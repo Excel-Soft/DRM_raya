@@ -1,0 +1,64 @@
+[
+  {
+    "id": "b29868ad-e13c-4aed-8c70-444639c3bfaf",
+    "email": "bilalahmed@gmail.com",
+    "role": "admin",
+    "role_id": "admin",
+    "roles": [
+      "admin",
+      "sales_executive"
+    ]
+  },
+  {
+    "id": "00e97543-f362-46d4-a6a8-e397998d99db",
+    "email": "nisar@gmail.com",
+    "role": "account_manager",
+    "role_id": "account_manager",
+    "roles": [
+      "account_manager",
+      "developer",
+      "hod"
+    ]
+  },
+  {
+    "id": "9ea6656a-bed3-4549-b60d-cba847c1c5ab",
+    "email": "talhaexcelstech@gmail.com",
+    "role": "admin",
+    "role_id": "admin",
+    "roles": [
+      "admin"
+    ]
+  },
+  {
+    "id": "512a8be4-e78c-4f7d-afbb-8c6740007ba5",
+    "email": "admin@example.com",
+    "role": "sales_executive",
+    "role_id": "sales_executive",
+    "roles": [
+      "sales_executive"
+    ]
+  },
+  {
+    "id": "575997bd-b8dc-4d87-aecd-7c7907b47150",
+    "email": "shahzaib.nasir@excelstech.ai",
+    "role": "admin",
+    "role_id": "sales_executive",
+    "roles": []
+  },
+  {
+    "id": "a79f42c3-7d2f-4d2d-a820-79d25e4a6d22",
+    "email": "abdullah.khalil@excels-tech.com",
+    "role": "admin",
+    "role_id": "sales_executive",
+    "roles": []
+  },
+  {
+    "id": "96b90776-3ebd-4fe5-9615-03484eda945f",
+    "email": "testuser@example.com",
+    "role": "sales_executive",
+    "role_id": "sales_executive",
+    "roles": [
+      "sales_executive"
+    ]
+  }
+]

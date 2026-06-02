@@ -1,0 +1,1 @@
+import { pool } from './server/db'; async function main() { const res = await pool.query('select id, username, full_name from users where username ilike \'%faisal%\' or full_name ilike \'%faisal%\' or username ilike \'%bilal%\' or full_name ilike \'%bilal%\''); console.log(res.rows); process.exit(0); } main();

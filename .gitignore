@@ -1,0 +1,39 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Environment (secrets)
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Python
+venv/
+__pycache__/
+
+# SQL dumps (large / sensitive)
+local_db_dump.sql
+supabase_drm_import.sql
+
+# Temp/debug scripts
+temp_env.txt
+
+# Non-essential large assets
+attached_assets/**/*.txt

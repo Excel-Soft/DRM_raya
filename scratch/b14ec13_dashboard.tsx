@@ -1,0 +1,895 @@
+import { useMemo, useState } from "react";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
+import { GmApprovalCard } from "@/components/gm-approval-card";
+import { Breadcrumb } from "@/components/breadcrumb";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import {
+    Loader2,
+    Users,
+    ArrowRightLeft,
+    Tag,
+    Target,
+    ChevronRight,
+    MessageSquare,
+    Mail,
+    Presentation,
+    Video,
+    Phone,
+    CalendarCheck,
+    Star,
+    Activity,
+    DollarSign,
+    UserPlus,
+    RefreshCw,
+    Clock,
+    Briefcase,
+    Zap,
+    ShieldCheck,
+    Award
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type KpiKey = "totalRevenue" | "new" | "renew" | "expire" | "vm" | "kwa" | "psa" | "sponsorBrand";
+
+type KpiEntry = {
+    count: number;
+    amount: number;
+};
+
+type DashboardSummary = {
+    success: boolean;
+    data: Record<KpiKey, KpiEntry>;
+};
+
+type ActivitiesResponse = {
+    success: boolean;
+    data: {
+        period: string;
+        from: string;
+        to: string;
+        rows: Array<{
+            userId: string;
+            name: string;
+            methods: Record<
+                | "mobile"
+                | "whatsapp"
+                | "onsite"
+                | "email"
+                | "seminar"
+                | "webinar"
+                | "appointment"
+                | "meeting"
+                | "aMinus"
+                | "bPlus",
+                { done: number; target: number }
+            >;
+            totals: { activities: number; timeMinutes: number };
+        }>;
+    };
+};
+
+type QueuePerformanceResponse = {
+    success: boolean;
+    data: {
+        items: Array<{
+            index: number;
+            userId: string;
+            person: string;
+            target: number;
+            achieve: number;
+            remain: number;
+            aMinus: number;
+            prediction: number;
+            gm: number;
+            bv: number;
+        }>;
+    };
+};
+
+type FollowUpsResponse = {
+    success: boolean;
+    data: {
+        items: Array<{
+            id: string;
+            drmId?: string;
+            customerId: string;
+            company: string;
+            grade: string;
+            poolType: string;
+            status: string;
+            notes: string;
+            dueAt: string | null;
+            dateTime?: string | null;
+            createdAt: string;
+            salesPerson?: string | null;
+            serviceType?: string | null;
+            purpose?: string | null;
+            method?: string | null;
+            services?: { name: string; code: string }[];
+            details?: { purpose: string; method: string }[];
+        }>;
+    };
+};
+
+type TeamWorkResponse = {
+    success: boolean;
+    data: {
+        items: Array<{
+            userId: string;
+            name: string;
+            leads: number;
+            follow: number;
+            notFollow: number;
+            aMinusCustomer: number;
+            bPlusCustomer: number;
+            bCustomer: number;
+            bMinusCustomer: number;
+            callConnected: number;
+            notResponse: number;
+            appointment: number;
+            meeting: number;
+        }>;
+    };
+};
+
+type MeetingsResponse = {
+    success: boolean;
+    data: { items: Array<{ id: string; userName: string; startsAt: string; endsAt: string; totalMinutes: number | null }> };
+};
+
+type TrendResponse = {
+    success: boolean;
+    data: { labels: string[]; counts: number[]; revenue: number[] };
+};
+
+const kpiConfig: Array<{ key: KpiKey; label: string; icon: any; color: string; iconBg: string }> = [
+    { key: "totalRevenue", label: "Total Revenue", icon: DollarSign, color: "text-emerald-600", iconBg: "bg-emerald-500" },
+    { key: "new", label: "New Leads", icon: UserPlus, color: "text-blue-600", iconBg: "bg-blue-500" },
+    { key: "renew", label: "Renewals", icon: RefreshCw, color: "text-indigo-600", iconBg: "bg-indigo-500" },
+    { key: "expire", label: "Expiring", icon: Clock, color: "text-amber-600", iconBg: "bg-amber-500" },
+    { key: "vm", label: "VM Orders", icon: Briefcase, color: "text-rose-600", iconBg: "bg-rose-500" },
+    { key: "kwa", label: "KWA", icon: Zap, color: "text-purple-600", iconBg: "bg-purple-500" },
+    { key: "psa", label: "PSA", icon: ShieldCheck, color: "text-cyan-600", iconBg: "bg-cyan-500" },
+    { key: "sponsorBrand", label: "Sponsor", icon: Award, color: "text-pink-600", iconBg: "bg-pink-500" },
+];
+
+const activityColumns = [
+    { key: "mobile", label: "Mobile (50)" },
+    { key: "whatsapp", label: "Whatsapp (20)" },
+    { key: "onsite", label: "OnSite Visit (1)" },
+    { key: "email", label: "E-mail (50)" },
+    { key: "seminar", label: "Seminar (1)" },
+    { key: "webinar", label: "Webinar (1)" },
+    { key: "appointment", label: "Appointment (3)" },
+    { key: "meeting", label: "Meeting (2)" },
+    { key: "aMinus", label: "A- (6)" },
+    { key: "bPlus", label: "B+ (13)" },
+];
+
+const quickEntries = [
+    { label: "Duplication Check", to: "/sales/duplicate-checker" },
+    { label: "Private Pool", to: "/sales/lead-pools?pool=Private" },
+    { label: "Services Pool", to: "/sales/lead-pools?pool=Service" },
+    { label: "Performance", to: "/sales/targets" },
+    { label: "Leave Application", to: "/hr/leave-request" },
+    { label: "Loan Application", to: "/hr/loan" },
+    { label: "BV Checking", to: "/sales/lead-pools?pool=GMBV" },
+    { label: "Over Time", to: "/hr/overtime" },
+    { label: "Leave Application", to: "/hr/leave-request" },
+    { label: "Grade List", to: "/sales/lead-pools?grade=all" },
+    { label: "Commission Verification", to: "/account/gm-entries" },
+    { label: "Appointment Request", to: "/sales/appointments" },
+];
+
+const denseHeader = "flex flex-row items-center justify-between gap-3 p-4 sm:px-6 sm:py-5 border-b border-slate-50";
+const denseHeaderPlain = "p-4 sm:px-6 sm:py-5 border-b border-slate-50";
+const denseContent = "p-4 sm:p-6 pt-6";
+const denseTableContent = "overflow-x-auto px-1 sm:px-2 pb-4 pt-0";
+
+function formatCurrency(amount?: number) {
+    return new Intl.NumberFormat("en-US", { minimumFractionDigits: 0 }).format(amount ?? 0);
+}
+
+function formatCountAmount(entry?: KpiEntry) {
+    if (!entry) return "0 (0)$";
+    return `${entry.count ?? 0}(${formatCurrency(entry.amount)})$`;
+}
+
+function percent(done: number, target: number) {
+    if (!target) return "0%";
+    return `${Math.round((done / target) * 100)}%`;
+}
+
+function toDateLabel(value: string) {
+    const d = new Date(value);
+    return `${d.getDate()}/${d.getMonth() + 1}`;
+}
+
+function minutesLabel(m: number) {
+    if (!m) return "0m";
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
+    if (hours && mins) return `${hours}h ${mins}m`;
+    if (hours) return `${hours}h`;
+    return `${mins}m`;
+}
+
+export default function SalesManagerDashboard() {
+    const [kpiPeriod, setKpiPeriod] = useState<string>("WC");
+    const [activityPeriod, setActivityPeriod] = useState<string>("TD");
+    const [queuePeriod, setQueuePeriod] = useState<string>("MONTH");
+    const [followUpFilter, setFollowUpFilter] = useState<string>("all");
+    const [selectedUser, setSelectedUser] = useState<string>("All Team");
+
+
+
+    const todayStr = useMemo(() => {
+        const d = new Date();
+        return d.toISOString().slice(0, 10);
+    }, []);
+
+    const emptySummary: DashboardSummary = {
+        success: true,
+        data: Object.fromEntries(kpiConfig.map((k) => [k.key, { count: 0, amount: 0 }])) as Record<KpiKey, KpiEntry>,
+    };
+
+    const emptyActivities: ActivitiesResponse = {
+        success: true,
+        data: { period: "", from: "", to: "", rows: [] },
+    };
+
+    const emptyQueue: QueuePerformanceResponse = {
+        success: true,
+        data: { items: [] },
+    };
+
+    const emptyFollowUps: FollowUpsResponse = {
+        success: true,
+        data: { items: [] },
+    };
+
+    const emptyTeamWork: TeamWorkResponse = {
+        success: true,
+        data: { items: [] },
+    };
+
+    const emptyMeetings: MeetingsResponse = {
+        success: true,
+        data: { items: [] },
+    };
+
+    const emptyTrend: TrendResponse = {
+        success: true,
+        data: { labels: [], counts: [], revenue: [] },
+    };
+
+    const commonQueryOptions = {
+        staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: false,
+        retry: 1,
+        refetchOnMount: false as const,
+    };
+
+    const { data: summaryRes = emptySummary, isLoading: loadingSummary } = useQuery<DashboardSummary>({
+        queryKey: [`/api/dashboard/summary?period=${kpiPeriod}`],
+        ...commonQueryOptions,
+        placeholderData: emptySummary,
+    });
+
+    const { data: activitiesRes = emptyActivities, isLoading: loadingActivities } = useQuery<ActivitiesResponse>({
+        queryKey: [`/api/dashboard/activities?period=${activityPeriod}`],
+        ...commonQueryOptions,
+        placeholderData: emptyActivities,
+    });
+
+    const { data: queueRes = emptyQueue, isLoading: loadingQueue } = useQuery<QueuePerformanceResponse>({
+        queryKey: [`/api/dashboard/team-queue-performance?period=${queuePeriod}`],
+        ...commonQueryOptions,
+        placeholderData: emptyQueue,
+    });
+
+    const { data: followUpsRes = emptyFollowUps, isLoading: loadingFollowups } = useQuery<FollowUpsResponse>({
+        queryKey: [
+            `/api/dashboard/followups?page=1&pageSize=50${followUpFilter && followUpFilter !== "all" ? `&filter=${encodeURIComponent(followUpFilter)}` : ""}`,
+        ],
+        ...commonQueryOptions,
+        placeholderData: emptyFollowUps,
+    });
+
+    const { data: teamWorkRes = emptyTeamWork, isLoading: loadingTeamWork } = useQuery<TeamWorkResponse>({
+        queryKey: ["/api/dashboard/team-work-performance"],
+        ...commonQueryOptions,
+        placeholderData: emptyTeamWork,
+    });
+
+    const { data: meetingsRes = emptyMeetings, isLoading: loadingMeetings } = useQuery<MeetingsResponse>({
+        queryKey: [`/api/dashboard/daily-team-meeting?date=${todayStr}`],
+        ...commonQueryOptions,
+        placeholderData: emptyMeetings,
+    });
+
+    const { data: trendRes = emptyTrend } = useQuery<TrendResponse>({
+        queryKey: ["/api/dashboard/current-month-trend"],
+        ...commonQueryOptions,
+        placeholderData: emptyTrend,
+    });
+
+    const summary = summaryRes.data;
+    const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes.data.rows ?? [];
+    const queueItems: QueuePerformanceResponse["data"]["items"] = queueRes.data.items ?? [];
+    const followUpItems: FollowUpsResponse["data"]["items"] = followUpsRes.data.items ?? [];
+
+    const serviceCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        followUpItems.forEach((item) => {
+            const service = item.serviceType || "Main Service";
+            counts[service] = (counts[service] || 0) + 1;
+        });
+        return counts;
+    }, [followUpItems]);
+
+    const [viewFollowup, setViewFollowup] = useState<FollowUpsResponse["data"]["items"][number] | null>(null);
+    const teamWorkItems: TeamWorkResponse["data"]["items"] = teamWorkRes.data.items ?? [];
+    const trendLabels = trendRes.data.labels ?? [];
+    const trendCounts = trendRes.data.counts ?? [];
+
+    return (
+        <div className="flex-1 overflow-auto dashboard-page">
+            <div className="wide-page p-2 sm:p-3 lg:px-4 space-y-3">
+                <Breadcrumb items={[{ label: "DASHBOARD" }, { label: "SALES DEPARTMENT" }, { label: "SALES MANAGER" }]} />
+
+                <div className="grid gap-3 lg:grid-cols-[2fr,1fr] min-w-0 dashboard-grid">
+                    <div className="space-y-3 min-w-0 dashboard-col">
+                        <Card className="dashboard-card shadow-sm border-border bg-card">
+                            <CardHeader className={denseHeader}>
+                                <div>
+                                    <CardTitle className="text-xl sm:text-2xl font-semibold text-foreground">Team Performance</CardTitle>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Select value={kpiPeriod} onValueChange={setKpiPeriod}>
+                                        <SelectTrigger className="w-24 bg-card border-border">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="WC">WC</SelectItem>
+                                            <SelectItem value="TD">TD</SelectItem>
+                                            <SelectItem value="MONTH">Month</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </CardHeader>
+                            <CardContent className={`${denseContent} min-w-0`}>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                                    {kpiConfig.map((item) => {
+                                        const entry = summary?.[item.key];
+                                        return (
+                                            <div
+                                                key={item.key}
+                                                className="group relative flex items-center justify-between rounded-2xl bg-card p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border border-border shadow-sm overflow-hidden"
+                                            >
+                                                {/* Background Accent Gradient */}
+                                                <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-[0.05] transition-opacity duration-500 bg-gradient-to-br", item.iconBg)} />
+
+                                                <div className="relative space-y-2">
+                                                    <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest leading-none">{item.label}</div>
+                                                    {loadingSummary ? (
+                                                        <div className="flex items-center gap-2 py-1">
+                                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="space-y-0.5">
+                                                            <div className="text-2xl font-black text-foreground tracking-tight leading-none uppercase">
+                                                                {entry?.count ?? 0}
+                                                            </div>
+                                                            <div className={cn("text-xs font-bold tracking-wide flex items-center gap-1", item.color)}>
+                                                                <span className="opacity-60">$</span>
+                                                                {formatCurrency(entry?.amount)}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className={cn(
+                                                    "relative flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg transition-all duration-500 group-hover:scale-110 group-hover:rotate-6",
+                                                    item.iconBg
+                                                )}>
+                                                    <item.icon className="h-7 w-7 transition-all duration-500 group-hover:scale-110" strokeWidth={2.5} />
+
+                                                    {/* Decorative Ring */}
+                                                    <div className="absolute inset-0 rounded-2xl border-2 border-white/20 scale-90 group-hover:scale-100 transition-transform duration-500" />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="dashboard-card shadow-sm border-border bg-card">
+                            <CardHeader className={denseHeader}>
+                                <CardTitle className="text-lg font-semibold text-foreground">Activities</CardTitle>
+                                <div className="flex items-center gap-2">
+                                    <Select value={activityPeriod} onValueChange={setActivityPeriod}>
+                                        <SelectTrigger className="w-24 border-border">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="TD">TD</SelectItem>
+                                            <SelectItem value="WC">WC</SelectItem>
+                                            <SelectItem value="MONTH">Month</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </CardHeader>
+                            <CardContent className={denseTableContent}>
+                                <div className="rounded-lg border border-border overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-muted border-b border-border">
+                                                <th className="px-6 py-4 text-left font-black text-muted-foreground uppercase tracking-widest text-[10px]">Name</th>
+                                                {activityColumns.map((col) => (
+                                                    <th key={col.key} className="px-6 py-4 text-left font-black text-muted-foreground uppercase tracking-widest text-[10px] whitespace-nowrap">
+                                                        {col.label}
+                                                    </th>
+                                                ))}
+                                                <th className="px-4 py-3 text-left font-bold text-foreground whitespace-nowrap">Total Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-border">
+                                            {loadingActivities ? (
+                                                <tr>
+                                                    <td colSpan={activityColumns.length + 2} className="px-4 py-8 text-center text-slate-400">
+                                                        <div className="inline-flex items-center gap-2">
+                                                            <Loader2 className="h-5 w-5 animate-spin" />
+                                                            Loading activities...
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ) : activityRows.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={activityColumns.length + 2} className="px-4 py-8 text-center text-slate-400">
+                                                        No activity data found.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                activityRows.map((row) => (
+                                                    <tr key={row.userId} className="hover:bg-slate-50 transition-colors">
+                                                        <td className="px-4 py-3 font-semibold text-slate-700">{row.name}</td>
+                                                        {activityColumns.map((col) => {
+                                                            const entry = row.methods[col.key as keyof typeof row.methods];
+                                                            const val = entry ? `() ${percent(entry.done, entry.target)} ${entry.done}` : "-";
+                                                            return (
+                                                                <td key={col.key} className="px-4 py-3 whitespace-nowrap text-slate-600">
+                                                                    {val}
+                                                                </td>
+                                                            );
+                                                        })}
+                                                        <td className="px-4 py-3 whitespace-nowrap text-slate-600 font-medium">{minutesLabel(row.totals.timeMinutes)}</td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="dashboard-card shadow-sm border-slate-100">
+                            <CardHeader className={denseHeader}>
+                                <CardTitle className="text-lg font-semibold text-slate-700">Team Queue Sale Performance</CardTitle>
+                                <div className="flex items-center gap-2">
+                                    <div className="flex rounded-md border border-slate-200 overflow-hidden">
+                                        <button className="px-4 py-1.5 text-xs font-semibold hover:bg-slate-50 border-r border-slate-200 bg-white">Choose</button>
+                                        <button className="px-4 py-1.5 text-xs font-semibold bg-white text-slate-700">Month</button>
+                                    </div>
+                                </div>
+                            </CardHeader>
+                            <CardContent className={denseTableContent}>
+                                <div className="rounded-lg border border-slate-100 overflow-hidden">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-white border-b border-slate-100">
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">#</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Person</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Target</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Achive</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Remain</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">A-</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Prediction</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">GM</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">BV</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {loadingQueue ? (
+                                                <tr>
+                                                    <td colSpan={9} className="px-4 py-8 text-center text-slate-400">Loading...</td>
+                                                </tr>
+                                            ) : (
+                                                queueItems.map((item, idx) => (
+                                                    <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                                        <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
+                                                        <td className="px-4 py-3 font-semibold text-slate-700">{item.person}</td>
+                                                        <td className="px-4 py-3 text-slate-600">{item.target}</td>
+                                                        <td className="px-4 py-3">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="font-semibold text-slate-700">{item.achieve}</span>
+                                                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-[10px] font-bold text-slate-500">
+                                                                    {item.target > 0 ? Math.round((item.achieve / item.target) * 100) : 0}%
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-slate-600">{item.remain}</td>
+                                                        <td className="px-4 py-3 text-slate-600">{item.aMinus}</td>
+                                                        <td className="px-4 py-3 text-slate-600">{formatCurrency(item.prediction)}</td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <button className="px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-[10px] font-bold text-slate-600 rounded uppercase">GM List</button>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <button className="px-3 py-1 bg-white border border-slate-300 hover:bg-slate-100/50 text-[10px] font-bold text-slate-600 rounded uppercase">BV List</button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="dashboard-card shadow-sm border-slate-100">
+                            <CardHeader className={denseHeader}>
+                                <CardTitle className="text-lg font-semibold text-slate-700">Follow Up Details</CardTitle>
+                                <div className="w-52">
+                                    <Select value={followUpFilter} onValueChange={setFollowUpFilter}>
+                                        <SelectTrigger className="border-slate-200">
+                                            <SelectValue placeholder="Please Select Filter" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All</SelectItem>
+                                            <SelectItem value="Open">Open</SelectItem>
+                                            <SelectItem value="Closed">Closed</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </CardHeader>
+                            <CardContent className={denseTableContent}>
+                                <div className="rounded-lg border border-slate-100 overflow-hidden">
+                                    <div className="max-h-[420px] overflow-y-auto">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="bg-white border-b border-slate-100 sticky top-0 z-10">
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">#</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">Added By</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Company Name</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">
+                                                        <div className="flex items-center gap-2">
+                                                            Main Service
+                                                            <Popover>
+                                                                <PopoverTrigger asChild>
+                                                                    <Badge variant="secondary" className="cursor-pointer hover:bg-slate-200 px-1.5 py-0.5 h-5 text-[10px]">
+                                                                        {followUpItems.filter(i => i.serviceType).length}
+                                                                    </Badge>
+                                                                </PopoverTrigger>
+                                                                <PopoverContent className="w-64 p-0" align="start">
+                                                                    <div className="p-3 border-b bg-slate-50 font-semibold text-xs text-slate-700">
+                                                                        Service Type Breakdown
+                                                                    </div>
+                                                                    <div className="p-2 max-h-[300px] overflow-y-auto space-y-1">
+                                                                        {Object.entries(serviceCounts)
+                                                                            .sort(([, a], [, b]) => b - a)
+                                                                            .map(([service, count]) => (
+                                                                                <div key={service} className="flex items-center justify-between text-xs p-1.5 hover:bg-slate-50 rounded">
+                                                                                    <span className="font-medium text-slate-700 truncate pr-3">{service}</span>
+                                                                                    <span className="font-bold text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded">{count}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                    </div>
+                                                                </PopoverContent>
+                                                            </Popover>
+                                                        </div>
+                                                    </th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">Sub Type</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Grade</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Purpose</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Method</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">Next Date</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Comment</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800">Note</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">Created Date</th>
+                                                    <th className="px-4 py-3 text-left font-bold text-slate-800 whitespace-nowrap">Followup Note</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-50">
+                                                {loadingFollowups ? (
+                                                    <tr><td colSpan={13} className="px-4 py-8 text-center text-slate-400">Loading follow ups...</td></tr>
+                                                ) : followUpItems.length === 0 ? (
+                                                    <tr><td colSpan={13} className="px-4 py-12 text-center text-slate-400 font-medium text-lg">Please Select Filter to see the data</td></tr>
+                                                ) : (
+                                                    followUpItems.map((item, idx) => (
+                                                        <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                                                            <td className="px-4 py-3 text-slate-500">{idx + 1}</td>
+                                                            <td className="px-4 py-3 text-slate-600 font-medium">{item.salesPerson ?? "-"}</td>
+                                                            <td className="px-4 py-3 font-semibold text-slate-700">{item.company ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">{item.serviceType ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">{item.poolType ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">{item.grade ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">{item.purpose ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">{item.method ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.dateTime || item.dueAt ? new Date(item.dateTime || item.dueAt || "").toLocaleDateString() : "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate">{item.notes ?? "-"}</td>
+                                                            <td className="px-4 py-3 text-slate-600">-</td>
+                                                            <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{new Date(item.createdAt).toLocaleDateString()}</td>
+                                                            <td className="px-4 py-3 text-slate-600">-</td>
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                    </div>
+
+                    <div className="space-y-3 min-w-0 dashboard-col">
+                        {/* GM Approvals */}
+                        <GmApprovalCard role="sales-manager" />
+
+                        <Card className="overflow-hidden dashboard-card border-none shadow-sm">
+                            <CardContent className="p-0">
+                                <div className="relative h-48 bg-white border border-slate-100 rounded-lg overflow-hidden">
+                                    <img src="/webexcels-logo.png" alt="Decoration" className="absolute inset-0 w-full h-full object-cover opacity-20 contrast-125" />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/40 to-transparent flex items-end p-4">
+                                        <p className="text-white font-bold text-lg drop-shadow-md">Innovative Business Solutions</p>
+                                    </div>
+                                    <div className="absolute top-1/2 -translate-y-1/2 left-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"><ChevronRight className="h-5 w-5 rotate-180" /></div>
+                                    <div className="absolute top-1/2 -translate-y-1/2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"><ChevronRight className="h-5 w-5" /></div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-100">
+                            <CardHeader className={denseHeaderPlain}>
+                                <CardTitle className="text-lg font-semibold text-slate-700">Current Month</CardTitle>
+                            </CardHeader>
+                            <CardContent className={`${denseContent} overflow-hidden`}>
+                                <div className="relative h-64 border-l border-b border-slate-200 flex items-end px-2 pt-4">
+                                    {/* Mock Chart Grid */}
+                                    <div className="absolute left-0 right-0 top-0 bottom-0 grid grid-rows-7 h-full w-full pointer-events-none opacity-20">
+                                        {[60000, 50000, 40000, 30000, 20000, 10000, 0].map(v => (
+                                            <div key={v} className="border-t border-slate-400 relative">
+                                                <span className="absolute -left-10 -top-2 text-[10px] text-slate-400 font-bold">{v}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Placeholder bars */}
+                                    <div className="flex-1 flex justify-around items-end h-full z-10 px-4">
+                                        {[30000, 10000, 50000, 5000, 15000, 40000, 2000, 12000].map((h, i) => (
+                                            <div key={i} className="group relative">
+                                                <div
+                                                    className="w-1.5 bg-indigo-200 rounded-t group-hover:bg-indigo-400 transition-all"
+                                                    style={{ height: `${(h / 70000) * 100}%` }}
+                                                />
+                                                <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 whitespace-nowrap rotate-45 origin-left text-[8px] font-bold text-slate-500 uppercase">Team Member {i + 1}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="absolute -left-16 top-1/2 -rotate-90 text-xs font-bold text-slate-400 uppercase tracking-widest">Current Month Team Achievement</div>
+                                </div>
+                                <div className="h-16" /> {/* Spacing for rotated labels */}
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-100">
+                            <CardHeader className={denseHeaderPlain}>
+                                <CardTitle className="text-lg font-semibold text-slate-700">Daily Team Meeting</CardTitle>
+                            </CardHeader>
+                            <CardContent className={denseContent}>
+                                <div className="rounded-lg border border-slate-100 overflow-hidden">
+                                    <table className="w-full text-[11px]">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-100 font-bold text-slate-400 uppercase">
+                                                <th className="px-3 py-2 text-left">Person</th>
+                                                <th className="px-3 py-2 text-center">Start</th>
+                                                <th className="px-3 py-2 text-center">End</th>
+                                                <th className="px-3 py-2 text-center">Total</th>
+                                                <th className="px-3 py-2 text-right">Detail</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {loadingMeetings ? (
+                                                <tr><td colSpan={5} className="p-4 text-center">Loading...</td></tr>
+                                            ) : meetingsRes.data.items.length === 0 ? (
+                                                <tr><td colSpan={5} className="p-4 text-center text-slate-400">No meetings today</td></tr>
+                                            ) : (
+                                                meetingsRes.data.items.map(m => (
+                                                    <tr key={m.id}>
+                                                        <td className="px-3 py-2 font-bold text-slate-600">{m.userName}</td>
+                                                        <td className="px-3 py-2 text-center text-slate-500">{m.startsAt ? new Date(m.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}</td>
+                                                        <td className="px-3 py-2 text-center text-slate-500">{m.endsAt ? new Date(m.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"}</td>
+                                                        <td className="px-3 py-2 text-center text-slate-500 font-medium">{minutesLabel(m.totalMinutes ?? 0)}</td>
+                                                        <td className="px-3 py-2 text-right"><ChevronRight className="h-3 w-3 inline text-slate-300" /></td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-100">
+                            <CardHeader className={denseHeaderPlain}>
+                                <CardTitle className="text-lg font-semibold text-slate-700">Quick Enteries</CardTitle>
+                            </CardHeader>
+                            <CardContent className="px-4 pb-5 pt-0">
+                                <div className="grid grid-cols-2 gap-2">
+                                    {quickEntries.map((entry, idx) => (
+                                        <Link
+                                            key={idx}
+                                            href={entry.to}
+                                            className="flex items-center justify-between rounded-sm bg-white border border-slate-100 px-3 py-2 hover:bg-slate-50 transition-colors group cursor-pointer"
+                                        >
+                                            <span className="text-[11px] font-bold text-slate-500 uppercase">{entry.label}</span>
+                                            <ChevronRight className="h-3 w-3 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                                        </Link>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                    </div>
+                </div>
+
+                <Card className="dashboard-card shadow-sm border-slate-100 mt-3">
+                    <CardHeader className={denseHeaderPlain}>
+                        <CardTitle className="text-lg font-semibold text-slate-700">Team Work Performance</CardTitle>
+                        <div className="flex items-center gap-4 mt-2">
+                            <div className="flex border border-slate-200 rounded-md overflow-hidden bg-white">
+                                <input type="text" placeholder="Start Date" className="px-3 py-1 text-xs outline-none border-r border-slate-200 w-32" />
+                                <input type="text" placeholder="End Date" className="px-3 py-1 text-xs outline-none w-32" />
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent className={denseTableContent}>
+                        <div className="flex flex-wrap gap-2 mb-6">
+                            {["All Team", "HIFSA ABID", "SYEDA MEHAK FATIMA", "AMINA NASEER", "JANNAT NAEEM", "MUHAMMAD SHOAIB", "RUBAB YOUNAS", "ALISHBA QADEER", "KIRAN IMRAN", "MUDIHA JAMIL", "ATIA RANI", "HAFSA NASEER", "AFFRA SAEED", "MAIRA BUTT", "LAIBA FATIMA", "AYESHA KHATOON", "EHTISHAM UL HASSAN", "FAREHA", "SAROSH FARID", "ANAM SAIF"].map((name) => (
+                                <button
+                                    key={name}
+                                    onClick={() => setSelectedUser(name)}
+                                    className={cn(
+                                        "px-4 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm",
+                                        selectedUser === name
+                                            ? "bg-black/80 text-white shadow-slate-100"
+                                            : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                    )}
+                                >
+                                    {name.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="rounded-lg border border-slate-100 overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead>
+                                    <tr className="bg-white border-b border-slate-100">
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Name</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Leads</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Follow</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Not Follow</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">A- Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">B+ Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">B Csutomer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">B- Csutomer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Call Connected</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Not Response</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Appointment</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800">Meeting</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {loadingTeamWork ? (
+                                        <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-400">Loading...</td></tr>
+                                    ) : (
+                                        teamWorkItems
+                                            .filter(it => selectedUser === "All Team" || it.name.toUpperCase() === selectedUser)
+                                            .map((item) => (
+                                                <tr key={item.userId} className="hover:bg-white transition-colors">
+                                                    <td className="px-4 py-3 font-semibold text-slate-700">{item.name}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.leads}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.follow}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.notFollow}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.aMinusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.bPlusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.bCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.bMinusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.callConnected}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.notResponse}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.appointment}</td>
+                                                    <td className="px-4 py-3 text-slate-600">{item.meeting}</td>
+                                                </tr>
+                                            ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Dialog open={!!viewFollowup} onOpenChange={(open) => !open && setViewFollowup(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Follow-up Details</DialogTitle>
+                        <DialogDescription>Customer and follow-up info</DialogDescription>
+                    </DialogHeader>
+                    {viewFollowup && (
+                        <div className="space-y-2 text-sm">
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <p className="text-muted-foreground">Company</p>
+                                    <p className="font-medium">{viewFollowup.company || "-"}</p>
+                                </div>
+                                <div>
+                                    <p className="text-muted-foreground">Grade</p>
+                                    <p className="font-medium">{viewFollowup.grade || "-"}</p>
+                                </div>
+                                <div>
+                                    <p className="text-muted-foreground">Pool</p>
+                                    <p className="font-medium">{viewFollowup.poolType || "-"}</p>
+                                </div>
+                                <div>
+                                    <p className="text-muted-foreground">Status</p>
+                                    <p className="font-medium">{viewFollowup.status || "-"}</p>
+                                </div>
+                                <div>
+                                    <p className="text-muted-foreground">Next Date</p>
+                                    <p className="font-medium">
+                                        {viewFollowup.dueAt
+                                            ? new Date(viewFollowup.dueAt).toLocaleString()
+                                            : viewFollowup.dateTime
+                                                ? new Date(viewFollowup.dateTime).toLocaleString()
+                                                : "-"}
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-muted-foreground">Created</p>
+                                    <p className="font-medium">
+                                        {viewFollowup.createdAt ? new Date(viewFollowup.createdAt).toLocaleString() : "-"}
+                                    </p>
+                                </div>
+                            </div>
+                            <div>
+                                <p className="text-muted-foreground">Comments/Note</p>
+                                <p className="font-medium whitespace-pre-wrap">{viewFollowup.notes || "-"}</p>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+        </div>
+    );
+}

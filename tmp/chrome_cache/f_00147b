@@ -1,0 +1,1491 @@
+    <!doctype html>
+    <html lang="en">
+    <head>
+        
+        <meta charset="utf-8" />
+        <title>DRM Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta content="WEB EXCLES DRM" name="description" />
+        <meta content="WEB EXCLES" name="SHABAZ" />
+        <!-- App favicon -->
+         <link rel="shortcut icon" href="assets/images/favicon.ico"> 
+        <link href="assets/libs/select2/css/select2.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/css/bootstrap.min.css" id="bootstrap-style" rel="stylesheet" type="text/css" />
+        <link href="assets/css/icons.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/css/app.min.css" id="app-style" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/dropzone/min/dropzone.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/admin-resources/rwd-table/rwd-table.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/datatables.net-responsive-bs4/css/responsive.bootstrap4.min.css" rel="stylesheet" type="text/css" />
+        <link rel="stylesheet" type="text/css" href="assets/libs/toastr/build/toastr.min.css">
+        <link href="assets/libs/magnific-popup/magnific-popup.css" rel="stylesheet" type="text/css" />
+        <script src="assets/js/ajax.googleapis.com_ajax_libs_jquery_3.6.4_jquery.min.js"></script>     
+      <!-- ION Slider -->
+        <link href="assets/libs/ion-rangeslider/css/ion.rangeSlider.min.css" rel="stylesheet" type="text/css"/>
+           <script src="assets/libs/echarts/echarts.min.js"></script>
+
+    </head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.1/css/all.min.css" />
+    <style>
+        .sticky-table-header {
+            display: none;
+        }
+
+        .btn-toolbar {
+            display: none;
+        }
+
+        .blur {
+            filter: blur(5px);
+            transition: filter 0.3s ease-in-out;
+            text-align: center;
+        }
+
+        td:hover .blur {
+            filter: blur(0);
+        }
+
+        .block_copy {
+            user-select: none;
+            /* Disable text selection */
+        }
+    </style>
+
+    <body data-sidebar="dark" onload="myFunction()" class="sidebar-enable vertical-collpsed">
+                    
+            <script>
+                // $(document).ready(function(){
+                //   $('body').bind("cut copy ",function(e) {
+                //      e.preventDefault();
+                //   // cut copy paste
+                //   });
+                // });
+                // 
+            </script>
+        
+        <!-- Begin page -->
+        <div id="layout-wrapper">
+                            
+<header id="page-topbar">
+    <div class="navbar-header">
+        <div class="d-flex">
+            <!-- LOGO -->
+            <div class="navbar-brand-box">
+                <a href="home" class="logo logo-dark">
+                    <span class="logo-sm">
+                        <!-- <img src="assets/images/icon-light.png"  alt="" height="22" style="width: 45px !important; margin-left: -11px;"> -->
+                        <!-- <h2 style="color: #ffff; font-weight: bold;margin-top: 25px; margin-left: -12px;  font-size:20px;">DRM</h2> -->
+                    </span>
+                    <span class="logo-lg" style="display: -webkit-box;">
+                        <img src="assets/images/icon-light.png" class="img-fluid" alt="" height="17">
+                        <h2 style="color: #ffff; font-weight: bold;margin-top: 20px; margin-left: 10px;">DRM</h2>
+                    </span>
+                </a>
+
+                <a href="home" class="logo logo-light">
+                    <span class="logo-sm">
+                        <!-- <img src="assets/images/icon-light.png" alt="" height="22" style="width: 45px !important; margin-left: -11px;"> -->
+                        <!-- <h2 style="color: #ffff; font-weight: bold;margin-top: 25px;margin-left: -12px;font-size:20px;">DRM</h2> -->
+                    </span>
+                    <span class="logo-lg" style="display: -webkit-box;">
+                        <img src="assets/images/icon-light.png" class="img-fluid" alt="" height="19">
+                        <h2 style="color: #ffff; font-weight: bold;margin-top: 20px; margin-left: 10px;">DRM</h2>
+                    </span>
+                </a>
+            </div>
+
+            <button type="button" class="btn btn-sm px-3 font-size-16 header-item waves-effect" id="vertical-menu-btn">
+                <i class="fa fa-fw fa-bars"></i>
+            </button>
+
+        </div>
+
+        <div class="d-flex">
+
+            <div class="dropdown d-inline-block d-lg-none ms-2">
+                <button type="button" class="btn header-item noti-icon waves-effect" id="page-header-search-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="mdi mdi-magnify"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end p-0" aria-labelledby="page-header-search-dropdown">
+                    <form class="p-3">
+                        <div class="form-group m-0">
+                            <div class="input-group">
+                                <input type="text" class="form-control" placeholder="Search ..." aria-label="Search">
+                                <div class="input-group-append">
+                                    <button class="btn btn-primary" type="submit"><i class="mdi mdi-magnify"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="dropdown d-inline-block">
+                <button type="button" class="btn header-item waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                    </button>
+                <!-- branch code -->
+                <button type="button" class="btn header-item waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img id="header-lang-img" src="assets/images/flags/sialkot.jpg" alt="Header Language" height="16">
+                        <span class="ms-1">Sialkot</span>
+                                    </button>
+                
+
+                <div class="dropdown-menu dropdown-menu-end">
+                                    </div>
+            </div>
+
+            <!-- ENHANCED NOTIFICATION DROPDOWN -->
+            <div class="dropdown d-inline-block">
+                <button type="button" class="btn header-item noti-icon waves-effect" id="page-header-notifications-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="bx bx-bell bx-tada"></i>
+                    <span class="badge bg-danger rounded-pill" id="notification-count" style="display:none;">0</span>
+                </button>
+
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end p-0" aria-labelledby="page-header-notifications-dropdown">
+                    <!-- Notification Header -->
+                    <div class="p-3 bg-primary">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h6 class="m-0 text-white">Notifications (0)</h6>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notification Content -->
+                    <div data-simplebar="init" style="max-height: 350px;">
+                        <div class="simplebar-content" id="notification-content">
+
+                                                            <!-- No Notifications -->
+                                <div class="text-center py-4">
+                                    <div class="avatar-md mx-auto mb-4">
+                                        <div class="avatar-title bg-light rounded-circle">
+                                            <i class="bx bx-bell font-size-24 text-muted"></i>
+                                        </div>
+                                    </div>
+                                    <p class="text-muted">No new notifications</p>
+                                </div>
+                            
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                                    </div>
+            </div>
+
+            <div class="dropdown d-none d-lg-inline-block ms-1">
+                <button type="button" class="btn header-item noti-icon waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="bx bx-user-circle"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end" data-simplebar="init" style="max-height: 500px;">
+                    <div class="px-lg-2">
+                        <div class="row g-0">
+                            <div class="col">
+                                                                                    <a class="dropdown-icon-item" href="roleChange=2">
+                                                        <span>Sales Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=14">
+                                                        <span>admin</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=25">
+                                                        <span>Sales Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=27">
+                                                        <span>Service Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=29">
+                                                        <span>Service Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=30">
+                                                        <span>Reception</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=32">
+                                                        <span>Account Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=34">
+                                                        <span>SEO/SMM Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=35">
+                                                        <span>Product Posting Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=37">
+                                                        <span>Posting Executive	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=39">
+                                                        <span>D&amp;D Manager	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=41">
+                                                        <span>D&amp;D Executive	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=45">
+                                                        <span>IT Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=48">
+                                                        <span>H.O.D</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=55">
+                                                        <span>Lead Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=57">
+                                                        <span>QA Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=58">
+                                                        <span>Verification Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=59">
+                                                        <span>Complaint Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=60">
+                                                        <span>Marketing Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=61">
+                                                        <span>Media Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=63">
+                                                        <span>Software Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=64">
+                                                        <span>Software Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=65">
+                                                        <span>Full Salary</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=66">
+                                                        <span>TA Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=67">
+                                                        <span>TA Assistant Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=68">
+                                                        <span>TA Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=73">
+                                                        <span>Super HOD</span>
+                                                    </a>
+                                                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dropdown d-inline-block">
+                                <button type="button" class="btn header-item waves-effect" id="page-header-user-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <img class="rounded-circle header-profile-user" src="assets/images/user/M. Shabaz.JPG" alt="Header Avatar">
+                    <span class="d-none d-xl-inline-block ms-1">M. Shahbaz</span>
+                    <i class="mdi mdi-chevron-down d-none d-xl-inline-block"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end">
+                    <a class="dropdown-item" href="user-profile"><i class="bx bx-user font-size-16 align-middle me-1"></i> <span key="t-profile">Profile</span></a>
+                    <a class="dropdown-item d-block" href="#"><span class="badge bg-success float-end">11</span><i class="bx bx-wrench font-size-16 align-middle me-1"></i> <span key="t-settings">Settings</span></a>
+                    <a class="dropdown-item" href="reset"><i class="bx bx-lock-open font-size-16 align-middle me-1"></i> <span key="t-lock-screen">Lock screen</span></a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item text-danger" href="login"><i class="bx bx-power-off font-size-16 align-middle me-1 text-danger"></i> <span key="t-logout">Logout</span></a>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</header>
+
+<!-- ========== Left Sidebar Start ========== -->
+<div class="vertical-menu">
+    <div data-simplebar class="h-100">
+        <!--- Sidemenu -->
+        <div id="sidebar-menu">
+            <!-- Left Menu Start -->
+            <ul class="metismenu list-unstyled" id="side-menu">
+                <li>
+                    <a href="home" class="waves-effect">
+                        <i class="bx bx-home-circle"></i>
+                        <span key="t-dashboards">Dashboards</span>
+                    </a>
+                </li>
+
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-store"></i>
+                                <span key="t-layouts">Attendance</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="attendance-check" key="t-products">Check</a></li>
+                                                                        <li><a href="leave-form" key="t-products">Leave Form</a></li>
+                                                                        <li><a href="over-time" key="t-products">Over Time</a></li>
+                                                                        <li><a href="to-do-list" key="t-products">To Do List</a></li>
+                                                                        <li><a href="advance-salary" key="t-products">Loan Report</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-user-circle"></i>
+                                <span key="t-layouts">Customer</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="duplication" key="t-products">Check Duplication</a></li>
+                                                                        <li><a href="add-customer" key="t-products">Add Customer</a></li>
+                                                                        <li><a href="temp-contact" key="t-products">Temporary Contact</a></li>
+                                                                        <li><a href="private-pool" key="t-products">Private Pool</a></li>
+                                                                        <li><a href="service-pool" key="t-products">Service Pool</a></li>
+                                                                        <li><a href="gm-bv-pool" key="t-products">Gm Bv Pool</a></li>
+                                                                        <li><a href="in-service-report" key="t-products">In service Report</a></li>
+                                                                        <li><a href="public-pool" key="t-products">Public Pool</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-tone"></i>
+                                <span key="t-layouts">PMS</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="pms-projects" key="t-products">Projects</a></li>
+                                                                        <li><a href="pms-task-create" key="t-products">Task Create</a></li>
+                                                                        <li><a href="pms-running-project" key="t-products">Running</a></li>
+                                                                        <li><a href="pms-pending-project" key="t-products">Pending</a></li>
+                                                                        <li><a href="pms-project-task" key="t-products">Task</a></li>
+                                                                        <li><a href="work-spaces" key="t-products">Work Space</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-file"></i>
+                                <span key="t-layouts">User Report</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="advance-salary" key="t-products">Loan Report</a></li>
+                                                                        <li><a href="vas-report" key="t-products">Vas Report</a></li>
+                                                                        <li><a href="gm-report" key="t-products">Gm Report</a></li>
+                                                                        <li><a href="bv-report" key="t-products">Gm Bv Report</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-video-recording"></i>
+                                <span key="t-layouts">Training</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="training-video" key="t-products">Training Video</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bxs-user-detail"></i>
+                                <span key="t-layouts">Reports</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="vas-report" key="t-products">Vas Report</a></li>
+                                                            </ul>
+                        </li>
+                            </ul>
+        </div>
+        <!-- Sidebar -->
+    </div>
+</div>
+<!-- Left Sidebar End -->
+
+<!-- Additional CSS for enhanced notifications -->
+
+<style>
+    /* Enhanced Notification Styles */
+    .notification-badge {
+        animation: pulse 2s infinite;
+        min-width: 18px;
+        font-size: 11px;
+    }
+
+    @keyframes pulse {
+        0% {
+            transform: scale(1);
+        }
+
+        50% {
+            transform: scale(1.1);
+        }
+
+        100% {
+            transform: scale(1);
+        }
+    }
+
+    .notification-item {
+        transition: all 0.2s ease;
+        border-radius: 0;
+    }
+
+    .notification-item:hover {
+        background-color: #f8f9fa !important;
+        transform: translateX(2px);
+    }
+
+    .hover-bg-light:hover {
+        background-color: #f8f9fa !important;
+    }
+
+    .notification-item:not(:last-child) {
+        border-bottom: 1px solid #f0f0f0 !important;
+    }
+
+    .avatar-title {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+    }
+
+    .badge {
+        font-weight: 500;
+    }
+
+    .dropdown-menu-lg {
+        min-width: 320px;
+    }
+
+    /* Custom scrollbar for notifications */
+    .simplebar-content::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .simplebar-content::-webkit-scrollbar-track {
+        background: #f1f1f1;
+    }
+
+    .simplebar-content::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 4px;
+    }
+
+    .simplebar-content::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+
+    /* Notification count animation */
+    .notification-badge.animate {
+        animation: bounce 0.5s ease;
+    }
+
+    @keyframes bounce {
+
+        0%,
+        20%,
+        60%,
+        100% {
+            transform: translateY(0);
+        }
+
+        40% {
+            transform: translateY(-10px);
+        }
+
+        80% {
+            transform: translateY(-5px);
+        }
+    }
+
+    /* Enhanced badge styles */
+    .badge-soft-danger {
+        color: #f46a6a;
+        background-color: rgba(244, 106, 106, 0.18);
+    }
+
+    .badge-soft-info {
+        color: #34c38f;
+        background-color: rgba(52, 195, 143, 0.18);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .dropdown-menu-lg {
+            min-width: 280px;
+            max-width: 90vw;
+        }
+    }
+</style>
+
+<!-- Enhanced JavaScript for notification interactions -->
+<script>
+    // JavaScript functions for notification interactions
+    function markAllAsRead() {
+        // Show loading state
+        const markAllBtn = event.target;
+        const originalText = markAllBtn.innerHTML;
+        markAllBtn.innerHTML = '<i class="mdi mdi-loading mdi-spin me-1"></i>Marking...';
+        markAllBtn.style.pointerEvents = 'none';
+
+        // Example AJAX call (uncomment and modify as needed)
+        /*
+        fetch('mark-notifications-read.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                action: 'mark_all_read',
+                user_id: 55            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update notification count
+                document.getElementById('notification-count').style.display = 'none';
+                document.getElementById('notification-header-count').textContent = '0';
+                
+                // Show success message
+                showNotificationMessage('All notifications marked as read', 'success');
+                
+                // Refresh the notification content after delay
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            } else {
+                showNotificationMessage('Failed to mark notifications as read', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotificationMessage('An error occurred', 'error');
+        })
+        .finally(() => {
+            // Restore button state
+            markAllBtn.innerHTML = originalText;
+            markAllBtn.style.pointerEvents = 'auto';
+        });
+        */
+
+        // For demo purposes - remove this and uncomment above for production
+        setTimeout(() => {
+            document.getElementById('notification-count').style.display = 'none';
+            document.getElementById('notification-header-count').textContent = '0';
+            markAllBtn.innerHTML = originalText;
+            markAllBtn.style.pointerEvents = 'auto';
+            showNotificationMessage('All notifications marked as read', 'success');
+        }, 1000);
+    }
+
+    // Function to show notification messages
+    function showNotificationMessage(message, type = 'info') {
+        // Create toast notification
+        const toast = document.createElement('div');
+        toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : 'danger'} border-0`;
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                <i class="mdi mdi-${type === 'success' ? 'check-circle' : 'alert-circle'} me-2"></i>
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+
+        // Add to page and show
+        document.body.appendChild(toast);
+        const bsToast = new bootstrap.Toast(toast);
+        bsToast.show();
+
+        // Remove after hiding
+        toast.addEventListener('hidden.bs.toast', () => {
+            toast.remove();
+        });
+    }
+
+    // Auto-refresh notifications every 30 seconds
+    let notificationRefreshInterval;
+
+    function startNotificationRefresh() {
+        notificationRefreshInterval = setInterval(function() {
+            refreshNotifications();
+        }, 30000);
+    }
+
+    function refreshNotifications() {
+        // Example AJAX call to refresh notifications
+        /*
+        fetch('get-notifications.php', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateNotificationDisplay(data.notifications, data.total);
+            }
+        })
+        .catch(error => {
+            console.error('Error refreshing notifications:', error);
+        });
+        */
+    }
+
+    function updateNotificationDisplay(notifications, total) {
+        // Update notification count
+        const countElement = document.getElementById('notification-count');
+        const headerCountElement = document.getElementById('notification-header-count');
+
+        if (total > 0) {
+            countElement.textContent = total;
+            countElement.style.display = '';
+            countElement.classList.add('animate');
+            setTimeout(() => countElement.classList.remove('animate'), 500);
+        } else {
+            countElement.style.display = 'none';
+        }
+
+        headerCountElement.textContent = total;
+
+        // Update notification content
+        // Implementation depends on your notification structure
+    }
+
+    // Initialize notification features when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Start auto-refresh
+        startNotificationRefresh();
+
+        // Add click tracking for notifications
+        document.querySelectorAll('.notification-item').forEach(item => {
+            item.addEventListener('click', function() {
+                // Track notification click
+                console.log('Notification clicked:', this.href);
+
+                // Optional: Mark individual notification as read
+                // markNotificationAsRead(this.dataset.notificationId);
+            });
+        });
+
+        // Enhanced dropdown behavior
+        const notificationDropdown = document.getElementById('page-header-notifications-dropdown');
+        if (notificationDropdown) {
+            notificationDropdown.addEventListener('shown.bs.dropdown', function() {
+                // Optional: Mark notifications as seen when dropdown opens
+                console.log('Notifications dropdown opened');
+            });
+        }
+    });
+
+    // Stop refresh when page is hidden/user switches tabs
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(notificationRefreshInterval);
+        } else {
+            startNotificationRefresh();
+        }
+    });
+
+    // Function to manually refresh notifications
+    function forceRefreshNotifications() {
+        location.reload();
+    }
+</script>
+
+                
+<div class="main-content">
+
+    <div class="page-content">
+        <div class="container-fluid">
+
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+
+                        <h4 class="mb-sm-0 font-size-18">VAS System</h4>
+
+                    </div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-xl-12">
+                    <div class="card">
+                        <div class="card-body">
+
+                            <form id="view_user_vas" action="">
+
+                                <div class="row">
+
+                                    <div class="col-md-4">
+                                        <div class="mb-3 position-relative">
+                                            <label for="validationCustom03" class="form-label">Select User</label>
+                                            &nbsp;&nbsp;&nbsp;
+                                            <input class="form-check-input text-end" type="checkbox" name="user_id_vas_view_month_waise" value="month_waise" id="user_id_vas_view_month_waise" style="float:none !important;">
+                                            &nbsp;
+                                            <label class="form-check-label" for="user_id_vas_view_month_waise">Month Wise</label>
+
+                                                                                            <select class="form-select select2" id="user_id_vas_view" name="user_id_vas_view" required>
+                                                    <option selected="" disabled="" value="">Choose...</option>
+                                                    <option value="All">All</option>
+                                                    <optgroup label="Sales Manager"><option value="35">Rehman Faisal</option><option value="36">Waqas Ahmed</option><option value="37">M. Arslan Janjua</option><option value="39">M.salman</option><option value="43">Muhammad Nadeem Zulfiqar</option><option value="54">Saim Tariq</option><option value="55">M. Shahbaz</option><option value="63">Rohina Munir</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54334">Masood Abbas</option><option value="54361">Hafiz Akhtar Ali</option><option value="54422">Qamar Zia</option><option value="54426">Kashif Majeed</option><option value="54427">Usman Anwar Mirza</option><option value="54565">Muhammad Talha Nazir Saleemi</option></optgroup><optgroup label="admin"><option value="55">M. Shahbaz</option><option value="110">Rubina</option><option value="53688">Seerat Shahbaz</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option></optgroup><optgroup label="Sales Executive"><option value="35">Rehman Faisal</option><option value="36">Waqas Ahmed</option><option value="37">M. Arslan Janjua</option><option value="39">M.salman</option><option value="40">Zohaib Nisar Ahmad</option><option value="43">Muhammad Nadeem Zulfiqar</option><option value="47">Faiza Khalid</option><option value="54">Saim Tariq</option><option value="55">M. Shahbaz</option><option value="61">Ghazanfar ali</option><option value="63">Rohina Munir</option><option value="107">Izhaq Ravis </option><option value="112">Jibran Razzaq</option><option value="52104">Sherharyar(wA)</option><option value="52112">Muhammad Jawad</option><option value="52799">Tahir Mehmood Bhatti</option><option value="53338">Amina Shazadi</option><option value="53704">Asghar Khan</option><option value="53965">Zill E Huma</option><option value="54121">Ayesha shahbaz</option><option value="54128">Imran Ahmad</option><option value="54129">Muhammad Ahmad</option><option value="54173">Hina Arij </option><option value="54175">Hussnain Khalil</option><option value="54192">SHAHZAIB ZAFAR</option><option value="54210">ASIF JAHANGEER</option><option value="54239">Arslan Rehan</option><option value="54262">Abdul Qadir</option><option value="54266">Ramish Khurram</option><option value="54270">Mehreena Moeed</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54299">Muhammad Uzair</option><option value="54315">Amir Ishaq</option><option value="54316">Amir Nafees</option><option value="54317">Hassan Mubeen</option><option value="54323">M Sajawal</option><option value="54326">Muhammad Furqan</option><option value="54334">Masood Abbas</option><option value="54349">Ibad Ur Rehman</option><option value="54361">Hafiz Akhtar Ali</option><option value="54363">Aqsa Gul</option><option value="54364">Khadija jamil</option><option value="54388">Abu Baker Saeed Upal</option><option value="54398">Warda Akhtar</option><option value="54403">Waqas Ahmad(g)</option><option value="54404">Aamir Raza (F)</option><option value="54405">Muhammad Imran</option><option value="54406">Sheirsh Rehman</option><option value="54407">Muhammad Umer Nawaz</option><option value="54408">Mohammad Tariq Janjua</option><option value="54416">Muhammad Umair</option><option value="54417">Jannat Christina</option><option value="54418">Hareem Tariq</option><option value="54423">Anam Saif</option><option value="54425">Sarosh Farid</option><option value="54426">Kashif Majeed</option><option value="54427">Usman Anwar Mirza</option><option value="54429">Fareha</option><option value="54432">Laiba fatima</option><option value="54433">Maira Butt</option><option value="54435">Hafsa Naseer</option><option value="54436">Atia Rani</option><option value="54450">Test User</option><option value="54455">Amina Shoukat</option><option value="54469">Umar Farooq(A)</option><option value="54470">Syed Kashif Shah</option><option value="54473">Qasim Shah (M)</option><option value="54474">Abdullah Tariq (M)</option><option value="54475">Syed Ghulfam Haider Bukhari (M)</option><option value="54481">Muhammad Usman (N)</option><option value="54486">Muhammad Hassan Abbas</option><option value="54487">Umm E Arooba</option><option value="54495">Muhammad Razaq (J)</option><option value="54500">Saira Parvaiz (I)</option><option value="54510">Rabia Majeed (K)</option><option value="54513">Muhammad Arshad</option><option value="54514">Muhammad Ahmed(i)</option><option value="54515">Sughra Bibi</option><option value="54518">Muhammad Hamaad Raza</option><option value="54519">Habib Test</option><option value="54521">Faheem Asghar</option><option value="54522">Sodais Ahmed</option><option value="54527">Mawish Nadeem</option><option value="54528">Arif Aziz (S)</option><option value="54529">Faheem Test</option><option value="54539">Muhammad Shoaib</option><option value="54549">Jannat Naeem</option><option value="54553">Bilal Ahmed</option><option value="54559">Amina Naseer</option><option value="54560">Test Profile For Developer</option><option value="54563">Syeda Mehak Fatima</option><option value="54564">Hamza Sajid</option><option value="54565">Muhammad Talha Nazir Saleemi</option><option value="54566">New</option><option value="54567">Sami Imran</option><option value="54583">Hifsa Abid</option><option value="54584">Hassan Ali</option><option value="54585">zicivelemu</option><option value="54590">Muhammad  Tayyab</option><option value="54591">Bilal Ahmed</option><option value="54592">Muhammad Hamza</option><option value="54593">Abdullah Khalil</option><option value="54594">Abdul Rafay</option><option value="54595">Simran Hina</option><option value="54596">Jannat Fatima</option><option value="54599">Mousa Jan</option><option value="54601">Fatima Zubair</option><option value="54603">Muhammad Awais</option><option value="54604">Umar Bin Shahid</option><option value="54605">Makhdoma</option><option value="54606">Kaleem Ullah</option><option value="54607">Noreen Aftab</option><option value="54608">Syeda Ayesha Gillani</option><option value="54609">Muhammad Ismail</option><option value="54610">Sajjad Ali</option><option value="54611">Hamza Ibrahim</option><option value="54612">Arfa Naz</option></optgroup><optgroup label="Sales Assistant Manager"><option value="53965">Zill E Huma</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option><option value="54565">Muhammad Talha Nazir Saleemi</option><option value="54585">zicivelemu</option></optgroup><optgroup label="Service Manager"><option value="47">Faiza Khalid</option><option value="55">M. Shahbaz</option><option value="54210">ASIF JAHANGEER</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54334">Masood Abbas</option><option value="54426">Kashif Majeed</option><option value="54427">Usman Anwar Mirza</option><option value="54548">Hafiz Muhammad Mubashar Javed</option><option value="54585">zicivelemu</option></optgroup><optgroup label="Service Assistant Manager"><option value="54175">Hussnain Khalil</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option><option value="54585">zicivelemu</option></optgroup><optgroup label="Service Executive"><option value="43">Muhammad Nadeem Zulfiqar</option><option value="47">Faiza Khalid</option><option value="55">M. Shahbaz</option><option value="107">Izhaq Ravis </option><option value="54173">Hina Arij </option><option value="54175">Hussnain Khalil</option><option value="54192">SHAHZAIB ZAFAR</option><option value="54210">ASIF JAHANGEER</option><option value="54270">Mehreena Moeed</option><option value="54289">Muhammad Habib Ahmed</option><option value="54323">M Sajawal</option><option value="54326">Muhammad Furqan</option><option value="54363">Aqsa Gul</option><option value="54426">Kashif Majeed</option><option value="54455">Amina Shoukat</option><option value="54487">Umm E Arooba</option><option value="54548">Hafiz Muhammad Mubashar Javed</option><option value="54553">Bilal Ahmed</option><option value="54599">Mousa Jan</option><option value="54606">Kaleem Ullah</option></optgroup><optgroup label="Reception"><option value="55">M. Shahbaz</option><option value="54121">Ayesha shahbaz</option><option value="54128">Imran Ahmad</option><option value="54289">Muhammad Habib Ahmed</option><option value="54294">Umay kalsoom</option><option value="54426">Kashif Majeed</option><option value="54457">Samia Rani</option><option value="54579">Rumaisa Rizwan</option></optgroup><optgroup label="Project manager"><option value="54289">Muhammad Habib Ahmed</option><option value="54353">Muhammad Junaid</option></optgroup><optgroup label="Account Manager"><option value="55">M. Shahbaz</option><option value="53844">Ghulam Sarwar</option><option value="54191">SYED HURR ABBAS</option><option value="54219">Sana e Mustafa</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54340">Mubashar Fazal</option><option value="54467">Sonia Mubashar (M)</option><option value="54565">Muhammad Talha Nazir Saleemi</option></optgroup><optgroup label="SEO/SMM Manager"><option value="55">M. Shahbaz</option><option value="112">Jibran Razzaq</option><option value="54128">Imran Ahmad</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Product Posting Manager"><option value="55">M. Shahbaz</option><option value="68">Farhat Abdul Aziz</option><option value="54192">SHAHZAIB ZAFAR</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option><option value="54427">Usman Anwar Mirza</option></optgroup><optgroup label="Posting Assistant Manager"><option value="68">Farhat Abdul Aziz</option><option value="54192">SHAHZAIB ZAFAR</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Posting Executive	"><option value="55">M. Shahbaz</option><option value="68">Farhat Abdul Aziz</option><option value="53335">Farwa Shehzadi</option><option value="54170">Faiqa</option><option value="54188">Khadija Maqsood</option><option value="54190">zumar</option><option value="54209">ESHA ARSHAD</option><option value="54258">Asma Mazher</option><option value="54289">Muhammad Habib Ahmed</option><option value="54357">Malaika Butt</option><option value="54367">Khadija pervaiz</option><option value="54368">Noor Fatima</option><option value="54383">Asifa Ghazanfar</option><option value="54402">Kanwal Shehzadi</option><option value="54409">Qasim Khalil</option><option value="54410">Shahzaib</option><option value="54412">Sahar Bano</option><option value="54414">Ayesha Saleem</option><option value="54424">Amina Tahir</option><option value="54426">Kashif Majeed</option><option value="54471">Nirmal Ashknaz</option><option value="54490">Arooj Hashmi</option><option value="54491">Ayesha Shafique</option><option value="54519">Habib Test</option><option value="54542">Atika Riaz</option><option value="54543">Minahil</option><option value="54544">Amina Bibi</option><option value="54545">Muqadas </option><option value="54546">Nimra Shahzadi</option><option value="54562">Mehak Shahzadi</option><option value="54572">Areeba</option><option value="54576">Ayesha Shehzadi</option><option value="54577">Anmol Waheed</option><option value="54586">Esha Shoukat</option><option value="54587">Maryam  Shahzadi</option><option value="54588">Rushba Noor</option><option value="54589">Samriya Razzaq</option></optgroup><optgroup label="SEO/SMM Executive	"><option value="118">Muhammad Tuqeer Razaq</option><option value="53704">Asghar Khan</option><option value="54121">Ayesha shahbaz</option><option value="54128">Imran Ahmad</option><option value="54129">Muhammad Ahmad</option><option value="54222">Muhammad Shiraz Ali</option><option value="54236">Bilal Ramzan</option><option value="54321">Jahanzeb Ali</option><option value="54374">Rehan Ali</option><option value="54426">Kashif Majeed</option><option value="54459">Hasaan Ahmed</option><option value="54552">Muhammad Nadeem Shahzad</option></optgroup><optgroup label="D&D Manager	"><option value="55">M. Shahbaz</option><option value="61">Ghazanfar ali</option><option value="99">Haris Gulab</option><option value="112">Jibran Razzaq</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="D&D Assistant Manager	"><option value="99">Haris Gulab</option><option value="54128">Imran Ahmad</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option><option value="54574">Muhammad Mukkarram Khan</option></optgroup><optgroup label="D&D Executive	"><option value="55">M. Shahbaz</option><option value="90">Tuseef Abbas</option><option value="93">Ali Hussain</option><option value="99">Haris Gulab</option><option value="100">M Shahid</option><option value="112">Jibran Razzaq</option><option value="118">Muhammad Tuqeer Razaq</option><option value="52444">Taimoor Ahmed</option><option value="53112">Sahil Shabir</option><option value="54122">Zain Ahmed </option><option value="54125">Hassan Azhar</option><option value="54158">Shahzad </option><option value="54184">Mazhar Ul Haq</option><option value="54213">Ehtisham Shahid</option><option value="54278">Roshan Aslam</option><option value="54286">Tayyab Mustafa</option><option value="54289">Muhammad Habib Ahmed</option><option value="54307">Muhammad Maqsood</option><option value="54313">Zain naveed</option><option value="54371">Syed Hussain Ijaz</option><option value="54419">Muhammad Mehfooz</option><option value="54426">Kashif Majeed</option><option value="54453">Muhammad Abubakar</option><option value="54456">M Ashjah</option><option value="54493">Muhammad Amin (T)</option><option value="54523">Syed Komail Ali</option><option value="54571">Ahsan Ali</option><option value="54573">Muhammad Abuzar</option><option value="54574">Muhammad Mukkarram Khan</option><option value="54575">Muhammad Umar</option></optgroup><optgroup label="Internship Executive	"><option value="54221">Muhammad  Hasnat</option><option value="54222">Muhammad Shiraz Ali</option><option value="54223">Mubashar iqbal</option><option value="54243">Mubashra Naveed</option><option value="54285">Zainab Nazim</option><option value="54289">Muhammad Habib Ahmed</option><option value="54296">Sheikh Abdullah Shahid</option><option value="54308">Afzaal Hussain</option><option value="54540">Abdul Raheem</option><option value="54541">Talal Ahmed</option><option value="54585">zicivelemu</option></optgroup><optgroup label="Trainee Executive	"></optgroup><optgroup label="Accounts Assistant Manager	"><option value="54219">Sana e Mustafa</option><option value="54340">Mubashar Fazal</option><option value="54467">Sonia Mubashar (M)</option><option value="54585">zicivelemu</option></optgroup><optgroup label="IT Manager"><option value="43">Muhammad Nadeem Zulfiqar</option><option value="55">M. Shahbaz</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54304">Shakeel Sikandar</option></optgroup><optgroup label="IT Executive	"><option value="53338">Amina Shazadi</option><option value="54304">Shakeel Sikandar</option><option value="54496">Somia Shakeel(1092)</option><option value="54518">Muhammad Hamaad Raza</option><option value="54582">Faisal Shahzad</option><option value="54585">zicivelemu</option></optgroup><optgroup label="H.O.D"><option value="55">M. Shahbaz</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option><option value="54509">Saqib Majeed (K)</option><option value="54511">Muhammad Naseem Afridi (K)</option></optgroup><optgroup label="Office Boy"><option value="123">Ghufaar Gard</option><option value="52114">M.Waleed</option><option value="54130">Saqlain Ali</option><option value="54242">Muhammad Akram</option><option value="54287">Binyameen Jonson</option><option value="54373">Muhammad shahid</option><option value="54411">Muhammad Sajid</option><option value="54537">Muhammad Faheem</option><option value="54568">Muhammad Ali</option><option value="54569">Ameer Hamza</option></optgroup><optgroup label="R&D"></optgroup><optgroup label="WECL Manager"><option value="54128">Imran Ahmad</option></optgroup><optgroup label="WECL Assistant Manager"><option value="54289">Muhammad Habib Ahmed</option></optgroup><optgroup label="WECL Reception"><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Deactive"><option value="31">Mohsin Ali</option><option value="38">Zohaib Hussain</option><option value="45">Aqsa Butt</option><option value="48">Shaila Khaild</option><option value="50">Zain Fatima</option><option value="51">Anita</option><option value="53">Arooj Shahzad</option><option value="57">Zaiba </option><option value="58">Alia Zahid </option><option value="59">Gulam Fatima</option><option value="60">Ayesha Rashid</option><option value="62">Usman Amjad</option><option value="64">Hussain Tanveer</option><option value="66">Saba Ilyas</option><option value="67">Lariab  Ramzan</option><option value="69">Umm e farwa</option><option value="70">Faiza Shafique</option><option value="71">Sehar Sajjad</option><option value="72">Reem Ifthar </option><option value="73">Saliha Shahid</option><option value="74">Muqadas</option><option value="75">Gul Zarkhania</option><option value="76">Fariha Saleem</option><option value="78">Namriza</option><option value="79">Sawaira Sarfraz</option><option value="80">Maria Malik</option><option value="82">Armisha Shahid</option><option value="83">Laiba Waseem</option><option value="85">Maham Ilahi</option><option value="86">Asad Raqeeb</option><option value="87">Waqas Ali </option><option value="88">Sabir Mashi</option><option value="89">Zaid Junaid</option><option value="91">Haider Ali</option><option value="92">Ali Raza </option><option value="94">Hammad Akram</option><option value="95">M.Tahir Saeed</option><option value="97">Tabish Gulzar</option><option value="98">Zain Ali</option><option value="102">Abdul Rehman</option><option value="103">M Abrar</option><option value="105">Miyan Junaid Khalid</option><option value="106">Muhammad Bin Mahmood</option><option value="109">Safyan Hamza</option><option value="111">Rukhsar Ashraf</option><option value="113">Nabeel Butt</option><option value="115">Saqib Ali</option><option value="116">Farzan Majid</option><option value="119">Muhammad Jalil ur Rehman</option><option value="120">Muhammad Asad</option><option value="121">Hamid Mehmood</option><option value="122">Muhammad Bilal</option><option value="124">Anam Mureed</option><option value="125">Dawood Shanawar</option><option value="126">Sahil Salamat</option><option value="143">Afaq Ali</option><option value="493">Fasiha Sehri</option><option value="560">Yashal Tariq</option><option value="566">Nargis </option><option value="567">Nimra Ajmal</option><option value="653">Hafsa Amer Noor</option><option value="655">Sundas Nabi Ahmed</option><option value="747">Ansa Sharaif</option><option value="52000">Fiza Batool Butt</option><option value="52002">Khizra Altaf</option><option value="52111">Muhammad Awais</option><option value="52113">Bilal Saleem</option><option value="52116">Hashim Abbas </option><option value="52117">Muhammad Hamza</option><option value="52118">M Ibrar</option><option value="52119">Swaira Akram</option><option value="52214">Faisal Najeeb</option><option value="52215">Zulaikha</option><option value="52219">Ikhtisham Ali</option><option value="52328">Zarbab Afaq</option><option value="52329">Teemar Khalid</option><option value="52330">Sehar</option><option value="52331">Wajiha Zahid</option><option value="52332">Rimsha Raisat</option><option value="52333">Muhammad Rizwan</option><option value="52342">Samra</option><option value="52439">Muhammad Arslan Nadeem</option><option value="52442">Fajar Sehar</option><option value="52443">IBRAR</option><option value="52445">Shehrayar Dilshad</option><option value="52455">Samreen Batool</option><option value="52457">Syed Muhammad Wasil Mustanir</option><option value="52458">Shahid Kamal</option><option value="52565">Shoaib Ali</option><option value="52566">M Asim Yousaf</option><option value="52567">Munnaza Parveen</option><option value="52574">Minahil Saleem</option><option value="52676">Atta Ul Mustafa</option><option value="52681">Yousaf Masih</option><option value="52682">Usman Raza</option><option value="52683">Laiba Kanwal</option><option value="52684">Iqra Tabsam</option><option value="52685">Aqsa Shehzadi</option><option value="52686">Ashir Masih</option><option value="52687">Moueed Javed Bhatti</option><option value="52907">Harry Muntazir</option><option value="52913">Hifza</option><option value="53013">M talha Iqbal</option><option value="53108">Waqas Ahmed Cheema</option><option value="53205">Muhammad Hamza</option><option value="53206">Muhammad Mansoor</option><option value="53207">Umm-E-Kalsoom M</option><option value="53208">Nimra Shehzadi</option><option value="53210">Muhammad  Zakria</option><option value="53211">Mudasar Sajjad </option><option value="53212">Muhammad kabeer</option><option value="53213">Atif Iqbal</option><option value="53329">Muhammad Parviz Iqbal</option><option value="53330">Danish Raza</option><option value="53331">Naeem Khan</option><option value="53332">Khrooj Blouch</option><option value="53333">Anzalna</option><option value="53336">Mehak Khalil</option><option value="53339">Muhammad Subhan</option><option value="53464">Aqsa Umar</option><option value="53465">Khalid Mehmood</option><option value="53466">Muhammad Ali</option><option value="53471">Saqib Ali</option><option value="53472">Maryam Saleem</option><option value="53473">Usba Amjad</option><option value="53577">Khadija Anees</option><option value="53583">Sana Shahid </option><option value="53585">Muhammad Usman</option><option value="53586">Mustafa Nadeem</option><option value="53587">Sania Zahra</option><option value="53588">Syeda uswa ijaz</option><option value="53589">Baneen zahira</option><option value="53590">Muhammad Mubeen</option><option value="53687">Khawaja Abdul Moeed</option><option value="53703">Nain Ishaq</option><option value="53707">Hafiz Noor Ul Qamar</option><option value="53839">Hajra Rauf</option><option value="53840">Muhammad Shahzad Hussain</option><option value="53843">Ali Farooq</option><option value="53845">Azeem</option><option value="53848">Muntaha</option><option value="53852">Sobia Kousar</option><option value="53962">Arzoo Rafqat</option><option value="53963">Ghufran</option><option value="53964">Sameer</option><option value="53966">Maryam Batool</option><option value="53967">Khadija Ishrat Bhalli</option><option value="54073">Muhammad Allian Ahmed</option><option value="54075">Farhan</option><option value="54076">Haider Rafique </option><option value="54078">Safiullah </option><option value="54090">Amna Shezadi</option><option value="54096">Hafsa iqbal</option><option value="54101">Ayma Fatima</option><option value="54102">Fatima ilyas</option><option value="54107">Maham Mumtaz </option><option value="54108">Tahir Mehmood </option><option value="54110">Syed Mohsin Haider Gilani </option><option value="54112">Ayesha Kausar </option><option value="54113">Abdul Haseeb</option><option value="54126">Abdul Qadir Sohail</option><option value="54127">Rai Tasawar Abbas</option><option value="54131">Salman Moazam(q)</option><option value="54132">Muhammad Raza</option><option value="54133">Mehwish kanwal</option><option value="54135">Asad Ali </option><option value="54137">Shazia Arshad</option><option value="54140">Maqsood </option><option value="54141">Abdul Ahad </option><option value="54146">Salman Hassan</option><option value="54151">Zuha Amjad </option><option value="54152">M Noman Nadeem</option><option value="54153">Adan</option><option value="54157">Yahya </option><option value="54168">Nisha </option><option value="54169">Mariyam Shahzadi </option><option value="54171">Syed Yazdan Haider</option><option value="54172">Umm e kalsoom</option><option value="54174">M Hassan  Nawaz</option><option value="54176">Amir Shahzad </option><option value="54177">Sehrish </option><option value="54178">Madiha </option><option value="54180">Sagar Ahmed </option><option value="54181">Mehroz Asghar </option><option value="54182">Amir Shahzad </option><option value="54183">Amman Ali </option><option value="54185">Huzaifa</option><option value="54186">Marcus trescothick</option><option value="54187">Nouman</option><option value="54193">Muhammad hammad</option><option value="54194">HAMEED MASIH</option><option value="54195">umair shahzad</option><option value="54196">MUHAMMAD HASEEB ALI RIZVI</option><option value="54197">SAFEER AHMED </option><option value="54199">IBRAR Ahmed</option><option value="54200">Naeem Ahmad</option><option value="54201">Khurrum Mumtaz</option><option value="54202">Usama Ali</option><option value="54203">Muhammad Bilal Faheem</option><option value="54204">Shoaib Akhtar</option><option value="54205">Anzla Khan</option><option value="54206">Tehmina Khan</option><option value="54207">Marsad Jamil</option><option value="54208">Hamza Ehsaan</option><option value="54211">Waseem Abbas</option><option value="54212">M.SHAHZAIB</option><option value="54214">fareeha naveed</option><option value="54215">Samman Khalid</option><option value="54216">Shabbir Mahmood</option><option value="54217">MUHAMMAD FAROOQ</option><option value="54218">Sahil  razaq</option><option value="54220">Arslan Riasat cheema</option><option value="54224">Malika rani</option><option value="54225">Taimour Ali dar</option><option value="54226">Arooj Hanif</option><option value="54227">M salman Ahmed</option><option value="54228">Zara Nadeem</option><option value="54229">Kainaat</option><option value="54230">Fawad Raza</option><option value="54231">Muhammad Bilal</option><option value="54232">Syed Mughees haider</option><option value="54233">Moazam</option><option value="54234">Baber Masih</option><option value="54235">Yousaf lahore</option><option value="54237">Muhammad Ali Ch</option><option value="54238">Syed Rajab Ali Shah</option><option value="54240">Ali Asfar Malik</option><option value="54241">Meer Daud</option><option value="54244">Ayesha Bibi</option><option value="54245">Memona</option><option value="54246">Sawaira Farooq</option><option value="54247">Usman Asghar</option><option value="54248">Zunair Bin Ahmad</option><option value="54249">Umer Rashid</option><option value="54259">Muhammad Saleh</option><option value="54260">Esha Amjad</option><option value="54261">Taimour Talib</option><option value="54263">Danial Iqbal</option><option value="54264">Sheraz Arshad</option><option value="54265">Syed Sajjad Hussain Shah</option><option value="54267">Sobia Kausar</option><option value="54268">Fahad bin Khalid</option><option value="54269">Ali Hamza</option><option value="54271">Mastoora Javed</option><option value="54272">Hussnain Abbas</option><option value="54273">Muhammad Abdullah</option><option value="54275">Allay Abbas</option><option value="54276">Rizwan Naseer</option><option value="54277">Gulab Akhtar Qadri</option><option value="54279">Muhammad Ahmad Aziz</option><option value="54280">M Usman</option><option value="54281">Abubakar</option><option value="54282">Muhammad Umair</option><option value="54283">Usman (welc)</option><option value="54284">Hassan Zia</option><option value="54288">Rehman M Tariq</option><option value="54290">Waqar Hussain</option><option value="54291">Muzamil Ali</option><option value="54292">Haseeb Sohail</option><option value="54293">Zulaikha ijaz</option><option value="54297">Ujala Ayyub</option><option value="54298">Muhammad Arslan Ismail</option><option value="54300">Syed Faheem Jafer Gilani</option><option value="54301">Imtiaz Aslam</option><option value="54302">Mahnoor</option><option value="54303">Abdullah Baig</option><option value="54305">Syed Abdur Rehman</option><option value="54306">Adeem Akram</option><option value="54309">Mubeen Fatima</option><option value="54311">Tehseen usama</option><option value="54312">Saad Qamar</option><option value="54318">Hafiz Rashid Ali</option><option value="54319">Abdul Rafay</option><option value="54320">Zeeshan Rashid</option><option value="54322">Fajar Asif</option><option value="54324">Fida Hussain</option><option value="54325">Zainab Majeed</option><option value="54327">M.Haroon Rasheed</option><option value="54328">Raja Aatif Shamim</option><option value="54329">Zulfiqar Ali</option><option value="54330">Phool Shehzadi</option><option value="54331">Maqsood Hussian</option><option value="54332">Tariq Masih</option><option value="54333">Rasheeda Bibi</option><option value="54335">Ahsan Abdullah</option><option value="54336">Zoon Shehzadi</option><option value="54337">Rukhsar Imtiaz</option><option value="54338">Janant</option><option value="54339">Khawaja Abdullah</option><option value="54341">Muhammad Adnan</option><option value="54343">Ahad Waqas</option><option value="54344">Sameer Butt</option><option value="54346">Kundan</option><option value="54347">Vinza Razzaq</option><option value="54348">Laiba Kashif</option><option value="54350">Esha Anjum</option><option value="54351">Atif Aslam</option><option value="54352">Naqeeb ur Rehman</option><option value="54354">Asim Sharif</option><option value="54355">Muhammad Sharif</option><option value="54356">Moon</option><option value="54358">Farkhanda  Kanwal</option><option value="54359">Hinata Adil</option><option value="54360">Nayab Basharat</option><option value="54370">Sana Naz</option><option value="54372">Mohsin Riaz</option><option value="54375">Waleed Malik</option><option value="54376">Abdul Hayee</option><option value="54378">Sultan Muqaddas Ali Khan</option><option value="54379">Mudasar hussain</option><option value="54380">Zulnorain Gous</option><option value="54381">Ali Nawaz</option><option value="54382">Urwa Yasir</option><option value="54384">Fareed Ahmed</option><option value="54385">Usman Sagheer</option><option value="54386">Takasur Ali</option><option value="54387">Jannat</option><option value="54390">Abu Bakar Saeed Upal</option><option value="54391">Farooq Ahmad Qureshi</option><option value="54392">Ali Haider Murtaza</option><option value="54393">Salman Khan</option><option value="54394">Sami Khan</option><option value="54395">Shahriyar Masih</option><option value="54396">Sundas Khurram</option><option value="54397">Ayesha</option><option value="54399">Rameen Fatima</option><option value="54400">Pakeeza Bibi</option><option value="54401">Ezza Nasir</option><option value="54413">Rabia  Ameen</option><option value="54415">Sharique Sohail</option><option value="54420">Danish Masih</option><option value="54421">Syed Fazeen Ali</option><option value="54428">Khinsha Mujahid</option><option value="54430">Ehtisham ul Hassan</option><option value="54431">Ayesha Khatoon</option><option value="54434">Affra Saeed</option><option value="54437">Ayaaz Qaiser</option><option value="54438">Suraj Pervaiz</option><option value="54445">Umar Sabir</option><option value="54446"></option><option value="54447">Qurat ul ain(DR)</option><option value="54449">Mudiha Jamil</option><option value="54454">Abdul Rauf</option><option value="54458">Tasnim Kashif</option><option value="54460">Ameer Hamza</option><option value="54462">Kiran Imran</option><option value="54463">Farhan Shamas</option><option value="54464">Abdullah Waseem</option><option value="54465">Muhammad Mohsin</option><option value="54466">Muhammad Ayaz</option><option value="54468">Alishba Qadeer</option><option value="54472">Muhammad Yar (A)</option><option value="54478">Abdul Aziz (A)</option><option value="54480">Ali Hasan (W)</option><option value="54482">Rabia Iftikhar (N)</option><option value="54483">Muhammad Khalid(R)</option><option value="54488">Muhammad Nouman Tahir</option><option value="54492">Syed Muhammad Abbas Naqvi</option><option value="54494">Faheem Ullah</option><option value="54497">Muhammad Tahir Pasha</option><option value="54498">Rifat Tahir</option><option value="54499">Muhammad Zeeshan Tahir</option><option value="54506">Asghar Iqbal (U)</option><option value="54507">Allah Ditta (F)</option><option value="54512">Rida (A)</option><option value="54516">Ammara Zia</option><option value="54517">Muhammad Asim</option><option value="54524">Hasnain Sabir</option><option value="54526">Tanawish</option><option value="54530">Syed Ali Sher Rizvi</option><option value="54531">Syed Ali Sher Rizvi</option><option value="54533">Syed Ali Sher Rizvi</option><option value="54534">Rubab Younas</option><option value="54535">Rubab Younas</option><option value="54536">Amara Shahzadi</option><option value="54538">Waqar Ahmed</option><option value="54547">Saira</option><option value="54550">Muhammad Asim Shafique</option><option value="54561">Imtiaz Hussain</option><option value="54578">Nighat Pari</option><option value="54580">Usman Asghar</option><option value="54581">Abdullah Noor Dogar</option><option value="54602">Fatima Aslam</option></optgroup><optgroup label="Lead Manager"><option value="55">M. Shahbaz</option><option value="54210">ASIF JAHANGEER</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54304">Shakeel Sikandar</option><option value="54345">Marwa Iftikhar</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="QA Manager"><option value="55">M. Shahbaz</option><option value="118">Muhammad Tuqeer Razaq</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Verification Manager"><option value="55">M. Shahbaz</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54304">Shakeel Sikandar</option><option value="54345">Marwa Iftikhar</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Complaint Manager"><option value="55">M. Shahbaz</option><option value="54210">ASIF JAHANGEER</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54304">Shakeel Sikandar</option><option value="54345">Marwa Iftikhar</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Marketing Manager"><option value="55">M. Shahbaz</option><option value="54128">Imran Ahmad</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54362">Muhammad Anwar</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Media Manager"><option value="55">M. Shahbaz</option></optgroup><optgroup label="Media Executive"><option value="53704">Asghar Khan</option></optgroup><optgroup label="Software Manager"><option value="55">M. Shahbaz</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Software Executive"><option value="55">M. Shahbaz</option><option value="54136">Mufzalah Saleem</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54377">Muhammad Umer Razzaq</option><option value="54389">Muhammad Nouman Khalid</option><option value="54426">Kashif Majeed</option><option value="54450">Test User</option><option value="54451">Rana Ali Zeeshan</option><option value="54452">Arslan Aslam</option><option value="54485">Muhammad Inaam ul Haq (H)</option><option value="54508">Abdul  Razzaq (U)</option><option value="54525">Sajjad Hassan</option><option value="54548">Hafiz Muhammad Mubashar Javed</option><option value="54551">Roshan Ali Khan</option><option value="54554">Syed Mohsin Hussain Shah</option><option value="54570">Nisar Ahmad</option><option value="54597">Muhammad Mohsin Ali</option><option value="54598">Zaeem Shakeel</option></optgroup><optgroup label="Full Salary"><option value="41">Imran Dar(H)</option><option value="55">M. Shahbaz</option><option value="56">Zain Khalid</option><option value="96">Haroon Hameed(H)</option><option value="104">Muzammil Javed</option><option value="110">Rubina</option><option value="123">Ghufaar Gard</option><option value="52114">M.Waleed</option><option value="52115">Zubair (H)</option><option value="52120">Fezan  (H)</option><option value="52218">Luqman Muhammad(U)</option><option value="53011">Awais (H)</option><option value="53688">Seerat Shahbaz</option><option value="53844">Ghulam Sarwar</option><option value="54118">Umair Javed</option><option value="54130">Saqlain Ali</option><option value="54134">Perscilla (H)</option><option value="54136">Mufzalah Saleem</option><option value="54239">Arslan Rehan</option><option value="54242">Muhammad Akram</option><option value="54250">Munir (H)</option><option value="54251">Iqbal (H)</option><option value="54252">Sultan(H)</option><option value="54253">Maria (H)</option><option value="54254">NAEEM (H)</option><option value="54255">SKT Maid(H)</option><option value="54256">HOME GAURD(H)</option><option value="54257">Gardner (H)</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54287">Binyameen Jonson</option><option value="54295">Home Guard(h)</option><option value="54310">Shahid Cook(H)</option><option value="54353">Muhammad Junaid</option><option value="54365">Muhammad Khizar Hayyat</option><option value="54366">Rameen</option><option value="54411">Muhammad Sajid</option><option value="54416">Muhammad Umair</option><option value="54422">Qamar Zia</option><option value="54426">Kashif Majeed</option><option value="54427">Usman Anwar Mirza</option><option value="54439">Shafia Jamal (U)</option><option value="54440">Pir Khurram Khaleeq (U)</option><option value="54441">Umer Rabbani (U)</option><option value="54442">Ikseer Mehmood (U)</option><option value="54443">Tammawul Khaleeq (U)</option><option value="54444">Muhammad Zyaan Majeed (K)</option><option value="54448">Mr & Mrs Shahid (Cook)</option><option value="54479">Usama Khalid (UG)</option><option value="54484">Zainab Asifa (K)</option><option value="54489">Muhammad Farhan</option><option value="54502">Asad Munawar (Q)</option><option value="54503">sharjeel Farooq (Q)</option><option value="54504">Muhammad Saeed (Q)</option><option value="54505">Sameer Fiaz (Q)</option><option value="54509">Saqib Majeed (K)</option><option value="54510">Rabia Majeed (K)</option><option value="54511">Muhammad Naseem Afridi (K)</option><option value="54600">Shahzaib Nasir</option></optgroup><optgroup label="TA Manager"><option value="55">M. Shahbaz</option><option value="52112">Muhammad Jawad</option><option value="54289">Muhammad Habib Ahmed</option><option value="54427">Usman Anwar Mirza</option><option value="54501">Muhammad Hammad (J)</option></optgroup><optgroup label="TA Assistant Manager"><option value="55">M. Shahbaz</option><option value="52112">Muhammad Jawad</option><option value="54289">Muhammad Habib Ahmed</option></optgroup><optgroup label="TA Executive"><option value="55">M. Shahbaz</option><option value="52112">Muhammad Jawad</option><option value="54289">Muhammad Habib Ahmed</option><option value="54349">Ibad Ur Rehman</option></optgroup><optgroup label="Lead Executive"><option value="54128">Imran Ahmad</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54304">Shakeel Sikandar</option><option value="54345">Marwa Iftikhar</option><option value="54369">Maria Rani</option><option value="54426">Kashif Majeed</option><option value="54461">Maria Imran</option></optgroup><optgroup label="Account Auditor"><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option></optgroup><optgroup label="Junior Admin"><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option><option value="54426">Kashif Majeed</option></optgroup><optgroup label="Super HOD"><option value="55">M. Shahbaz</option><option value="54239">Arslan Rehan</option><option value="54274">Muhammad Junaid  Aazar</option><option value="54289">Muhammad Habib Ahmed</option></optgroup><optgroup label="Developer "><option value="54289">Muhammad Habib Ahmed</option><option value="54565">Muhammad Talha Nazir Saleemi</option></optgroup>                                                </select>
+                                                                                    </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label for="formrow-password-input" class="form-label">Start Date</label>
+                                            <div class="input-group" id="datepicker1">
+                                                <input type="text" class="form-control" placeholder="yyyy-m-d"
+                                                    data-date-format="yyyy-m-d" data-date-container="#datepicker1"
+                                                    data-provide="datepicker" name="startData" autocomplete="off" required>
+
+                                                <span class="input-group-text"><i class="mdi mdi-calendar"></i></span>
+
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="mb-3">
+                                            <label for="formrow-password-input" class="form-label">End Date</label>
+                                            <div class="input-group" id="datepicker2">
+                                                <input type="text" class="form-control" placeholder="yyyy-m-d"
+                                                    data-date-format="yyyy-m-d" data-date-container="#datepicker2"
+                                                    data-provide="datepicker" name="endData" autocomplete="off" required>
+
+                                                <span class="input-group-text"><i class="mdi mdi-calendar"></i></span>
+
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <button type="submit" class="btn btn-primary w-md">View</button>
+                                    </div>
+                                </div>
+
+                            </form>
+                        </div>
+                        <!-- end card body -->
+                    </div>
+                    <!-- end card -->
+                </div>
+                <div class="tab-pane" id="messages-1" role="tabpanel">
+                    <div class="col-xl-12">
+                        <div class="card">
+                            <div class="card-body">
+                                <h4 class="card-title mb-4">VAS View</h4>
+                                <div class="table-responsive1" id="attendence_List">
+                                    <table class="table table-striped mb-0 text-center">
+
+                                        <thead>
+                                            <tr class="table-success">
+
+                                                <th>Company</th>
+                                                <th>Amount</th>
+                                                <th>Method</th>
+                                                <th>Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <th scope="row">trusmile surgical</th>
+                                                <td>10000</td>
+                                                <td>364</td>
+                                                <td>2021-07-13 17:08:25</td>
+                                            </tr>
+                                            <tr>
+                                                <th scope="row">trusmile surgical</th>
+                                                <td>10000</td>
+                                                <td>364</td>
+                                                <td>2021-07-13 17:08:25</td>
+                                            </tr>
+
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+            <!-- end col -->
+        </div> <!-- end row -->
+
+    </div>
+
+</div>
+<script type="text/javascript">
+    $(document).ready(function() {
+        $("#view_user_vas").on("submit", function(e) {
+            e.preventDefault();
+            var formData = new FormData(this);
+            $.ajax({
+                type: 'post',
+                url: 'layouts/func.php',
+                async: false,
+                data: formData,
+                contentType: false,
+                processData: false,
+                success: function(data) {
+                    $('#attendence_List').fadeIn();
+                    $('#attendence_List').html(data);
+                }
+
+            });
+        });
+    });
+</script>            
+                        
+  
+            <!-- Right bar overlay-->
+                                    <!-- Right bar overlay-->
+            <div class="rightbar-overlay"></div>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#subscribeModalView"
+                id="viewComplaint" hidden>Complaint</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#subscribeModalViewPenalty"
+                id="viewPenalty" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#todolistPending"
+                id="todolistPendingBtn" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#todolistPending_comm"
+                id="todolistPending_commBtn" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#ShowDailyPost"
+                id="ShowDailyPostId" hidden>ShowDailyPost</button>
+
+            <!-- toaster start --->
+        <div class="custom-toast-container position-fixed top-0 end-0 p-3" style="z-index: 1005;">
+                    </div>
+        <div class="custom-toast-container position-fixed top-0 end-0 p-3" style="z-index: 1005;">
+    </div>
+
+<!-- ✅ NEW Pending Tasks Toast -->
+<!-- <div class="custom-toast-container position-fixed top-0 end-0 p-3" style="z-index: 1005;">
+                <div class="custom-toast">
+                <div class="custom-toast-header">
+                    <span class="custom-toast-icon">⚠️ <strong>Pending Task Alert</strong></span>
+                    <button class="custom-toast-close" onclick="removeToast(this)">✖</button>
+                </div>
+                <div class="custom-toast-body">
+                    <small>You have <strong class="text-primary">4</strong> pending tasks assigned.</small>
+                    <p>Please update their status to stop this alert.</p>
+                </div>
+            </div>
+    </div> -->
+
+<script>
+    // ✅ Close toast
+    function removeToast(btn) {
+        const toast = btn.closest('.custom-toast');
+        if (toast) toast.remove();
+    }
+</script>
+        <style>
+            /* Custom Toast Container */
+            .custom-toast-container {
+                position: fixed;
+                top: 0;
+                right: 0;
+                padding: 5px;
+                max-width: 450px;
+            }
+
+            /* Individual Toast */
+            .custom-toast {
+                background-color: #fff;
+                border: 1px solid #ddd;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                border-radius: 5px;
+                margin-bottom: 5px;
+                padding: 5px;
+                animation: fadeIn 0.5s, fadeOut 0.5s 5s;
+                opacity: 1;
+                position: relative;
+            }
+
+            /* Toast Header */
+            .custom-toast-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: start;
+                font-weight: bold;
+                font-size: 12px;
+            }
+
+            /* Toast Icon */
+            .custom-toast-icon {
+                margin-right: 10px;
+                color: red;
+            }
+
+            /* Toast Close Button */
+            .custom-toast-close {
+                background: none;
+                border: none;
+                color: gray;
+                cursor: pointer;
+                font-size: 14px;
+            }
+
+            /* Toast Body */
+            .custom-toast-body {
+                font-size: 12px;
+                color: #333;
+                margin-top: 2px;
+            }
+
+            /* Fade Animations */
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-20px);
+                }
+
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+
+            @keyframes fadeOut {
+                from {
+                    opacity: 1;
+                }
+
+                to {
+                    opacity: 0;
+                }
+            }
+        </style>
+
+
+        <!-- toaster end --->
+        <!-- For Project Delay Notifications -->
+<style>
+    
+    .tracking__wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      gap: 5px;
+      padding-block: 5px ;
+
+      .tracking__item {
+        --current-color: #fff;
+        --current-content-color: #000;
+        transition: color .25s ease-in-out;
+        position: relative;
+        z-index: 1;
+        /* display: flex; */
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        width: 65px;
+        gap: 5px;
+
+        /* dep-icon */
+        .item__icon {
+          background-color: var(--current-color);
+          --icon-size: 30px;
+          height: var(--icon-size);
+          width: var(--icon-size);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin: 5px auto;
+          border-radius: 50px;
+          box-shadow: 0px 0px 22px #b5b5b5;
+
+          .delay_num{
+            color: var(--current-content-color);
+            font-size: calc( var(--icon-size) / 2.5 );
+          }
+        }
+
+        /* dep details */
+        .item__details {
+          text-align: center;
+          background-color: #fff;
+
+          span {
+            line-height: 1;
+            display: block;
+            font-size: 10px;
+            font-weight: 600;
+          }
+        }
+
+        /* tool-tip */
+        .is__tooltip {
+          .item__tooltip_wrapper {
+            background-color: var(--current-color);
+            color: var(--current-content-color);
+            span {
+              border-color: var(--current-content-color);
+            }
+          }
+
+        }
+      }
+
+      .tracking__item.is__success {
+        --current-color: #198754;
+        --current-content-color: #fff;
+      }
+
+      .tracking__item.is__working {
+        --current-color: #ffc107;
+        --current-content-color: #000000;
+      }
+
+      .tracking__item.is__delay {
+        --current-color: #dc3545;
+        --current-content-color: #ffffff;
+      }
+
+      .tracking__item:nth-child(even) {
+        /* flex-direction: column-reverse; */
+        .is__tooltip {
+          /* bottom: unset;
+          top: calc(100% + 3px); */
+        }
+      }
+    }
+
+    .has__tolltip {
+      position: relative;
+
+      .is__tooltip {
+        position: absolute;
+        z-index: 999;
+        bottom: calc(100% + 3px);
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        text-wrap: nowrap;
+        opacity: 0;
+        visibility: hidden;
+        transition: all .25s ease-in-out;
+
+        .item__tooltip_wrapper {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 2px 5px;
+          border-radius: 3px;
+          box-shadow: 0px 0px 10px #b5b5b5;
+          span {
+            font-size: 10px;
+            font-weight: 500;
+            margin: 0 5px 0 0;
+            padding: 0 5px 0 0;
+            border-right: 1px solid #fff;
+            cursor: pointer;
+          }
+
+          span:last-child {
+            margin: 0;
+            padding: 0;
+            border: 0;
+          }
+        }
+      }
+    }
+
+    .has__tolltip:hover {
+      .is__tooltip {
+        opacity: 1;
+        visibility: visible;
+      }
+    }
+
+    [title] {
+      font-size: 12px;
+      font-family: 'Poppins', Arial, Helvetica, sans-serif;
+      font-weight: 500;
+    }
+</style> 
+
+<!-- commission verify model -->
+<div class="modal fade" id="project-delay-popup" tabindex="-1" aria-labelledby="subscribeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header border-bottom-0">
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-center mb-2">
+                    <div class="avatar-md mx-auto mb-2">
+                        <div class="avatar-title bg-light rounded-circle text-primary h1">
+                            <i class="mdi mdi-email-open"></i>
+                        </div>
+                    </div>
+                    <div class="row justify-content-center">
+                        <div class="col-xl-12">
+                            <h4 class="text-primary">Project Delay!</h4>
+                            <p class="text-muted font-size-14">Please Confirm Your Project.</p>
+
+                            <div id="addChgFillterCom4" data-simplebar style="max-height:305px;" class="pt-4">
+
+                                
+
+                            </div>
+
+
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- end modal -->
+
+    <script>
+    var isDelayed = null;
+    document.addEventListener("DOMContentLoaded", function () {
+        if (isDelayed) {
+            var myModal = new bootstrap.Modal(document.getElementById('project-delay-popup'));
+            myModal.show();
+        }
+    });
+    </script>              
+         <footer class="footer">
+                    <div class="container-fluid">
+                        <div class="row">
+                            <div class="col-sm-6">
+                                <script>document.write(new Date().getFullYear())</script> © Web Excels.
+                            </div>
+                            <div class="col-sm-6">
+                                <div class="text-sm-end d-none d-sm-block">
+                                    Design & Develop by Web Excels
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </footer>
+      
+        <!-- JAVASCRIPT -->
+          
+        <script src="assets/libs/jquery/jquery.min.js"></script>
+        <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+        <script src="assets/libs/metismenu/metisMenu.min.js"></script>
+        <script src="assets/libs/simplebar/simplebar.min.js"></script>
+        <script src="assets/libs/node-waves/waves.min.js"></script>
+        <script src="assets/libs/apexcharts/apexcharts.min.js"></script>
+        <script src="assets/js/pages/dashboard.init.js"></script>
+        <script src="assets/js/app.js"></script>
+
+        <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+        <script src="assets/libs/metismenu/metisMenu.min.js"></script>
+        <script src="assets/libs/simplebar/simplebar.min.js"></script>
+        <script src="assets/libs/node-waves/waves.min.js"></script>
+
+        <script src="assets/libs/select2/js/select2.min.js"></script>
+        <script src="assets/libs/bootstrap-datepicker/js/bootstrap-datepicker.min.js"></script>
+        <script src="assets/libs/spectrum-colorpicker2/spectrum.min.js"></script>
+        <script src="assets/libs/bootstrap-timepicker/js/bootstrap-timepicker.min.js"></script>
+        <script src="assets/libs/bootstrap-touchspin/jquery.bootstrap-touchspin.min.js"></script>
+        <script src="assets/libs/bootstrap-maxlength/bootstrap-maxlength.min.js"></script>
+        <script src="assets/libs/%40chenfengyuan/datepicker/datepicker.min.js"></script>
+            <!-- form advanced init -->
+            <script src="assets/libs/%40chenfengyuan/datepicker/datepicker.min.js"></script>
+            <script src="assets/js/pages/form-advanced.init.js"></script>
+            <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+     <!-- Responsive Table js -->
+        <script src="assets/libs/admin-resources/rwd-table/rwd-table.min.js"></script>
+        <!-- Init js -->
+        <script src="assets/js/pages/table-responsive.init.js"></script>
+            <!-- Required datatable js -->
+        <script src="assets/libs/datatables.net/js/jquery.dataTables.min.js"></script>
+        <script src="assets/libs/datatables.net-bs4/js/dataTables.bootstrap4.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/dataTables.buttons.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons-bs4/js/buttons.bootstrap4.min.js"></script>
+        <script src="assets/libs/jszip/jszip.min.js"></script>
+        <script src="assets/libs/pdfmake/build/pdfmake.min.js"></script>
+        <script src="assets/libs/pdfmake/build/vfs_fonts.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.html5.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.print.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.colVis.min.js"></script>
+                <!-- Responsive examples -->
+        <script src="assets/libs/datatables.net-responsive/js/dataTables.responsive.min.js"></script>
+        <script src="assets/libs/datatables.net-responsive-bs4/js/responsive.bootstrap4.min.js"></script>
+                    <!-- Datatable init js -->
+        <script src="assets/js/pages/datatables.init.js"></script> 
+        <script src="assets/js/pages/form-validation.init.js"></script>   
+
+        <script src="assets/libs/admin-resources/rwd-table/rwd-table.min.js"></script>
+                <!-- toastr plugin -->
+        <script src="assets/libs/toastr/build/toastr.min.js"></script>
+        <script src="assets/js/pages/toastr.init.js"></script>
+             <!-- form repeater js -->
+        <script src="assets/libs/jquery.repeater/jquery.repeater.min.js"></script>
+        <script src="assets/js/pages/form-repeater.int.js"></script>
+        <script src="assets/js/sweetalert.min.js"></script>
+        <script src="assets/libs/magnific-popup/jquery.magnific-popup.min.js"></script>
+        <script src="assets/js/pages/lightbox.init.js"></script>  
+        <script src="assets/js/pages/teamchartdata.init.js"></script>
+                 <!-- Ion Range Slider-->
+        <script src="assets/libs/ion-rangeslider/js/ion.rangeSlider.min.js"></script>
+         <script src="assets/libs/bootstrap-editable/js/index.js"></script>
+		<script src="assets/js/pages/form-xeditable.init.js"></script>    
+
+         <!-- echarts js -->
+        <!-- echarts init -->
+        <script src="assets/js/pages/echarts.init.js"></script>
+          <!-- <script src="assets/js/pages/form-file-upload.init.js"></script>  -->
+
+        <script>
+            $(document).on('click', '.action-button', function () {
+                const $button = $(this); // The clicked button
+                const $input = $button.next('input'); // Corresponding hidden input
+
+                // Toggle the selected state
+                $button.toggleClass('selected');
+
+                // Enable or disable the hidden input
+                if ($button.hasClass('selected')) {
+                    $input.prop('disabled', false).val('Yes'); // Enable input
+                } else {
+                    $input.prop('disabled', true).val('No'); // Disable input
+                }
+            });
+
+
+            function notification_Success(text) {
+                toastr["success"](text)
+                toastr.options = {
+                    "closeButton": false,
+                    "debug": false,
+                    "newestOnTop": true,
+                    "progressBar": false,
+                    "positionClass": "toast-top-right",
+                    "preventDuplicates": false,
+                    "onclick": null,
+                    "showDuration": 300,
+                    "hideDuration": 1000,
+                    "timeOut": 5000,
+                    "extendedTimeOut": 1000,
+                    "showEasing": "swing",
+                    "hideEasing": "linear",
+                    "showMethod": "fadeIn",
+                    "hideMethod": "fadeOut"
+                }
+            }
+
+            function notification_error(text) {
+                toastr["error"](text)
+                toastr.options = {
+                    "closeButton": false,
+                    "debug": false,
+                    "newestOnTop": false,
+                    "progressBar": false,
+                    "positionClass": "toast-top-right",
+                    "preventDuplicates": false,
+                    "onclick": null,
+                    "showDuration": 300,
+                    "hideDuration": 1000,
+                    "timeOut": 5000,
+                    "extendedTimeOut": 1000,
+                    "showEasing": "swing",
+                    "hideEasing": "linear",
+                    "showMethod": "fadeIn",
+                    "hideMethod": "fadeOut"
+                }
+            }
+
+            function yesResolved(id, dep) {
+                var text = "Your Request Is Accepted";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        com_plain_id: id,
+                        com_plain_dep: dep
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom').load(' #addChgFillterCom');
+                    }
+                });
+            }
+
+            function yesConfirmPenalty(id) {
+                var text = "Your Request Is Accepted";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_penalty_id: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom2').load(' #addChgFillterCom2');
+                    }
+                });
+            }
+
+            function yesConfirmTodoList(id) {
+                var text = "You Successfully Received Task";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_todo_list_by_partci_id: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom3').load(' #addChgFillterCom3');
+                    }
+                });
+            }
+
+            $(document).ready(function () {
+                // $(".form-select").select2({ width: '100%' }); 
+                $('.select2-container').css('width', '100%');
+            });
+
+            function delete_table_status(id, table, relod_id) {
+                var text = "You successfully delete this item";
+                var result = confirm("Are you sure you want to delete this item?");
+                if (result) {
+                    // User clicked OK
+                    $.ajax({
+                        type: 'post',
+                        url: 'layouts/func.php',
+                        async: false,
+                        data: {
+                            "del_table_status_id": id,
+                            "del_table": table,
+                        },
+                        success: function () {
+                            notification_error(text);
+                            $('#' + relod_id).load(' #' + relod_id);
+                        }
+                    });
+                    // Perform the delete action here
+                }
+
+            }
+
+            function delete_table_dynamic_row_id(id, table, relod_id) {
+                var text = "You successfully delete this item";
+                var result = confirm("Are you sure you want to delete this item?");
+                if (result) {
+                    // User clicked OK
+                    $.ajax({
+                        type: 'post',
+                        url: 'layouts/func.php',
+                        async: false,
+                        data: {
+                            "delete_dynamic_id": id,
+                            "del_table": table,
+                        },
+                        success: function () {
+                            notification_error(text);
+                            $('#' + relod_id).load(' #' + relod_id);
+                        }
+                    });
+                    // Perform the delete action here
+                }
+
+            }
+
+            function yesConfirmComm(id) {
+                var text = "You Successfully Confirm";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_commission_id_pop: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom4').load(' #addChgFillterCom4');
+                    }
+                });
+            }
+            // Function to remove a toast
+            function removeToastSequentially(toast) {
+                toast.style.animation = 'fadeOut 0.5s';
+                setTimeout(() => {
+                    toast.remove(); // Remove after fade-out
+                }, 500);
+            }
+
+            // Function to display toasts one by one
+            function showToastsSequentially() {
+                const toasts = document.querySelectorAll('.custom-toast');
+                let delay = 0;
+
+                toasts.forEach((toast, index) => {
+                    setTimeout(() => {
+                        toast.style.animation = 'fadeIn 0.5s';
+                        toast.style.opacity = 1; // Ensure the toast is visible
+
+                        // Automatically remove toast after its duration
+                        setTimeout(() => {
+                            removeToastSequentially(toast);
+                        }, 4000); // Duration for each toast before removal
+                    }, delay);
+
+                    delay += 5000; // Delay between displaying each toast
+                });
+            }
+            document.addEventListener("click", function (e) {
+                if (e.target.classList.contains("custom-toast-close")) {
+                    const toast = e.target.closest('.custom-toast');
+                    removeToastSequentially(toast);
+                }
+            });
+            // Trigger the function after the DOM is loaded
+            document.addEventListener("DOMContentLoaded", function () {
+                showToastsSequentially();
+            });
+
+
+            function yesConfirmPenalty_social(id, platForm, num) {
+                var text = "Feedback Added";
+                var likes = $('#likes-' + num).val();
+                var comment = $('#comment-' + num).val();
+                var share = $('#share-' + num).val();
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        social_media_feeback: id,
+                        platForm: platForm,
+                        likes: likes,
+                        comment: comment,
+                        share: share,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom2_social0').load(' #addChgFillterCom2_social0');
+                    }
+                });
+            }
+
+            // Function to load a section dynamically
+            async function loadSection(sectionId, url) {
+                const container = document.getElementById(sectionId);
+                $(container).css({
+                    opacity: 0.5
+                });
+                try {
+                    const response = await fetch(url);
+                    if (response.ok) {
+                        const html = await response.text();
+                        container.innerHTML = html;
+                        $(container).css({
+                            opacity: 1
+                        });
+                    } else {
+                        container.innerHTML = `<p>Error loading section: ${response.status}</p>`;
+                    }
+                } catch (error) {
+                    container.innerHTML = `<p>Error: ${error.message}</p>`;
+                }
+            }
+        </script>
+        <script>
+            $(document).ready(function () {
+                // Bind the cut, copy, and paste events
+                $('.block_copy').on("cut copy paste", function (e) {
+                    e.preventDefault(); // Prevent default behavior
+                    alert('Cut, copy, and paste are disabled for this field.');
+                });
+
+                // Prevent text selection for additional security
+                $('.block_copy').on('selectstart', function (e) {
+                    e.preventDefault();
+                });
+            });
+        </script>
+</body>
+
+
+</html>

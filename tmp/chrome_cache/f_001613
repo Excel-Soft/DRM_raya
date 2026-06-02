@@ -1,0 +1,2603 @@
+    <!doctype html>
+    <html lang="en">
+    <head>
+        
+        <meta charset="utf-8" />
+        <title>DRM Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta content="WEB EXCLES DRM" name="description" />
+        <meta content="WEB EXCLES" name="SHABAZ" />
+        <!-- App favicon -->
+         <link rel="shortcut icon" href="assets/images/favicon.ico"> 
+        <link href="assets/libs/select2/css/select2.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/css/bootstrap.min.css" id="bootstrap-style" rel="stylesheet" type="text/css" />
+        <link href="assets/css/icons.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/css/app.min.css" id="app-style" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/dropzone/min/dropzone.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/admin-resources/rwd-table/rwd-table.min.css" rel="stylesheet" type="text/css" />
+        <link href="assets/libs/datatables.net-responsive-bs4/css/responsive.bootstrap4.min.css" rel="stylesheet" type="text/css" />
+        <link rel="stylesheet" type="text/css" href="assets/libs/toastr/build/toastr.min.css">
+        <link href="assets/libs/magnific-popup/magnific-popup.css" rel="stylesheet" type="text/css" />
+        <script src="assets/js/ajax.googleapis.com_ajax_libs_jquery_3.6.4_jquery.min.js"></script>     
+      <!-- ION Slider -->
+        <link href="assets/libs/ion-rangeslider/css/ion.rangeSlider.min.css" rel="stylesheet" type="text/css"/>
+           <script src="assets/libs/echarts/echarts.min.js"></script>
+
+    </head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.1/css/all.min.css" />
+    <style>
+        .sticky-table-header {
+            display: none;
+        }
+
+        .btn-toolbar {
+            display: none;
+        }
+
+        .blur {
+            filter: blur(5px);
+            transition: filter 0.3s ease-in-out;
+            text-align: center;
+        }
+
+        td:hover .blur {
+            filter: blur(0);
+        }
+
+        .block_copy {
+            user-select: none;
+            /* Disable text selection */
+        }
+
+        .toast-close-all-bar {
+            position: fixed;
+            top: 10px;
+            right: 15px;
+            z-index: 99999;
+            background: #fff;
+            padding: 6px 8px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .custom-toast-container {
+            position: fixed;
+            top: 60px;
+            /* button ke neeche start hoga */
+            right: 15px;
+            width: 320px;
+            max-height: calc(100vh - 80px);
+            overflow-y: auto;
+            z-index: 99998;
+        }
+
+        .custom-toast {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        .custom-toast-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .custom-toast-close {
+            background: transparent;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .custom-toast-body p {
+            margin: 5px 0 0;
+        }
+    </style>
+
+    <body data-sidebar="dark" onload="myFunction()" class="sidebar-enable vertical-collpsed">
+        
+            <script>
+                // $(document).ready(function(){
+                //   $('body').bind("cut copy ",function(e) {
+                //      e.preventDefault();
+                //   // cut copy paste
+                //   });
+                // });
+                // 
+            </script>
+        
+        <!-- Begin page -->
+        <div id="layout-wrapper">
+                            
+<header id="page-topbar">
+    <div class="navbar-header">
+        <div class="d-flex">
+            <!-- LOGO -->
+            <div class="navbar-brand-box">
+                <a href="home" class="logo logo-dark">
+                    <span class="logo-sm">
+                        <!-- <img src="assets/images/icon-light.png"  alt="" height="22" style="width: 45px !important; margin-left: -11px;"> -->
+                        <!-- <h2 style="color: #ffff; font-weight: bold;margin-top: 25px; margin-left: -12px;  font-size:20px;">DRM</h2> -->
+                    </span>
+                    <span class="logo-lg" style="display: -webkit-box;">
+                        <img src="assets/images/icon-light.png" class="img-fluid" alt="" height="17">
+                        <h2 style="color: #ffff; font-weight: bold;margin-top: 20px; margin-left: 10px;">DRM</h2>
+                    </span>
+                </a>
+
+                <a href="home" class="logo logo-light">
+                    <span class="logo-sm">
+                        <!-- <img src="assets/images/icon-light.png" alt="" height="22" style="width: 45px !important; margin-left: -11px;"> -->
+                        <!-- <h2 style="color: #ffff; font-weight: bold;margin-top: 25px;margin-left: -12px;font-size:20px;">DRM</h2> -->
+                    </span>
+                    <span class="logo-lg" style="display: -webkit-box;">
+                        <img src="assets/images/icon-light.png" class="img-fluid" alt="" height="19">
+                        <h2 style="color: #ffff; font-weight: bold;margin-top: 20px; margin-left: 10px;">DRM</h2>
+                    </span>
+                </a>
+            </div>
+
+            <button type="button" class="btn btn-sm px-3 font-size-16 header-item waves-effect" id="vertical-menu-btn">
+                <i class="fa fa-fw fa-bars"></i>
+            </button>
+
+        </div>
+
+        <div class="d-flex">
+
+            <div class="dropdown d-inline-block d-lg-none ms-2">
+                <button type="button" class="btn header-item noti-icon waves-effect" id="page-header-search-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="mdi mdi-magnify"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end p-0" aria-labelledby="page-header-search-dropdown">
+                    <form class="p-3">
+                        <div class="form-group m-0">
+                            <div class="input-group">
+                                <input type="text" class="form-control" placeholder="Search ..." aria-label="Search">
+                                <div class="input-group-append">
+                                    <button class="btn btn-primary" type="submit"><i class="mdi mdi-magnify"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="dropdown d-inline-block">
+                <button type="button" class="btn header-item waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                    </button>
+                <!-- branch code -->
+                <button type="button" class="btn header-item waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                            <img id="header-lang-img" src="assets/images/flags/sialkot.jpg" alt="Header Language" height="16">
+                        <span class="ms-1">Sialkot</span>
+                                    </button>
+                
+
+                <div class="dropdown-menu dropdown-menu-end">
+                                    </div>
+            </div>
+
+            <!-- ENHANCED NOTIFICATION DROPDOWN -->
+            <div class="dropdown d-inline-block">
+                <button type="button" class="btn header-item noti-icon waves-effect" id="page-header-notifications-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="bx bx-bell bx-tada"></i>
+                    <span class="badge bg-danger rounded-pill" id="notification-count" style="display:none;">0</span>
+                </button>
+
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end p-0" aria-labelledby="page-header-notifications-dropdown">
+                    <!-- Notification Header -->
+                    <div class="p-3 bg-primary">
+                        <div class="row align-items-center">
+                            <div class="col">
+                                <h6 class="m-0 text-white">Notifications (0)</h6>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notification Content -->
+                    <div data-simplebar="init" style="max-height: 350px;">
+                        <div class="simplebar-content" id="notification-content">
+
+                                                            <!-- No Notifications -->
+                                <div class="text-center py-4">
+                                    <div class="avatar-md mx-auto mb-4">
+                                        <div class="avatar-title bg-light rounded-circle">
+                                            <i class="bx bx-bell font-size-24 text-muted"></i>
+                                        </div>
+                                    </div>
+                                    <p class="text-muted">No new notifications</p>
+                                </div>
+                            
+                        </div>
+                    </div>
+
+                    <!-- Footer -->
+                                    </div>
+            </div>
+
+            <div class="dropdown d-none d-lg-inline-block ms-1">
+                <button type="button" class="btn header-item noti-icon waves-effect" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <i class="bx bx-user-circle"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-lg dropdown-menu-end" data-simplebar="init" style="max-height: 500px;">
+                    <div class="px-lg-2">
+                        <div class="row g-0">
+                            <div class="col">
+                                                                                    <a class="dropdown-icon-item" href="roleChange=2">
+                                                        <span>Sales Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=14">
+                                                        <span>admin</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=25">
+                                                        <span>Sales Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=27">
+                                                        <span>Service Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=29">
+                                                        <span>Service Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=30">
+                                                        <span>Reception</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=32">
+                                                        <span>Account Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=34">
+                                                        <span>SEO/SMM Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=35">
+                                                        <span>Product Posting Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=37">
+                                                        <span>Posting Executive	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=39">
+                                                        <span>D&amp;D Manager	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=41">
+                                                        <span>D&amp;D Executive	</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=45">
+                                                        <span>IT Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=48">
+                                                        <span>H.O.D</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=55">
+                                                        <span>Lead Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=57">
+                                                        <span>QA Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=58">
+                                                        <span>Verification Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=59">
+                                                        <span>Complaint Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=60">
+                                                        <span>Marketing Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=61">
+                                                        <span>Media Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=63">
+                                                        <span>Software Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=64">
+                                                        <span>Software Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=65">
+                                                        <span>Full Salary</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=66">
+                                                        <span>TA Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=67">
+                                                        <span>TA Assistant Manager</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=68">
+                                                        <span>TA Executive</span>
+                                                    </a>
+                                                                                    <a class="dropdown-icon-item" href="roleChange=73">
+                                                        <span>Super HOD</span>
+                                                    </a>
+                                                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dropdown d-inline-block">
+                                <button type="button" class="btn header-item waves-effect" id="page-header-user-dropdown" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                    <img class="rounded-circle header-profile-user" src="assets/images/user/M. Shabaz.JPG" alt="Header Avatar">
+                    <span class="d-none d-xl-inline-block ms-1">M. Shahbaz</span>
+                    <i class="mdi mdi-chevron-down d-none d-xl-inline-block"></i>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end">
+                    <a class="dropdown-item" href="user-profile"><i class="bx bx-user font-size-16 align-middle me-1"></i> <span key="t-profile">Profile</span></a>
+                    <a class="dropdown-item d-block" href="#"><span class="badge bg-success float-end">11</span><i class="bx bx-wrench font-size-16 align-middle me-1"></i> <span key="t-settings">Settings</span></a>
+                    <a class="dropdown-item" href="reset"><i class="bx bx-lock-open font-size-16 align-middle me-1"></i> <span key="t-lock-screen">Lock screen</span></a>
+                    <div class="dropdown-divider"></div>
+                    <a class="dropdown-item text-danger" href="login"><i class="bx bx-power-off font-size-16 align-middle me-1 text-danger"></i> <span key="t-logout">Logout</span></a>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</header>
+
+<!-- ========== Left Sidebar Start ========== -->
+<div class="vertical-menu">
+    <div data-simplebar class="h-100">
+        <!--- Sidemenu -->
+        <div id="sidebar-menu">
+            <!-- Left Menu Start -->
+            <ul class="metismenu list-unstyled" id="side-menu">
+                <li>
+                    <a href="home" class="waves-effect">
+                        <i class="bx bx-home-circle"></i>
+                        <span key="t-dashboards">Dashboards</span>
+                    </a>
+                </li>
+
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-store"></i>
+                                <span key="t-layouts">Attendance</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="attendance-check" key="t-products">Check</a></li>
+                                                                        <li><a href="leave-form" key="t-products">Leave Form</a></li>
+                                                                        <li><a href="over-time" key="t-products">Over Time</a></li>
+                                                                        <li><a href="to-do-list" key="t-products">To Do List</a></li>
+                                                                        <li><a href="advance-salary" key="t-products">Loan Report</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-user-circle"></i>
+                                <span key="t-layouts">Customer</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="duplication" key="t-products">Check Duplication</a></li>
+                                                                        <li><a href="add-customer" key="t-products">Add Customer</a></li>
+                                                                        <li><a href="temp-contact" key="t-products">Temporary Contact</a></li>
+                                                                        <li><a href="private-pool" key="t-products">Private Pool</a></li>
+                                                                        <li><a href="service-pool" key="t-products">Service Pool</a></li>
+                                                                        <li><a href="gm-bv-pool" key="t-products">Gm Bv Pool</a></li>
+                                                                        <li><a href="in-service-report" key="t-products">In service Report</a></li>
+                                                                        <li><a href="public-pool" key="t-products">Public Pool</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-tone"></i>
+                                <span key="t-layouts">PMS</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="pms-projects" key="t-products">Projects</a></li>
+                                                                        <li><a href="pms-task-create" key="t-products">Task Create</a></li>
+                                                                        <li><a href="pms-running-project" key="t-products">Running</a></li>
+                                                                        <li><a href="pms-pending-project" key="t-products">Pending</a></li>
+                                                                        <li><a href="pms-project-task" key="t-products">Task</a></li>
+                                                                        <li><a href="work-spaces" key="t-products">Work Space</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-file"></i>
+                                <span key="t-layouts">User Report</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="advance-salary" key="t-products">Loan Report</a></li>
+                                                                        <li><a href="vas-report" key="t-products">Vas Report</a></li>
+                                                                        <li><a href="gm-report" key="t-products">Gm Report</a></li>
+                                                                        <li><a href="bv-report" key="t-products">Gm Bv Report</a></li>
+                                                            </ul>
+                        </li>
+                                        <li>
+                            <a href="javascript: void(0);" class="has-arrow waves-effect">
+                                <i class="bx bx-video-recording"></i>
+                                <span key="t-layouts">Training</span>
+                            </a>
+                            <ul class="sub-menu" aria-expanded="true">
+                                                                        <li><a href="training-video" key="t-products">Training Video</a></li>
+                                                            </ul>
+                        </li>
+                            </ul>
+        </div>
+        <!-- Sidebar -->
+    </div>
+</div>
+<!-- Left Sidebar End -->
+
+<!-- Additional CSS for enhanced notifications -->
+
+<style>
+    /* Enhanced Notification Styles */
+    .notification-badge {
+        animation: pulse 2s infinite;
+        min-width: 18px;
+        font-size: 11px;
+    }
+
+    @keyframes pulse {
+        0% {
+            transform: scale(1);
+        }
+
+        50% {
+            transform: scale(1.1);
+        }
+
+        100% {
+            transform: scale(1);
+        }
+    }
+
+    .notification-item {
+        transition: all 0.2s ease;
+        border-radius: 0;
+    }
+
+    .notification-item:hover {
+        background-color: #f8f9fa !important;
+        transform: translateX(2px);
+    }
+
+    .hover-bg-light:hover {
+        background-color: #f8f9fa !important;
+    }
+
+    .notification-item:not(:last-child) {
+        border-bottom: 1px solid #f0f0f0 !important;
+    }
+
+    .avatar-title {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+    }
+
+    .badge {
+        font-weight: 500;
+    }
+
+    .dropdown-menu-lg {
+        min-width: 320px;
+    }
+
+    /* Custom scrollbar for notifications */
+    .simplebar-content::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .simplebar-content::-webkit-scrollbar-track {
+        background: #f1f1f1;
+    }
+
+    .simplebar-content::-webkit-scrollbar-thumb {
+        background: #c1c1c1;
+        border-radius: 4px;
+    }
+
+    .simplebar-content::-webkit-scrollbar-thumb:hover {
+        background: #a8a8a8;
+    }
+
+    /* Notification count animation */
+    .notification-badge.animate {
+        animation: bounce 0.5s ease;
+    }
+
+    @keyframes bounce {
+
+        0%,
+        20%,
+        60%,
+        100% {
+            transform: translateY(0);
+        }
+
+        40% {
+            transform: translateY(-10px);
+        }
+
+        80% {
+            transform: translateY(-5px);
+        }
+    }
+
+    /* Enhanced badge styles */
+    .badge-soft-danger {
+        color: #f46a6a;
+        background-color: rgba(244, 106, 106, 0.18);
+    }
+
+    .badge-soft-info {
+        color: #34c38f;
+        background-color: rgba(52, 195, 143, 0.18);
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .dropdown-menu-lg {
+            min-width: 280px;
+            max-width: 90vw;
+        }
+    }
+</style>
+
+<!-- Enhanced JavaScript for notification interactions -->
+<script>
+    // JavaScript functions for notification interactions
+    function markAllAsRead() {
+        // Show loading state
+        const markAllBtn = event.target;
+        const originalText = markAllBtn.innerHTML;
+        markAllBtn.innerHTML = '<i class="mdi mdi-loading mdi-spin me-1"></i>Marking...';
+        markAllBtn.style.pointerEvents = 'none';
+
+        // Example AJAX call (uncomment and modify as needed)
+        /*
+        fetch('mark-notifications-read.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                action: 'mark_all_read',
+                user_id: 55            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update notification count
+                document.getElementById('notification-count').style.display = 'none';
+                document.getElementById('notification-header-count').textContent = '0';
+                
+                // Show success message
+                showNotificationMessage('All notifications marked as read', 'success');
+                
+                // Refresh the notification content after delay
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            } else {
+                showNotificationMessage('Failed to mark notifications as read', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotificationMessage('An error occurred', 'error');
+        })
+        .finally(() => {
+            // Restore button state
+            markAllBtn.innerHTML = originalText;
+            markAllBtn.style.pointerEvents = 'auto';
+        });
+        */
+
+        // For demo purposes - remove this and uncomment above for production
+        setTimeout(() => {
+            document.getElementById('notification-count').style.display = 'none';
+            document.getElementById('notification-header-count').textContent = '0';
+            markAllBtn.innerHTML = originalText;
+            markAllBtn.style.pointerEvents = 'auto';
+            showNotificationMessage('All notifications marked as read', 'success');
+        }, 1000);
+    }
+
+    // Function to show notification messages
+    function showNotificationMessage(message, type = 'info') {
+        // Create toast notification
+        const toast = document.createElement('div');
+        toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : 'danger'} border-0`;
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = `
+        <div class="d-flex">
+            <div class="toast-body">
+                <i class="mdi mdi-${type === 'success' ? 'check-circle' : 'alert-circle'} me-2"></i>
+                ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    `;
+
+        // Add to page and show
+        document.body.appendChild(toast);
+        const bsToast = new bootstrap.Toast(toast);
+        bsToast.show();
+
+        // Remove after hiding
+        toast.addEventListener('hidden.bs.toast', () => {
+            toast.remove();
+        });
+    }
+
+    // Auto-refresh notifications every 30 seconds
+    let notificationRefreshInterval;
+
+    function startNotificationRefresh() {
+        notificationRefreshInterval = setInterval(function() {
+            refreshNotifications();
+        }, 30000);
+    }
+
+    function refreshNotifications() {
+        // Example AJAX call to refresh notifications
+        /*
+        fetch('get-notifications.php', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateNotificationDisplay(data.notifications, data.total);
+            }
+        })
+        .catch(error => {
+            console.error('Error refreshing notifications:', error);
+        });
+        */
+    }
+
+    function updateNotificationDisplay(notifications, total) {
+        // Update notification count
+        const countElement = document.getElementById('notification-count');
+        const headerCountElement = document.getElementById('notification-header-count');
+
+        if (total > 0) {
+            countElement.textContent = total;
+            countElement.style.display = '';
+            countElement.classList.add('animate');
+            setTimeout(() => countElement.classList.remove('animate'), 500);
+        } else {
+            countElement.style.display = 'none';
+        }
+
+        headerCountElement.textContent = total;
+
+        // Update notification content
+        // Implementation depends on your notification structure
+    }
+
+    // Initialize notification features when page loads
+    document.addEventListener('DOMContentLoaded', function() {
+        // Start auto-refresh
+        startNotificationRefresh();
+
+        // Add click tracking for notifications
+        document.querySelectorAll('.notification-item').forEach(item => {
+            item.addEventListener('click', function() {
+                // Track notification click
+                console.log('Notification clicked:', this.href);
+
+                // Optional: Mark individual notification as read
+                // markNotificationAsRead(this.dataset.notificationId);
+            });
+        });
+
+        // Enhanced dropdown behavior
+        const notificationDropdown = document.getElementById('page-header-notifications-dropdown');
+        if (notificationDropdown) {
+            notificationDropdown.addEventListener('shown.bs.dropdown', function() {
+                // Optional: Mark notifications as seen when dropdown opens
+                console.log('Notifications dropdown opened');
+            });
+        }
+    });
+
+    // Stop refresh when page is hidden/user switches tabs
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(notificationRefreshInterval);
+        } else {
+            startNotificationRefresh();
+        }
+    });
+
+    // Function to manually refresh notifications
+    function forceRefreshNotifications() {
+        location.reload();
+    }
+</script>
+
+                <!-- ============================================================== -->
+<!-- Start right Content here -->
+<!-- ============================================================== -->
+
+<style>
+    .is-invalid {
+        border: 1px solid red !important;
+    }
+</style>
+<div class="main-content">
+    <div class="page-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-xl-12">
+                    <div class="card" style="border-radius: 20px;">
+                        <div class="btn-group btn-group-md" role="group" aria-label="Basic example">
+                            <button type="button" class="btn btn-primary btn-rounded ">Yet to Contact</button>
+                            <button type="button" class="btn btn-danger">Contact</button>
+                            <button type="button" class="btn btn-success">Invoice Send</button>
+                            <button type="button" class="btn btn-info" data-bs-toggle="modal"
+                                data-bs-target=".bs-example-modal-lg">WhatsApp (TEMP)</button>
+                            <button type="button" class="btn btn-warning" data-bs-toggle="modal"
+                                data-bs-target=".bs-example-modal-lg-mail">Email (TEMP)</button>
+                            <button type="button" class="btn btn-secondary">SMS (TEMP)</button>
+                            <button type="button" class="btn btn-primary btn-rounded">Instagram (TEMP)</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- start page title -->
+            <div class="row">
+                <div class="col-12">
+                    <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                        <h4 class="mb-sm-0 font-size-18">Customer List </h4>
+                    </div>
+                </div>
+            </div>
+            <!-- end page title -->
+            <div class="row">
+                <div class="col-xl-12">
+                    <div class="card">
+                        <div class="card-body">
+                            <!-- <h4 class="card-title">Primary Detail</h4> -->
+                            <form class="needs-validation mt-0" novalidate>
+                                <div class="row">
+
+                                    <div class="col-md-6">
+                                        <div class="mb-2 position-relative">
+                                            <label for="validationTooltip01" class="form-label">Search Customer</label>
+                                            <input type="text" class="form-control" id="coname"
+                                                placeholder="Enter company name/mobile/email" required>
+                                            <div class="valid-tooltip">
+                                                Looks good!
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-2 position-relative">
+                                            <label for="validationTooltip01" class="form-label">Team Customer</label>
+                                            <input type="text" class="form-control" id="teamCompany"
+                                                placeholder="Enter company name/mobile/email" required>
+                                            <div class="valid-tooltip">
+                                                Looks good!
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div> <!-- end col -->
+            </div> <!-- container-fluid -->
+            <div class="container-fluid">
+                <!-- start page title -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="page-title-box d-sm-flex align-items-center justify-content-between">
+                            <h4 class="mb-sm-0 font-size-18">Tracing </h4>
+                        </div>
+                    </div>
+                </div>
+                <!-- end page title -->
+                <div class="row">
+                    
+                    <div class="col-xl-12 mb-3">
+                        <div class="card" style="border-radius: 6px; overflow:hidden;">
+                            <div class="btn-group btn-group-sm w-100" role="group" aria-label="Service Filters">
+
+                                <a href="service-followup-list=service-membership"
+                                    class="btn btn-success text-white"
+                                    style="width:25%; height:38px; line-height:28px;" target="_blank">
+                                    Alibaba Membership 2                                </a>
+
+                                <a href="service-followup-list=service-alibaba"
+                                    class="btn btn-danger text-white"
+                                    style="width:25%; height:38px; line-height:28px;" target="_blank">
+                                    Alibaba Services 0                                </a>
+
+                                <a href="service-followup-list=service-design"
+                                    class="btn btn-info text-white"
+                                    style="width:25%; height:38px; line-height:28px;" target="_blank">
+                                    Design Development 0                                </a>
+
+                                <a href="service-followup-list=service-domain"
+                                    class="btn btn-dark text-white"
+                                    style="width:25%; height:38px; line-height:28px;" target="_blank">
+                                    Domain Hosting 0                                </a>
+
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-12">
+                        <div class="card" style="border-radius: 100px;">
+                            <div class="btn-group btn-group-sm" role="group" aria-label="Basic example">
+                                <a href="important-page=A-plus" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-primary btn-rounded text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white btn-rounded"
+                                        onclick="GradeListPrivatePool('55','A+')">A+
+                                        0</button></a>
+                                <a href="important-page=A-" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-danger text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','A-')">A-
+                                        0</button></a>
+                                <a href="important-page=B-plus" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-success text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','B+')">B+
+                                        1</button></a>
+                                <a href="important-page=B-" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-info text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','B-')">B-
+                                        0</button></a>
+                                <a href="important-page=B" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-warning text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','B')">B
+                                        0</button></a>
+                                <a href="important-page=C-plus" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-secondary text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','C+')">C+
+                                        0</button></a>
+                                <a href="important-page=C" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-dark btn-rounded text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white"
+                                        onclick="GradeListPrivatePool('55','C')">C
+                                        0</button></a>
+                                <a href="important-page=D" style="line-height: 20px; height: 30px;"
+                                    class="btn btn-primary btn-rounded text-white" target="_blank"><button type="button"
+                                        class="btn p-0 text-white btn-rounded"
+                                        onclick="GradeListPrivatePool('55','D')">D
+                                        0</button></a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body">
+                                <input type="hidden" value="55" id="userid">
+                                <div class="table-responsive1" data-simplebar="init">
+                                    <div class="loader text-center align-middle" id="loaderCustomer"
+                                        style="display:none;position: absolute;width: 100%;top: 50%;z-index: 3;height: 50%;">
+                                        <div class="spinner-grow text-secondary font-size-12" role="status"
+                                            style="width:1rem;height:1rem;">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <div class="spinner-grow text-success font-size-12" role="status"
+                                            style="width:1rem;height:1rem;">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        <div class="spinner-grow text-info font-size-12" role="status"
+                                            style="width:1rem;height:1rem;">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                    </div>
+                                    <table class="table align-middle table-sm table-nowrap table-check">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th style="width: 20px;" class="align-middle">
+                                                    <div class="form-check font-size-12">
+                                                        <input class="form-check-input" type="checkbox" id="checkAll">
+                                                        <label class="form-check-label" for="checkAll"></label>
+                                                    </div>
+                                                </th>
+                                                <th class="align-middle">Company ID</th>
+                                                <th class="align-middle">Co Name</th>
+                                                <th class="align-middle">Acc Holder</th>
+                                                <th class="align-middle">Email</th>
+                                                <th class="align-middle">Contact No</th>
+                                                <th class="align-middle">NTN/CINC</th>
+                                                <th class="align-middle">Account Create</th>
+                                                <th class="align-middle">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="showdata">
+
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="row">
+                                    <div class="col-lg-12">
+
+                                        <ul id="pagination"
+                                            class="pagination pagination-rounded justify-content-center mt-3 mb-4 pb-1">
+                                            <li class="page-item paginationBtn">
+                                                <a href="#" class="page-link" id="prevPage" data-page=""><i
+                                                        class="mdi mdi-chevron-left"></i></a>
+                                            </li>
+                                            <span class="d-flex" id="pageNumbers"></span>
+                                            <li class="page-item paginationBtn">
+                                                <a href="#" class="page-link" id="nextPage" data-page=""><i
+                                                        class="mdi mdi-chevron-right"></i></a>
+                                            </li>
+                                        </ul>
+
+                                    </div>
+                                </div>
+                                <!--  Whats app Message Module -->
+                                <div class="modal fade bs-example-modal-lg" tabindex="-1"
+                                    aria-labelledby="myLargeModalLabel" aria-hidden="true">
+                                    <div class="modal-dialog modal-lg">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title" id="myLargeModalLabel">Whats App Template</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                                    aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <table class="table align-middle table-nowrap table-check">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th class="align-middle">ID</th>
+                                                            <th class="align-middle">Title</th>
+                                                            <th class="align-middle">Message</th>
+                                                            <th class="align-middle">Action</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td>04</td>
+                                                            <td>Ramzan Offer</td>
+                                                            <td>Ramzan offer 50% off</td>
+                                                            <td><button type="button"
+                                                                    class="btn btn-primary">use</button></td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div><!-- /.modal-content -->
+                                    </div><!-- /.modal-dialog -->
+                                </div>
+                                <!--  Email Template -->
+                                <div class="modal fade bs-example-modal-lg-mail" tabindex="-1"
+                                    aria-labelledby="myLargeModalLabel" aria-hidden="true">
+                                    <div class="modal-dialog modal-lg">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title" id="myLargeModalLabel">Email Template</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                                    aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <table class="table align-middle table-nowrap table-check">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th class="align-middle">ID</th>
+                                                            <th class="align-middle">Title</th>
+                                                            <th class="align-middle">Message</th>
+                                                            <th class="align-middle">Action</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td>01</td>
+                                                            <td>Email</td>
+                                                            <td>
+                                                                <p>Dear [Name], I hope this email finds you well.<br />I
+                                                                    am writing to extend an invitation <br />to
+                                                                    participate
+                                                                    in a bet that I have proposed.</p>
+                                                            </td>
+                                                            <td><button type="button"
+                                                                    class="btn btn-primary">Active</button></td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div><!-- /.modal-content -->
+                                    </div><!-- /.modal-dialog -->
+                                </div>
+                                <!--  Link Popup -->
+                                <div class="modal fade bs-example-modal-md-link" tabindex="-1"
+                                    aria-labelledby="myLargeModalLabel" aria-hidden="true">
+                                    <div class="modal-dialog modal-md">
+                                        <div class="modal-content">
+                                            <div class="modal-header">
+                                                <h5 class="modal-title" id="myLargeModalLabel">Project Information</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal"
+                                                    aria-label="Close"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <h4>links</h4>
+                                            </div>
+                                        </div><!-- /.modal-content -->
+                                    </div><!-- /.modal-dialog -->
+                                </div>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="text-center my-3">
+                                            <a href="javascript:void(0);" id="loaderMore" style="display:none;"
+                                                class="text-success"><i
+                                                    class="bx bx-loader bx-spin font-size-18 align-middle mr-2"></i>
+                                                Load more </a>
+                                        </div>
+                                    </div> <!-- end col-->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div> <!-- container-fluid -->
+            </div>
+        </div>
+    </div>
+    <div class="modal fade bs-example-modal-lg-follow" id="staticBackdrop" data-bs-backdrop="static"
+        data-bs-keyboard="false" tabindex="-1" role="dialog" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="staticBackdropLabel">Follow The Customer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="card-body p-2">
+                        <form id="form_follow" action="" enctype="multipart/form-data">
+                            <div class="row g-2">
+                                <div class="col-lg-12">
+                                    <input type="hidden" name="comname" id="comname" value="">
+                                    <input type="hidden" name="meeting_user" id="meeting_user" value="55">
+                                    <input type="text" class="form-control form-control-sm" id="comnNameData" value=""
+                                        readonly>
+                                </div>
+
+                                <div class="col-lg-12">
+                                    <div class="border rounded p-3">
+                                        <label class="text-success fw-bold mb-2">Select Services:<span
+                                                class="text-danger">*</span></label>
+                                        <div class="d-flex gap-4 flex-wrap">
+                                            <div class="form-check">
+                                                <input class="form-check-input main-service-checkbox" type="checkbox"
+                                                    name="main_services[]" id="service_1" value="1"
+                                                    data-service-name="Alibaba Membership">
+                                                <label class="form-check-label fw-bold" for="service_1">Alibaba
+                                                    Membership</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input main-service-checkbox" type="checkbox"
+                                                    name="main_services[]" id="service_2" value="2"
+                                                    data-service-name="Alibaba Services">
+                                                <label class="form-check-label fw-bold" for="service_2">Alibaba
+                                                    Services</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input main-service-checkbox" type="checkbox"
+                                                    name="main_services[]" id="service_3" value="3"
+                                                    data-service-name="Design Development">
+                                                <label class="form-check-label fw-bold" for="service_3">Design
+                                                    Development</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input main-service-checkbox" type="checkbox"
+                                                    name="main_services[]" id="service_4" value="4"
+                                                    data-service-name="Domain Hosting">
+                                                <label class="form-check-label fw-bold" for="service_4">Domain
+                                                    Hosting</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-lg-12" id="allSubServicesContainer"></div>
+
+                                <div class="col-lg-12">
+                                    <button type="button" id="toggleAdditionalDetails"
+                                        class="btn btn-outline-primary btn-sm w-100">
+                                        <i class="fas fa-plus-circle"></i> Show Additional Details
+                                    </button>
+                                </div>
+
+                                <div id="additionalDetailsSection" style="display: none;">
+                                    <div class="col-lg-3">
+                                        <label class="text-success fw-bold">Reservation:<span
+                                                class="text-danger">*</span></label>
+                                        <select name="reservation" id="reservation" class="form-select form-select-sm">
+                                            <option value="">Select Reservation</option>
+                                            <option value="Mobile">Mobile</option>
+                                            <option value="W-Call">W-Call</option>
+                                            <option value="On-Site Appointment">On-Site Appointment</option>
+                                            <option value="E-mail">E-mail</option>
+                                            <option value="Vm Appointment">Vm Appointment</option>
+                                            <option value="Fax">Fax</option>
+                                            <option value="No Need">No Need</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="col-lg-3" id="talk_mint_reservation" style="display:none;">
+                                        <label class="text-success fw-bold">Talk Time (Minutes):</label>
+                                        <input type="number" class="form-control form-control-sm"
+                                            placeholder="Enter minutes" name="talk_mint_res" id="talk_mint_res">
+                                    </div>
+                                </div>
+
+                                <div class="col-lg-12">
+                                    <button type="submit" name="submit"
+                                        class="btn btn-primary w-100 btn-sm">Submit</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        $('#coname').keyup(function () {
+            var query = $(this).val();
+            var userid = document.getElementById("userid").value;
+            $("#loaderCustomer").show();
+            $("#showdata").css({
+                opacity: 0.5
+            })
+            if (query != '') {
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        searchCompany: query
+                    },
+                    success: function (data) {
+                        $("#loaderCustomer").hide();
+                        $("#showdata").css({
+                            opacity: 1
+                        })
+                        $('#showdata').fadeIn();
+                        $('#showdata').html(data);
+                    }
+                });
+            }
+        });
+        //team Company Search
+        $('#teamCompany').keyup(function () {
+            var query = $(this).val();
+            $("#loaderCustomer").show();
+            $("#showdata").css({
+                opacity: 0.5
+            })
+            if (query != '') {
+                $.ajax({
+                    url: "func.php",
+                    method: "POST",
+                    data: {
+                        teamCompanySearch: query
+                    },
+                    success: function (data) {
+                        $("#loaderCustomer").hide();
+                        $("#showdata").css({
+                            opacity: 1
+                        })
+                        $('#showdata').fadeIn();
+                        $('#showdata').html(data);
+                    }
+                });
+            }
+        });
+
+        $(document).ready(function () {
+            $("#form_follow").on("submit", function (e) {
+                e.preventDefault();
+
+                $("input, select, textarea").removeClass("is-invalid");
+
+                let valid = true;
+                let message = "";
+
+                if ($(".main-service-checkbox:checked").length === 0) {
+                    valid = false;
+                    message = "Please select at least one main service.";
+                }
+                else if ($(".sub-service-checkbox:checked").length === 0) {
+                    valid = false;
+                    message = "Please select at least one sub-service.";
+                }
+                else {
+                    $(".sub-service-checkbox:checked").each(function () {
+                        const serviceId = $(this).data("service-id");
+                        const serviceIndex = $(this).data("service-index");
+
+                        if (!$(`select[name='purpose_${serviceId}_${serviceIndex}']`).val()) {
+                            valid = false;
+                            message = "Please select Purpose for all selected sub-services.";
+                            $(`select[name='purpose_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+
+                        if (!$(`select[name='grade_${serviceId}_${serviceIndex}']`).val()) {
+                            valid = false;
+                            message = "Please select Grade for all selected sub-services.";
+                            $(`select[name='grade_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+
+                        if (!$(`select[name='method_${serviceId}_${serviceIndex}']`).val()) {
+                            valid = false;
+                            message = "Please select Method for all selected sub-services.";
+                            $(`select[name='method_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+
+                        if (!$(`select[name='comment_${serviceId}_${serviceIndex}']`).val()) {
+                            valid = false;
+                            message = "Please select Comment for all selected sub-services.";
+                            $(`select[name='comment_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+
+                        if (!$(`input[name='next_date_${serviceId}_${serviceIndex}']`).val()) {
+                            valid = false;
+                            message = "Please enter Next Date for all selected sub-services.";
+                            $(`input[name='next_date_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+
+                        if (!$(`input[name='note_${serviceId}_${serviceIndex}']`).val().trim()) {
+                            valid = false;
+                            message = "Please enter Note for all selected sub-services.";
+                            $(`input[name='note_${serviceId}_${serviceIndex}']`).addClass("is-invalid");
+                            return false;
+                        }
+                    });
+                }
+
+                if ($("#additionalDetailsSection").is(":visible")) {
+                    if (!$("#reservation").val()) {
+                        valid = false;
+                        message = "Please select a Reservation.";
+                        $("#reservation").addClass("is-invalid");
+                    }
+                }
+
+                if (!valid) {
+                    alert(message);
+                    return false;
+                }
+
+                var formData = new FormData(this);
+                const noti_text = "Your Request is done!";
+
+                $.ajax({
+                    type: 'POST',
+                    url: 'layouts/func.php',
+                    data: formData,
+                    contentType: false,
+                    processData: false,
+                    success: function (data) {
+                        notification_Success(noti_text);
+                        $("#form_follow")[0].reset();
+                        $("#showdetail").load(" #showdetail");
+                        $(".btn-close").click();
+                    },
+                    error: function () {
+                        alert("Something went wrong while submitting the form!");
+                    }
+                });
+            });
+        });
+
+        function followUpCustomer(com_id, cname) {
+            $("#comname").val(com_id);
+            $("#comnNameData").val(cname);
+        }
+
+        function Packages() {
+            var x = document.getElementById("talk_mint2");
+            var y = document.getElementById("followupMethod").value;
+
+            if (y == 'Mobile' || y == 'W-Call') {
+                x.style.display = "block";
+            } else {
+                x.style.display = "none";
+            }
+        }
+
+        $(document).ready(function () {
+            loadPage(1);
+
+            $(document).on('click', '.pagination a', function () {
+                var page = $(this).data('page');
+                if (page !== undefined && page !== '') {
+                    loadPage(page);
+                }
+            });
+
+            $('#prevPage').click(function () {
+                var currentPage = parseInt($('#pageNumbers li .active').data('page'));
+                if (currentPage > 1) {
+                    loadPage(currentPage - 1);
+                }
+            });
+
+            $('#nextPage').click(function () {
+                var currentPage = parseInt($('#pageNumbers li .active').data('page'));
+                var totalPages = parseInt($('#pageNumbers').data('total-pages'));
+                if (currentPage < totalPages) {
+                    loadPage(currentPage + 1);
+                }
+            });
+
+
+        });
+
+        function loadPage(page) {
+            $("#loaderCustomer").show();
+            $("#showdata").css({
+                opacity: 0.5
+            })
+            $.ajax({
+                url: 'layouts/pagenation.php',
+                type: 'GET',
+                data: {
+                    page: page
+                },
+                contentType: "application/json",
+                dataType: 'json',
+                success: function (data) {
+                    $("#loaderCustomer").hide();
+                    $("#showdata").css({
+                        opacity: 1
+                    });
+                    displayData(data);
+                    displayPagination(data.totalPages, page);
+                },
+                error: function (xhr, status, error) {
+                    console.error('AJAX Error:', status, error);
+                    var nextPage = page + 1;
+                    loadPage(nextPage);
+                }
+            });
+        }
+
+        function displayData(datas) {
+            $('#showdata').empty();
+            var itemsContainer = $('#showdata');
+            var data = datas.records;
+
+            for (var i = 0; i < data.length; i++) {
+                let currentDate = new Date(data[i].create_date);
+                var day = currentDate.getDate();
+                var month = currentDate.getMonth() + 1;
+                var year = currentDate.getFullYear();
+                var formattedDate = year + '-' + (month < 10 ? '0' : '') + month + '-' + (day < 10 ? '0' : '') + day;
+
+                let pagenation_data = '<tr>';
+                pagenation_data += '<td><div class="form-check font-size-12">';
+                pagenation_data += '<input class="form-check-input" type="checkbox" id="' + data[i].id + '">';
+                pagenation_data += '<label class="form-check-label" for="' + data[i].id + '"></label></div></td>';
+                pagenation_data += '<td><a href="javascript:void(0)" class="text-body fw-bold popup-form" onclick="followUpCustomer(\'' + data[i].id + '\',\'' + data[i].cname + '\');">' + data[i].com_id + '</a></td>';
+                pagenation_data += '<td>' + data[i].cname + '</td>';
+                pagenation_data += '<td><span class="blur block_copy" id="personL' + data[i].id + '"></span></td>';
+                pagenation_data += '<td><span class="blur block_copy" id="emailL' + data[i].id + '"></span></td>';
+                pagenation_data += '<td><span class="badge  badge-pill badge-soft-success font-size-11" ><span class="blur block_copy" id="phoneL' + data[i].id + '"></span></span></td>';
+                pagenation_data += '<td>' + data[i].ntn + '</td>';
+                pagenation_data += '<td>' + formattedDate + '</td>';
+                pagenation_data += '<td><div class="d-flex gap-1">';
+                pagenation_data += '<a href="company-detail=' + data[i].id + '"><button type="button" style="height:1.5rem; width:1.5rem;" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle" title="User Account">';
+                pagenation_data += '<span class="avatar-title bg-transparent text-reset"><i class="bx bx-user font-size-12"></i></span></button></a>';
+                pagenation_data += '<span id="personLMail' + data[i].id + '"></span>';
+                pagenation_data += '<span id="personLPhone' + data[i].id + '"></span>';
+                pagenation_data += '<a href="new-quote=' + data[i].id + '">';
+                pagenation_data += '<button type="button" style="height:1.5rem; width:1.5rem;" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="Quotation">';
+                pagenation_data += ' <span class="avatar-title bg-transparent text-reset"> <i class="bx bxs-yin-yang font-size-12"></i></span></button></a>';
+                pagenation_data += '<a href="dmoain_register.php"><button type="button" style="height:1.5rem; width:1.5rem;" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="Domain Hosting">';
+                pagenation_data += '<span class="avatar-title bg-transparent text-reset"> <i class="bx bx-collection font-size-12"></i></span></button></a>';
+                pagenation_data += '<a href="#" data-bs-toggle="modal" data-bs-target=".bs-example-modal-md-link">';
+                pagenation_data += '<button  style="height:1.5rem; width:1.5rem;" type="button" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="Link">';
+                pagenation_data += '<span class="avatar-title bg-transparent text-reset"><i class="bx bx-link font-size-12"></i></span></button></a>';
+                pagenation_data += '<a href="edit-uae-customer=' + data[i].id + '" target="_blank"><button  style="height:1.5rem; width:1.5rem;" type="button" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="Edit"><span class="avatar-title bg-transparent text-reset"><i class="bx bx-edit-alt font-size-12"></i></span></button></a></div></td>';
+                pagenation_data += '</tr>';
+                itemsContainer.append(pagenation_data);
+                lastFollow(data[i].id, 'personL' + data[i].id, 'emailL' + data[i].id, 'phoneL' + data[i].id, 'personLMail' + data[i].id, 'personLPhone' + data[i].id);
+            }
+
+        }
+
+        function displayPagination(totalPages, currentPage) {
+            $('#pageNumbers').empty();
+
+            var startPage = Math.max(currentPage - 2, 1);
+            var endPage = Math.min(currentPage + 1, totalPages);
+
+            if (startPage > 1) {
+
+                $('#pageNumbers').append('<li class="page-item"><a href="#" class="page-link" data-page="1">1</a></li>');
+                if (startPage > 3) {
+                    $('#pageNumbers').append('<span class="ellipsis">...</span>');
+                }
+            }
+
+            for (var i = startPage; i <= endPage; i++) {
+                var activeClass = (i === currentPage) ? 'active' : '';
+                $('#pageNumbers').append('<li class="page-item ' + activeClass + '"><a href="#" class="page-link ' + activeClass + '" data-page="' + i + '">' + i + '</a></li>');
+            }
+
+            if (endPage < totalPages) {
+                if (endPage < totalPages - 1) {
+                    $('#pageNumbers').append('<span class="ellipsis">...</span>');
+                }
+                $('#pageNumbers').append('<li class="page-item"><a href="#" class="page-link"  data-page="' + totalPages + '">' + totalPages + '</a></li>');
+            }
+            $('#pageNumbers').append('<li class="page-item" style="width: 70px;"><input type="number" class="form-control form-control-sm" style="width: 70px;" id="manualPageInput" placeholder="Page"></li>');
+            $('#pageNumbers').append('<li class="page-item"><button class="btn btn-primary btn-sm" onclick="goToPageBtn()">Go</button></li>');
+            $('#pageNumbers').data('total-pages', totalPages);
+        }
+
+        function lastFollow(cid, personL, emailL, phoneL, personLMail, personLPhone) {
+            $.ajax({
+                url: "layouts/func.php",
+                method: "POST",
+                data: {
+                    privatePoolPersonDetail: cid
+                },
+                success: function (data) {
+                    var dataSplit = data;
+                    var shouldSplit = dataSplit.split("#");
+                    let pagenation_data0 = shouldSplit[0];
+                    let pagenation_data1 = shouldSplit[1];
+                    let pagenation_data2 = shouldSplit[2];
+                    let pagenation_data3 = shouldSplit[3];
+                    let pagenation_dataPersonMail = '<a href="mailto:' + pagenation_data1 + '" target="_blank"><button type="button" style="height:1.5rem; width:1.5rem;" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="Mail">';
+                    pagenation_dataPersonMail += '<span class="avatar-title bg-transparent text-reset"><i class="bx bxs-envelope font-size-12"></i></span></button></a>';
+
+                    let pagenation_dataPersonPhone = '<a href="https://api.whatsapp.com/send?phone=' + pagenation_data2 + '&text=The domain names specified below are about to expire. If they are not renewed before expiration, your websites and other services running on these domain names may stop working.">';
+                    pagenation_dataPersonPhone += '<button type="button" style="height:1.5rem; width:1.5rem;" class="btn btn-primary position-relative p-0 avatar-xs rounded-circle " title="WhatsApp">';
+                    pagenation_dataPersonPhone += '<span class="avatar-title bg-transparent text-reset"><i class="bx bxl-whatsapp font-size-12"></i></span></button></a>';
+                    $('#' + personL).append(pagenation_data0);
+                    $('#' + emailL).append(pagenation_data1);
+                    $('#' + phoneL).append(pagenation_data2);
+                    $('#' + personLMail).append(pagenation_dataPersonMail);
+                    $('#' + personLPhone).append(pagenation_dataPersonPhone);
+                }
+            });
+        }
+        function goToPageBtn() {
+            var manualPage = parseInt($('#manualPageInput').val());
+            var totalPages = parseInt($('#pageNumbers').data('total-pages'));
+            if (!isNaN(manualPage) && manualPage >= 1 && manualPage <= totalPages) {
+                loadPage(manualPage);
+            } else {
+                alert('Please enter a valid page number.');
+            }
+        };
+        $('.grade').click(function () {
+            var y = $(this).val();
+            var input = document.getElementById("dat");
+
+            if (y === 'A-' || y === 'B+') {
+                input.setAttribute('required', '');
+            } else {
+                input.removeAttribute('required');
+                input.value = '';
+            }
+        });
+    </script>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const allSubServicesContainer = document.getElementById("allSubServicesContainer");
+            const toggleButton = document.getElementById("toggleAdditionalDetails");
+            const additionalDetailsSection = document.getElementById("additionalDetailsSection");
+            const reservationSelect = document.getElementById("reservation");
+            const talkMintReservation = document.getElementById("talk_mint_reservation");
+
+            const subServices = {
+                "1": [
+                    "GGS Digital",
+                    "Basic Basic Plus",
+                    "GGS Pro",
+                    "Standard",
+                    "Verified Supplier Rc-Up",
+                    "KAP",
+                    "Kwa Psa",
+                    "KWA-KAP",
+                    "Cat",
+                    "Ai",
+                    "S-Brand",
+                    "China Trip",
+                    "RFQs"
+                ],
+                "2": [
+                    "Alibaba Minisite",
+                    "Alibaba Product Posting",
+                    "Alibaba online training",
+                    "Alibaba VA",
+                    "VATS",
+                    "BD/ RFQ",
+                    "AMS",
+                    "KWA-CM"
+                ],
+                "3": [
+                    "Dynamic Website",
+                    "E-Commerce Store",
+                    "SEO",
+                    "Logo Design",
+                    "Catalog Design",
+                    "Brochure Design",
+                    "Software Development",
+                    "Video Documentary",
+                    "Sole Proprietor Company",
+                    "Partnership Company",
+                    "Etsy Store Creation or Posting",
+                    "Social Media Account Handling",
+                    "EBay Store Design",
+                    "Amazon Store Design",
+                    "Shopify Store Design",
+                    "Ebay per Product Posting",
+                    "Product photoshoot",
+                    "Listing Page Design",
+                    "Android App / IOS",
+                    "Welc Training",
+                    "VM Video"
+                ],
+                "4": [
+                    "Domain Registration",
+                    "Hosting Plan",
+                    "SSL Certificate",
+                    "Cloud Vps Professional",
+                    "Cloud Vps Business"
+                ]
+            };
+
+            const purposeOptions = [
+                "New Sell", "Inform", "Payment Recovery", "Ab Payment", "Project Data",
+                "Renew Sell", "Seminar", "Webinar", "Training", "Anydesk"
+            ];
+
+            const gradeOptions = ["A+", "A-", "B+", "B-", "B", "C+", "C", "D"];
+
+
+            const methodOptions = ["Mobile", "Whatsapp", "WH-Call", "In-meeting", "Out-meeting", "E-mail", "Appointment", "Seminar", "OL-Meeting"];
+
+
+            toggleButton.addEventListener("click", function () {
+                if (additionalDetailsSection.style.display === "none") {
+                    additionalDetailsSection.style.display = "contents";
+                    toggleButton.innerHTML = '<i class="fas fa-minus-circle"></i> Hide Additional Details';
+                    toggleButton.classList.remove("btn-outline-primary");
+                    toggleButton.classList.add("btn-outline-danger");
+                } else {
+                    additionalDetailsSection.style.display = "none";
+                    toggleButton.innerHTML = '<i class="fas fa-plus-circle"></i> Show Additional Details';
+                    toggleButton.classList.remove("btn-outline-danger");
+                    toggleButton.classList.add("btn-outline-primary");
+                }
+            });
+
+            reservationSelect.addEventListener("change", function () {
+                const value = this.value.toLowerCase();
+                if (value === "mobile" || value === "whatsapp") {
+                    talkMintReservation.style.display = "block";
+                } else {
+                    talkMintReservation.style.display = "none";
+                    document.getElementById("talk_mint_res").value = "";
+                }
+            });
+
+            document.querySelectorAll('.main-service-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function () {
+                    const serviceId = this.value;
+                    const serviceName = this.dataset.serviceName;
+
+                    if (this.checked) {
+                        renderSubServices(serviceId, serviceName);
+                    } else {
+                        // Check if any sub-service is selected before unchecking
+                        const hasSelectedSubServices = document.querySelectorAll(`#service_container_${serviceId} .sub-service-checkbox:checked`).length > 0;
+
+                        if (hasSelectedSubServices) {
+                            alert(`Please unselect all sub-services of "${serviceName}" before unchecking this main service.`);
+                            this.checked = true;
+                            return false;
+                        }
+
+                        const container = document.getElementById(`service_container_${serviceId}`);
+                        if (container) {
+                            container.remove();
+                        }
+                    }
+                });
+            });
+
+            function collapseAllServices() {
+                document.querySelectorAll('.service-content-collapse').forEach(content => {
+                    content.style.display = 'none';
+                });
+                document.querySelectorAll('.service-header-toggle').forEach(header => {
+                    header.classList.remove('active');
+                    const icon = header.querySelector('.toggle-icon');
+                    if (icon) {
+                        icon.classList.remove('fa-minus');
+                        icon.classList.add('fa-plus');
+                    }
+                });
+            }
+
+            function renderSubServices(serviceId, serviceName) {
+                const services = subServices[serviceId] || [];
+                if (services.length === 0) return;
+
+                const serviceContainer = document.createElement('div');
+                serviceContainer.className = 'col-lg-12 mb-3';
+                serviceContainer.id = `service_container_${serviceId}`;
+
+                const borderDiv = document.createElement('div');
+                borderDiv.className = 'border rounded';
+
+                const headerDiv = document.createElement('div');
+                headerDiv.className = 'service-header-toggle active p-2 bg-light cursor-pointer d-flex justify-content-between align-items-center';
+                headerDiv.style.cursor = 'pointer';
+                headerDiv.innerHTML = `
+            <h6 class="text-primary mb-0">${serviceName} - Sub Services</h6>
+            <i class="fas fa-minus toggle-icon"></i>
+        `;
+
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'service-content-collapse p-1';
+                contentDiv.style.display = 'block';
+
+                headerDiv.addEventListener('click', function () {
+                    const isActive = this.classList.contains('active');
+
+                    if (!isActive) {
+                        collapseAllServices();
+                        this.classList.add('active');
+                        contentDiv.style.display = 'block';
+                        const icon = this.querySelector('.toggle-icon');
+                        icon.classList.remove('fa-plus');
+                        icon.classList.add('fa-minus');
+                    } else {
+                        this.classList.remove('active');
+                        contentDiv.style.display = 'none';
+                        const icon = this.querySelector('.toggle-icon');
+                        icon.classList.remove('fa-minus');
+                        icon.classList.add('fa-plus');
+                    }
+                });
+
+                const subServicesColumn = document.createElement('div');
+                subServicesColumn.className = 'row g-2';
+
+                const initialDisplayCount = 5;
+                const shouldShowLoadMore = services.length > initialDisplayCount;
+
+                services.forEach((service, index) => {
+                    const subServiceRow = createSubServiceRow(serviceId, service, index);
+
+                    if (shouldShowLoadMore && index >= initialDisplayCount) {
+                        subServiceRow.style.display = 'none';
+                        subServiceRow.classList.add('hidden-service');
+                    }
+
+                    subServicesColumn.appendChild(subServiceRow);
+                });
+
+                // Add Load More button if needed
+                if (shouldShowLoadMore) {
+                    const loadMoreRow = document.createElement('div');
+                    loadMoreRow.className = 'col-12 text-center mt-2';
+                    loadMoreRow.id = `load_more_container_${serviceId}`;
+
+                    const loadMoreBtn = document.createElement('button');
+                    loadMoreBtn.type = 'button';
+                    loadMoreBtn.className = 'btn btn-sm btn-outline-primary';
+                    loadMoreBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Load More';
+                    loadMoreBtn.id = `load_more_btn_${serviceId}`;
+
+                    loadMoreBtn.addEventListener('click', function () {
+                        const hiddenServices = document.querySelectorAll(`#service_container_${serviceId} .hidden-service`);
+                        hiddenServices.forEach(service => {
+                            service.style.display = 'block';
+                        });
+                        loadMoreRow.style.display = 'none';
+                    });
+
+                    loadMoreRow.appendChild(loadMoreBtn);
+                    subServicesColumn.appendChild(loadMoreRow);
+                }
+
+                contentDiv.appendChild(subServicesColumn);
+                borderDiv.appendChild(headerDiv);
+                borderDiv.appendChild(contentDiv);
+                serviceContainer.appendChild(borderDiv);
+                allSubServicesContainer.appendChild(serviceContainer);
+
+                collapseAllServices();
+                headerDiv.classList.add('active');
+                contentDiv.style.display = 'block';
+                const icon = headerDiv.querySelector('.toggle-icon');
+                icon.classList.remove('fa-plus');
+                icon.classList.add('fa-minus');
+
+                document.querySelectorAll(`#service_container_${serviceId} .sub-service-checkbox`).forEach(cb => {
+                    cb.addEventListener('change', function () {
+                        handleSubServiceChange(this);
+                    });
+                });
+
+                document.querySelectorAll(`#service_container_${serviceId} .method-select`).forEach(select => {
+                    select.addEventListener('change', function () {
+                        const serviceId = this.dataset.serviceId;
+                        const serviceIndex = this.dataset.serviceIndex;
+                        const talkTimeDiv = document.getElementById(`talk_time_${serviceId}_${serviceIndex}`);
+                        const value = this.value.toLowerCase();
+
+                        if (value === "mobile" || value === "wh-call" || value === "ol-meeting" || value === "in-meeting" || value === "out-meeting" || value === "appointment" || value === "seminar" || value === "e-mail" || value === "whatsapp") {
+                            talkTimeDiv.style.display = "block";
+                        } else {
+                            talkTimeDiv.style.display = "none";
+                            talkTimeDiv.querySelector('input').value = "";
+                        }
+                    });
+                });
+            }
+
+            function createSubServiceRow(serviceId, service, index) {
+                const subServiceRow = document.createElement('div');
+                subServiceRow.className = 'col-12';
+
+                const subServiceCard = document.createElement('div');
+                subServiceCard.className = 'mb-2';
+                subServiceCard.id = `sub_service_card_${serviceId}_${index}`;
+
+                const mainRow = document.createElement('div');
+                mainRow.id = `details_${serviceId}_${index}`;
+                mainRow.innerHTML = `
+            <div class="row align-items-center">
+                <div class="col-auto" style="min-width: 120px;">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input sub-service-checkbox" type="checkbox" 
+                               name="sub_services_${serviceId}[]" value="${service}" 
+                               id="sub_${serviceId}_${index}"
+                               data-service-id="${serviceId}"
+                               data-service-index="${index}"
+                               data-service-name="${service}">
+                        <label class="form-check-label" for="sub_${serviceId}_${index}" style="font-size: 10px;">${service}</label>
+                    </div>
+                </div>
+
+                <div class="col" style="display:none;" id="purpose_col_${serviceId}_${index}">
+                    <select name="purpose_${serviceId}_${index}" class="form-select form-select-xs" style="font-size: 10px;min-width: 70px;">
+                        <option value="">Purpose*</option>
+                        ${purposeOptions.map(purpose => `<option value="${purpose}">${purpose}</option>`).join('')}
+                    </select>
+                </div>
+
+                <div class="col" style="display:none;" id="grade_col_${serviceId}_${index}">
+                    <select name="grade_${serviceId}_${index}" class="form-select form-select-xs" style="font-size: 10px;">
+                        <option value="">Grade*</option>
+                        ${gradeOptions.map(grade => `<option value="${grade}">${grade}</option>`).join('')}
+                    </select>
+                </div>
+
+                <div class="col" style="display:none;" id="method_col_${serviceId}_${index}">
+                    <select name="method_${serviceId}_${index}" 
+                            class="form-select form-select-xs method-select"
+                            data-service-id="${serviceId}"
+                            data-service-index="${index}"
+                            style="font-size: 10px;">
+                        <option value="">Method*</option>
+                        ${methodOptions.map(method => `<option value="${method}">${method}</option>`).join('')}
+                    </select>
+                </div>
+
+                <div class="col" style="display:none;" id="comment_col_${serviceId}_${index}">
+                    <select name="comment_${serviceId}_${index}" class="form-select form-select-xs" style="font-size: 10px;">
+                        <option value="">Comment*</option>
+                        <option value="Introduction Message">Introduction Message</option>
+                        <option value="Introduction Call">Introduction Call</option>
+                        <option value="Promotion Shared">Promotion Shared</option>
+                        <option value="Promotion Discussion">Promotion Discussion</option>
+                        <option value="Follow-Up Scheduled">Follow-Up Scheduled</option>
+                        <option value="Quotation Sent">Quotation Sent</option>
+                        <option value="Quotation Revised">Quotation Revised</option>
+                        <option value="Quotation Approved">Quotation Approved</option>
+                        <option value="Invoice Sent">Invoice Sent</option>
+                        <option value="Awaiting Payment">Awaiting Payment</option>
+                        <option value="Invoice Overdue">Invoice Overdue</option>
+                    </select>
+                </div>
+
+                <div class="col" style="display:none;" id="nextdate_col_${serviceId}_${index}">
+                    <input type="datetime-local" class="form-control form-control-xs" 
+                           name="next_date_${serviceId}_${index}"
+                           style="font-size: 10px;"  placeholder="Next Reservation*" title="Next Reservation*">
+                </div>
+
+                <div class="col" style="display:none;" id="note_col_${serviceId}_${index}">
+                    <input type="text" name="note_${serviceId}_${index}" 
+                          class="form-control form-control-xs" 
+                          placeholder="Note*"
+                          style="font-size: 10px;">
+                </div>
+
+                <div class="col" style="display:none;" id="meeting_col_${serviceId}_${index}">
+                    <input type="file" class="form-control form-control-xs" 
+                           name="meeting_proof_${serviceId}_${index}[]" 
+                           accept="image/*" multiple
+                           style="font-size: 10px;">
+                </div>
+            </div>
+
+            <div class="row g-2 mt-2" id="talk_time_${serviceId}_${index}" style="display:none;">
+                <div class="col-auto">
+                    <input type="number" class="form-control form-control-xs" 
+                           name="talk_time_${serviceId}_${index}" 
+                           placeholder="Talk Time (Minutes)"
+                           style="font-size: 12px; width: 150px;">
+                </div>
+            </div>
+        `;
+
+                subServiceCard.appendChild(mainRow);
+                subServiceRow.appendChild(subServiceCard);
+
+                return subServiceRow;
+            }
+
+            function handleSubServiceChange(checkbox) {
+                const serviceId = checkbox.dataset.serviceId;
+                const serviceIndex = checkbox.dataset.serviceIndex;
+
+                const purposeCol = document.getElementById(`purpose_col_${serviceId}_${serviceIndex}`);
+                const gradeCol = document.getElementById(`grade_col_${serviceId}_${serviceIndex}`);
+                const methodCol = document.getElementById(`method_col_${serviceId}_${serviceIndex}`);
+                const commentCol = document.getElementById(`comment_col_${serviceId}_${serviceIndex}`);
+                const nextdateCol = document.getElementById(`nextdate_col_${serviceId}_${serviceIndex}`);
+                const noteCol = document.getElementById(`note_col_${serviceId}_${serviceIndex}`);
+                const meetingCol = document.getElementById(`meeting_col_${serviceId}_${serviceIndex}`);
+                const talkTimeDiv = document.getElementById(`talk_time_${serviceId}_${serviceIndex}`);
+
+                if (checkbox.checked) {
+                    purposeCol.style.display = 'block';
+                    gradeCol.style.display = 'block';
+                    methodCol.style.display = 'block';
+                    commentCol.style.display = 'block';
+                    nextdateCol.style.display = 'block';
+                    noteCol.style.display = 'block';
+                    meetingCol.style.display = 'block';
+                } else {
+                    purposeCol.style.display = 'none';
+                    gradeCol.style.display = 'none';
+                    methodCol.style.display = 'none';
+                    commentCol.style.display = 'none';
+                    nextdateCol.style.display = 'none';
+                    noteCol.style.display = 'none';
+                    meetingCol.style.display = 'none';
+                    talkTimeDiv.style.display = 'none';
+
+                    purposeCol.querySelector('select').value = '';
+                    gradeCol.querySelector('select').value = '';
+                    methodCol.querySelector('select').value = '';
+                    commentCol.querySelector('select').value = '';
+                    nextdateCol.querySelector('input').value = '';
+                    noteCol.querySelector('input').value = '';
+                    meetingCol.querySelector('input').value = '';
+                    if (talkTimeDiv.querySelector('input')) {
+                        talkTimeDiv.querySelector('input').value = '';
+                    }
+                }
+            }
+        });
+    </script>            
+                        
+            
+            <!-- Right bar overlay-->
+                                    <!-- Right bar overlay-->
+            <div class="rightbar-overlay"></div>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#subscribeModalView"
+                id="viewComplaint" hidden>Complaint</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#subscribeModalViewPenalty"
+                id="viewPenalty" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#todolistPending"
+                id="todolistPendingBtn" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#todolistPending_comm"
+                id="todolistPending_commBtn" hidden>Penalty</button>
+            <button type="button" class="text-center" data-bs-toggle="modal" data-bs-target="#ShowDailyPost"
+                id="ShowDailyPostId" hidden>ShowDailyPost</button>
+
+            <!-- toaster start --->
+        <div class="custom-toast-container position-fixed top-0 end-0 p-3" style="z-index: 1005;">
+
+            
+            
+            </div>
+
+
+            <!-- ✅ NEW Pending Tasks Toast -->
+            <!-- <div class="custom-toast-container position-fixed top-0 end-0 p-3" style="z-index: 1005;">
+                <div class="custom-toast">
+                <div class="custom-toast-header">
+                    <span class="custom-toast-icon">⚠️ <strong>Pending Task Alert</strong></span>
+                    <button class="custom-toast-close" onclick="removeToast(this)">✖</button>
+                </div>
+                <div class="custom-toast-body">
+                    <small>You have <strong class="text-primary">5</strong> pending tasks assigned.</small>
+                    <p>Please update their status to stop this alert.</p>
+                </div>
+            </div>
+    </div> -->
+
+            <script>
+                // ✅ Close toast
+                function removeToast(btn) {
+                    const toast = btn.closest('.custom-toast');
+                    if (toast) toast.remove();
+                }
+            </script>
+            <style>
+                /* Custom Toast Container */
+                .custom-toast-container {
+                    position: fixed;
+                    top: 0;
+                    right: 0;
+                    padding: 5px;
+                    max-width: 450px;
+                }
+
+                /* Individual Toast */
+                .custom-toast {
+                    background-color: #fff;
+                    border: 1px solid #ddd;
+                    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                    border-radius: 5px;
+                    margin-bottom: 5px;
+                    padding: 5px;
+                    animation: fadeIn 0.5s, fadeOut 0.5s 5s;
+                    opacity: 1;
+                    position: relative;
+                }
+
+                /* Toast Header */
+                .custom-toast-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: start;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+
+                /* Toast Icon */
+                .custom-toast-icon {
+                    margin-right: 10px;
+                    color: red;
+                }
+
+                /* Toast Close Button */
+                .custom-toast-close {
+                    background: none;
+                    border: none;
+                    color: gray;
+                    cursor: pointer;
+                    font-size: 14px;
+                }
+
+                /* Toast Body */
+                .custom-toast-body {
+                    font-size: 12px;
+                    color: #333;
+                    margin-top: 2px;
+                }
+
+                /* Fade Animations */
+                @keyframes fadeIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(-20px);
+                    }
+
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+
+                @keyframes fadeOut {
+                    from {
+                        opacity: 1;
+                    }
+
+                    to {
+                        opacity: 0;
+                    }
+                }
+            </style>
+
+
+            <!-- toaster end --->
+        <!-- For Project Delay Notifications -->
+<style>
+    
+    .tracking__wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      gap: 5px;
+      padding-block: 5px ;
+
+      .tracking__item {
+        --current-color: #fff;
+        --current-content-color: #000;
+        transition: color .25s ease-in-out;
+        position: relative;
+        z-index: 1;
+        /* display: flex; */
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        width: 65px;
+        gap: 5px;
+
+        /* dep-icon */
+        .item__icon {
+          background-color: var(--current-color);
+          --icon-size: 30px;
+          height: var(--icon-size);
+          width: var(--icon-size);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          margin: 5px auto;
+          border-radius: 50px;
+          box-shadow: 0px 0px 22px #b5b5b5;
+
+          .delay_num{
+            color: var(--current-content-color);
+            font-size: calc( var(--icon-size) / 2.5 );
+          }
+        }
+
+        /* dep details */
+        .item__details {
+          text-align: center;
+          background-color: #fff;
+
+          span {
+            line-height: 1;
+            display: block;
+            font-size: 10px;
+            font-weight: 600;
+          }
+        }
+
+        /* tool-tip */
+        .is__tooltip {
+          .item__tooltip_wrapper {
+            background-color: var(--current-color);
+            color: var(--current-content-color);
+            span {
+              border-color: var(--current-content-color);
+            }
+          }
+
+        }
+      }
+
+      .tracking__item.is__success {
+        --current-color: #198754;
+        --current-content-color: #fff;
+      }
+
+      .tracking__item.is__working {
+        --current-color: #ffc107;
+        --current-content-color: #000000;
+      }
+
+      .tracking__item.is__delay {
+        --current-color: #dc3545;
+        --current-content-color: #ffffff;
+      }
+
+      .tracking__item:nth-child(even) {
+        /* flex-direction: column-reverse; */
+        .is__tooltip {
+          /* bottom: unset;
+          top: calc(100% + 3px); */
+        }
+      }
+    }
+
+    .has__tolltip {
+      position: relative;
+
+      .is__tooltip {
+        position: absolute;
+        z-index: 999;
+        bottom: calc(100% + 3px);
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        text-wrap: nowrap;
+        opacity: 0;
+        visibility: hidden;
+        transition: all .25s ease-in-out;
+
+        .item__tooltip_wrapper {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 2px 5px;
+          border-radius: 3px;
+          box-shadow: 0px 0px 10px #b5b5b5;
+          span {
+            font-size: 10px;
+            font-weight: 500;
+            margin: 0 5px 0 0;
+            padding: 0 5px 0 0;
+            border-right: 1px solid #fff;
+            cursor: pointer;
+          }
+
+          span:last-child {
+            margin: 0;
+            padding: 0;
+            border: 0;
+          }
+        }
+      }
+    }
+
+    .has__tolltip:hover {
+      .is__tooltip {
+        opacity: 1;
+        visibility: visible;
+      }
+    }
+
+    [title] {
+      font-size: 12px;
+      font-family: 'Poppins', Arial, Helvetica, sans-serif;
+      font-weight: 500;
+    }
+</style> 
+
+<!-- commission verify model -->
+<div class="modal fade" id="project-delay-popup" tabindex="-1" aria-labelledby="subscribeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content">
+            <div class="modal-header border-bottom-0">
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-center mb-2">
+                    <div class="avatar-md mx-auto mb-2">
+                        <div class="avatar-title bg-light rounded-circle text-primary h1">
+                            <i class="mdi mdi-email-open"></i>
+                        </div>
+                    </div>
+                    <div class="row justify-content-center">
+                        <div class="col-xl-12">
+                            <h4 class="text-primary">Project Delay!</h4>
+                            <p class="text-muted font-size-14">Please Confirm Your Project.</p>
+
+                            <div id="addChgFillterCom4" data-simplebar style="max-height:305px;" class="pt-4">
+
+                                
+
+                            </div>
+
+
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- end modal -->
+
+    <script>
+    var isDelayed = null;
+    document.addEventListener("DOMContentLoaded", function () {
+        if (isDelayed) {
+            var myModal = new bootstrap.Modal(document.getElementById('project-delay-popup'));
+            myModal.show();
+        }
+    });
+    </script>              
+         <footer class="footer">
+                    <div class="container-fluid">
+                        <div class="row">
+                            <div class="col-sm-6">
+                                <script>document.write(new Date().getFullYear())</script> © Web Excels.
+                            </div>
+                            <div class="col-sm-6">
+                                <div class="text-sm-end d-none d-sm-block">
+                                    Design & Develop by Web Excels
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </footer>
+      
+        <!-- JAVASCRIPT -->
+          
+        <script src="assets/libs/jquery/jquery.min.js"></script>
+        <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+        <script src="assets/libs/metismenu/metisMenu.min.js"></script>
+        <script src="assets/libs/simplebar/simplebar.min.js"></script>
+        <script src="assets/libs/node-waves/waves.min.js"></script>
+        <script src="assets/libs/apexcharts/apexcharts.min.js"></script>
+        <script src="assets/js/pages/dashboard.init.js"></script>
+        <script src="assets/js/app.js"></script>
+
+        <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+        <script src="assets/libs/metismenu/metisMenu.min.js"></script>
+        <script src="assets/libs/simplebar/simplebar.min.js"></script>
+        <script src="assets/libs/node-waves/waves.min.js"></script>
+
+        <script src="assets/libs/select2/js/select2.min.js"></script>
+        <script src="assets/libs/bootstrap-datepicker/js/bootstrap-datepicker.min.js"></script>
+        <script src="assets/libs/spectrum-colorpicker2/spectrum.min.js"></script>
+        <script src="assets/libs/bootstrap-timepicker/js/bootstrap-timepicker.min.js"></script>
+        <script src="assets/libs/bootstrap-touchspin/jquery.bootstrap-touchspin.min.js"></script>
+        <script src="assets/libs/bootstrap-maxlength/bootstrap-maxlength.min.js"></script>
+        <script src="assets/libs/%40chenfengyuan/datepicker/datepicker.min.js"></script>
+            <!-- form advanced init -->
+            <script src="assets/libs/%40chenfengyuan/datepicker/datepicker.min.js"></script>
+            <script src="assets/js/pages/form-advanced.init.js"></script>
+            <script src="assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+     <!-- Responsive Table js -->
+        <script src="assets/libs/admin-resources/rwd-table/rwd-table.min.js"></script>
+        <!-- Init js -->
+        <script src="assets/js/pages/table-responsive.init.js"></script>
+            <!-- Required datatable js -->
+        <script src="assets/libs/datatables.net/js/jquery.dataTables.min.js"></script>
+        <script src="assets/libs/datatables.net-bs4/js/dataTables.bootstrap4.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/dataTables.buttons.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons-bs4/js/buttons.bootstrap4.min.js"></script>
+        <script src="assets/libs/jszip/jszip.min.js"></script>
+        <script src="assets/libs/pdfmake/build/pdfmake.min.js"></script>
+        <script src="assets/libs/pdfmake/build/vfs_fonts.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.html5.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.print.min.js"></script>
+        <script src="assets/libs/datatables.net-buttons/js/buttons.colVis.min.js"></script>
+                <!-- Responsive examples -->
+        <script src="assets/libs/datatables.net-responsive/js/dataTables.responsive.min.js"></script>
+        <script src="assets/libs/datatables.net-responsive-bs4/js/responsive.bootstrap4.min.js"></script>
+                    <!-- Datatable init js -->
+        <script src="assets/js/pages/datatables.init.js"></script> 
+        <script src="assets/js/pages/form-validation.init.js"></script>   
+
+        <script src="assets/libs/admin-resources/rwd-table/rwd-table.min.js"></script>
+                <!-- toastr plugin -->
+        <script src="assets/libs/toastr/build/toastr.min.js"></script>
+        <script src="assets/js/pages/toastr.init.js"></script>
+             <!-- form repeater js -->
+        <script src="assets/libs/jquery.repeater/jquery.repeater.min.js"></script>
+        <script src="assets/js/pages/form-repeater.int.js"></script>
+        <script src="assets/js/sweetalert.min.js"></script>
+        <script src="assets/libs/magnific-popup/jquery.magnific-popup.min.js"></script>
+        <script src="assets/js/pages/lightbox.init.js"></script>  
+        <script src="assets/js/pages/teamchartdata.init.js"></script>
+                 <!-- Ion Range Slider-->
+        <script src="assets/libs/ion-rangeslider/js/ion.rangeSlider.min.js"></script>
+         <script src="assets/libs/bootstrap-editable/js/index.js"></script>
+		<script src="assets/js/pages/form-xeditable.init.js"></script>    
+
+         <!-- echarts js -->
+        <!-- echarts init -->
+        <script src="assets/js/pages/echarts.init.js"></script>
+          <!-- <script src="assets/js/pages/form-file-upload.init.js"></script>  -->
+
+        <script>
+            $(document).on('click', '.action-button', function () {
+                const $button = $(this); // The clicked button
+                const $input = $button.next('input'); // Corresponding hidden input
+
+                // Toggle the selected state
+                $button.toggleClass('selected');
+
+                // Enable or disable the hidden input
+                if ($button.hasClass('selected')) {
+                    $input.prop('disabled', false).val('Yes'); // Enable input
+                } else {
+                    $input.prop('disabled', true).val('No'); // Disable input
+                }
+            });
+
+
+            function notification_Success(text) {
+                toastr["success"](text)
+                toastr.options = {
+                    "closeButton": false,
+                    "debug": false,
+                    "newestOnTop": true,
+                    "progressBar": false,
+                    "positionClass": "toast-top-right",
+                    "preventDuplicates": false,
+                    "onclick": null,
+                    "showDuration": 300,
+                    "hideDuration": 1000,
+                    "timeOut": 5000,
+                    "extendedTimeOut": 1000,
+                    "showEasing": "swing",
+                    "hideEasing": "linear",
+                    "showMethod": "fadeIn",
+                    "hideMethod": "fadeOut"
+                }
+            }
+
+            function notification_error(text) {
+                toastr["error"](text)
+                toastr.options = {
+                    "closeButton": false,
+                    "debug": false,
+                    "newestOnTop": false,
+                    "progressBar": false,
+                    "positionClass": "toast-top-right",
+                    "preventDuplicates": false,
+                    "onclick": null,
+                    "showDuration": 300,
+                    "hideDuration": 1000,
+                    "timeOut": 5000,
+                    "extendedTimeOut": 1000,
+                    "showEasing": "swing",
+                    "hideEasing": "linear",
+                    "showMethod": "fadeIn",
+                    "hideMethod": "fadeOut"
+                }
+            }
+
+            function yesResolved(id, dep) {
+                var text = "Your Request Is Accepted";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        com_plain_id: id,
+                        com_plain_dep: dep
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom').load(' #addChgFillterCom');
+                    }
+                });
+            }
+
+            function yesConfirmPenalty(id) {
+                var text = "Your Request Is Accepted";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_penalty_id: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom2').load(' #addChgFillterCom2');
+                    }
+                });
+            }
+
+            function yesConfirmTodoList(id) {
+                var text = "You Successfully Received Task";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_todo_list_by_partci_id: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom3').load(' #addChgFillterCom3');
+                    }
+                });
+            }
+
+            $(document).ready(function () {
+                // $(".form-select").select2({ width: '100%' }); 
+                $('.select2-container').css('width', '100%');
+            });
+
+            function delete_table_status(id, table, relod_id) {
+                var text = "You successfully delete this item";
+                var result = confirm("Are you sure you want to delete this item?");
+                if (result) {
+                    // User clicked OK
+                    $.ajax({
+                        type: 'post',
+                        url: 'layouts/func.php',
+                        async: false,
+                        data: {
+                            "del_table_status_id": id,
+                            "del_table": table,
+                        },
+                        success: function () {
+                            notification_error(text);
+                            $('#' + relod_id).load(' #' + relod_id);
+                        }
+                    });
+                    // Perform the delete action here
+                }
+
+            }
+
+            function delete_table_dynamic_row_id(id, table, relod_id) {
+                var text = "You successfully delete this item";
+                var result = confirm("Are you sure you want to delete this item?");
+                if (result) {
+                    // User clicked OK
+                    $.ajax({
+                        type: 'post',
+                        url: 'layouts/func.php',
+                        async: false,
+                        data: {
+                            "delete_dynamic_id": id,
+                            "del_table": table,
+                        },
+                        success: function () {
+                            notification_error(text);
+                            $('#' + relod_id).load(' #' + relod_id);
+                        }
+                    });
+                    // Perform the delete action here
+                }
+
+            }
+
+            function yesConfirmComm(id) {
+                var text = "You Successfully Confirm";
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        confim_commission_id_pop: id,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom4').load(' #addChgFillterCom4');
+                    }
+                });
+            }
+            // Function to remove a toast
+            function removeToastSequentially(toast) {
+                toast.style.animation = 'fadeOut 0.5s';
+                setTimeout(() => {
+                    toast.remove(); // Remove after fade-out
+                }, 500);
+            }
+
+            // Function to display toasts one by one
+            function showToastsSequentially() {
+                const toasts = document.querySelectorAll('.custom-toast');
+                let delay = 0;
+
+                toasts.forEach((toast, index) => {
+                    setTimeout(() => {
+                        toast.style.animation = 'fadeIn 0.5s';
+                        toast.style.opacity = 1; // Ensure the toast is visible
+
+                        // Automatically remove toast after its duration
+                        setTimeout(() => {
+                            removeToastSequentially(toast);
+                        }, 4000); // Duration for each toast before removal
+                    }, delay);
+
+                    delay += 5000; // Delay between displaying each toast
+                });
+            }
+            document.addEventListener("click", function (e) {
+                if (e.target.classList.contains("custom-toast-close")) {
+                    const toast = e.target.closest('.custom-toast');
+                    removeToastSequentially(toast);
+                }
+            });
+            // Trigger the function after the DOM is loaded
+            document.addEventListener("DOMContentLoaded", function () {
+                showToastsSequentially();
+            });
+
+
+            function yesConfirmPenalty_social(id, platForm, num) {
+                var text = "Feedback Added";
+                var likes = $('#likes-' + num).val();
+                var comment = $('#comment-' + num).val();
+                var share = $('#share-' + num).val();
+                $.ajax({
+                    url: "layouts/func.php",
+                    method: "POST",
+                    data: {
+                        social_media_feeback: id,
+                        platForm: platForm,
+                        likes: likes,
+                        comment: comment,
+                        share: share,
+                    },
+                    success: function (data) {
+                        notification_Success(text);
+                        $('#addChgFillterCom2_social0').load(' #addChgFillterCom2_social0');
+                    }
+                });
+            }
+
+            // Function to load a section dynamically
+            async function loadSection(sectionId, url) {
+                const container = document.getElementById(sectionId);
+                $(container).css({
+                    opacity: 0.5
+                });
+                try {
+                    const response = await fetch(url);
+                    if (response.ok) {
+                        const html = await response.text();
+                        container.innerHTML = html;
+                        $(container).css({
+                            opacity: 1
+                        });
+                    } else {
+                        container.innerHTML = `<p>Error loading section: ${response.status}</p>`;
+                    }
+                } catch (error) {
+                    container.innerHTML = `<p>Error: ${error.message}</p>`;
+                }
+            }
+        </script>
+        <script>
+            $(document).ready(function () {
+                // Bind the cut, copy, and paste events
+                $('.block_copy').on("cut copy paste", function (e) {
+                    e.preventDefault(); // Prevent default behavior
+                    alert('Cut, copy, and paste are disabled for this field.');
+                });
+
+                // Prevent text selection for additional security
+                $('.block_copy').on('selectstart', function (e) {
+                    e.preventDefault();
+                });
+            });
+        </script>
+        <script>
+            function removeToast(button) {
+                const toast = button.closest('.custom-toast');
+                if (toast) {
+                    toast.remove();
+                }
+
+                checkToastVisibility();
+            }
+
+            function closeAllToasts() {
+                document.querySelectorAll('.custom-toast').forEach(function (toast) {
+                    toast.remove();
+                });
+
+                checkToastVisibility();
+            }
+
+            function checkToastVisibility() {
+                const remainingToasts = document.querySelectorAll('.custom-toast');
+                const toastContainer = document.querySelector('.custom-toast-container');
+                const closeBar = document.querySelector('.toast-close-all-bar');
+
+                if (remainingToasts.length === 0) {
+                    if (toastContainer) toastContainer.style.display = 'none';
+                    if (closeBar) closeBar.style.display = 'none';
+                }
+            }
+        </script>
+</body>
+
+
+</html>

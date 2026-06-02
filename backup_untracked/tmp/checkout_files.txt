@@ -1,0 +1,20 @@
+﻿commit 6b25cad7e046d4209d1d62be23257d188be5a102
+Merge: bdda94a baa9c1f
+Author: AL RAFIO TRADER <alrafiotrader@example.com>
+Date:   Mon Mar 9 18:54:09 2026 +0500
+
+    Merged product-posting-recovery into bilal
+
+client/src/App.tsx
+client/src/components/app-sidebar.tsx
+client/src/index.css
+client/src/pages/drm/permission.tsx
+client/src/pages/lead-pools.tsx
+client/src/pages/super-admin-dashboard.tsx
+drizzle.config.ts
+server/account-routes.ts
+server/dashboard-routes.ts
+server/repositories/hod.repository.ts
+server/routes.ts
+server/utils/role-utils.ts
+shared/schema.ts

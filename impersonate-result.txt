@@ -1,0 +1,24 @@
+Test ran at: 2026-03-05T18:40:00.275Z
+
+LOGIN status: 200
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI1MTJhOGJlNC1lNzhjLTRmN2QtYWZiYi04YzY3NDAwMDdiYTUiLCJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwicm9sZUlkIjoiYWRtaW4iLCJyb2xlcyI6WyJhZG1pbiJdLCJhY3RpdmVSb2xlSWQiOiJhZG1pbiIsImJyYW5jaCI6IiIsImNvdW50cnkiOiIiLCJpYXQiOjE3NzI3MzYwMDAsImV4cCI6MTc3MzM0MDgwMH0.npuJvv8v0b0JNTLfGvAbKLsuO5Uobr2SZNoyDm11TdU",
+  "user": {
+    "id": "512a8be4-e78c-4f7d-afbb-8c6740007ba5",
+    "fullName": "Admin User",
+    "email": "admin@example.com",
+    "role": "admin",
+    "roles": [
+      "admin"
+    ],
+    "activeRoleId": "admin"
+  }
+}
+
+IMPERSONATE status: 200
+{
+  "success": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI1MTJhOGJlNC1lNzhjLTRmN2QtYWZiYi04YzY3NDAwMDdiYTUiLCJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwicm9sZUlkIjoic2FsZXNfZXhlY3V0aXZlIiwiYWN0aXZlUm9sZUlkIjoic2FsZXNfZXhlY3V0aXZlIiwicm9sZXMiOltdLCJicmFuY2giOiJIUSIsImNvdW50cnkiOiJVQUUiLCJpbXBlcnNvbmF0b3JJZCI6IjUxMmE4YmU0LWU3OGMtNGY3ZC1hZmJiLThjNjc0MDAwN2JhNSIsInR5cGUiOiJpbXBlcnNvbmF0aW9uIiwiaWF0IjoxNzcyNzM2MDAyLCJleHAiOjE3NzMzNDA4MDJ9.ULyP_JjCbuOzzwjbV4r7HBqsTOK57pNO3YF5CAAOB3g",
+  "actingRole": "sales_executive",
+  "actingAs": "admin@example.com"
+}
