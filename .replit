@@ -1,4 +1,4 @@
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "python-3.11"]
 [nix]
 channel = "stable-25_05"
 
@@ -26,9 +26,16 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "env -u DATABASE_URL -u PGHOST -u PGPORT -u PGUSER -u PGPASSWORD -u PGDATABASE npm run dev"
+args = "npm run dev"
 waitForPort = 5000
 
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+JWT_SECRET = "f99a860b121627ebd035123095e6ae0548c54eefb91dcea0e05ed4bb0203547a341b050877d0f58d97fe8173dd899d59"
+DATABASE_SSL = "false"
+DEBUG_ERRORS = "true"

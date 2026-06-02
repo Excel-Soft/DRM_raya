@@ -18,8 +18,10 @@ function validateDbHost(host: string): void {
   const hasDomain = host.includes(".");
   // Render internal Postgres hosts (internal service name without dot), e.g. dpg-xxxxxx-a
   const looksRenderInternal = /^dpg-[a-z0-9]+/i.test(host);
+  // Replit internal Postgres proxy uses a single-label host (e.g. "helium")
+  const looksReplitInternal = host === "helium" || host === process.env.PGHOST;
 
-  if (!host || (!looksLocal && !hasDomain && !looksRenderInternal)) {
+  if (!host || (!looksLocal && !hasDomain && !looksRenderInternal && !looksReplitInternal)) {
     throw new Error(
       `Invalid DB host "${host}". Set DATABASE_URL (or DB_HOST) with the full hostname, e.g. *.render.com`,
     );
