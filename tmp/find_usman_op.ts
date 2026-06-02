@@ -1,0 +1,1 @@
+import { pool } from '../server/db'; async function run() { const r = await pool.query('select * from drm.opportunities where customer_id=\'e7599469-3635-4218-9e05-3a9e6430b5f4\''); console.log(r.rows); process.exit(0); } run();

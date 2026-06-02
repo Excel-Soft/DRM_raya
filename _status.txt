@@ -1,0 +1,24 @@
+﻿ M client/src/App.tsx
+ M client/src/components/app-sidebar.tsx
+ M client/src/pages/loan-request.tsx
+ M client/src/pages/overtime-submission.tsx
+ M client/src/pages/pms-pending-approvals.tsx
+ M client/src/pages/pms-running-projects.tsx
+ M client/src/pages/pms-status.tsx
+ M client/src/pages/pms-task-history.tsx
+ M client/src/pages/pms-tasks.tsx
+ M server/repositories/service-pool.repository.ts
+?? _diff.txt
+?? _status.txt
+?? client/src/pages/drm/add-penalty.tsx
+?? client/src/pages/drm/all-social-accounts.tsx
+?? client/src/pages/drm/commission-verification.tsx
+?? client/src/pages/drm/increment.tsx
+?? client/src/pages/drm/late-coming.tsx
+?? client/src/pages/drm/monthly-complete-project.tsx
+?? client/src/pages/drm/overall-report.tsx
+?? client/src/pages/drm/performance.tsx
+?? client/src/pages/drm/pms-setting.tsx
+?? client/src/pages/drm/today-post.tsx
+?? client/src/pages/pms-project-report.tsx
+?? client/src/pages/seo-smm-manager-dashboard.tsx

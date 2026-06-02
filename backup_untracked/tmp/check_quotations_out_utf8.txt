@@ -1,0 +1,26 @@
+﻿[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=5432 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[
+  { column_name: 'id', data_type: 'uuid' },
+  { column_name: 'customer_id', data_type: 'text' },
+  { column_name: 'lead_id', data_type: 'text' },
+  { column_name: 'account_holder', data_type: 'text' },
+  { column_name: 'company', data_type: 'text' },
+  { column_name: 'email', data_type: 'text' },
+  { column_name: 'contact', data_type: 'text' },
+  { column_name: 'delivery_time', data_type: 'text' },
+  { column_name: 'gst_percent', data_type: 'numeric' },
+  { column_name: 'discount_type', data_type: 'text' },
+  { column_name: 'discount_value', data_type: 'numeric' },
+  { column_name: 'sub_amount', data_type: 'numeric' },
+  { column_name: 'gst_amount', data_type: 'numeric' },
+  { column_name: 'total_amount', data_type: 'numeric' },
+  { column_name: 'grand_total', data_type: 'numeric' },
+  { column_name: 'pkr_total', data_type: 'numeric' },
+  { column_name: 'payment_term_percent', data_type: 'numeric' },
+  { column_name: 'save_status', data_type: 'text' },
+  { column_name: 'note', data_type: 'text' },
+  { column_name: 'amount', data_type: 'numeric' },
+  { column_name: 'created_by', data_type: 'text' },
+  { column_name: 'created_at', data_type: 'timestamp with time zone' },
+  { column_name: 'updated_at', data_type: 'timestamp with time zone' }
+]

@@ -1,0 +1,18 @@
+﻿[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=5432 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[
+  { column_name: 'id', data_type: 'uuid' },
+  { column_name: 'customer_id', data_type: 'uuid' },
+  { column_name: 'name', data_type: 'text' },
+  { column_name: 'description', data_type: 'text' },
+  { column_name: 'status', data_type: 'text' },
+  { column_name: 'start_date', data_type: 'date' },
+  { column_name: 'end_date', data_type: 'date' },
+  { column_name: 'created_by', data_type: 'uuid' },
+  { column_name: 'is_deleted', data_type: 'boolean' },
+  { column_name: 'created_at', data_type: 'timestamp with time zone' },
+  { column_name: 'updated_at', data_type: 'timestamp with time zone' },
+  { column_name: 'owner_user_id', data_type: 'uuid' },
+  { column_name: 'workspace', data_type: 'text' },
+  { column_name: 'invoice_id', data_type: 'uuid' },
+  { column_name: 'notes', data_type: 'text' }
+]

@@ -1,0 +1,1 @@
+import { pool } from './server/db'; async function main() { const res = await pool.query('select column_name from information_schema.columns where table_name=''overtime_records'''); console.log(res.rows); process.exit(0); } main();

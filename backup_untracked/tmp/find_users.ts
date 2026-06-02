@@ -1,0 +1,1 @@
+﻿import { pool } from './server/db'; async function run() { const res = await pool.query('SELECT id, email, role, full_name FROM drm.users WHERE role IN (''account_manager'', ''admin'', ''sales_executive'') LIMIT 10'); console.log(res.rows); } run().finally(() => process.exit(0));

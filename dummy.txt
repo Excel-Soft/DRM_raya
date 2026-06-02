@@ -1,0 +1,6 @@
+import { projectsRepository } from "./server/repositories/projects.repository.ts";
+import { projectApprovalsRepository } from "./server/repositories/project-approvals.repository.ts";
+import pkg from 'pg';
+const { pool } = pkg; // This won't work because of imports
+
+// I'll use a simpler script that mimics the repository logic but with logging

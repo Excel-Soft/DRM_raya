@@ -1,0 +1,41 @@
+[2026-05-25T17:49:08.900Z] USER: dd_manager MESSAGE: New documents and details uploaded for project 'honda • talha'. Pending verification.
+[2026-05-25T17:49:09.160Z] USER: b6d20d05-77d2-4067-898f-3e32cb5954cb MESSAGE: New documents and details uploaded for project 'honda • talha'. Pending verification.
+[2026-05-25T17:49:09.404Z] USER: product_posting_manager MESSAGE: New Minisite project requirements uploaded for 'honda • talha'. Centrally tracked.
+[2026-05-25T17:49:09.669Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: New Minisite project requirements uploaded for 'honda • talha'. Centrally tracked.
+[2026-05-25T17:52:01.123Z] USER: dd_manager MESSAGE: New documents and details uploaded for project 'honda • talha'. Pending verification.
+[2026-05-25T17:52:01.380Z] USER: b6d20d05-77d2-4067-898f-3e32cb5954cb MESSAGE: New documents and details uploaded for project 'honda • talha'. Pending verification.
+[2026-05-25T17:52:01.622Z] USER: product_posting_manager MESSAGE: New Minisite project requirements uploaded for 'honda • talha'. Centrally tracked.
+[2026-05-25T17:52:01.873Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: New Minisite project requirements uploaded for 'honda • talha'. Centrally tracked.
+[2026-05-25T18:37:46.769Z] USER: 4fec24fc-8c7a-4066-8126-578f66164d00 MESSAGE: Your document for project was approved and is now ready for task assignment.
+[2026-05-25T18:37:47.179Z] USER: product_posting_manager MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-25T18:37:47.487Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-25T19:19:57.634Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: A Product Posting task has been assigned to you for project 'ali baba • talha'.
+[2026-05-25T19:20:01.763Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: A Product Posting task has been assigned to you for project 'ali baba • talha'.
+[2026-05-25T19:43:46.848Z] USER: 4fec24fc-8c7a-4066-8126-578f66164d00 MESSAGE: Your document for project was approved and is now ready for task assignment.
+[2026-05-25T19:43:47.153Z] USER: product_posting_manager MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-25T19:43:47.409Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-25T20:21:28.083Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: URGENT: Your task 'BASIC WEBSITE' is now OVERDUE! Please request an extension or complete it.
+[2026-05-25T20:21:28.389Z] USER: PRODUCT_POSTING_MANAGER_ROLE MESSAGE: Task 'BASIC WEBSITE' is now overdue.
+[2026-05-25T20:21:30.281Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: URGENT: Your task 'BASIC WEBSITE' is now OVERDUE! Please request an extension or complete it.
+[2026-05-25T20:21:30.540Z] USER: PRODUCT_POSTING_MANAGER_ROLE MESSAGE: Task 'BASIC WEBSITE' is now overdue.
+[2026-05-29T13:41:59.784Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: A Product Posting task has been assigned to you for project 'honda • talha'.
+[2026-05-29T14:39:06.286Z] USER: 4fec24fc-8c7a-4066-8126-578f66164d00 MESSAGE: Your document for project was approved and is now ready for task assignment.
+[2026-05-29T14:39:06.527Z] USER: product_posting_manager MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-29T14:39:06.771Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-05-29T14:39:49.328Z] USER: 64b855c8-1136-4d7a-bc8c-17f172e65199 MESSAGE: A Listing Page task has been assigned to you for project 'honda • talha'.
+[2026-05-29T16:42:29.867Z] USER: dd_manager MESSAGE: Overtime requested for task "LOGO DESIGN". Reason: sdfsfsdfsdfsdf. Minutes: 60
+[2026-05-29T16:42:30.139Z] USER: b6d20d05-77d2-4067-898f-3e32cb5954cb MESSAGE: Overtime requested for task "LOGO DESIGN". Reason: sdfsfsdfsdfsdf. Minutes: 60
+[2026-05-29T16:55:59.597Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: Overtime requested for a Product Posting task. Reason: sdfuawheuif
+[2026-06-01T16:25:23.141Z] USER: e423f3e0-28bd-4dd6-8eab-7e906b068e45 MESSAGE: A Listing Page task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T16:25:25.197Z] USER: e423f3e0-28bd-4dd6-8eab-7e906b068e45 MESSAGE: A Listing Page task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T16:25:26.418Z] USER: e423f3e0-28bd-4dd6-8eab-7e906b068e45 MESSAGE: A Listing Page task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T16:25:26.992Z] USER: e423f3e0-28bd-4dd6-8eab-7e906b068e45 MESSAGE: A Listing Page task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T16:25:27.233Z] USER: e423f3e0-28bd-4dd6-8eab-7e906b068e45 MESSAGE: A Listing Page task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T18:42:26.165Z] USER: 9ea6656a-bed3-4549-b60d-cba847c1c5ab MESSAGE: Your document for project was approved and is now ready for task assignment.
+[2026-06-01T18:42:26.409Z] USER: product_posting_manager MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-06-01T18:42:26.669Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: A project document was approved and is now ready for task assignment.
+[2026-06-01T18:43:36.915Z] USER: 3fb2144e-3858-49f3-892b-c113c9d9f898 MESSAGE: A Alibaba Minisite task has been assigned to you for project 'LegerPro • Bilal'.
+[2026-06-01T19:06:50.708Z] USER: product_posting_manager MESSAGE: Task 'Alibaba Minisite' has been submitted for manager completion review.
+[2026-06-01T19:06:50.957Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: Task 'Alibaba Minisite' has been submitted for manager completion review.
+[2026-06-01T19:07:05.535Z] USER: product_posting_manager MESSAGE: Task 'Alibaba Minisite' has been submitted for manager completion review.
+[2026-06-01T19:07:05.782Z] USER: 77278049-eece-4171-a5b8-289e2a99bc23 MESSAGE: Task 'Alibaba Minisite' has been submitted for manager completion review.

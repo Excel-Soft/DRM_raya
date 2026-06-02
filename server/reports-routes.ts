@@ -1,0 +1,1445 @@
+import { Router, type Express } from "express";
+import { getDepartmentFilterUserIds } from "./dashboard-routes";
+import { normalizeRole } from "./utils/role-utils";
+import { db } from "./db";
+import { z } from "zod";
+import {
+  loanRequests,
+  customers,
+  opportunities,
+  followUps,
+  vasProgressSnapshots,
+  users,
+  userActivities,
+  gmEntries,
+  invoices,
+  refundGmEntries,
+  ledgerEntries,
+  insertBvReportSchema,
+  insertLoanReportSchema,
+  insertVasReportSchema,
+  insertGmReportSchema,
+  loanReports,
+  vasReports,
+  gmReports,
+  officeVas,
+  bvEntries,
+  productPostingInvoices,
+} from "@shared/schema";
+import { eq, and, gte, lte, sql, count, ilike, or, desc, inArray } from "drizzle-orm";
+import { bvReportsRepository, ensureBvReportsSchema } from "./repositories/bv-reports.repository";
+import {
+  loanReportsRepository,
+  vasReportsRepository,
+  gmReportsRepository,
+} from "./repositories/generic-report.repository";
+import { isManagerialRole } from "./utils/role-utils";
+
+const router = Router();
+
+type ReportType = "loan" | "vas" | "gm" | "bv";
+
+interface ReportMetrics {
+  totalTasks: number;
+  valueOfServiceSold: number;
+  successRate: number;
+  followUpsCompleted: number;
+  missedLeads: number;
+}
+
+interface ReportData {
+  type: ReportType;
+  dateRange: { from: string; to: string };
+  metrics: ReportMetrics;
+  chartData: { date: string; value: number; count: number }[];
+  details: any[];
+  totals?: {
+    totalAdvance: number;
+    totalRemaining: number;
+  };
+  meta: {
+    from: string;
+    to: string;
+    timezone: string;
+  };
+}
+
+const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const clampPercentage = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function parseDateRange(from?: string, to?: string) {
+  const defaultTo = endOfDay(new Date());
+  const defaultFrom = startOfDay(new Date(defaultTo));
+  defaultFrom.setDate(defaultFrom.getDate() - 30);
+
+  const parsedFrom = from ? startOfDay(new Date(from)) : defaultFrom;
+  const parsedTo = to ? endOfDay(new Date(to)) : defaultTo;
+
+  if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
+    throw new Error("Invalid date range");
+  }
+
+  const fromDate = parsedFrom <= parsedTo ? parsedFrom : parsedTo;
+  const toDate = parsedFrom <= parsedTo ? parsedTo : parsedFrom;
+
+  return {
+    fromDate,
+    toDate,
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+  };
+}
+
+const bvPayloadSchema = insertBvReportSchema;
+const bvUpdateSchema = bvPayloadSchema.partial();
+const loanPayloadSchema = insertLoanReportSchema.extend({
+  reportDate: z.union([z.string(), z.date()]).optional(),
+});
+const vasPayloadSchema = insertVasReportSchema.extend({
+  reportDate: z.union([z.string(), z.date()]).optional(),
+  valueSold: z.coerce.number().min(0).default(0),
+  successRate: z.coerce.number().min(0).max(100).default(0),
+  totalTasks: z.coerce.number().min(0).default(0),
+  followUpsDone: z.coerce.number().min(0).default(0),
+  missedLeads: z.coerce.number().min(0).default(0),
+});
+const gmPayloadSchema = insertGmReportSchema.extend({
+  reportDate: z.union([z.string(), z.date()]).optional(),
+});
+
+router.post("/bv-reports", async (req, res) => {
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const parsed = bvPayloadSchema.parse(req.body);
+    console.debug(`[${requestId}] create bv-report`, {
+      userId: req.user.userId,
+      customerId: parsed.customerId,
+      reportDate: parsed.reportDate?.toISOString?.(),
+      status: parsed.status,
+      titleLength: parsed.title?.length,
+    });
+    const report = await bvReportsRepository.create(req.user.userId, {
+      ...parsed,
+      reportDate: parsed.reportDate ?? new Date(),
+    });
+    return res.status(201).json({ success: true, data: report });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+    }
+    if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER" || error?.code === "23503") {
+      return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+    }
+    console.error(`Failed to create BV report [${requestId}]`, {
+      requestId,
+      message: error?.message,
+      code: error?.code,
+      detail: error?.detail,
+      stack: error?.stack,
+    });
+    const status = error?.code === "ECONNREFUSED" ? 503 : 500;
+    return res.status(status).json({ error: "Failed to create BV report", code: error?.code });
+  }
+});
+
+router.get("/bv-reports", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const from = req.query.from as string | undefined;
+    const to = req.query.to as string | undefined;
+    const { fromDate, toDate } = parseDateRange(from, to);
+    const userId = isManagerialRole(req.user.roleId) ? null : req.user.userId;
+    const items = await bvReportsRepository.list(userId, fromDate, toDate);
+    return res.json({ success: true, items });
+  } catch (error) {
+    console.error("Failed to list BV reports", error);
+    return res.status(500).json({ error: "Failed to list BV reports" });
+  }
+});
+
+router.get("/bv-reports/:id", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const report = await bvReportsRepository.getById(req.user.userId, req.params.id);
+    if (!report) return res.status(404).json({ error: "Not found" });
+    return res.json({ success: true, data: report });
+  } catch (error) {
+    console.error("Failed to fetch BV report", error);
+    return res.status(500).json({ error: "Failed to fetch BV report" });
+  }
+});
+
+router.put("/bv-reports/:id", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    const parsed = bvUpdateSchema.parse(req.body);
+    const updated = await bvReportsRepository.update(req.user.userId, req.params.id, parsed);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    return res.json({ success: true, data: updated });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+    }
+    if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER" || error?.code === "23503") {
+      return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+    }
+    console.error("Failed to update BV report", error);
+    return res.status(500).json({ error: "Failed to update BV report" });
+  }
+});
+
+function buildReportCrud(path: string, repo: any, schema: z.AnyZodObject) {
+  const baseNumeric: Record<string, z.ZodTypeAny> = {
+    totalTasks: z.coerce.number().min(0).default(0),
+    valueSold: z.coerce.number().min(0).default(0),
+    successRate: z.coerce.number().min(0).max(100).default(0),
+    followUpsDone: z.coerce.number().min(0).default(0),
+    missedLeads: z.coerce.number().min(0).default(0),
+  };
+  const numericExtras: Record<string, z.ZodTypeAny> = { ...baseNumeric };
+  if (path === "loan-reports") {
+    numericExtras.totalApplications = z.coerce.number().min(0).default(0);
+    numericExtras.approvedLoans = z.coerce.number().min(0).default(0);
+    numericExtras.rejectedLoans = z.coerce.number().min(0).default(0);
+    numericExtras.pendingLoans = z.coerce.number().min(0).default(0);
+    numericExtras.totalLoanAmount = z.coerce.number().min(0).default(0);
+    numericExtras.disbursedAmount = z.coerce.number().min(0).default(0);
+  }
+  const payload = schema
+    .extend({ reportDate: z.union([z.string(), z.date()]).optional() })
+    .extend(numericExtras);
+  router.post(`/${path}`, async (req, res) => {
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const parsed = payload.parse(req.body);
+      console.log(`[${requestId}] create ${path}`, {
+        userId: req.user.userId,
+        keys: Object.keys(req.body || {}),
+      });
+      const data = await repo.create(req.user.userId, {
+        ...parsed,
+        reportDate: parsed.reportDate ? new Date(parsed.reportDate) : new Date(),
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+      }
+      if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER") {
+        return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+      }
+      console.error(`Failed to create ${path}`, {
+        requestId,
+        message: error?.message,
+        code: error?.code,
+        detail: error?.detail,
+        stack: error?.stack,
+      });
+      const status = error?.code === "23505" ? 409 : 500;
+      return res.status(status).json({ error: `Failed to create ${path}`, code: error?.code, detail: error?.detail });
+    }
+  });
+
+  router.get(`/${path}`, async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const from = req.query.from as string | undefined;
+      const to = req.query.to as string | undefined;
+      const { fromDate, toDate } = parseDateRange(from, to);
+      const items = await repo.list(req.user.userId, fromDate, toDate);
+      return res.json({ success: true, items });
+    } catch (error) {
+      console.error(`Failed to list ${path}`, error);
+      return res.status(500).json({ error: `Failed to list ${path}` });
+    }
+  });
+
+  router.get(`/${path}/:id`, async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const data = await repo.getById(req.user.userId, req.params.id);
+      if (!data) return res.status(404).json({ error: "Not found" });
+      return res.json({ success: true, data });
+    } catch (error) {
+      console.error(`Failed to fetch ${path}`, error);
+      return res.status(500).json({ error: `Failed to fetch ${path}` });
+    }
+  });
+
+  router.put(`/${path}/:id`, async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const parsed = payload.partial().parse(req.body);
+      const data = await repo.update(req.user.userId, req.params.id, parsed);
+      if (!data) return res.status(404).json({ error: "Not found" });
+      return res.json({ success: true, data });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+      }
+      console.error(`Failed to update ${path}`, error);
+      return res.status(500).json({ error: `Failed to update ${path}` });
+    }
+  });
+}
+
+buildReportCrud("loan-reports", loanReportsRepository, loanPayloadSchema);
+buildReportCrud("vas-reports", vasReportsRepository, vasPayloadSchema);
+buildReportCrud("gm-reports", gmReportsRepository, insertGmReportSchema);
+
+async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+  const whereConditions = [
+    gte(loanRequests.createdAt, fromDate),
+    lte(loanRequests.createdAt, toDate)
+  ];
+  if (userIds && userIds.length > 0) {
+    whereConditions.push(inArray(loanRequests.userId, userIds));
+  }
+
+  const loans = await db
+    .select()
+    .from(loanRequests)
+    .where(and(...whereConditions));
+
+  const totalLoans = loans.length;
+  const approvedLoans = loans.filter(l => l.status === "HODApproved" || l.status === "Completed");
+  const totalValue = loans.reduce((sum, l) => sum + parseFloat(l.amount), 0);
+  const pendingLoans = loans.filter(l => l.status === "Pending" || l.status === "ManagerApproved");
+  const rejectedLoans = loans.filter(l => l.status === "Rejected");
+  const totalRemaining = loans.reduce((sum, l) => sum + parseFloat(l.remainingAmount), 0);
+
+  const relatedUserIds = Array.from(
+    new Set(
+      loans.flatMap(l => [
+        l.userId,
+        l.managerApprovedByUserId,
+        l.hodApprovedByUserId
+      ].filter(Boolean) as string[])
+    )
+  );
+  const userNames: Record<string, string> = {};
+  if (relatedUserIds.length > 0) {
+    const usersResult = await db
+      .select({ id: users.id, name: users.name })
+      .from(users)
+      .where(inArray(users.id, relatedUserIds));
+    usersResult.forEach(u => {
+      userNames[u.id] = u.name;
+    });
+  }
+
+  const chartData = generateChartData(loans, fromDate, toDate, 'amount');
+  const loanReportConditions = [
+    gte(loanReports.reportDate, fromDate),
+    lte(loanReports.reportDate, toDate)
+  ];
+  if (userIds && userIds.length > 0) {
+    loanReportConditions.push(inArray(loanReports.userId, userIds));
+  }
+
+  const customReports = await db
+    .select()
+    .from(loanReports)
+    .where(and(...loanReportConditions));
+  const combinedValue = totalValue + customReports.reduce((s, r) => s + Number(r.valueSold || 0), 0);
+  const combinedDetails = [
+    ...loans.map(l => ({
+      id: l.id,
+      employeeName: userNames[l.userId] || "N/A",
+      amount: l.amount,
+      detail: l.detail,
+      status: l.status,
+      date: l.createdAt,
+      installmentAmount: l.installmentAmount,
+      remainingAmount: l.remainingAmount,
+      managerName: l.managerApprovedByUserId ? (userNames[l.managerApprovedByUserId] || "N/A") : null,
+      hodName: l.hodApprovedByUserId ? (userNames[l.hodApprovedByUserId] || "N/A") : null,
+    })),
+    ...customReports.map(r => ({
+      id: r.id,
+      employeeName: "Custom Report",
+      amount: r.valueSold ?? 0,
+      detail: r.title || r.summary || "",
+      status: r.status,
+      date: r.reportDate,
+      installmentAmount: 0,
+      remainingAmount: 0,
+      managerName: null,
+      hodName: null,
+    })),
+  ];
+
+  return {
+    type: "loan",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+    metrics: {
+      totalTasks: totalLoans + customReports.length,
+      valueOfServiceSold: combinedValue,
+      successRate: (totalLoans + customReports.length) > 0 ? clampPercentage((approvedLoans.length / (totalLoans + customReports.length)) * 100) : 0,
+      followUpsCompleted: approvedLoans.length,
+      missedLeads: rejectedLoans.length,
+    },
+    chartData,
+    details: combinedDetails,
+    totals: {
+      totalAdvance: combinedValue,
+      totalRemaining,
+    },
+  };
+}
+
+async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+  // Fetch from office_vas instead of vas_progress_snapshots
+  const vasConditions = [
+    gte(officeVas.vasDate, fromDate),
+    lte(officeVas.vasDate, toDate)
+  ];
+  if (userIds && userIds.length > 0) {
+    vasConditions.push(inArray(officeVas.createdByUserId, userIds));
+  }
+
+  const vasEntries = await db
+    .select()
+    .from(officeVas)
+    .where(and(...vasConditions));
+
+  // Fetch approved invoices from productPostingInvoices
+  const invoiceConditions = [
+    gte(productPostingInvoices.updatedAt, fromDate),
+    lte(productPostingInvoices.updatedAt, toDate),
+    inArray(productPostingInvoices.status, ['PENDING_ACCOUNT', 'APPROVED']) // HOD approved
+  ];
+  if (userIds && userIds.length > 0) {
+    invoiceConditions.push(inArray(productPostingInvoices.salesExecId, userIds));
+  }
+
+  const invoiceEntriesRaw = await db
+    .select()
+    .from(productPostingInvoices)
+    .where(and(...invoiceConditions));
+
+  // Fetch approved standard invoices
+  const stdInvoiceConditions = [
+    gte(invoices.updatedAt, fromDate),
+    lte(invoices.updatedAt, toDate),
+    inArray(invoices.status, ['Paid', 'APPROVED']) // Account approved
+  ];
+  if (userIds && userIds.length > 0) {
+    stdInvoiceConditions.push(inArray(invoices.createdByUserId, userIds));
+  }
+
+  const stdInvoiceEntriesRaw = await db
+    .select()
+    .from(invoices)
+    .where(and(...stdInvoiceConditions));
+
+  // Combine them
+  const combinedDetails = [
+    ...vasEntries.map(v => ({
+      id: v.id,
+      companyName: v.companyName,
+      amount: v.amount,
+      method: v.method,
+      date: v.vasDate,
+      notes: v.notes,
+      type: "VAS"
+    })),
+    ...invoiceEntriesRaw.map(i => ({
+      id: i.id,
+      companyName: i.companyName || i.projectName || 'Invoice',
+      amount: i.amount,
+      method: i.paymentMethod || "BankTransfer",
+      date: i.updatedAt,
+      notes: `Invoice Status: ${i.status}`,
+      type: "Invoice"
+    })),
+    ...stdInvoiceEntriesRaw.map(i => ({
+      id: i.id,
+      companyName: i.customerName || 'Standard Invoice',
+      amount: i.total,
+      method: i.paymentMethod || "BankTransfer",
+      date: i.updatedAt,
+      notes: `Invoice Status: ${i.status}`,
+      type: "Invoice"
+    }))
+  ];
+
+  // Sort by date descending
+  combinedDetails.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+  const totalValue = combinedDetails.reduce((sum, item) => sum + Number(item.amount), 0);
+  const chartData = generateChartData(combinedDetails.map(d => ({ ...d, createdAt: d.date })), fromDate, toDate, 'amount');
+
+  return {
+    type: "vas",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+    metrics: {
+      totalTasks: combinedDetails.length,
+      valueOfServiceSold: totalValue,
+      successRate: 100, // Not applicable for simple list
+      followUpsCompleted: invoiceEntriesRaw.length + stdInvoiceEntriesRaw.length, // repurposing as invoice count for display if needed
+      missedLeads: vasEntries.length, // repurposing as vas count
+    },
+    chartData,
+    details: combinedDetails,
+    totals: {
+      totalAdvance: totalValue,
+      totalRemaining: 0
+    }
+  };
+}
+
+async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+  const conditions = [
+    gte(gmEntries.createdAt, fromDate),
+    lte(gmEntries.createdAt, toDate)
+  ];
+
+  if (userIds && userIds.length > 0) {
+    conditions.push(
+      or(
+        inArray(gmEntries.salesPersonId, userIds),
+        inArray(gmEntries.createdBy, userIds)
+      )
+    );
+  }
+
+  const entries = await db
+    .select()
+    .from(gmEntries)
+    .where(and(...conditions))
+    .orderBy(desc(gmEntries.createdAt));
+
+  const totalValue = entries.reduce((sum, e) => sum + Number(e.amountUsd || 0), 0);
+  const chartData = generateChartData(entries.map(e => ({ ...e, createdAt: e.createdAt })), fromDate, toDate, 'amountUsd');
+
+  return {
+    type: "gm",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+    metrics: {
+      totalTasks: entries.length,
+      valueOfServiceSold: totalValue,
+      successRate: 100,
+      followUpsCompleted: 0,
+      missedLeads: 0,
+    },
+    chartData,
+    details: entries.map(e => ({
+      id: e.id,
+      companyName: e.companyName,
+      package: e.packageType,
+      kwa: "-", // Placeholder as not in schema
+      psa: "-", // Placeholder as not in schema
+      packageAmount: e.finalOrderUsd || e.amountUsd,
+      method: e.paymentStatus || "BankTransfer", // Default to BankTransfer if missing
+      bvSubmitDate: "-", // Placeholder
+      bvDate: "-", // Placeholder
+      person: e.salesPersonName,
+      rcNew: e.entryType,
+      date: e.createdAt,
+    })),
+  };
+}
+
+async function getBvReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+  console.log("🔍 getBvReport called with:", { userIds, fromDate, toDate });
+
+  const conditions = [
+    gte(bvEntries.createdAt, fromDate),
+    lte(bvEntries.createdAt, toDate)
+  ];
+
+  if (userIds && userIds.length > 0) {
+    conditions.push(
+      or(
+        inArray(bvEntries.salesPersonId, userIds),
+        inArray(bvEntries.createdByUserId, userIds)
+      )
+    );
+  }
+
+  const entries = await db
+    .select()
+    .from(bvEntries)
+    .where(and(...conditions))
+    .orderBy(desc(bvEntries.createdAt));
+
+  console.log(`✅ getBvReport found ${entries.length} entries`);
+
+
+  const totalValue = entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const chartData = generateChartData(entries.map(e => ({ ...e, createdAt: e.createdAt })), fromDate, toDate, 'amount');
+
+  return {
+    type: "bv",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: "UTC", // Placeholder
+    },
+    metrics: {
+      totalTasks: entries.length,
+      valueOfServiceSold: totalValue,
+      successRate: 100,
+      followUpsCompleted: 0,
+      missedLeads: 0,
+    },
+    chartData,
+    details: entries.map(e => ({
+      id: e.id,
+      companyName: e.companyName,
+      packageType: e.packageType,
+      amount: e.amount,
+      commission: e.commission || "-",
+      reward: e.reward || "-",
+      vasAmount: e.vasAmount || "-",
+      kwaAmount: e.kwaAmount || "-",
+      method: e.method || "-",
+      personName: e.personName || "-",
+      payAmount: e.payAmount || "-",
+      bvAmount: e.bvAmount || "-",
+      entryType: e.entryType || "-", // Rc/New
+      type: e.type || "-",
+      receivedAt: e.receivedAt,
+      date: e.createdAt,
+    })),
+  };
+}
+
+function generateChartData(data: any[], fromDate: Date, toDate: Date, valueField?: string) {
+  const chartMap = new Map<string, { value: number; count: number }>();
+
+  const current = new Date(fromDate);
+  while (current <= toDate) {
+    const dateKey = current.toISOString().split('T')[0];
+    chartMap.set(dateKey, { value: 0, count: 0 });
+    current.setDate(current.getDate() + 1);
+  }
+
+  data.forEach(item => {
+    const dateKey = new Date(item.createdAt).toISOString().split('T')[0];
+    if (chartMap.has(dateKey)) {
+      const existing = chartMap.get(dateKey)!;
+      existing.count += 1;
+      if (valueField && item[valueField]) {
+        existing.value += parseFloat(item[valueField]);
+      }
+    }
+  });
+
+  return Array.from(chartMap.entries()).map(([date, data]) => ({
+    date,
+    value: data.value,
+    count: data.count,
+  }));
+}
+
+function buildReportCsv(report: ReportData) {
+  const lines: string[] = [];
+
+  lines.push(`Report Type,${report.type.toUpperCase()}`);
+  lines.push(`From,${report.meta.from}`);
+  lines.push(`To,${report.meta.to}`);
+  lines.push(`Timezone,${report.meta.timezone}`);
+  lines.push("");
+  lines.push("Metric,Value");
+  lines.push(`Total Tasks,${report.metrics.totalTasks}`);
+  lines.push(`Value Sold,${report.metrics.valueOfServiceSold}`);
+  lines.push(`Success Rate,${report.metrics.successRate}%`);
+  lines.push(`Follow-ups Done,${report.metrics.followUpsCompleted}`);
+  lines.push(`Missed Leads,${report.metrics.missedLeads}`);
+
+  lines.push("");
+  lines.push("Date,Count,Value");
+  report.chartData.forEach((row) => {
+    lines.push(`${row.date},${row.count},${row.value}`);
+  });
+
+  if (report.details.length > 0) {
+    lines.push("");
+    switch (report.type) {
+      case "loan": {
+        lines.push("Date,Employee,Advance,Installment,Remaining,Status,Manager,HOD");
+        report.details.forEach((item: any) => {
+          lines.push(
+            `${new Date(item.date).toISOString().split("T")[0]},` +
+            `"${item.employeeName ?? ""}",` +
+            `${item.amount ?? 0},` +
+            `${item.installmentAmount ?? 0},` +
+            `${item.remainingAmount ?? 0},` +
+            `"${item.status ?? ""}",` +
+            `"${item.managerName ?? ""}",` +
+            `"${item.hodName ?? ""}"`
+          );
+        });
+        break;
+      }
+      case "vas": {
+        lines.push("Period,Amount,Target,Achievement%");
+        report.details.forEach((item: any) => {
+          const achievement =
+            item.targetAmount && Number(item.targetAmount) > 0
+              ? Math.round((Number(item.amount || 0) / Number(item.targetAmount)) * 100)
+              : 0;
+          lines.push(
+            `${item.month}/${item.year},${item.amount ?? 0},${item.targetAmount ?? 0},${achievement}`
+          );
+        });
+        break;
+      }
+      case "gm":
+      case "bv": {
+        lines.push("Date,Company,Account,Grade");
+        report.details.forEach((item: any) => {
+          lines.push(
+            `${new Date(item.date).toISOString().split("T")[0]},` +
+            `"${item.companyName ?? ""}",` +
+            `"${item.accountName ?? ""}",` +
+            `"${item.grade ?? ""}"`
+          );
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return lines.join("\n");
+}
+
+router.get("/reports/:type", async (req, res, next) => {
+  const reportType = req.params.type as string;
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  if (specificRoutes.includes(reportType)) {
+    return next();
+  }
+
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (!["loan", "vas", "gm", "bv"].includes(reportType)) {
+      return res.status(400).json({ error: "Invalid report type" });
+    }
+
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    let parsedRange;
+    try {
+      parsedRange = parseDateRange(from, to);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "Invalid date range" });
+    }
+    const { fromDate, toDate } = parsedRange;
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
+    const queryUserId = typeof req.query.userId === "string" && req.query.userId !== "all" ? req.query.userId : null;
+    
+    let filterUserIds: string[] | null = null;
+    if (!isPrivileged) {
+      filterUserIds = [user.userId];
+    } else if (isGlobalAdmin) {
+      filterUserIds = queryUserId ? [queryUserId] : null;
+    } else {
+      const allowedIds = await getDepartmentFilterUserIds(req);
+      if (queryUserId) {
+        filterUserIds = allowedIds && allowedIds.includes(queryUserId) ? [queryUserId] : ['00000000-0000-0000-0000-000000000000'];
+      } else {
+        filterUserIds = allowedIds;
+      }
+    }
+
+    let report: ReportData;
+    switch (reportType) {
+      case "loan":
+        report = await getLoanReport(filterUserIds, fromDate, toDate);
+        break;
+      case "vas":
+        report = await getVasReport(filterUserIds, fromDate, toDate);
+        break;
+      case "gm":
+        report = await getGmReport(filterUserIds, fromDate, toDate);
+        break;
+      case "bv":
+        console.log("➡️ Dispatching to getBvReport");
+        report = await getBvReport(filterUserIds, fromDate, toDate);
+        break;
+      default:
+        return res.status(400).json({ error: "Invalid report type" });
+    }
+
+    res.json(report);
+  } catch (error) {
+    console.error("Error fetching report:", error);
+    res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
+router.get("/reports/:type/export", async (req, res, next) => {
+  const reportType = req.params.type as string;
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  if (specificRoutes.includes(reportType)) {
+    return next();
+  }
+
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const format = req.query.format as string || "csv";
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+
+    let parsedRange;
+    try {
+      parsedRange = parseDateRange(from, to);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "Invalid date range" });
+    }
+    const { fromDate, toDate } = parsedRange;
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
+    let filterUserIds: string[] | null = null;
+    if (!isPrivileged) {
+      filterUserIds = [user.userId];
+    } else if (isGlobalAdmin) {
+      filterUserIds = null;
+    } else {
+      filterUserIds = await getDepartmentFilterUserIds(req);
+    }
+
+    let report: ReportData;
+    switch (reportType) {
+      case "loan":
+        report = await getLoanReport(filterUserIds, fromDate, toDate);
+        break;
+      case "vas":
+        report = await getVasReport(filterUserIds, fromDate, toDate);
+        break;
+      case "gm":
+        report = await getGmReport(filterUserIds, fromDate, toDate);
+        break;
+      case "bv":
+        report = await getBvReport(filterUserIds, fromDate, toDate);
+        break;
+      default:
+        return res.status(400).json({ error: "Invalid report type" });
+    }
+
+    const suffix = `${reportType}_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}`;
+
+    if (format === "csv") {
+      const csvContent = buildReportCsv(report);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${suffix}.csv"`);
+      res.send(csvContent);
+    } else if (format === "json") {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="${suffix}.json"`);
+      res.json(report);
+    } else {
+      res.status(400).json({ error: "Unsupported export format" });
+    }
+  } catch (error) {
+    console.error("Error exporting report:", error);
+    res.status(500).json({ error: "Failed to export report" });
+  }
+});
+
+router.post("/reports/:type/email", async (req, res, next) => {
+  const reportType = req.params.type as string;
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  if (specificRoutes.includes(reportType)) {
+    return next();
+  }
+
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { recipient, includeDetails } = req.body;
+
+    res.json({
+      success: true,
+      message: `Report will be sent to ${recipient || user.email}`,
+      note: "Email integration pending - report data prepared successfully"
+    });
+  } catch (error) {
+    console.error("Error emailing report:", error);
+    res.status(500).json({ error: "Failed to email report" });
+  }
+});
+
+router.get("/reports/summary", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    let parsedRange;
+    try {
+      parsedRange = parseDateRange(from, to);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "Invalid date range" });
+    }
+    const { fromDate, toDate } = parsedRange;
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
+    let filterUserIds: string[] | null = null;
+    if (!isPrivileged) {
+      filterUserIds = [user.userId];
+    } else if (isGlobalAdmin) {
+      filterUserIds = null;
+    } else {
+      filterUserIds = await getDepartmentFilterUserIds(req);
+    }
+
+    const [loanReport, vasReport, gmReport, bvReport] = await Promise.all([
+      getLoanReport(filterUserIds, fromDate, toDate),
+      getVasReport(filterUserIds, fromDate, toDate),
+      getGmReport(filterUserIds, fromDate, toDate),
+      getBvReport(filterUserIds, fromDate, toDate),
+    ]);
+
+    res.json({
+      loan: loanReport.metrics,
+      vas: vasReport.metrics,
+      gm: gmReport.metrics,
+      bv: bvReport.metrics,
+      dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    });
+  } catch (error) {
+    console.error("Error fetching summary:", error);
+    res.status(500).json({ error: "Failed to fetch summary" });
+  }
+});
+
+// User Activity Report
+router.get("/reports/user-activities", async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const isPrivileged = isManagerialRole(req.user.roleId);
+    const { userId, department, actionType, from, to, search, page = "1", pageSize = "20" } = req.query;
+
+    const conditions = [];
+
+    const requestedUserId = userId as string | undefined;
+    if (!isPrivileged) {
+      if (requestedUserId && requestedUserId !== req.user.userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      conditions.push(eq(userActivities.userId, req.user.userId));
+    } else if (requestedUserId) {
+      conditions.push(eq(userActivities.userId, requestedUserId));
+    }
+    if (department) {
+      conditions.push(eq(userActivities.department, department as string));
+    }
+    if (actionType) {
+      conditions.push(eq(userActivities.actionType, actionType as any));
+    }
+    if (from) {
+      conditions.push(gte(userActivities.activityDate, new Date(from as string)));
+    }
+    if (to) {
+      conditions.push(lte(userActivities.activityDate, new Date(to as string)));
+    }
+    if (search) {
+      conditions.push(
+        or(
+          ilike(userActivities.userName, `%${search}%`),
+          sql`${userActivities.companyName} ILIKE ${'%' + search + '%'}`,
+          sql`${userActivities.actionDescription} ILIKE ${'%' + search + '%'}`
+        )
+      );
+    }
+
+    const pageNum = parseInt(page as string);
+    const pageSizeNum = parseInt(pageSize as string);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // STUBBED: user_activities table missing, returning empty result to prevent crash
+    const activities: any[] = [];
+    const countResult = [{ count: 0 }];
+
+    /*
+    const [activities, countResult] = await Promise.all([
+      db.select()
+        .from(userActivities)
+        .where(whereClause)
+        .orderBy(desc(userActivities.activityDate))
+        .limit(pageSizeNum)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` })
+        .from(userActivities)
+        .where(whereClause)
+    ]);
+    */
+
+    res.json({
+      data: activities,
+      total: Number(countResult[0]?.count || 0),
+      page: pageNum,
+      pageSize: pageSizeNum
+    });
+  } catch (error: any) {
+    console.error("Error fetching user activities:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Ledger Report with summary
+router.get("/reports/ledger", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const { company, from, to, page = "1", pageSize = "20" } = req.query;
+
+    const conditions = [];
+
+    if (!isPrivileged) {
+      conditions.push(eq(ledgerEntries.createdByUserId, user.userId));
+    }
+
+    if (company) {
+      conditions.push(ilike(ledgerEntries.description, `%${company}%`));
+    }
+    if (from) {
+      conditions.push(gte(ledgerEntries.entryDate, new Date(from as string)));
+    }
+    if (to) {
+      conditions.push(lte(ledgerEntries.entryDate, new Date(to as string)));
+    }
+    const contact = req.query.contact as string | undefined;
+    const ntn = req.query.ntn as string | undefined;
+
+    if (contact || ntn) {
+      // If filtering by contact or ntn, we might need more complex logic, but for now 
+      // let's assume they are stored in description or we can filter by joining if needed.
+      // However, to keep it simple and robust, we'll check description/notes for these identifiers.
+      const orConditions = [];
+      if (contact) orConditions.push(ilike(ledgerEntries.description, `%${contact}%`));
+      if (ntn) orConditions.push(ilike(ledgerEntries.description, `%${ntn}%`));
+      if (orConditions.length > 0) conditions.push(or(...orConditions));
+    }
+
+    const pageNum = parseInt(page as string);
+    const pageSizeNum = parseInt(pageSize as string);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [entries, countResult] = await Promise.all([
+      db.select()
+        .from(ledgerEntries)
+        .where(whereClause)
+        .orderBy(desc(ledgerEntries.entryDate))
+        .limit(pageSizeNum)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` })
+        .from(ledgerEntries)
+        .where(whereClause)
+    ]);
+
+    // Calculate summary based on category field (GM, Invoice, Refund, Donation, etc.)
+    const summaryResult = await db.select({
+      totalGM: sql<number>`COALESCE(SUM(CASE WHEN category ILIKE '%GM%' THEN amount ELSE 0 END), 0)`,
+      totalRefund: sql<number>`COALESCE(SUM(CASE WHEN category ILIKE '%Refund%' THEN amount ELSE 0 END), 0)`,
+      totalInvoice: sql<number>`COALESCE(SUM(CASE WHEN category ILIKE '%Invoice%' THEN amount ELSE 0 END), 0)`,
+      totalDonation: sql<number>`COALESCE(SUM(CASE WHEN category ILIKE '%Donation%' THEN amount ELSE 0 END), 0)`,
+    }).from(ledgerEntries).where(whereClause);
+
+    res.json({
+      data: entries,
+      total: Number(countResult[0]?.count || 0),
+      page: pageNum,
+      pageSize: pageSizeNum,
+      summary: {
+        totalGM: Number(summaryResult[0]?.totalGM || 0),
+        totalRefund: Number(summaryResult[0]?.totalRefund || 0),
+        totalInvoice: Number(summaryResult[0]?.totalInvoice || 0),
+        totalDonation: Number(summaryResult[0]?.totalDonation || 0),
+        outstandingDues: Number(summaryResult[0]?.totalInvoice || 0) - Number(summaryResult[0]?.totalGM || 0)
+      }
+    });
+  } catch (error: any) {
+    console.error("Error fetching ledger report:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GM Entries Report
+router.get("/reports/gm-entries", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const { company, office, from, to, page = "1", pageSize = "20" } = req.query;
+
+    const conditions = [];
+
+    if (!isPrivileged) {
+      conditions.push(
+        or(
+          eq(gmEntries.salesPersonId, user.userId),
+          eq(gmEntries.createdBy, user.userId)
+        )
+      );
+    }
+
+    if (company) {
+      conditions.push(ilike(gmEntries.companyName, `%${company}%`));
+    }
+    if (from) {
+      conditions.push(gte(gmEntries.createdAt, new Date(from as string)));
+    }
+    if (to) {
+      conditions.push(lte(gmEntries.createdAt, new Date(to as string)));
+    }
+
+    const pageNum = parseInt(page as string);
+    const pageSizeNum = parseInt(pageSize as string);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [entries, countResult, totalResult] = await Promise.all([
+      db.select()
+        .from(gmEntries)
+        .where(whereClause)
+        .orderBy(desc(gmEntries.createdAt))
+        .limit(pageSizeNum)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` })
+        .from(gmEntries)
+        .where(whereClause),
+      db.select({ total: sql<number>`COALESCE(SUM(amount_usd), 0)` })
+        .from(gmEntries)
+        .where(whereClause)
+    ]);
+
+    res.json({
+      data: entries,
+      total: Number(countResult[0]?.count || 0),
+      totalAmount: Number(totalResult[0]?.total || 0),
+      page: pageNum,
+      pageSize: pageSizeNum
+    });
+  } catch (error: any) {
+    console.error("Error fetching GM entries report:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Refund Report
+router.get("/reports/refund-entries", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const { company, from, to, page = "1", pageSize = "20" } = req.query;
+
+    const conditions = [];
+
+    if (!isPrivileged) {
+      conditions.push(eq(refundGmEntries.createdBy, user.userId));
+    }
+
+    if (company) {
+      conditions.push(ilike(refundGmEntries.companyName, `%${company}%`));
+    }
+    if (from) {
+      conditions.push(gte(refundGmEntries.createdAt, new Date(from as string)));
+    }
+    if (to) {
+      conditions.push(lte(refundGmEntries.createdAt, new Date(to as string)));
+    }
+
+    const pageNum = parseInt(page as string);
+    const pageSizeNum = parseInt(pageSize as string);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [entries, countResult, totalResult] = await Promise.all([
+      db.select()
+        .from(refundGmEntries)
+        .where(whereClause)
+        .orderBy(desc(refundGmEntries.createdAt))
+        .limit(pageSizeNum)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` })
+        .from(refundGmEntries)
+        .where(whereClause),
+      db.select({ total: sql<number>`COALESCE(SUM(amount), 0)` })
+        .from(refundGmEntries)
+        .where(whereClause)
+    ]);
+
+    res.json({
+      data: entries,
+      total: Number(countResult[0]?.count || 0),
+      totalAmount: Number(totalResult[0]?.total || 0),
+      page: pageNum,
+      pageSize: pageSizeNum
+    });
+  } catch (error: any) {
+    console.error("Error fetching refund entries report:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Invoice Report
+router.get("/reports/invoice-entries", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const { company, from, to, status, page = "1", pageSize = "20" } = req.query;
+
+    const conditions = [];
+
+    if (!isPrivileged) {
+      conditions.push(eq(invoices.createdByUserId, user.userId));
+    }
+
+    if (company) {
+      conditions.push(ilike(invoices.customerName, `%${company}%`));
+    }
+    if (from) {
+      conditions.push(gte(invoices.issueDate, new Date(from as string)));
+    }
+    if (to) {
+      conditions.push(lte(invoices.issueDate, new Date(to as string)));
+    }
+    if (status) {
+      conditions.push(eq(invoices.status, status as any));
+    }
+
+    const pageNum = parseInt(page as string);
+    const pageSizeNum = parseInt(pageSize as string);
+    const offset = (pageNum - 1) * pageSizeNum;
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [entries, countResult, totalResult] = await Promise.all([
+      db.select()
+        .from(invoices)
+        .where(whereClause)
+        .orderBy(desc(invoices.issueDate))
+        .limit(pageSizeNum)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` })
+        .from(invoices)
+        .where(whereClause),
+      db.select({ total: sql<number>`COALESCE(SUM(total), 0)` })
+        .from(invoices)
+        .where(whereClause)
+    ]);
+
+    res.json({
+      data: entries,
+      total: Number(countResult[0]?.count || 0),
+      totalAmount: Number(totalResult[0]?.total || 0),
+      page: pageNum,
+      pageSize: pageSizeNum
+    });
+  } catch (error: any) {
+    console.error("Error fetching invoice entries report:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+router.get("/reports/users-list", async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const isPrivileged = isManagerialRole(req.user.roleId);
+    if (!isPrivileged) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const allUsers = await db.select({
+      id: users.id,
+      name: users.name,
+      branch: users.branch
+    }).from(users);
+
+    res.json(allUsers);
+  } catch (error: any) {
+    console.error("Error fetching users list:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// CSV Export for reports
+router.get("/reports/:reportType/export-csv", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    const isPrivileged = isManagerialRole(user.roleId);
+    const { reportType } = req.params;
+    const { company, from, to } = req.query;
+
+    let data: any[] = [];
+    let filename = "";
+    let headers = "";
+
+    const fromDate = from ? new Date(from as string) : undefined;
+    const toDate = to ? new Date(to as string) : undefined;
+
+    if (reportType === "gm-entries") {
+      const conditions = [];
+      if (!isPrivileged) {
+        conditions.push(
+          or(
+            eq(gmEntries.salesPersonId, user.userId),
+            eq(gmEntries.createdBy, user.userId)
+          )
+        );
+      }
+      if (company) conditions.push(ilike(gmEntries.companyName, `%${company}%`));
+      if (fromDate) conditions.push(gte(gmEntries.createdAt, fromDate));
+      if (toDate) conditions.push(lte(gmEntries.createdAt, toDate));
+
+      data = await db.select().from(gmEntries).where(conditions.length > 0 ? and(...conditions) : undefined);
+      headers = "ID,Company,Amount USD,Status,Entry Type,Date,Sales Person";
+      filename = "gm_report.csv";
+
+      const csvContent = headers + "\n" + data.map(e =>
+        `${e.id},"${e.companyName}",${e.amountUsd},${e.status},${e.entryType},${e.createdAt?.toISOString().split('T')[0]},${e.salesPersonName || ''}`
+      ).join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(csvContent);
+
+    } else if (reportType === "refund-entries") {
+      const conditions = [];
+      if (!isPrivileged) conditions.push(eq(refundGmEntries.createdBy, user.userId));
+      if (company) conditions.push(ilike(refundGmEntries.companyName, `%${company}%`));
+      if (fromDate) conditions.push(gte(refundGmEntries.createdAt, fromDate));
+      if (toDate) conditions.push(lte(refundGmEntries.createdAt, toDate));
+
+      data = await db.select().from(refundGmEntries).where(conditions.length > 0 ? and(...conditions) : undefined);
+      headers = "ID,Company,Person Name,Amount,Amount Type,Status,Date,Created By";
+      filename = "refund_report.csv";
+
+      const csvContent = headers + "\n" + data.map(e =>
+        `${e.id},"${e.companyName}","${e.personName}",${e.amount},${e.amountType},${e.status},${e.createdAt?.toISOString().split('T')[0]},${e.createdByUserId}`
+      ).join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(csvContent);
+
+    } else if (reportType === "invoice-entries") {
+      const conditions = [];
+      if (!isPrivileged) conditions.push(eq(invoices.createdByUserId, user.userId));
+      if (company) conditions.push(ilike(invoices.customerName, `%${company}%`));
+      if (fromDate) conditions.push(gte(invoices.issueDate, fromDate));
+      if (toDate) conditions.push(lte(invoices.issueDate, toDate));
+
+      data = await db.select().from(invoices).where(conditions.length > 0 ? and(...conditions) : undefined);
+      headers = "ID,Invoice Number,Customer,Total,Currency,Status,Issue Date,Created By";
+      filename = "invoice_report.csv";
+
+      const csvContent = headers + "\n" + data.map(e =>
+        `${e.id},"${e.invoiceNumber}","${e.customerName}",${e.total},${e.currency},${e.status},${e.issueDate?.toISOString().split('T')[0]},${e.createdByUserId}`
+      ).join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(csvContent);
+
+    } else if (reportType === "ledger") {
+      const conditions = [];
+      if (!isPrivileged) conditions.push(eq(ledgerEntries.createdByUserId, user.userId));
+      if (company) conditions.push(ilike(ledgerEntries.description, `%${company}%`));
+      if (fromDate) conditions.push(gte(ledgerEntries.entryDate, fromDate));
+      if (toDate) conditions.push(lte(ledgerEntries.entryDate, toDate));
+
+      data = await db.select().from(ledgerEntries).where(conditions.length > 0 ? and(...conditions) : undefined);
+      headers = "ID,Description,Entry Type,Category,Reference ID,Amount,Currency,Date,Created By";
+      filename = "ledger_report.csv";
+
+      const csvContent = headers + "\n" + data.map(e =>
+        `${e.id},"${e.description}",${e.entryType},${e.category},${e.referenceId || ''},${e.amount},${e.currency},${e.entryDate?.toISOString().split('T')[0]},${e.createdByUserId}`
+      ).join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(csvContent);
+
+    } else {
+      res.status(400).json({ error: "Invalid report type" });
+    }
+  } catch (error: any) {
+    console.error("Error exporting CSV:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export function registerReportsRoutes(app: Express) {
+  app.use("/api", router);
+}
+
+export default router;

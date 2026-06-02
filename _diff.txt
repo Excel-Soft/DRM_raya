@@ -1,0 +1,3582 @@
+﻿diff --git a/client/src/App.tsx b/client/src/App.tsx
+index 54d2692..4296943 100644
+--- a/client/src/App.tsx
++++ b/client/src/App.tsx
+@@ -114,11 +114,23 @@ import PermissionPage from "@/pages/drm/permission";
+ import DelayProjectPage from "@/pages/drm/delay-project";
+ import PromotionPage from "@/pages/drm/promotion";
+ import RelatedCustomerPage from "@/pages/drm/related-customer";
++import PmsSettingPage from "@/pages/drm/pms-setting";
++import MonthlyCompleteProject from "@/pages/drm/monthly-complete-project";
++import OverallReportPage from "@/pages/drm/overall-report";
++import TodayPostPage from "@/pages/drm/today-post";
++import AddPenaltyPage from "@/pages/drm/add-penalty";
++import CommissionVerificationPage from "@/pages/drm/commission-verification";
++import AllSocialAccountsPage from "@/pages/drm/all-social-accounts";
++import IncrementPage from "@/pages/drm/increment";
++import PerformancePage from "@/pages/drm/performance";
++import LateComingPage from "@/pages/drm/late-coming";
+ import BotSystem from "@/pages/bot-system";
+ import OnlineForm from "@/pages/online-form";
+ import FbPost from "@/pages/fb-post";
+ import DelayProjectsNewPage from "./pages/drm/delay-projects-new";
+ import PostingData from "./pages/posting-data";
++import SeoSmmManagerDashboard from "@/pages/seo-smm-manager-dashboard";
++import PmsProjectReport from "@/pages/pms-project-report";
+ 
+ 
+ function Router() {
+@@ -142,6 +154,7 @@ function Router() {
+       <Route path="/qa/manager" component={QAManagerDashboard} />
+       <Route path="/verification/manager" component={VerificationManagerDashboard} />
+       <Route path="/verification/customers" component={CustomersVerification} />
++      <Route path="/dashboard/seo-smm" component={SeoSmmManagerDashboard} />
+       <Route path="/dashboard/dd-executive" component={DDExecutiveDashboard} />
+       <Route path="/product-posting" component={ProductPostingDashboard} />
+       <Route path="/sales/customers" component={CustomerManagement} />
+@@ -170,9 +183,20 @@ function Router() {
+       <Route path="/pms/status" component={PmsStatus} />
+       <Route path="/drm/delay-project" component={DelayProjectPage} />
+       <Route path="/drm/delay-projects-new" component={DelayProjectsNewPage} />
++      <Route path="/drm/pms-setting" component={PmsSettingPage} />
++      <Route path="/drm/monthly-complete-project" component={MonthlyCompleteProject} />
++      <Route path="/drm/overall-report" component={OverallReportPage} />
++      <Route path="/drm/today-post" component={TodayPostPage} />
++      <Route path="/drm/add-penalty" component={AddPenaltyPage} />
++      <Route path="/drm/commission-verification" component={CommissionVerificationPage} />
++      <Route path="/drm/all-social-accounts" component={AllSocialAccountsPage} />
++      <Route path="/drm/increment" component={IncrementPage} />
++      <Route path="/drm/performance" component={PerformancePage} />
++      <Route path="/drm/late-coming" component={LateComingPage} />
+       <Route path="/pms/running-projects" component={PmsRunningProjects} />
+       <Route path="/pms/approvals" component={PmsPendingApprovals} />
+       <Route path="/pms/task-history" component={PmsTaskHistory} />
++      <Route path="/pms/project-report" component={PmsProjectReport} />
+       <Route path="/pms/team-workspace" component={PmsTeamWorkspace} />
+       <Route path="/service/pool" component={ServicePoolDashboard} />
+       <Route path="/service/bv-checking" component={ServiceBvChecking} />
+diff --git a/client/src/components/app-sidebar.tsx b/client/src/components/app-sidebar.tsx
+index f43dd1e..96752ca 100644
+--- a/client/src/components/app-sidebar.tsx
++++ b/client/src/components/app-sidebar.tsx
+@@ -118,6 +118,7 @@ const menuItems: MenuItem[] = [
+   { title: "Dashboard", icon: LayoutDashboard, url: "/dashboard", permKey: "Dashboard" },
+   { title: "HOD Dashboard", icon: LayoutDashboard, url: "/dashboard/hod", permKey: "Head of Department" },
+   { title: "D&D Manager", icon: LayoutGrid, url: "/dashboard/dd-manager", permKey: "Head of Department" },
++  { title: "SEO/SMM Manager", icon: Target, url: "/dashboard/seo-smm", permKey: "SEO/SMM Department" },
+   // permKey must match the `name` field in drm.menu_permissions
+   {
+     title: "Customer", icon: TrendingUp, permKey: "Customer",
+diff --git a/client/src/pages/loan-request.tsx b/client/src/pages/loan-request.tsx
+index b6fdf70..c6b9aa9 100644
+--- a/client/src/pages/loan-request.tsx
++++ b/client/src/pages/loan-request.tsx
+@@ -1,560 +1,198 @@
+-import { useState, useEffect, useMemo } from "react";
++import { useState } from "react";
+ import { useQuery, useMutation } from "@tanstack/react-query";
+ import { queryClient, apiRequest } from "@/lib/queryClient";
+ import { useToast } from "@/hooks/use-toast";
+-import { useScreenContext } from "@/contexts/screen-context";
+-import { useForm } from "react-hook-form";
+-import { zodResolver } from "@hookform/resolvers/zod";
+-import { z } from "zod";
+ import { format } from "date-fns";
+ import { Button } from "@/components/ui/button";
+-import { Badge } from "@/components/ui/badge";
+ import { Card, CardContent } from "@/components/ui/card";
+-import { Skeleton } from "@/components/ui/skeleton";
+ import { Input } from "@/components/ui/input";
+-import { Textarea } from "@/components/ui/textarea";
+-import {
+-  Form,
+-  FormControl,
+-  FormField,
+-  FormItem,
+-  FormLabel,
+-  FormMessage,
+-  FormDescription,
+-} from "@/components/ui/form";
+-import {
+-  Table,
+-  TableBody,
+-  TableCell,
+-  TableHead,
+-  TableHeader,
+-  TableRow,
+-  TableFooter,
+-} from "@/components/ui/table";
+-import {
+-  Clock,
+-  CheckCircle2,
+-  XCircle,
+-  DollarSign,
+-  Plus,
+-  History,
+-  User as UserIcon,
+-  Trash2,
+-  Download,
+-  Mail,
+-  FileSpreadsheet,
+-  TrendingUp as TrendingUpIcon,
+-  Target,
+-} from "lucide-react";
+ import type { LoanRequest, User } from "@shared/schema";
+-
+-type LoanStats = {
+-  totalRequests: number;
+-  pending: number;
+-  managerApproved: number;
+-  hodApproved: number;
+-  rejected: number;
+-  completed: number;
+-  totalAmountApproved: number;
+-  totalRemainingAmount: number;
+-};
+-
+-const STATUS_LABELS: Record<string, string> = {
+-  Pending: "Pending",
+-  ManagerApproved: "Manager Approved",
+-  HODApproved: "HOD Approved",
+-  Rejected: "Rejected",
+-  Completed: "Completed",
+-};
+-
+-const loanFormSchema = z.object({
+-  amount: z.string().min(1, "Amount is required").refine((val) => {
+-    const num = parseFloat(val);
+-    return !isNaN(num) && num > 0;
+-  }, "Amount must be a positive number"),
+-  installmentAmount: z.string().min(1, "Installment amount is required").refine((val) => {
+-    const num = parseFloat(val);
+-    return !isNaN(num) && num > 0;
+-  }, "Installment must be a positive number"),
+-  detail: z.string().min(10, "Detail must be at least 10 characters"),
+-}).refine((data) => {
+-  const amount = parseFloat(data.amount);
+-  const installment = parseFloat(data.installmentAmount);
+-  return installment <= amount;
+-}, {
+-  message: "Installment amount cannot be greater than loan amount",
+-  path: ["installmentAmount"],
+-});
+-
+-type LoanFormValues = z.infer<typeof loanFormSchema>;
++import { Trash2 } from "lucide-react";
+ 
+ export default function LoanRequestPage() {
+-  const { toast } = useToast();
+-  const { updateVisibleData } = useScreenContext();
+-  const [activeTab, setActiveTab] = useState("add_loan");
+-  const [searchQuery, setSearchQuery] = useState("");
+-  const { data: currentUser } = useQuery<User>({ queryKey: ["/api/me"] });
++    const { toast } = useToast();
++    const [searchQuery, setSearchQuery] = useState("");
+ 
+-  useEffect(() => {
+-    updateVisibleData({
+-      screenName: "Loan / Advance Salary",
+-      description: "Submit loan or salary advance requests with two-level approval workflow",
+-      features: [
+-        "Submit loan/advance salary requests with amount and installment plan",
+-        "Two-level approval: Manager then HOD",
+-        "Track remaining balance and payment progress",
+-        "Export history to Excel, CSV, or PDF",
+-      ],
++    const { data: loanRequests, isLoading: loadingRequests } = useQuery<LoanRequest[]>({
++        queryKey: ["/api/loans"],
+     });
+-  }, [updateVisibleData]);
+-
+-  const form = useForm<LoanFormValues>({
+-    resolver: zodResolver(loanFormSchema),
+-    defaultValues: {
+-      amount: "",
+-      installmentAmount: "",
+-      detail: "",
+-    },
+-  });
+-
+-  const { data: loanRequests, isLoading: loadingRequests } = useQuery<LoanRequest[]>({
+-    queryKey: ["/api/loans"],
+-  });
+-
+-  const { data: loanStats } = useQuery<LoanStats>({
+-    queryKey: ["/api/loans/stats"],
+-  });
+-
+-  const createMutation = useMutation({
+-    mutationFn: async (data: LoanFormValues) => {
+-      return apiRequest("POST", "/api/loans", {
+-        amount: parseFloat(data.amount),
+-        installmentAmount: parseFloat(data.installmentAmount),
+-        detail: data.detail,
+-      });
+-    },
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/loans"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/loans/stats"] });
+-      toast({ title: "Loan request submitted successfully" });
+-      form.reset();
+-      setActiveTab("history");
+-    },
+-    onError: (error: any) => {
+-      toast({
+-        title: "Failed to submit loan request",
+-        description: error.message || "Please try again",
+-        variant: "destructive",
+-      });
+-    },
+-  });
+-
+-  const deleteMutation = useMutation({
+-    mutationFn: async (id: string) => {
+-      return apiRequest("DELETE", `/api/loans/${id}`);
+-    },
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/loans"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/loans/stats"] });
+-      toast({ title: "Loan request deleted successfully" });
+-    },
+-    onError: () => {
+-      toast({
+-        title: "Failed to delete loan request",
+-        variant: "destructive",
+-      });
+-    },
+-  });
+-
+-  const onSubmit = (data: LoanFormValues) => {
+-    createMutation.mutate(data);
+-  };
+-
+-  const formatDate = (date: Date | string | null | undefined) => {
+-    if (!date) return "-";
+-    try {
+-      const d = typeof date === "string" ? new Date(date) : date;
+-      if (isNaN(d.getTime())) return "-";
+-      return format(d, "MMM d, yyyy");
+-    } catch {
+-      return "-";
+-    }
+-  };
+-
+-  const formatCurrency = (amount: string | number) => {
+-    const num = typeof amount === "string" ? parseFloat(amount) : amount;
+-    return new Intl.NumberFormat("en-US", {
+-      style: "currency",
+-      currency: "AED",
+-    }).format(num || 0);
+-  };
+-
+-  const exportData = (format: "copy" | "csv" | "excel" | "pdf") => {
+-    if (!loanRequests || loanRequests.length === 0) {
+-      toast({ title: "No data to export", variant: "destructive" });
+-      return;
+-    }
+-
+-    const headers = ["Date", "Amount", "Installment", "Remaining", "Status", "Detail"];
+-    const rows = loanRequests.map((loan) => [
+-      formatDate(loan.createdAt),
+-      formatCurrency(loan.amount),
+-      formatCurrency(loan.installmentAmount),
+-      formatCurrency(loan.remainingAmount),
+-      STATUS_LABELS[loan.status] || loan.status,
+-      loan.detail,
+-    ]);
+-
+-    if (format === "copy") {
+-      const text = [headers.join("\t"), ...rows.map((r) => r.join("\t"))].join("\n");
+-      navigator.clipboard.writeText(text);
+-      toast({ title: "Data copied to clipboard" });
+-    } else if (format === "csv" || format === "excel") {
+-      const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
+-      const mime = format === "csv" ? "text/csv" : "application/vnd.ms-excel";
+-      const ext = format === "csv" ? "csv" : "xls";
+-      const blob = new Blob([csv], { type: mime });
+-      const url = URL.createObjectURL(blob);
+-      const link = document.createElement("a");
+-      link.href = url;
+-      link.download = `loan-requests.${ext}`;
+-      link.click();
+-      toast({ title: `${format.toUpperCase()} file downloaded` });
+-    } else if (format === "pdf") {
+-      window.print();
+-    }
+-  };
+-
+-  const filteredRequests = useMemo(() => {
+-    if (!loanRequests) return [];
+-    if (!searchQuery) return loanRequests;
+-    return loanRequests.filter(l =>
+-      l.detail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+-      l.status?.toLowerCase().includes(searchQuery.toLowerCase())
+-    );
+-  }, [loanRequests, searchQuery]);
+ 
+-  return (
+-    <main className="flex-1 overflow-auto p-6">
+-      <div className="max-w-full mx-auto space-y-6">
+-        {/* Page Header */}
+-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-2">
+-          <div>
+-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Loan Report</h1>
+-            <p className="text-sm text-slate-500 dark:text-slate-400">Loan and advance salary requests</p>
+-          </div>
+-          <div className="flex flex-wrap items-center gap-2">
+-            <Button variant="outline" size="sm" className="h-9 px-3 text-slate-600 border-slate-200" onClick={() => exportData("csv")}>
+-              <Download className="h-4 w-4 mr-2" /> CSV
+-            </Button>
+-            <Button variant="outline" size="sm" className="h-9 px-3 text-slate-600 border-slate-200" onClick={() => window.print()}>
+-              <FileSpreadsheet className="h-4 w-4 mr-2" /> PDF
+-            </Button>
+-            <Button variant="outline" size="sm" className="h-9 px-3 text-slate-600 border-slate-200">
+-              <Mail className="h-4 w-4 mr-2" /> Email
+-            </Button>
+-          </div>
+-        </div>
+-
+-        {/* Report Dashboard Section - Only visible in History tab */}
+-        {activeTab === "history" && (
+-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 animate-in fade-in slide-in-from-top-4 duration-500">
+-            <MetricCard
+-              title="Total Requests"
+-              value={loanStats?.totalRequests || 0}
+-              icon={Target}
+-              color="text-[#2b76b9]"
+-              bgColor="bg-blue-50"
+-            />
+-            <MetricCard
+-              title="Approved Amount"
+-              value={Number(loanStats?.totalAmountApproved || 0).toLocaleString()}
+-              icon={DollarSign}
+-              color="text-[#008d4c]"
+-              bgColor="bg-emerald-50"
+-              suffix=" AED"
+-            />
+-            <MetricCard
+-              title="Remaining Balance"
+-              value={Number(loanStats?.totalRemainingAmount || 0).toLocaleString()}
+-              icon={TrendingUpIcon}
+-              color="text-red-600"
+-              bgColor="bg-red-50"
+-              suffix=" AED"
+-            />
+-            <MetricCard
+-              title="Completed"
+-              value={loanStats?.completed || 0}
+-              icon={CheckCircle2}
+-              color="text-[#009f9f]"
+-              bgColor="bg-cyan-50"
+-            />
+-          </div>
+-        )}
+-
+-        <div className="flex items-center gap-2 mb-6">
+-          <Button
+-            variant={activeTab === "add_loan" ? "default" : "secondary"}
+-            className={`h-11 px-6 font-bold shadow-sm transition-all ${activeTab === "add_loan"
+-              ? "bg-white text-slate-800 hover:bg-slate-50 border border-slate-200"
+-              : "bg-slate-100 text-slate-500 hover:bg-slate-200 border-none"
+-              }`}
+-            onClick={() => setActiveTab("add_loan")}
+-          >
+-            <Plus className="mr-2 h-4 w-4" /> New Request
+-          </Button>
+-          <Button
+-            variant={activeTab === "history" ? "default" : "secondary"}
+-            className={`h-11 px-6 font-bold shadow-sm transition-all ${activeTab === "history"
+-              ? "bg-white text-slate-800 hover:bg-slate-50 border border-slate-200"
+-              : "bg-slate-100 text-slate-500 hover:bg-slate-200 border-none"
+-              }`}
+-            onClick={() => setActiveTab("history")}
+-          >
+-            <History className="mr-2 h-4 w-4" /> Request History
+-          </Button>
+-        </div>
+-
+-        {activeTab === "add_loan" && (
+-          <Card className="border-none shadow-sm bg-white dark:bg-slate-900 overflow-hidden">
+-            <CardContent className="p-8">
+-              <div className="mb-8">
+-                <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Submit Loan Request</h2>
+-                <p className="text-slate-500 dark:text-slate-400 mt-1">Fill in the details below to submit a loan or salary advance request</p>
+-              </div>
+-
+-              <div className="mb-8 p-6 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 flex items-center gap-4">
+-                <div className="h-12 w-12 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shadow-sm">
+-                  <UserIcon className="h-6 w-6 text-slate-400" />
+-                </div>
+-                <div>
+-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-0.5">Employee</label>
+-                  <p className="font-medium text-slate-700 dark:text-slate-300">
+-                    {currentUser?.name || "Loading..."} <span className="text-slate-400 font-normal">(Auto-filled from your account)</span>
+-                  </p>
+-                </div>
+-              </div>
++    const deleteMutation = useMutation({
++        mutationFn: async (id: string) => {
++            return apiRequest("DELETE", `/api/loans/${id}`);
++        },
++        onSuccess: () => {
++            queryClient.invalidateQueries({ queryKey: ["/api/loans"] });
++            queryClient.invalidateQueries({ queryKey: ["/api/loans/stats"] });
++            toast({ title: "Loan request deleted successfully" });
++        },
++        onError: () => {
++            toast({
++                title: "Failed to delete loan request",
++                variant: "destructive",
++            });
++        },
++    });
+ 
+-              <Form {...form}>
+-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+-                    <FormField
+-                      control={form.control}
+-                      name="amount"
+-                      render={({ field }) => (
+-                        <FormItem className="space-y-3">
+-                          <FormLabel className="text-sm font-bold text-slate-700 dark:text-slate-300">Loan Amount (AED)</FormLabel>
+-                          <FormControl>
+-                            <Input
+-                              type="number"
+-                              placeholder="e.g., 5000"
+-                              className="h-12 bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 focus:ring-[#008d4c] transition-all"
+-                              {...field}
+-                            />
+-                          </FormControl>
+-                          <FormMessage />
+-                        </FormItem>
+-                      )}
+-                    />
++    const exportData = (formatType: "copy" | "csv" | "excel" | "pdf") => {
++        if (!loanRequests || loanRequests.length === 0) {
++            toast({ title: "No data to export", variant: "destructive" });
++            return;
++        }
++
++        const headers = ["No#", "Employee", "Advance", "Detail", "Instalment", "Remaining", "Manager", "Hod", "Date"];
++        const rows = loanRequests.map((loan, idx) => [
++            (idx + 1).toString(),
++            "Employee User", // Mocked as employee name is complex here
++            loan.amount.toString(),
++            loan.detail,
++            loan.installmentAmount.toString(),
++            loan.remainingAmount.toString(),
++            loan.managerApprovedByUserId ? "Approved" : "Pending",
++            loan.hodApprovedByUserId ? "Approved" : "Pending",
++            loan.createdAt ? format(new Date(loan.createdAt), "MMM d, yyyy") : "-"
++        ]);
++
++        if (formatType === "copy") {
++            const text = [headers.join("\t"), ...rows.map((r) => r.join("\t"))].join("\n");
++            navigator.clipboard.writeText(text);
++            toast({ title: "Data copied to clipboard" });
++        } else if (formatType === "csv" || formatType === "excel") {
++            const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${c}"`).join(","))].join("\n");
++            const mime = formatType === "csv" ? "text/csv" : "application/vnd.ms-excel";
++            const ext = formatType === "csv" ? "csv" : "xls";
++            const blob = new Blob([csv], { type: mime });
++            const url = URL.createObjectURL(blob);
++            const link = document.createElement("a");
++            link.href = url;
++            link.download = `advance-salary.${ext}`;
++            link.click();
++            toast({ title: `${formatType.toUpperCase()} file downloaded` });
++        } else if (formatType === "pdf") {
++            window.print();
++        }
++    };
++
++    const filteredRequests = loanRequests?.filter((l) => 
++        !searchQuery || 
++        l.detail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
++        l.status?.toLowerCase().includes(searchQuery.toLowerCase())
++    ) || [];
++
++    return (
++        <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] font-sans">
++            <h1 className="text-[16px] font-bold tracking-wide uppercase mb-6 text-[#495057]">
++                ADVANCE SALARY LIST
++            </h1>
++
++            <Card className="border border-gray-100 shadow-sm rounded-md bg-white">
++                <CardContent className="p-5">
++                    {/* The specific string from the screenshot */}
++                    <div className="text-[13px] text-[#495057] mb-2 font-medium">
++                        Sales DepartmentSales DepartmentD&D Department D&D Department Accounts DepartmentAccounts DepartmentDeactiveDeactiveD&D Department D&D Department DeactiveDeactive
++                    </div>
+ 
+-                    <FormField
+-                      control={form.control}
+-                      name="installmentAmount"
+-                      render={({ field }) => (
+-                        <FormItem className="space-y-3">
+-                          <FormLabel className="text-sm font-bold text-slate-700 dark:text-slate-300">Monthly Installment (AED)</FormLabel>
+-                          <FormControl>
+-                            <Input
+-                              type="number"
+-                              placeholder="e.g., 500"
+-                              className="h-12 bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 focus:ring-[#008d4c] transition-all"
+-                              {...field}
++                    {/* Table Controls */}
++                    <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 gap-4">
++                        {/* Action Buttons */}
++                        <div className="flex bg-[#6c757d] rounded-[3px] overflow-hidden shadow-sm h-8">
++                            <button 
++                                onClick={() => exportData('copy')}
++                                className="px-3 text-[13px] text-white hover:bg-[#5a6268] border-r border-[#5a6268] transition-colors"
++                            >
++                                Copy
++                            </button>
++                            <button 
++                                onClick={() => exportData('excel')}
++                                className="px-3 text-[13px] text-white hover:bg-[#5a6268] border-r border-[#5a6268] transition-colors"
++                            >
++                                Excel
++                            </button>
++                            <button 
++                                onClick={() => exportData('csv')}
++                                className="px-3 text-[13px] text-white hover:bg-[#5a6268] border-r border-[#5a6268] transition-colors"
++                            >
++                                CSV
++                            </button>
++                            <button 
++                                onClick={() => exportData('pdf')}
++                                className="px-3 text-[13px] text-white hover:bg-[#5a6268] transition-colors"
++                            >
++                                PDF
++                            </button>
++                        </div>
++
++                        {/* Search Input */}
++                        <div className="flex items-center gap-2">
++                            <span className="text-[13px] text-[#495057]">Search:</span>
++                            <Input 
++                                type="search"
++                                value={searchQuery}
++                                onChange={(e) => setSearchQuery(e.target.value)}
++                                className="h-8 w-[200px] bg-white text-[13px] text-gray-500 shadow-sm border-gray-200" 
+                             />
+-                          </FormControl>
+-                          <FormMessage />
+-                        </FormItem>
+-                      )}
+-                    />
+-
+-                    <div className="md:col-span-2">
+-                      <FormField
+-                        control={form.control}
+-                        name="detail"
+-                        render={({ field }) => (
+-                          <FormItem className="space-y-3">
+-                            <FormLabel className="text-sm font-bold text-slate-700 dark:text-slate-300">Reason / Detail</FormLabel>
+-                            <FormControl>
+-                              <Textarea
+-                                placeholder="Explain why you need this loan..."
+-                                className="min-h-[140px] bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 focus:ring-[#008d4c] p-4"
+-                                {...field}
+-                              />
+-                            </FormControl>
+-                            <FormDescription className="text-xs text-slate-400">Provide details about the loan purpose</FormDescription>
+-                            <FormMessage />
+-                          </FormItem>
+-                        )}
+-                      />
++                        </div>
+                     </div>
+-                  </div>
+-
+-                  <div className="flex items-center justify-end gap-4 pt-4">
+-                    <Button
+-                      type="button"
+-                      variant="outline"
+-                      className="h-12 px-8 font-bold border-slate-200"
+-                      onClick={() => form.reset()}
+-                    >
+-                      Reset
+-                    </Button>
+-                    <Button
+-                      type="submit"
+-                      className="h-12 px-8 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+-                      disabled={createMutation.isPending}
+-                    >
+-                      {createMutation.isPending ? "Processing..." : "Submit Request"}
+-                    </Button>
+-                  </div>
+-                </form>
+-              </Form>
+-            </CardContent>
+-          </Card>
+-        )}
+-
+-        {activeTab === "history" && (
+-          <Card className="border-none shadow-sm overflow-hidden bg-white dark:bg-slate-900">
+-            <CardContent className="p-0">
+-              <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+-                <div className="flex bg-[#576472] rounded-md overflow-hidden shadow-sm">
+-                  <Button variant="ghost" size="sm" className="text-white hover:bg-[#4a5561] px-4 h-10 rounded-none border-r border-[#6c7b8b]" onClick={() => exportData("copy")}>Copy</Button>
+-                  <Button variant="ghost" size="sm" className="text-white hover:bg-[#4a5561] px-4 h-10 rounded-none border-r border-[#6c7b8b]" onClick={() => exportData("excel")}>Excel</Button>
+-                  <Button variant="ghost" size="sm" className="text-white hover:bg-[#4a5561] px-4 h-10 rounded-none border-r border-[#6c7b8b]" onClick={() => exportData("csv")}>CSV</Button>
+-                  <Button variant="ghost" size="sm" className="text-white hover:bg-[#4a5561] px-4 h-10 rounded-none" onClick={() => exportData("pdf")}>PDF</Button>
+-                </div>
+-                <div className="flex items-center gap-3">
+-                  <span className="text-sm font-bold text-slate-500 uppercase">Search:</span>
+-                  <Input
+-                    placeholder="Search requests..."
+-                    className="h-10 w-48 md:w-72 bg-slate-50 border-slate-200"
+-                    value={searchQuery}
+-                    onChange={(e) => setSearchQuery(e.target.value)}
+-                  />
+-                </div>
+-              </div>
+ 
+-              <div className="overflow-x-auto">
+-                <Table>
+-                  <TableHeader>
+-                    <TableRow className="bg-slate-50 border-y border-slate-100">
+-                      <TableHead className="w-16 font-bold">No#</TableHead>
+-                      <TableHead className="font-bold">Employee</TableHead>
+-                      <TableHead className="font-bold">Advance</TableHead>
+-                      <TableHead className="font-bold">Detail</TableHead>
+-                      <TableHead className="font-bold">Installment</TableHead>
+-                      <TableHead className="font-bold">Remaining</TableHead>
+-                      <TableHead className="font-bold">Manager</TableHead>
+-                      <TableHead className="font-bold">Hod</TableHead>
+-                      <TableHead className="font-bold">Date</TableHead>
+-                      <TableHead className="font-bold">Action</TableHead>
+-                    </TableRow>
+-                  </TableHeader>
+-                  <TableBody>
+-                    {loadingRequests ? (
+-                      Array.from({ length: 3 }).map((_, i) => (
+-                        <TableRow key={i}>
+-                          <TableCell colSpan={10}><Skeleton className="h-10 w-full" /></TableCell>
+-                        </TableRow>
+-                      ))
+-                    ) : filteredRequests.length === 0 ? (
+-                      <TableRow>
+-                        <TableCell colSpan={10} className="h-24 text-center text-slate-500">No data available</TableCell>
+-                      </TableRow>
+-                    ) : (
+-                      filteredRequests.map((loan, idx) => (
+-                        <TableRow key={loan.id} className="hover:bg-slate-50/50">
+-                          <TableCell>{idx + 1}</TableCell>
+-                          <TableCell className="font-medium text-[#2b76b9]">{currentUser?.name}</TableCell>
+-                          <TableCell>{formatCurrency(loan.amount)}</TableCell>
+-                          <TableCell className="max-w-[150px] truncate">{loan.detail}</TableCell>
+-                          <TableCell>{formatCurrency(loan.installmentAmount)}</TableCell>
+-                          <TableCell>{formatCurrency(loan.remainingAmount)}</TableCell>
+-                          <TableCell>
+-                            {loan.managerApprovedByUserId ? (
+-                              <Badge className="bg-emerald-100 text-emerald-700 gap-1 border-none"><CheckCircle2 className="h-3 w-3" /> Approved</Badge>
+-                            ) : loan.status === "Rejected" ? (
+-                              <Badge className="bg-red-100 text-red-700 gap-1 border-none"><XCircle className="h-3 w-3" /> Rejected</Badge>
+-                            ) : (
+-                              <Badge className="bg-amber-100 text-amber-700 gap-1 border-none"><Clock className="h-3 w-3" /> Pending</Badge>
+-                            )}
+-                          </TableCell>
+-                          <TableCell>
+-                            {loan.hodApprovedByUserId ? (
+-                              <Badge className="bg-emerald-100 text-emerald-700 gap-1 border-none"><CheckCircle2 className="h-3 w-3" /> Approved</Badge>
+-                            ) : loan.status === "Rejected" ? (
+-                              <Badge className="bg-red-100 text-red-700 gap-1 border-none"><XCircle className="h-3 w-3" /> Rejected</Badge>
+-                            ) : (
+-                              <Badge className="bg-amber-100 text-amber-700 gap-1 border-none"><Clock className="h-3 w-3" /> Pending</Badge>
+-                            )}
+-                          </TableCell>
+-                          <TableCell>{formatDate(loan.createdAt)}</TableCell>
+-                          <TableCell>
+-                            {loan.status === "Pending" && (
+-                              <Button
+-                                variant="ghost"
+-                                size="icon"
+-                                className="h-8 w-8 text-red-500 hover:bg-red-50"
+-                                onClick={() => deleteMutation.mutate(loan.id)}
+-                                disabled={deleteMutation.isPending}
+-                              >
+-                                <Trash2 className="h-4 w-4" />
+-                              </Button>
+-                            )}
+-                          </TableCell>
+-                        </TableRow>
+-                      ))
+-                    )}
+-                  </TableBody>
+-                  <TableFooter className="bg-slate-50 font-bold border-t border-slate-100">
+-                    <TableRow>
+-                      <TableCell>Total</TableCell>
+-                      <TableCell></TableCell>
+-                      <TableCell className="text-[#2b76b9]">{formatCurrency(loanStats?.totalAmountApproved || 0)}</TableCell>
+-                      <TableCell></TableCell>
+-                      <TableCell>Remaning</TableCell>
+-                      <TableCell className="text-[#2b76b9]">{formatCurrency(loanStats?.totalRemainingAmount || 0)}</TableCell>
+-                      <TableCell colSpan={4}></TableCell>
+-                    </TableRow>
+-                  </TableFooter>
+-                </Table>
+-              </div>
+-              <div className="p-4 border-t border-slate-100 text-sm text-slate-500">
+-                Showing {filteredRequests.length} of {loanRequests?.length || 0} entries
+-              </div>
+-            </CardContent>
+-          </Card>
+-        )}
+-      </div>
+-    </main>
+-  );
+-}
++                    {/* Table */}
++                    <div className="w-full border border-gray-200 overflow-hidden mb-4 rounded-t">
++                        <table className="w-full text-left border-collapse">
++                            <thead>
++                                <tr className="bg-[#f1f5f9] border-b border-gray-200">
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white w-[50px]">No#</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Employee</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Advance</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Detail</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Instalment</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Remaining</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Manager</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Hod</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Date</th>
++                                    <th className="px-3 py-3 text-[13px] font-bold text-[#495057]">Action</th>
++                                </tr>
++                            </thead>
++                            <tbody>
++                                {!loadingRequests && filteredRequests.length === 0 ? (
++                                    <tr>
++                                        <td colSpan={10} className="px-3 py-4 text-[13px] text-[#495057]">
++                                            No data available in table
++                                        </td>
++                                    </tr>
++                                ) : (
++                                    filteredRequests.map((loan, idx) => (
++                                        <tr key={loan.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{idx + 1}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">Employee User</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.amount}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.detail}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.installmentAmount}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.remainingAmount}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.managerApprovedByUserId ? "Approved" : "Pending"}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">{loan.hodApprovedByUserId ? "Approved" : "Pending"}</td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">
++                                                {loan.createdAt ? format(new Date(loan.createdAt), "MMM d, yyyy") : "-"}
++                                            </td>
++                                            <td className="px-3 py-4 text-[13px] text-gray-700">
++                                                <button 
++                                                    onClick={() => deleteMutation.mutate(loan.id)}
++                                                    className="w-7 h-7 bg-red-50 text-red-500 rounded flex items-center justify-center hover:bg-red-100 border border-red-100"
++                                                >
++                                                    <Trash2 className="w-3.5 h-3.5" />
++                                                </button>
++                                            </td>
++                                        </tr>
++                                    ))
++                                )}
++                            </tbody>
++                        </table>
++                    </div>
+ 
+-function MetricCard({ title, value, icon: Icon, color, suffix = "", bgColor }: any) {
+-  return (
+-    <Card className="shadow-sm border-border/50 bg-white/50 backdrop-blur-sm transition-all hover:shadow-md">
+-      <CardContent className="p-4">
+-        <div className="flex items-center justify-between">
+-          <div className="space-y-1">
+-            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{title}</p>
+-            <div className="flex items-baseline gap-1">
+-              <h3 className="text-xl font-bold text-slate-800">{value}</h3>
+-              {suffix && <span className="text-xs font-medium text-slate-500">{suffix}</span>}
+-            </div>
+-          </div>
+-          <div className={`p-2 rounded-xl ${bgColor || 'bg-slate-50'}`}>
+-            <Icon className={`h-5 w-5 ${color}`} />
+-          </div>
++                    {/* Footer Controls */}
++                    <div className="text-[13px] text-[#495057]">
++                        Showing {filteredRequests.length > 0 ? 1 : 0} to {filteredRequests.length} of {filteredRequests.length} entries
++                    </div>
++                </CardContent>
++            </Card>
+         </div>
+-      </CardContent>
+-    </Card>
+-  );
++    );
+ }
+diff --git a/client/src/pages/overtime-submission.tsx b/client/src/pages/overtime-submission.tsx
+index 29a4c48..64ec0e5 100644
+--- a/client/src/pages/overtime-submission.tsx
++++ b/client/src/pages/overtime-submission.tsx
+@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
+ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+ import { Skeleton } from "@/components/ui/skeleton";
+ import { Input } from "@/components/ui/input";
++import { Label } from "@/components/ui/label";
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+ import { Textarea } from "@/components/ui/textarea";
+ import {
+   Form,
+@@ -73,6 +75,7 @@ export default function OvertimeSubmissionPage() {
+   const { toast } = useToast();
+   const { updateVisibleData } = useScreenContext();
+   const [activeTab, setActiveTab] = useState("new");
++  const [isAddMode, setIsAddMode] = useState(false);
+ 
+   useEffect(() => {
+     updateVisibleData({
+@@ -181,86 +184,111 @@ export default function OvertimeSubmissionPage() {
+     : 0;
+ 
+   return (
+-    <div className="p-4 bg-[#f8fafc] min-h-screen font-sans">
+-      <div className="mb-6 flex items-center text-[15px] font-bold tracking-tight px-2 uppercase shadow-none bg-transparent">
+-        <span className="text-slate-600">OVERTIME /</span>
+-        <span className="text-[#059669] ml-1">ADD OVERTIME</span>
+-      </div>
++    <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] font-sans">
++        <h1 className="text-[16px] font-bold tracking-wide uppercase mb-6 flex items-center">
++            <span className="text-[#495057]">OVERTIME</span>
++            <span className="mx-1 text-[#495057]">/</span>
++            <span 
++                className="text-[#00a65a] cursor-pointer hover:underline"
++                onClick={() => setIsAddMode(!isAddMode)}
++            >
++                ADD OVERTIME
++            </span>
++        </h1>
+ 
+-      <div className="bg-white rounded-[10px] shadow-sm border border-slate-100 p-6 mb-6">
+-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+-          <div>
+-            <label className="block text-[13px] font-semibold text-slate-600 mb-2">Task</label>
+-            <input
+-              value={form.watch('taskTitle')}
+-              onChange={(e) => form.setValue('taskTitle', e.target.value)}
+-              placeholder="purpose"
+-              className="w-full rounded border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-[#059669] transition-colors"
+-            />
+-          </div>
+-          <div>
+-            <label className="block text-[13px] font-semibold text-slate-600 mb-2">Time In Mint</label>
+-            <input
+-              type="number"
+-              value={form.watch('timeSpent')}
+-              onChange={(e) => form.setValue('timeSpent', parseInt(e.target.value) || 0)}
+-              placeholder="time in mint"
+-              className="w-full rounded border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-[#059669] transition-colors"
+-            />
+-          </div>
+-          <div>
+-            <label className="block text-[13px] font-semibold text-slate-600 mb-2">Task Detail</label>
+-            <input
+-              value={form.watch('taskDetails')}
+-              onChange={(e) => form.setValue('taskDetails', e.target.value)}
+-              placeholder="add detail"
+-              className="w-full rounded border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-[#059669] transition-colors"
+-            />
+-          </div>
+-        </div>
+-        <button
+-          onClick={form.handleSubmit(onSubmit)}
+-          disabled={createMutation.isPending}
+-          className="bg-[#52b788] hover:bg-[#40916c] text-white font-medium px-8 py-2.5 rounded transition-colors text-[14px]"
+-        >
+-          {createMutation.isPending ? "Submitting..." : "Submit"}
+-        </button>
+-      </div>
++      {isAddMode && (
++        <Card className="border border-gray-100 shadow-sm rounded-md bg-white mb-6">
++            <CardContent className="p-5">
++                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">
++                <div className="space-y-1.5 flex flex-col">
++                    <Label className="text-[13px] font-medium text-[#495057]">Task</Label>
++                    <Input
++                    value={form.watch('taskTitle')}
++                    onChange={(e) => form.setValue('taskTitle', e.target.value)}
++                    placeholder="purpose"
++                    className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200"
++                    />
++                </div>
++                <div className="space-y-1.5 flex flex-col">
++                    <Label className="text-[13px] font-medium text-[#495057]">Time In Mint</Label>
++                    <Input
++                    type="text"
++                    value={form.watch('timeSpent') || ""}
++                    onChange={(e) => form.setValue('timeSpent', parseInt(e.target.value) || 0)}
++                    placeholder="time in mint"
++                    className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200"
++                    />
++                </div>
++                <div className="space-y-1.5 flex flex-col">
++                    <Label className="text-[13px] font-medium text-[#495057]">Task Detail</Label>
++                    <Input
++                    value={form.watch('taskDetails')}
++                    onChange={(e) => form.setValue('taskDetails', e.target.value)}
++                    placeholder="add detail"
++                    className="h-9 w-full bg-white text-[13px] text-gray-500 shadow-sm border-gray-200"
++                    />
++                </div>
++                </div>
++                <div>
++                    <Button
++                        onClick={form.handleSubmit(onSubmit)}
++                        disabled={createMutation.isPending}
++                        className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 text-[13px] font-medium shadow-none"
++                    >
++                    {createMutation.isPending ? "Submitting..." : "Submit"}
++                    </Button>
++                </div>
++            </CardContent>
++        </Card>
++      )}
+ 
+-      <div className="bg-white rounded-[10px] shadow-sm border border-slate-100 p-4 min-h-[300px]">
+-        <div className="flex flex-col gap-4">
+-          <div className="flex justify-between items-center mb-1">
+-            <div className="flex flex-col text-[13px] text-slate-600">
+-              <span className="mb-1">Show</span>
+-              <select className="w-[65px] h-8 text-[12px] border border-slate-200 rounded px-2 outline-none focus:border-[#059669] bg-white">
+-                <option value="10">10</option>
+-              </select>
+-              <span className="mt-1 flex items-center">entries</span>
+-            </div>
+-            <div className="flex flex-col items-end text-[13px] text-slate-600 self-end mb-5 font-medium">
+-              <span className="mb-1">Search:</span>
+-              <input type="text" className="h-8 w-[180px] text-[13px] border border-slate-200 rounded px-2 outline-none focus:border-[#059669] bg-white text-left font-normal" />
++      <Card className="border border-gray-100 shadow-sm rounded-md bg-white">
++        <CardContent className="p-5">
++            {/* Table Controls */}
++            <div className="flex justify-between items-center mb-4">
++                <div className="flex items-center gap-2">
++                    <span className="text-[13px] text-[#495057]">Show</span>
++                    <Select defaultValue="10">
++                        <SelectTrigger className="h-8 w-[70px] bg-white text-[13px] text-gray-600 border-gray-200">
++                            <SelectValue />
++                        </SelectTrigger>
++                        <SelectContent>
++                            <SelectItem value="10">10</SelectItem>
++                            <SelectItem value="25">25</SelectItem>
++                            <SelectItem value="50">50</SelectItem>
++                            <SelectItem value="100">100</SelectItem>
++                        </SelectContent>
++                    </Select>
++                    <span className="text-[13px] text-[#495057]">entries</span>
++                </div>
++
++                <div className="flex items-center gap-2">
++                    <span className="text-[13px] text-[#495057]">Search:</span>
++                    <Input 
++                        type="search"
++                        className="h-8 w-[200px] bg-white text-[13px] text-gray-500 shadow-sm border-gray-200" 
++                    />
++                </div>
+             </div>
+-          </div>
+ 
+-          <div className="overflow-x-auto mt-[-10px]">
+-            <table className="w-full text-left border-collapse">
++          <div className="w-full border border-gray-200 overflow-hidden mb-4 mt-2">
++            <table className="w-full text-center border-collapse">
+               <thead>
+-                <tr className="bg-[#f1f5f9] border-b border-white">
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600 rounded-tl w-16">#</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Name</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Task</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Time</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Task Detail</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Manager</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600">Create</th>
+-                  <th className="py-4 px-4 text-[13px] font-bold text-slate-600 rounded-tr w-24">Action</th>
++                <tr className="bg-[#f2f2f2] border-b border-gray-200">
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white w-[50px]">#</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Name</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Task</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Time</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Task Detail</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Manager</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Create</th>
++                  <th className="px-3 py-3 text-[13px] font-bold text-[#495057] border-r border-white">Action</th>
+                 </tr>
+               </thead>
+               <tbody>
+                 {!overtimeRecords || overtimeRecords.length === 0 ? (
+                   <tr>
+-                    <td colSpan={8} className="px-6 py-5 text-left text-[13px] text-slate-500 font-medium tracking-wide border-b border-slate-100/60 pb-8">
++                    <td colSpan={8} className="px-3 py-4 text-[13px] text-[#495057]">
+                       No data available in table
+                     </td>
+                   </tr>
+@@ -285,18 +313,19 @@ export default function OvertimeSubmissionPage() {
+               </tbody>
+             </table>
+           </div>
+-
+-          <div className="flex items-center justify-between px-2 py-3 text-[13px] text-slate-500 mt-2">
+-            <div>
+-              {(!overtimeRecords || overtimeRecords.length === 0) ? "Showing 0 to 0 of 0 entries" : `Showing 1 to ${overtimeRecords.length} of ${overtimeRecords.length} entries`}
++            <div className="flex justify-between items-center text-[13px] text-[#495057]">
++                <div>Showing 0 to 0 of 0 entries</div>
++                <div className="flex rounded-md overflow-hidden border border-gray-200">
++                    <button className="px-3 py-1.5 bg-[#f9f9f9] text-[#b0b0b0] cursor-not-allowed border-r border-gray-200">
++                        Previous
++                    </button>
++                    <button className="px-3 py-1.5 bg-white text-[#b0b0b0] cursor-not-allowed">
++                        Next
++                    </button>
++                </div>
+             </div>
+-            <div className="flex rounded border border-slate-200 overflow-hidden shadow-sm">
+-              <button disabled className="px-3 py-1.5 bg-white text-slate-300 border-r border-slate-200">Previous</button>
+-              <button disabled className="px-3 py-1.5 bg-white text-slate-300">Next</button>
+-            </div>
+-          </div>
+-        </div>
+-      </div>
++        </CardContent>
++      </Card>
+     </div>
+   );
+ }
+diff --git a/client/src/pages/pms-pending-approvals.tsx b/client/src/pages/pms-pending-approvals.tsx
+index 9153d0f..ec87cc6 100644
+--- a/client/src/pages/pms-pending-approvals.tsx
++++ b/client/src/pages/pms-pending-approvals.tsx
+@@ -1,479 +1,82 @@
+-import { useQuery, useMutation } from "@tanstack/react-query";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Badge } from "@/components/ui/badge";
++import { Loader2 } from "lucide-react";
+ import { Button } from "@/components/ui/button";
+-import { ScrollArea } from "@/components/ui/scroll-area";
+-import { CheckCircle, XCircle, Clock, AlertCircle, Filter, Loader2 } from "lucide-react";
+-import {
+-  Table,
+-  TableBody,
+-  TableCell,
+-  TableHead,
+-  TableHeader,
+-  TableRow,
+-} from "@/components/ui/table";
+-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+-import { Textarea } from "@/components/ui/textarea";
+-import { useState } from "react";
+-import { format } from "date-fns";
+-import { useToast } from "@/hooks/use-toast";
+-import { apiRequest, queryClient } from "@/lib/queryClient";
+ 
+-interface ApprovalStats {
+-  pending: number;
+-  approved: number;
+-  rejected: number;
+-  pendingInvoices: number;
+-}
+-
+-interface PendingApproval {
+-  id: string;
+-  projectId: string;
+-  stage: string;
+-  status: string;
+-  approverUserId: string | null;
+-  approvedAt: string | null;
+-  rejectionReason: string | null;
+-  createdAt: string;
+-  project: {
+-    id: string;
+-    name: string;
+-    status: string;
+-    workSpace: string;
+-    companyName?: string;
+-  };
+-  approver: { id: string; name: string } | null;
+-}
++const PENDING_MOCK = [
++    { id: "9399", name: "Alibaba Minisite", company: "MOZLAN SPORTS", status: "Start Work", hod: "Approved", dep: "Approved", date: "01 Jan 2026" },
++    { id: "3618", name: "Alibaba Minisite", company: "SANZAF ENTERPRISES", status: "Start Work", hod: "Approved", dep: "Approved", date: "25 Apr 2024" },
++    { id: "703", name: "Domain Registration", company: "DADDY D PRO", status: "verify Data", hod: "Approved", dep: "Waiting", date: "15 Jul 2024" },
++];
+ 
+ export default function PmsPendingApprovals() {
+-  const { toast } = useToast();
+-  const [selectedStage, setSelectedStage] = useState(() => {
+-    if (typeof window !== "undefined") {
+-      const tab = new URLSearchParams(window.location.search).get("tab");
+-      return tab || "all";
+-    }
+-    return "all";
+-  });
+-  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+-  const [selectedApproval, setSelectedApproval] = useState<PendingApproval | null>(null);
+-  const [rejectionReason, setRejectionReason] = useState("");
+-
+-  const {
+-    data: stats,
+-    isLoading: statsLoading,
+-    isError: statsError,
+-  } = useQuery<ApprovalStats>({
+-    queryKey: ["/api/pms/approval-stats"],
+-    queryFn: async () => {
+-      const res = await apiRequest("GET", "/api/pms/approval-stats");
+-      return res.json();
+-    },
+-    retry: 1,
+-  });
+-
+-  const { data: approvals, isLoading, isError } = useQuery<PendingApproval[]>({
+-    queryKey: ["/api/pms/pending-approvals", selectedStage],
+-    queryFn: async () => {
+-      const res = await apiRequest(
+-        "GET",
+-        `/api/pms/pending-approvals${selectedStage !== "all" && selectedStage !== "invoices" ? `?stage=${selectedStage}` : ""}`,
+-      );
+-      return res.json();
+-    },
+-  });
+-
+-  const { data: pendingInvoices, isLoading: invoicesLoading } = useQuery<any[]>({
+-    queryKey: ["/api/pms/invoices/pending-project"],
+-    queryFn: async () => {
+-      const res = await apiRequest("GET", "/api/pms/invoices/pending-project");
+-      return res.json();
+-    },
+-  });
+-
+-  const createProjectMutation = useMutation({
+-    mutationFn: async (invoice: any) => {
+-        const projectName = invoice.projectName || `Proj-INV-${invoice.id.substring(0, 5)}`;
+-        return apiRequest("POST", "/api/pms/projects", {
+-            name: projectName,
+-            invoiceId: invoice.id,
+-            description: invoice.description || `Project created from invoice ${invoice.id}`,
+-            status: "Active",
+-            ownerUserId: invoice.salesExecId // Original SE
+-        });
+-    },
+-    onSuccess: () => {
+-        queryClient.invalidateQueries({ queryKey: ["/api/pms/invoices/pending-project"] });
+-        queryClient.invalidateQueries({ queryKey: ["/api/pms/projects"] });
+-        toast({ title: "Success", description: "Project created successfully from invoice." });
+-    }
+-  });
+-
+-  const approveMutation = useMutation({
+-    mutationFn: (id: string) =>
+-      apiRequest("POST", `/api/pms/approvals/${id}/approve`, {}),
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/pending-approvals"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/approval-stats"] });
+-      toast({ title: "Approved", description: "Request has been approved successfully" });
+-    },
+-  });
+-
+-  const rejectMutation = useMutation({
+-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+-      apiRequest("POST", `/api/pms/approvals/${id}/reject`, { reason }),
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/pending-approvals"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/approval-stats"] });
+-      setRejectDialogOpen(false);
+-      setRejectionReason("");
+-      setSelectedApproval(null);
+-      toast({ title: "Rejected", description: "Request has been rejected" });
+-    },
+-  });
+-
+-  const handleApprove = (approval: PendingApproval) => {
+-    approveMutation.mutate(approval.id);
+-  };
+-
+-  const handleRejectClick = (approval: PendingApproval) => {
+-    setSelectedApproval(approval);
+-    setRejectDialogOpen(true);
+-  };
+-
+-  const handleRejectSubmit = () => {
+-    if (selectedApproval && rejectionReason.trim()) {
+-      rejectMutation.mutate({ id: selectedApproval.id, reason: rejectionReason });
+-    }
+-  };
+-
+-  const getStageBadge = (stage: string, currentStage: string) => {
+-    const isCurrent = stage === currentStage;
+-    if (isCurrent) {
+-        return <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">Pending</Badge>;
+-    }
+-    return <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200">Waiting</Badge>;
+-  };
+-
+-  const getStatusBadge = (status: string) => {
+-    switch (status) {
+-      case "Active":
+-      case "APPROVED":
+-      case "Approved":
+-        return <Badge className="bg-green-500 text-white border-0">Start Work</Badge>;
+-      default:
+-        return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">{status}</Badge>;
+-    }
+-  };
+-
+-  return (
+-    <ScrollArea className="flex-1">
+-      <div className="p-6 space-y-6">
+-        <div className="flex items-center justify-between gap-4 flex-wrap">
+-          <div>
+-            <h1 className="text-2xl font-bold" data-testid="text-page-title">Pending Approvals</h1>
+-            <p className="text-muted-foreground">Review and process project approval requests</p>
+-          </div>
+-        </div>
+-
+-        <div className="grid gap-4 md:grid-cols-4">
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
+-              <Clock className="h-4 w-4 text-yellow-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-yellow-600" data-testid="text-pending-count">
+-                {statsLoading ? "-" : stats?.pending || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Awaiting review</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Approved Invoices</CardTitle>
+-              <AlertCircle className="h-4 w-4 text-blue-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-blue-600">
+-                {statsLoading ? "-" : stats?.pendingInvoices || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Needs Project Creation</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Total Approved</CardTitle>
+-              <CheckCircle className="h-4 w-4 text-green-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-green-600" data-testid="text-approved-count">
+-                {statsLoading ? "-" : stats?.approved || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Historical total</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Rejected</CardTitle>
+-              <XCircle className="h-4 w-4 text-red-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-red-600" data-testid="text-rejected-count">
+-                {statsLoading ? "-" : stats?.rejected || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Total rejected</p>
+-            </CardContent>
+-          </Card>
+-        </div>
+-
+-        <Tabs defaultValue="all" onValueChange={setSelectedStage}>
+-          <div className="flex items-center gap-4">
+-            <Filter className="h-4 w-4 text-muted-foreground" />
+-            <TabsList>
+-              <TabsTrigger value="all" data-testid="tab-all">All Stages</TabsTrigger>
+-              <TabsTrigger value="Manager" data-testid="tab-manager">Manager</TabsTrigger>
+-              <TabsTrigger value="HOD" data-testid="tab-hod">HOD</TabsTrigger>
+-              <TabsTrigger value="Department" data-testid="tab-department">Department</TabsTrigger>
+-              <TabsTrigger value="invoices" data-testid="tab-invoices" className="bg-primary/10 text-primary font-bold">Approved Invoices</TabsTrigger>
+-            </TabsList>
+-          </div>
+-
+-          <TabsContent value="invoices" className="mt-4">
+-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+-                <Table>
+-                  <TableHeader className="bg-slate-50/50">
+-                    <TableRow>
+-                      <TableHead className="w-[80px] font-bold text-slate-800">#P-ID</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Projects</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Status</TableHead>
+-                      <TableHead className="text-center font-bold text-slate-800">HOD</TableHead>
+-                      <TableHead className="text-center font-bold text-slate-800">DEP</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Date</TableHead>
+-                      <TableHead className="text-right font-bold text-slate-800">Action</TableHead>
+-                    </TableRow>
+-                  </TableHeader>
+-                  <TableBody>
+-                    {pendingInvoices?.map((invoice) => (
+-                      <TableRow key={invoice.id} className="hover:bg-slate-50/50 transition-colors">
+-                        <TableCell className="font-mono text-xs text-slate-500">
+-                          {invoice.id.substring(0, 4).toUpperCase()}
+-                        </TableCell>
+-                        <TableCell>
+-                          <div className="flex flex-col">
+-                            <span className="font-bold text-slate-900">{invoice.projectName || `Approved Invoice #${invoice.id.substring(0, 6)}`}</span>
+-                            <span className="text-xs text-slate-500 font-medium">{invoice.companyName || "No Company Specified"}</span>
+-                          </div>
+-                        </TableCell>
+-                        <TableCell>
+-                          <span className="text-sm font-semibold text-slate-700">${invoice.amount}</span>
+-                        </TableCell>
+-                        <TableCell>
+-                          <Badge className="bg-emerald-500 text-white border-0 py-0.5 px-2 text-[10px]">Ready to Start</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          <Badge variant="outline" className="bg-green-50 text-green-600 border-green-100">Approved</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          <Badge variant="outline" className="bg-green-50 text-green-600 border-green-100">Approved</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-slate-500 text-sm">
+-                          {invoice.updatedAt && !isNaN(new Date(invoice.updatedAt).getTime()) ? format(new Date(invoice.updatedAt), "dd MMM yyyy") : "-"}
+-                        </TableCell>
+-                        <TableCell className="text-right">
+-                          <Button 
+-                            size="sm" 
+-                            variant="ghost" 
+-                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 h-8 font-bold"
+-                            onClick={() => createProjectMutation.mutate(invoice)}
+-                            disabled={createProjectMutation.isPending}
+-                          >
+-                            Create Project
+-                          </Button>
+-                        </TableCell>
+-                      </TableRow>
+-                    ))}
+-                  </TableBody>
+-                </Table>
+-                {pendingInvoices?.length === 0 && (
+-                    <div className="text-center py-20 text-muted-foreground">No approved invoices awaiting project creation.</div>
+-                )}
+-              </div>
+-          </TabsContent>
+-
+-          {selectedStage !== "invoices" && (
+-            <TabsContent value={selectedStage} className="mt-4">
+-            {isLoading ? (
+-              <div className="flex items-center justify-center h-64">
+-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+-              </div>
+-            ) : isError || statsError ? (
+-              <div className="flex items-center justify-center h-64 text-muted-foreground">
+-                Failed to load approvals. Please try again.
+-              </div>
+-            ) : (
+-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+-                <Table>
+-                  <TableHeader className="bg-slate-50/50">
+-                    <TableRow>
+-                      <TableHead className="w-[80px] font-bold text-slate-800">#P-ID</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Projects</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Status</TableHead>
+-                      <TableHead className="text-center font-bold text-slate-800">Hod</TableHead>
+-                      <TableHead className="text-center font-bold text-slate-800">Dep</TableHead>
+-                      <TableHead className="font-bold text-slate-800">Date</TableHead>
+-                      <TableHead className="text-right font-bold text-slate-800">Action</TableHead>
+-                    </TableRow>
+-                  </TableHeader>
+-                  <TableBody>
+-                    {selectedStage === "all" && pendingInvoices?.map((invoice) => (
+-                      <TableRow key={`invoice-${invoice.id}`} className="group hover:bg-slate-50/50 transition-colors">
+-                        <TableCell>
+-                          <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold text-xs ring-4 ring-blue-50">
+-                            {invoice.id.substring(0, 4).toUpperCase()}
+-                          </div>
+-                        </TableCell>
+-                        <TableCell>
+-                          <div className="flex flex-col">
+-                            <span className="font-bold text-slate-900">Invoice #{invoice.id.substring(0, 8)}</span>
+-                            <span className="text-xs text-slate-400">{invoice.company_name || 'No Company'}</span>
+-                          </div>
+-                        </TableCell>
+-                        <TableCell>
+-                          <Badge className="bg-blue-500 text-white border-0 py-0.5 px-2 text-[10px]">Verify Data</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          <Badge variant="outline" className="bg-green-50 text-green-600 border-green-100">Approved</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          <Badge variant="outline" className="bg-slate-50 text-slate-400">Waiting</Badge>
+-                        </TableCell>
+-                        <TableCell className="text-slate-500 text-sm">
+-                          {invoice.updatedAt && !isNaN(new Date(invoice.updatedAt).getTime()) ? format(new Date(invoice.updatedAt), "dd MMM yyyy") : "-"}
+-                        </TableCell>
+-                        <TableCell className="text-right">
+-                          <Button 
+-                            size="sm" 
+-                            variant="ghost" 
+-                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 h-8 font-bold"
+-                            onClick={() => createProjectMutation.mutate(invoice)}
+-                            disabled={createProjectMutation.isPending}
+-                          >
+-                            Create Project
+-                          </Button>
+-                        </TableCell>
+-                      </TableRow>
+-                    ))}
+-
+-                    {approvals?.map((approval) => (
+-                      <TableRow key={approval.id} className="group hover:bg-slate-50/50 transition-colors">
+-                        <TableCell>
+-                          <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-bold text-xs ring-4 ${approval.stage === 'HOD' ? 'bg-orange-500 ring-orange-50' : 'bg-green-500 ring-green-50'}`}>
+-                            {approval.project?.id?.substring(0, 4).toUpperCase() || "????"}
+-                          </div>
+-                        </TableCell>
+-                        <TableCell>
+-                          <div className="flex flex-col">
+-                            <span className="font-bold text-slate-900 truncate max-w-[200px]">{approval.project?.name || "Unnamed Project"}</span>
+-                            <span className="text-xs text-slate-500 font-medium">{approval.project?.companyName || (approval.project?.workSpace ? approval.project.workSpace + " Project" : "Not Provided")}</span>
+-                          </div>
+-                        </TableCell>
+-                        <TableCell>
+-                          {getStatusBadge(approval.project?.status || "Pending")}
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          {getStageBadge("HOD", approval.stage)}
+-                        </TableCell>
+-                        <TableCell className="text-center">
+-                          {getStageBadge("Department", approval.stage)}
+-                        </TableCell>
+-                        <TableCell className="text-slate-500 text-sm">
+-                          {approval.createdAt && !isNaN(new Date(approval.createdAt).getTime()) ? format(new Date(approval.createdAt), "dd MMM yyyy") : "-"}
+-                        </TableCell>
+-                        <TableCell className="text-right">
+-                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+-                            <Button
+-                              variant="ghost"
+-                              size="sm"
+-                              onClick={() => handleRejectClick(approval)}
+-                              disabled={rejectMutation.isPending}
+-                              className="text-red-500 hover:text-red-600 hover:bg-red-50 h-8"
+-                            >
+-                              Reject
+-                            </Button>
+-                            <Button
+-                              variant="ghost"
+-                              size="sm"
+-                              onClick={() => handleApprove(approval)}
+-                              disabled={approveMutation.isPending}
+-                              className="text-green-600 hover:text-green-700 hover:bg-green-50 h-8 font-bold"
+-                            >
+-                              Approve
+-                            </Button>
+-                          </div>
+-                        </TableCell>
+-                      </TableRow>
+-                    ))}
+-                  </TableBody>
+-                </Table>
+-
+-                {(approvals?.length === 0 && (selectedStage !== "all" || pendingInvoices?.length === 0)) && (
+-                  <div className="flex flex-col items-center justify-center py-20 bg-slate-50/30">
+-                    <CheckCircle className="h-12 w-12 text-green-300 mb-4" />
+-                    <h3 className="text-lg font-bold text-slate-700">LIST OF PROJECT ACTIVITY</h3>
+-                    <p className="text-slate-400 text-center max-w-sm mt-1">
+-                      No pending approvals at the moment.
+-                    </p>
+-                  </div>
+-                )}
+-                
+-                {(approvals && approvals.length > 5) && (
+-                  <div className="p-4 border-t bg-slate-50/50 flex justify-center">
+-                    <Button variant="ghost" className="text-emerald-500 font-bold hover:bg-transparent flex items-center gap-2">
+-                       <Loader2 className="h-4 w-4 animate-spin" /> Load more
+-                    </Button>
+-                  </div>
+-                )}
+-              </div>
+-            )}
+-          </TabsContent>
+-        )}
+-        </Tabs>
++    return (
++        <div className="p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans">
++            <h1 className="text-[17px] font-bold text-[#495057] uppercase tracking-wide mb-8">
++                LIST OF PROJECT ACTIVITY
++            </h1>
++
++            <div className="w-full">
++                <table className="w-full text-left border-separate border-spacing-y-3">
++                    <thead>
++                        <tr className="text-[#495057]">
++                            <th className="px-6 py-2 text-[13px] font-bold w-[100px]">#P-ID</th>
++                            <th className="px-6 py-2 text-[13px] font-bold">Projects</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[160px]">Status</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[140px]">Hod</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[140px]">Dep</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[150px]">Date</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[100px]">Action</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        {PENDING_MOCK.map((row) => (
++                            <tr key={row.id} className="bg-white shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] rounded-md transition-transform hover:scale-[1.01]">
++                                <td className="px-6 py-4 rounded-l-md">
++                                    <div className="w-9 h-9 rounded-full bg-[#00a65a] flex items-center justify-center text-white text-[11px] font-bold shadow-sm">
++                                        {row.id}
++                                    </div>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <div className="flex flex-col gap-1">
++                                        <span className="text-[14.5px] font-semibold text-[#343a40] tracking-wide">{row.name}</span>
++                                        <span className="text-[12px] font-medium text-[#adb5bd] uppercase tracking-wider">{row.company}</span>
++                                    </div>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="inline-flex bg-[#00a65a] text-white text-[10.5px] px-3.5 py-1 rounded-[4px] font-bold shadow-sm border border-[#009450]">
++                                        {row.status}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className={`inline-flex text-[11.5px] px-3.5 py-1 rounded-full font-bold shadow-sm border ${row.hod === 'Approved' ? 'bg-[#ebf5ff] text-[#0056b3] border-[#d6ebff]' : 'bg-[#f1f3f5] text-[#868e96] border-[#e9ecef]'}`}>
++                                        {row.hod}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className={`inline-flex text-[11.5px] px-3.5 py-1 rounded-full font-bold shadow-sm border ${row.dep === 'Approved' ? 'bg-[#ebf5ff] text-[#0056b3] border-[#d6ebff]' : 'bg-[#f1f3f5] text-[#868e96] border-gray-200'}`}>
++                                        {row.dep}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="text-[12.5px] text-[#495057] font-medium">{row.date}</span>
++                                </td>
++                                <td className="px-6 py-4 rounded-r-md">
++                                    {/* Action slot ready */}
++                                </td>
++                            </tr>
++                        ))}
++                    </tbody>
++                </table>
++            </div>
+ 
+-        <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+-          <DialogContent>
+-            <DialogHeader>
+-              <DialogTitle>Reject Request</DialogTitle>
+-            </DialogHeader>
+-            <div className="py-4">
+-              <label className="text-sm font-medium">Reason for Rejection</label>
+-              <Textarea
+-                placeholder="Please provide a reason for rejecting this request..."
+-                value={rejectionReason}
+-                onChange={(e) => setRejectionReason(e.target.value)}
+-                className="mt-2"
+-                data-testid="textarea-rejection-reason"
+-              />
++            <div className="mt-10 flex justify-center w-full">
++                <Button 
++                    variant="ghost" 
++                    className="text-[#00a65a] hover:bg-transparent hover:text-[#008d4c] font-medium flex items-center gap-2 text-[14px]"
++                >
++                    <Loader2 className="w-[18px] h-[18px]" strokeWidth={2.5} />
++                    Load more
++                </Button>
+             </div>
+-            <DialogFooter>
+-              <Button variant="outline" onClick={() => setRejectDialogOpen(false)} data-testid="button-cancel-reject">
+-                Cancel
+-              </Button>
+-              <Button
+-                onClick={handleRejectSubmit}
+-                disabled={!rejectionReason.trim() || rejectMutation.isPending}
+-                className="bg-red-600 hover:bg-red-700"
+-                data-testid="button-confirm-reject"
+-              >
+-                Reject Request
+-              </Button>
+-            </DialogFooter>
+-          </DialogContent>
+-        </Dialog>
+-      </div>
+-    </ScrollArea>
+-  );
++        </div>
++    );
+ }
+diff --git a/client/src/pages/pms-running-projects.tsx b/client/src/pages/pms-running-projects.tsx
+index a5a4623..e4c0adf 100644
+--- a/client/src/pages/pms-running-projects.tsx
++++ b/client/src/pages/pms-running-projects.tsx
+@@ -1,248 +1,160 @@
+-import { useQuery } from "@tanstack/react-query";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Badge } from "@/components/ui/badge";
+-import { Button } from "@/components/ui/button";
+-import { ScrollArea } from "@/components/ui/scroll-area";
+-import { DollarSign, TrendingUp, Clock, AlertCircle, Plus, Search } from "lucide-react";
+-import { Input } from "@/components/ui/input";
+-import { useState } from "react";
+-import { format } from "date-fns";
+-import { Link } from "wouter";
+-import { apiRequest } from "@/lib/queryClient";
+-
+-interface ProjectFinancial {
+-  id: string;
+-  projectId: string;
+-  totalAmount: string;
+-  paidAmount: string;
+-  dueAmount: string;
+-  currency: string;
+-  lastPaymentAt: string | null;
+-  project: {
+-    id: string;
+-    name: string;
+-    status: string;
+-    workSpace: string;
+-    companyName?: string;
+-    startDate: string | null;
+-    endDate: string | null;
+-  };
+-}
++import React from "react";
++
++const UPCOMING_MOCK = [
++    { id: 1, company: "London hybrid centre", project: "SEO", status: "Documents Panding", person: "", date: "09 Apr 2024" },
++    { id: 2, company: "NAVEED ELECTRONICS", project: "SEO", status: "Documents Panding", person: "", date: "07 May 2024" },
++    { id: 3, company: "NAVEED ELECTRONICS", project: "SEO", status: "Documents Panding", person: "", date: "07 May 2024" },
++    { id: 4, company: "Veltrix Enterprises", project: "Social Media Account Handling", status: "Documents Panding", person: "Muhammad Hassan Abbas", date: "06 Nov 2025" },
++    { id: 5, company: "Veltrix Enterprises", project: "Social Media Account Handling", status: "Documents Panding", person: "Muhammad Hassan Abbas", date: "10 Dec 2025" },
++    { id: 6, company: "PAKWIN SPORTS", project: "Social Media Account Handling", status: "Documents Panding", person: "Tahir Mehmood Bhatti", date: "01 Apr 2026" },
++];
++
++const RUNNING_MOCK = [
++    { id: 1, company: "WELC", project: "SEO", status: "Stop", time: "4:0", assign: "Muhammad Tuqeer Razaq", date: "08 Feb 2023", link: "5" },
++    { id: 2, company: "univenture", project: "SEO", status: "Stop", time: "8:0", assign: "Laiba Waseem", date: "25 Feb 2023", link: "-12" },
++    { id: 3, company: "WELC", project: "SEO", status: "Stop", time: "8:0", assign: "Aqsa Umar", date: "16 Mar 2023", link: "2" },
++    { id: 4, company: "WELC", project: "SEO", status: "Stop", time: "6:0", assign: "Muhammad Tuqeer Razaq", date: "17 Oct 2023", link: "1" },
++    { id: 5, company: "WELC", project: "SEO", status: "Stop", time: "4:0", assign: "Muhammad Tuqeer Razaq", date: "30 Oct 2023", link: "1" },
++    { id: 6, company: "NAVEED ELECTRONICS", project: "SEO", status: "Stop", time: "2:0", assign: "Muhammad Tuqeer Razaq", date: "06 Mar 2024", link: "0" },
++];
++
++const COMPLETED_MOCK = [
++    { id: 1, company: "WELC", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "02 Feb 2023", link: "0" },
++    { id: 2, company: "WELC", project: "SEO", status: "End", time: "4:0", assign: "Aqsa Umar", date: "02 Feb 2023", link: "0" },
++    { id: 3, company: "WELC", project: "SEO", status: "End", time: "4:0", assign: "Aqsa Umar", date: "03 Feb 2023", link: "0" },
++    { id: 4, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "06 Feb 2023", link: "0" },
++    { id: 5, company: "WELC", project: "SEO", status: "End", time: "1:0", assign: "Aqsa Umar", date: "07 Feb 2023", link: "0" },
++    { id: 6, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "08 Feb 2023", link: "0" },
++    { id: 7, company: "WELC", project: "SEO", status: "End", time: "4:0", assign: "Aqsa Umar", date: "08 Feb 2023", link: "0" },
++];
+ 
+ export default function PmsRunningProjects() {
+-  const [searchTerm, setSearchTerm] = useState("");
+-
+-  const {
+-    data: projects = [],
+-    isLoading,
+-    isError,
+-  } = useQuery<ProjectFinancial[]>({
+-    queryKey: ["/api/pms/running-projects"],
+-    queryFn: async () => {
+-      const res = await apiRequest("GET", "/api/pms/running-projects");
+-      return res.json();
+-    },
+-  });
+-
+-  const filteredProjects = projects?.filter(
+-    (p) =>
+-      p.project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+-      p.project.workSpace.toLowerCase().includes(searchTerm.toLowerCase())
+-  );
+-
+-  const totalValue = projects?.reduce((sum, p) => sum + parseFloat(p.totalAmount || "0"), 0) || 0;
+-  const totalPaid = projects?.reduce((sum, p) => sum + parseFloat(p.paidAmount || "0"), 0) || 0;
+-  const totalDue = projects?.reduce((sum, p) => sum + parseFloat(p.dueAmount || "0"), 0) || 0;
+-
+-  const formatCurrency = (amount: string | number, currency = "USD") => {
+-    const num = typeof amount === "string" ? parseFloat(amount) : amount;
+-    return new Intl.NumberFormat("en-US", {
+-      style: "currency",
+-      currency,
+-    }).format(num);
+-  };
+-
+-  const getStatusBadge = (status: string) => {
+-    switch (status) {
+-      case "Active":
+-        return <Badge className="bg-green-500/10 text-green-500" data-testid="badge-status-active">Active</Badge>;
+-      case "OnHold":
+-        return <Badge className="bg-yellow-500/10 text-yellow-500" data-testid="badge-status-onhold">On Hold</Badge>;
+-      case "Completed":
+-        return <Badge className="bg-blue-500/10 text-blue-500" data-testid="badge-status-completed">Completed</Badge>;
+-      default:
+-        return <Badge data-testid={`badge-status-${status.toLowerCase()}`}>{status}</Badge>;
+-    }
+-  };
+-
+-  const getPaymentProgress = (paid: string, total: string) => {
+-    const paidNum = parseFloat(paid || "0");
+-    const totalNum = parseFloat(total || "0");
+-    if (totalNum === 0) return 0;
+-    return Math.min(100, (paidNum / totalNum) * 100);
+-  };
+-
+-  return (
+-    <ScrollArea className="flex-1">
+-      <div className="p-6 space-y-6">
+-        <div className="flex items-center justify-between gap-4 flex-wrap">
+-          <div>
+-            <h1 className="text-2xl font-bold" data-testid="text-page-title">Running Projects</h1>
+-            <p className="text-muted-foreground">Track project financials and payment progress</p>
+-          </div>
+-          <Button asChild data-testid="button-add-project">
+-            <Link href="/pms/status">
+-              <Plus className="h-4 w-4 mr-2" />
+-              New Project
+-            </Link>
+-          </Button>
+-        </div>
+-
+-        <div className="grid gap-4 md:grid-cols-3">
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Total Project Value</CardTitle>
+-              <DollarSign className="h-4 w-4 text-muted-foreground" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold" data-testid="text-total-value">
+-                {formatCurrency(totalValue)}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Across {projects?.length || 0} projects</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Total Paid</CardTitle>
+-              <TrendingUp className="h-4 w-4 text-green-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-green-600" data-testid="text-total-paid">
+-                {formatCurrency(totalPaid)}
+-              </div>
+-              <p className="text-xs text-muted-foreground">
+-                {totalValue > 0 ? ((totalPaid / totalValue) * 100).toFixed(1) : 0}% of total
+-              </p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Total Due</CardTitle>
+-              <AlertCircle className="h-4 w-4 text-orange-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-orange-600" data-testid="text-total-due">
+-                {formatCurrency(totalDue)}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Outstanding payments</p>
+-            </CardContent>
+-          </Card>
+-        </div>
+-
+-        <div className="flex items-center gap-4">
+-          <div className="relative flex-1 max-w-md">
+-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+-            <Input
+-              placeholder="Search projects..."
+-              className="pl-10"
+-              value={searchTerm}
+-              onChange={(e) => setSearchTerm(e.target.value)}
+-              data-testid="input-search-projects"
+-            />
+-          </div>
+-        </div>
+-
+-        {isLoading ? (
+-          <div className="flex items-center justify-center h-64">
+-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+-          </div>
+-        ) : isError ? (
+-          <div className="flex items-center justify-center h-64 text-muted-foreground">
+-            Failed to load projects. Please try again.
+-          </div>
+-        ) : (
+-          <div className="space-y-4">
+-            {filteredProjects?.map((item) => (
+-              <Card key={item.id} className="hover-elevate cursor-pointer" data-testid={`card-project-${item.projectId}`}>
+-                <CardContent className="p-6">
+-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+-                    <div className="space-y-1">
+-                      <div className="flex items-center gap-2">
+-                        <h3 className="font-semibold text-lg" data-testid={`text-project-name-${item.projectId}`}>
+-                          {item.project.name}
+-                        </h3>
+-                        {getStatusBadge(item.project.status)}
+-                      </div>
+-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+-                        <span className="font-medium text-slate-500">
+-                          {item.project.companyName || (item.project.workSpace ? item.project.workSpace + " Project" : "No Company")}
+-                        </span>
+-                        {item.project.startDate && (
+-                          <span>Started: {format(new Date(item.project.startDate), "MMM dd, yyyy")}</span>
+-                        )}
+-                        {item.lastPaymentAt && (
+-                          <span className="flex items-center gap-1">
+-                            <Clock className="h-3 w-3" />
+-                            Last payment: {format(new Date(item.lastPaymentAt), "MMM dd, yyyy")}
+-                          </span>
+-                        )}
+-                      </div>
++    return (
++        <div className="p-4 md:p-6 bg-white flex flex-col h-[calc(100vh-60px)] overflow-hidden font-sans">
++            <h1 className="text-[17px] font-bold text-[#495057] uppercase mb-6 flex-shrink-0">
++                RUNNING PROJECT / <span className="text-[#00a65a]">REPORT</span>
++            </h1>
++
++            {/* Split 3 Columns Wrapper */}
++            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
++                
++                {/* 1. UPCOMING PROJECTS */}
++                <div className="flex flex-col min-h-0 bg-white border border-gray-100 rounded shadow-sm h-full">
++                    <div className="p-4 bg-white border-b border-gray-100">
++                        <h2 className="text-[14px] font-bold text-[#495057]">Upcoming Projects</h2>
++                    </div>
++                    {/* Scrollable Container */}
++                    <div className="flex-1 overflow-auto custom-scrollbar">
++                        <table className="w-full text-left border-collapse min-w-[500px]">
++                            <thead className="bg-[#5ab671] text-white sticky top-0 z-10">
++                                <tr>
++                                    <th className="px-3 py-3.5 text-[13px] font-semibold tracking-wide border-r border-[#4ca461]/30">Company</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-semibold tracking-wide border-r border-[#4ca461]/30">Project</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-semibold tracking-wide border-r border-[#4ca461]/30">Status</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-semibold tracking-wide border-r border-[#4ca461]/30">Person</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-semibold tracking-wide">Create Date</th>
++                                </tr>
++                            </thead>
++                            <tbody className="divide-y divide-gray-100 text-[#495057]">
++                                {UPCOMING_MOCK.map((row) => (
++                                    <tr key={row.id} className="hover:bg-gray-50 transition-colors">
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 w-[140px]">{row.company}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100">{row.project}</td>
++                                        <td className="px-3 py-[20px] border-r border-gray-100 whitespace-nowrap">
++                                            <span className="inline-flex bg-[#f1f3f5] text-[#868e96] border border-gray-200 text-[11px] px-2.5 py-1 rounded-full font-medium shadow-sm">
++                                                {row.status}
++                                            </span>
++                                        </td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 min-w-[100px]">{row.person}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] whitespace-nowrap">{row.date}</td>
++                                    </tr>
++                                ))}
++                            </tbody>
++                        </table>
+                     </div>
++                </div>
+ 
+-                    <div className="flex items-center gap-6">
+-                      <div className="text-right">
+-                        <p className="text-sm text-muted-foreground">Total</p>
+-                        <p className="font-semibold" data-testid={`text-project-total-${item.projectId}`}>
+-                          {formatCurrency(item.totalAmount, item.currency)}
+-                        </p>
+-                      </div>
+-                      <div className="text-right">
+-                        <p className="text-sm text-muted-foreground">Paid</p>
+-                        <p className="font-semibold text-green-600" data-testid={`text-project-paid-${item.projectId}`}>
+-                          {formatCurrency(item.paidAmount, item.currency)}
+-                        </p>
+-                      </div>
+-                      <div className="text-right">
+-                        <p className="text-sm text-muted-foreground">Due</p>
+-                        <p className="font-semibold text-orange-600" data-testid={`text-project-due-${item.projectId}`}>
+-                          {formatCurrency(item.dueAmount, item.currency)}
+-                        </p>
+-                      </div>
++                {/* 2. RUNNING PROJECTS */}
++                <div className="flex flex-col min-h-0 bg-white border border-gray-100 rounded shadow-sm h-full">
++                    <div className="p-4 bg-white border-b border-gray-100">
++                        <h2 className="text-[14px] font-bold text-[#495057]">Running Projects</h2>
+                     </div>
+-                  </div>
++                    {/* Scrollable Container */}
++                    <div className="flex-1 overflow-auto custom-scrollbar">
++                        <table className="w-full text-left border-collapse min-w-[650px]">
++                            <thead className="bg-[#ccaa84] text-[#554332] sticky top-0 z-10">
++                                <tr>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40">Company</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40">Project</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40">Status</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40">Time</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40 w-[120px]">Assign</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-[#b99872]/40">Assign Date</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold">Link</th>
++                                </tr>
++                            </thead>
++                            <tbody className="divide-y divide-gray-100 text-[#495057]">
++                                {RUNNING_MOCK.map((row) => (
++                                    <tr key={row.id} className="hover:bg-gray-50 transition-colors">
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 w-[120px]">{row.company}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100">{row.project}</td>
++                                        <td className="px-3 py-[20px] border-r border-gray-100">
++                                            <span className="inline-flex bg-[#fdf2e8] text-[#eeb375] border border-[#fbf0e6] text-[11px] px-3 py-0.5 rounded font-bold shadow-sm">
++                                                {row.status}
++                                            </span>
++                                        </td>
++                                        <td className="px-3 py-[20px] text-[13px] text-gray-500 font-medium border-r border-gray-100">{row.time}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100">{row.assign}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 whitespace-nowrap">{row.date}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px]">{row.link}</td>
++                                    </tr>
++                                ))}
++                            </tbody>
++                        </table>
++                    </div>
++                </div>
+ 
+-                  <div className="mt-4">
+-                    <div className="flex items-center justify-between text-sm mb-1">
+-                      <span className="text-muted-foreground">Payment Progress</span>
+-                      <span>{getPaymentProgress(item.paidAmount, item.totalAmount).toFixed(1)}%</span>
++                {/* 3. COMPLETED PROJECTS */}
++                <div className="flex flex-col min-h-0 bg-white border border-gray-100 rounded shadow-sm h-full">
++                    <div className="p-4 bg-white border-b border-gray-100">
++                        <h2 className="text-[14px] font-bold text-[#495057]">Completed Projects</h2>
+                     </div>
+-                    <div className="w-full bg-muted rounded-full h-2">
+-                      <div
+-                        className="bg-green-500 h-2 rounded-full transition-all"
+-                        style={{ width: `${getPaymentProgress(item.paidAmount, item.totalAmount)}%` }}
+-                      />
++                    {/* Scrollable Container */}
++                    <div className="flex-1 overflow-auto custom-scrollbar">
++                        <table className="w-full text-left border-collapse min-w-[650px]">
++                            <thead className="bg-[#f0f2f5] text-[#495057] sticky top-0 z-10">
++                                <tr>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50">Company</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50">Project</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50">Status</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50">Time</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50 w-[120px]">Assign</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold border-r border-white/50">Assign Date</th>
++                                    <th className="px-3 py-3.5 text-[13px] font-bold">Link</th>
++                                </tr>
++                            </thead>
++                            <tbody className="divide-y divide-gray-100 text-[#495057]">
++                                {COMPLETED_MOCK.map((row) => (
++                                    <tr key={row.id} className="hover:bg-gray-50 transition-colors">
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 w-[120px]">{row.company}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100">{row.project}</td>
++                                        <td className="px-3 py-[20px] border-r border-gray-100">
++                                            <span className="inline-flex bg-[#ebfbf1] text-[#69df9e] border border-[#e5f9ed] text-[11px] px-3 py-0.5 rounded font-bold shadow-sm">
++                                                {row.status}
++                                            </span>
++                                        </td>
++                                        <td className="px-3 py-[20px] text-[13px] text-gray-500 font-medium border-r border-gray-100">{row.time}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100">{row.assign}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px] border-r border-gray-100 whitespace-nowrap">{row.date}</td>
++                                        <td className="px-3 py-[20px] text-[12.5px]">{row.link}</td>
++                                    </tr>
++                                ))}
++                            </tbody>
++                        </table>
+                     </div>
+-                  </div>
+-                </CardContent>
+-              </Card>
+-            ))}
++                </div>
+ 
+-            {filteredProjects?.length === 0 && (
+-              <Card>
+-                <CardContent className="flex flex-col items-center justify-center py-12">
+-                  <DollarSign className="h-12 w-12 text-muted-foreground mb-4" />
+-                  <h3 className="text-lg font-semibold mb-2">No Projects Found</h3>
+-                  <p className="text-muted-foreground text-center max-w-sm">
+-                    {searchTerm ? "No projects match your search criteria." : "Start by adding a new project with financial tracking."}
+-                  </p>
+-                </CardContent>
+-              </Card>
+-            )}
+-          </div>
+-        )}
+-      </div>
+-    </ScrollArea>
+-  );
++            </div>
++        </div>
++    );
+ }
+diff --git a/client/src/pages/pms-status.tsx b/client/src/pages/pms-status.tsx
+index 15fb61a..466c809 100644
+--- a/client/src/pages/pms-status.tsx
++++ b/client/src/pages/pms-status.tsx
+@@ -1,506 +1,138 @@
+-import { useQuery, useMutation } from "@tanstack/react-query";
+-import { queryClient, apiRequest } from "@/lib/queryClient";
+-import { useModuleData } from "@/hooks/use-module-data";
+-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Button } from "@/components/ui/button";
+-import { Badge } from "@/components/ui/badge";
+-import { Progress } from "@/components/ui/progress";
+-import { Plus, Calendar, CheckCircle2, Clock, Pause, FolderKanban, Users, AlertTriangle, ListTodo } from "lucide-react";
+ import { useState } from "react";
+-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
++import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
+-import { Textarea } from "@/components/ui/textarea";
+ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+-import { useForm } from "react-hook-form";
+-import { zodResolver } from "@hookform/resolvers/zod";
+-import { z } from "zod";
+-import { useToast } from "@/hooks/use-toast";
+-import { Link } from "wouter";
+-
+-type ProjectWithStats = {
+-  id: string;
+-  name: string;
+-  description?: string;
+-  ownerUserId: string;
+-  ownerName: string;
+-  workSpace?: string;
+-  status: "Active" | "OnHold" | "Completed";
+-  startDate?: string;
+-  endDate?: string;
+-  createdAt: string;
+-  updatedAt: string;
+-  taskStats: {
+-    total: number;
+-    toDo: number;
+-    inProgress: number;
+-    blocked: number;
+-    completed: number;
+-  };
+-};
+-
+-type OverallStats = {
+-  projects: {
+-    totalProjects: number;
+-    activeProjects: number;
+-    completedProjects: number;
+-    onHoldProjects: number;
+-  };
+-  tasks: {
+-    total: number;
+-    toDo: number;
+-    inProgress: number;
+-    blocked: number;
+-    completed: number;
+-    overdue: number;
+-  };
+-};
+-
+-const createProjectSchema = z.object({
+-  name: z.string().min(1, "Name is required"),
+-  description: z.string().optional(),
+-  workSpace: z.string().optional(),
+-  startDate: z.string().optional(),
+-  endDate: z.string().optional(),
+-});
+-
+-type CreateProjectFormData = z.infer<typeof createProjectSchema>;
+-
+-export default function PmsStatus() {
+-  useModuleData("/pms/status");
+-  const { toast } = useToast();
+-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+-  const [statusFilter, setStatusFilter] = useState<string>("all");
+-
+-  const { data: stats, isError: statsError } = useQuery<OverallStats>({
+-    queryKey: ["/api/pms/stats"],
+-    retry: 1,
+-  });
+-
+-  const { data: projects = [], isLoading: isLoadingProjects } = useQuery<ProjectWithStats[]>({
+-    queryKey: ["/api/pms/projects?withStats=true"],
+-    queryFn: async () => {
+-      const res = await apiRequest("GET", "/api/pms/projects?withStats=true");
+-      return res.json();
+-    },
+-    retry: 1,
+-  });
+-
+-  const createProjectMutation = useMutation({
+-    mutationFn: async (data: CreateProjectFormData) => {
+-      return apiRequest("POST", "/api/pms/projects", {
+-        ...data,
+-        startDate: data.startDate ? new Date(data.startDate).toISOString() : undefined,
+-        endDate: data.endDate ? new Date(data.endDate).toISOString() : undefined,
+-      });
+-    },
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/projects"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/stats"] });
+-      setIsCreateDialogOpen(false);
+-      form.reset();
+-      toast({
+-        title: "Project Created",
+-        description: "New project has been created successfully",
+-      });
+-    },
+-    onError: (error: Error) => {
+-      toast({
+-        title: "Error",
+-        description: error.message || "Failed to create project",
+-        variant: "destructive",
+-      });
+-    },
+-  });
+-
+-  const updateProjectStatusMutation = useMutation({
+-    mutationFn: async ({ projectId, status }: { projectId: string; status: string }) => {
+-      return apiRequest("PUT", `/api/pms/projects/${projectId}`, { status });
+-    },
+-    onSuccess: () => {
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/projects"] });
+-      queryClient.invalidateQueries({ queryKey: ["/api/pms/stats"] });
+-      toast({
+-        title: "Status Updated",
+-        description: "Project status has been updated",
+-      });
+-    },
+-    onError: (error: Error) => {
+-      toast({
+-        title: "Error",
+-        description: error.message || "Failed to update project status",
+-        variant: "destructive",
+-      });
+-    },
+-  });
+-
+-  const form = useForm<CreateProjectFormData>({
+-    resolver: zodResolver(createProjectSchema),
+-    defaultValues: {
+-      name: "",
+-      description: "",
+-      workSpace: "",
+-    },
+-  });
+-
+-  const onSubmit = (data: CreateProjectFormData) => {
+-    createProjectMutation.mutate(data);
+-  };
+-
+-  const getStatusBadge = (status: ProjectWithStats["status"]) => {
+-    switch (status) {
+-      case "Active":
+-        return (
+-          <Badge className="bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">
+-            <CheckCircle2 className="h-3 w-3 mr-1" />
+-            Active
+-          </Badge>
+-        );
+-      case "OnHold":
+-        return (
+-          <Badge className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
+-            <Pause className="h-3 w-3 mr-1" />
+-            On Hold
+-          </Badge>
+-        );
+-      case "Completed":
+-        return (
+-          <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400">
+-            <CheckCircle2 className="h-3 w-3 mr-1" />
+-            Completed
+-          </Badge>
+-        );
++import { CalendarIcon } from "lucide-react";
++import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
++
++const DEP_MOCK = [
++    {
++        id: "1",
++        company: "Webexcels",
++        package: "Basic Plus",
++        status: "New",
++        project: "Website",
++        amount: "50000",
++        method: "Cash",
++        createVerify: "2021-07-13 17:08:25"
+     }
+-  };
+-
+-  const filteredProjects = projects.filter((p) => {
+-    if (statusFilter === "all") return true;
+-    return p.status === statusFilter;
+-  });
+-
+-  const getProgressPercentage = (project: ProjectWithStats) => {
+-    const total = project.taskStats.total;
+-    if (total === 0) return 0;
+-    return Math.round((project.taskStats.completed / total) * 100);
+-  };
+-
+-  return (
+-    <div className="flex-1 overflow-auto p-4 md:p-6">
+-      <div className="w-full space-y-6">
+-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+-          <div>
+-            <h1 className="text-3xl font-bold" data-testid="text-page-title">Project Dashboard</h1>
+-            <p className="text-muted-foreground" data-testid="text-page-description">
+-              Monitor project progress and team performance
+-            </p>
+-          </div>
+-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+-            <DialogTrigger asChild>
+-              <Button data-testid="button-create-project">
+-                <Plus className="h-4 w-4 mr-2" />
+-                New Project
+-              </Button>
+-            </DialogTrigger>
+-            <DialogContent data-testid="dialog-create-project">
+-              <DialogHeader>
+-                <DialogTitle>Create New Project</DialogTitle>
+-              </DialogHeader>
+-              <Form {...form}>
+-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+-                  <FormField
+-                    control={form.control}
+-                    name="name"
+-                    render={({ field }) => (
+-                      <FormItem>
+-                        <FormLabel>Project Name</FormLabel>
+-                        <FormControl>
+-                          <Input placeholder="Enter project name" {...field} data-testid="input-project-name" />
+-                        </FormControl>
+-                        <FormMessage />
+-                      </FormItem>
+-                    )}
+-                  />
+-                  <FormField
+-                    control={form.control}
+-                    name="description"
+-                    render={({ field }) => (
+-                      <FormItem>
+-                        <FormLabel>Description</FormLabel>
+-                        <FormControl>
+-                          <Textarea placeholder="Project description" {...field} data-testid="input-project-description" />
+-                        </FormControl>
+-                        <FormMessage />
+-                      </FormItem>
+-                    )}
+-                  />
+-                  <FormField
+-                    control={form.control}
+-                    name="workSpace"
+-                    render={({ field }) => (
+-                      <FormItem>
+-                        <FormLabel>Workspace</FormLabel>
+-                        <FormControl>
+-                          <Input placeholder="e.g., Development, HR, Sales" {...field} data-testid="input-project-workspace" />
+-                        </FormControl>
+-                        <FormMessage />
+-                      </FormItem>
+-                    )}
+-                  />
+-                  <div className="grid grid-cols-2 gap-4">
+-                    <FormField
+-                      control={form.control}
+-                      name="startDate"
+-                      render={({ field }) => (
+-                        <FormItem>
+-                          <FormLabel>Start Date</FormLabel>
+-                          <FormControl>
+-                            <Input type="date" {...field} data-testid="input-project-start-date" />
+-                          </FormControl>
+-                          <FormMessage />
+-                        </FormItem>
+-                      )}
+-                    />
+-                    <FormField
+-                      control={form.control}
+-                      name="endDate"
+-                      render={({ field }) => (
+-                        <FormItem>
+-                          <FormLabel>End Date</FormLabel>
+-                          <FormControl>
+-                            <Input type="date" {...field} data-testid="input-project-end-date" />
+-                          </FormControl>
+-                          <FormMessage />
+-                        </FormItem>
+-                      )}
+-                    />
+-                  </div>
+-                  <div className="flex justify-end gap-2">
+-                    <Button type="button" variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+-                      Cancel
+-                    </Button>
+-                    <Button type="submit" disabled={createProjectMutation.isPending} data-testid="button-submit-project">
+-                      {createProjectMutation.isPending ? "Creating..." : "Create Project"}
+-                    </Button>
+-                  </div>
+-                </form>
+-              </Form>
+-            </DialogContent>
+-          </Dialog>
+-        </div>
+-
+-        {!statsError && (
+-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+-            <Card className="hover-elevate cursor-pointer" onClick={() => setStatusFilter("all")} data-testid="card-stat-total-projects">
+-              <CardContent className="p-4 text-center">
+-                <FolderKanban className="h-6 w-6 mx-auto mb-2 text-primary" />
+-                <div className="text-2xl font-bold" data-testid="text-stat-total-projects">{stats?.projects?.totalProjects ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">Total Projects</div>
+-              </CardContent>
+-            </Card>
+-            <Card className="hover-elevate cursor-pointer" onClick={() => setStatusFilter("Active")} data-testid="card-stat-active">
+-              <CardContent className="p-4 text-center">
+-                <CheckCircle2 className="h-6 w-6 mx-auto mb-2 text-green-500" />
+-                <div className="text-2xl font-bold text-green-500" data-testid="text-stat-active">{stats?.projects?.activeProjects ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">Active</div>
+-              </CardContent>
+-            </Card>
+-            <Card className="hover-elevate cursor-pointer" onClick={() => setStatusFilter("OnHold")} data-testid="card-stat-onhold">
+-              <CardContent className="p-4 text-center">
+-                <Pause className="h-6 w-6 mx-auto mb-2 text-yellow-500" />
+-                <div className="text-2xl font-bold text-yellow-500" data-testid="text-stat-onhold">{stats?.projects?.onHoldProjects ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">On Hold</div>
+-              </CardContent>
+-            </Card>
+-            <Card className="hover-elevate cursor-pointer" onClick={() => setStatusFilter("Completed")} data-testid="card-stat-completed-projects">
+-              <CardContent className="p-4 text-center">
+-                <CheckCircle2 className="h-6 w-6 mx-auto mb-2 text-blue-500" />
+-                <div className="text-2xl font-bold text-blue-500" data-testid="text-stat-completed-projects">{stats?.projects?.completedProjects ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">Completed</div>
+-              </CardContent>
+-            </Card>
+-            <Card data-testid="card-stat-total-tasks">
+-              <CardContent className="p-4 text-center">
+-                <ListTodo className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
+-                <div className="text-2xl font-bold" data-testid="text-stat-total-tasks">{stats?.tasks?.total ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">Total Tasks</div>
+-              </CardContent>
+-            </Card>
+-            <Card data-testid="card-stat-blocked-tasks">
+-              <CardContent className="p-4 text-center">
+-                <AlertTriangle className="h-6 w-6 mx-auto mb-2 text-red-500" />
+-                <div className="text-2xl font-bold text-red-500" data-testid="text-stat-blocked">{stats?.tasks?.blocked ?? 0}</div>
+-                <div className="text-sm text-muted-foreground">Blocked</div>
+-              </CardContent>
+-            </Card>
+-          </div>
+-        )}
++];
+ 
+-        <div className="flex items-center gap-2">
+-          <span className="text-sm text-muted-foreground">Filter:</span>
+-          <div className="flex gap-2">
+-            <Badge 
+-              variant={statusFilter === "all" ? "default" : "outline"} 
+-              className="cursor-pointer"
+-              onClick={() => setStatusFilter("all")}
+-              data-testid="filter-all"
+-            >
+-              All
+-            </Badge>
+-            <Badge 
+-              variant={statusFilter === "Active" ? "default" : "outline"} 
+-              className="cursor-pointer"
+-              onClick={() => setStatusFilter("Active")}
+-              data-testid="filter-active"
+-            >
+-              Active
+-            </Badge>
+-            <Badge 
+-              variant={statusFilter === "OnHold" ? "default" : "outline"} 
+-              className="cursor-pointer"
+-              onClick={() => setStatusFilter("OnHold")}
+-              data-testid="filter-onhold"
+-            >
+-              On Hold
+-            </Badge>
+-            <Badge 
+-              variant={statusFilter === "Completed" ? "default" : "outline"} 
+-              className="cursor-pointer"
+-              onClick={() => setStatusFilter("Completed")}
+-              data-testid="filter-completed"
+-            >
+-              Completed
+-            </Badge>
+-          </div>
+-        </div>
+-
+-        {isLoadingProjects ? (
+-          <div className="text-center py-12" data-testid="loading-projects">
+-            <p className="text-muted-foreground">Loading projects...</p>
+-          </div>
+-        ) : filteredProjects.length === 0 ? (
+-          <Card className="p-12">
+-            <div className="text-center space-y-2">
+-              <FolderKanban className="h-12 w-12 mx-auto text-muted-foreground" />
+-              <p className="text-lg font-medium" data-testid="text-no-projects">No projects found</p>
+-              <p className="text-sm text-muted-foreground">
+-                {statusFilter === "all" ? "Create your first project to get started" : `No ${statusFilter.toLowerCase()} projects`}
+-              </p>
+-            </div>
+-          </Card>
+-        ) : (
+-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+-            {filteredProjects.map((project) => {
+-              const progress = getProgressPercentage(project);
+-              
+-              return (
+-                <Card key={project.id} className="hover-elevate" data-testid={`card-project-${project.id}`}>
+-                  <CardHeader className="pb-2">
+-                    <div className="flex items-start justify-between gap-2">
+-                      <div className="space-y-1 flex-1">
+-                        <CardTitle className="text-lg" data-testid={`text-project-name-${project.id}`}>
+-                          {project.name}
+-                        </CardTitle>
+-                        {project.description && (
+-                          <CardDescription className="line-clamp-2" data-testid={`text-project-desc-${project.id}`}>
+-                            {project.description}
+-                          </CardDescription>
+-                        )}
+-                      </div>
+-                      {getStatusBadge(project.status)}
++export default function PmsStatus() {
++    return (
++        <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans flex flex-col">
++            <h1 className="text-[17px] font-bold text-[#495057] tracking-wide uppercase mb-6 flex-shrink-0">
++                DEPARTMENT PROJECT
++            </h1>
++
++            {/* Filter Section */}
++            <div className="bg-white rounded border border-gray-100 p-6 shadow-sm flex-shrink-0 mb-6">
++                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
++                    <div className="flex flex-col gap-2">
++                        <label className="text-[12.5px] font-semibold text-[#495057]">Department</label>
++                        <Select>
++                            <SelectTrigger className="h-10 text-[13px] text-gray-500">
++                                <SelectValue placeholder="Choose ..." />
++                            </SelectTrigger>
++                            <SelectContent>
++                                <SelectItem value="seo">SEO/SMM</SelectItem>
++                                <SelectItem value="dev">Development</SelectItem>
++                                <SelectItem value="design">Design</SelectItem>
++                            </SelectContent>
++                        </Select>
+                     </div>
+-                  </CardHeader>
+-                  <CardContent className="space-y-4">
+-                    <div className="space-y-2">
+-                      <div className="flex items-center justify-between text-sm">
+-                        <span className="text-muted-foreground">Progress</span>
+-                        <span className="font-medium" data-testid={`text-progress-${project.id}`}>{progress}%</span>
+-                      </div>
+-                      <Progress value={progress} className="h-2" data-testid={`progress-bar-${project.id}`} />
++                    <div className="flex flex-col gap-2">
++                        <label className="text-[12.5px] font-semibold text-[#495057]">Select City</label>
++                        <Select>
++                            <SelectTrigger className="h-10 text-[13px] text-gray-500">
++                                <SelectValue placeholder="Choose..." />
++                            </SelectTrigger>
++                            <SelectContent>
++                                <SelectItem value="isb">Islamabad</SelectItem>
++                                <SelectItem value="lhr">Lahore</SelectItem>
++                                <SelectItem value="khi">Karachi</SelectItem>
++                            </SelectContent>
++                        </Select>
+                     </div>
+-
+-                    <div className="grid grid-cols-4 gap-2 text-center text-sm">
+-                      <div className="p-2 rounded bg-muted/50">
+-                        <div className="font-semibold" data-testid={`text-todo-${project.id}`}>{project.taskStats.toDo}</div>
+-                        <div className="text-xs text-muted-foreground">To Do</div>
+-                      </div>
+-                      <div className="p-2 rounded bg-blue-100 dark:bg-blue-900/20">
+-                        <div className="font-semibold text-blue-600 dark:text-blue-400" data-testid={`text-inprogress-${project.id}`}>
+-                          {project.taskStats.inProgress}
+-                        </div>
+-                        <div className="text-xs text-blue-600 dark:text-blue-400">Active</div>
+-                      </div>
+-                      <div className="p-2 rounded bg-red-100 dark:bg-red-900/20">
+-                        <div className="font-semibold text-red-600 dark:text-red-400" data-testid={`text-blocked-${project.id}`}>
+-                          {project.taskStats.blocked}
+-                        </div>
+-                        <div className="text-xs text-red-600 dark:text-red-400">Blocked</div>
+-                      </div>
+-                      <div className="p-2 rounded bg-green-100 dark:bg-green-900/20">
+-                        <div className="font-semibold text-green-600 dark:text-green-400" data-testid={`text-done-${project.id}`}>
+-                          {project.taskStats.completed}
++                    <div className="flex flex-col gap-2">
++                        <label className="text-[12.5px] font-semibold text-[#495057]">Select Status</label>
++                        <Select>
++                            <SelectTrigger className="h-10 text-[13px] text-gray-500">
++                                <SelectValue placeholder="Choose..." />
++                            </SelectTrigger>
++                            <SelectContent>
++                                <SelectItem value="new">New</SelectItem>
++                                <SelectItem value="renewal">Renewal</SelectItem>
++                                <SelectItem value="pending">Pending</SelectItem>
++                            </SelectContent>
++                        </Select>
++                    </div>
++                    <div className="flex flex-col gap-2">
++                        <label className="text-[12.5px] font-semibold text-[#495057]">Start Date</label>
++                        <div className="relative">
++                            <Input 
++                                type="date" 
++                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0" 
++                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()} 
++                            />
++                            <CalendarIcon className="w-4 h-4 absolute right-3 top-3 text-gray-400 pointer-events-none" />
+                         </div>
+-                        <div className="text-xs text-green-600 dark:text-green-400">Done</div>
+-                      </div>
+                     </div>
+-
+-                    <div className="space-y-2 pt-2 border-t">
+-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+-                        <Users className="h-4 w-4" />
+-                        <span data-testid={`text-owner-${project.id}`}>{project.ownerName}</span>
+-                      </div>
+-                      {project.workSpace && (
+-                        <Badge variant="outline" data-testid={`badge-workspace-${project.id}`}>
+-                          {project.workSpace}
+-                        </Badge>
+-                      )}
+-                      {(project.startDate || project.endDate) && (
+-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+-                          <Calendar className="h-4 w-4" />
+-                          <span data-testid={`text-dates-${project.id}`}>
+-                            {project.startDate && new Date(project.startDate).toLocaleDateString()}
+-                            {project.endDate && ` - ${new Date(project.endDate).toLocaleDateString()}`}
+-                          </span>
++                    <div className="flex flex-col gap-2">
++                        <label className="text-[12.5px] font-semibold text-[#495057]">End Date</label>
++                        <div className="relative">
++                            <Input 
++                                type="date" 
++                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0" 
++                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()} 
++                            />
++                            <CalendarIcon className="w-4 h-4 absolute right-3 top-3 text-gray-400 pointer-events-none" />
+                         </div>
+-                      )}
+                     </div>
++                </div>
++                <div>
++                    <Button className="h-10 px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide">
++                        View
++                    </Button>
++                </div>
++            </div>
+ 
+-                    <div className="flex gap-2 pt-2">
+-                      <Link href="/pms/tasks" className="flex-1">
+-                        <Button variant="outline" className="w-full" size="sm" data-testid={`button-view-tasks-${project.id}`}>
+-                          View Tasks
+-                        </Button>
+-                      </Link>
+-                      {project.status === "Active" && (
+-                        <Select
+-                          onValueChange={(value) => updateProjectStatusMutation.mutate({ projectId: project.id, status: value })}
+-                        >
+-                          <SelectTrigger className="w-[100px]" data-testid={`select-status-${project.id}`}>
+-                            <SelectValue placeholder="Action" />
+-                          </SelectTrigger>
+-                          <SelectContent>
+-                            <SelectItem value="OnHold">Pause</SelectItem>
+-                            <SelectItem value="Completed">Complete</SelectItem>
+-                          </SelectContent>
+-                        </Select>
+-                      )}
+-                      {project.status === "OnHold" && (
+-                        <Button
+-                          size="sm"
+-                          variant="outline"
+-                          onClick={() => updateProjectStatusMutation.mutate({ projectId: project.id, status: "Active" })}
+-                          data-testid={`button-resume-${project.id}`}
+-                        >
+-                          Resume
+-                        </Button>
+-                      )}
+-                    </div>
+-                  </CardContent>
+-                </Card>
+-              );
+-            })}
+-          </div>
+-        )}
+-      </div>
+-    </div>
+-  );
++            {/* List Section */}
++            <div className="bg-white rounded border border-gray-100 shadow-sm flex-1 flex flex-col min-h-0">
++                <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057]">
++                    List
++                </div>
++                <div className="flex-1 p-4 overflow-auto custom-scrollbar">
++                    <Table className="w-full border-collapse">
++                        <TableHeader>
++                            <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0">
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 first:rounded-l last:rounded-r w-[60px]">#</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Company</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Package</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Status</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Project</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Amount</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3">Method</TableHead>
++                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 last:rounded-r">Create/verify</TableHead>
++                            </TableRow>
++                        </TableHeader>
++                        <TableBody>
++                            {DEP_MOCK.map((row) => (
++                                <TableRow key={row.id} className="hover:bg-gray-50/50 transition-colors border-0">
++                                    <TableCell className="text-[12.5px] font-medium text-[#495057] px-4 py-4">{row.id}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.company}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.package}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.status}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.project}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.amount}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.method}</TableCell>
++                                    <TableCell className="text-[12.5px] text-[#495057] px-4 py-4">{row.createVerify}</TableCell>
++                                </TableRow>
++                            ))}
++                        </TableBody>
++                    </Table>
++                </div>
++            </div>
++        </div>
++    );
+ }
+diff --git a/client/src/pages/pms-task-history.tsx b/client/src/pages/pms-task-history.tsx
+index 0e657db..0bc7c01 100644
+--- a/client/src/pages/pms-task-history.tsx
++++ b/client/src/pages/pms-task-history.tsx
+@@ -1,274 +1,86 @@
+-import { useQuery } from "@tanstack/react-query";
+-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+-import { Badge } from "@/components/ui/badge";
+-import { ScrollArea } from "@/components/ui/scroll-area";
+-import { Clock, ArrowRight, Filter, Calendar, User } from "lucide-react";
+-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+-import { Input } from "@/components/ui/input";
+-import { useState } from "react";
+-import { format } from "date-fns";
+-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+-import { getAuthHeader } from "@/lib/queryClient";
++import { Link2, Loader2 } from "lucide-react";
++import { Button } from "@/components/ui/button";
+ 
+-interface TaskStatusHistoryItem {
+-  id: string;
+-  taskId: string;
+-  userId: string;
+-  fromStatus: string;
+-  toStatus: string;
+-  changedAt: string;
+-  notes: string | null;
+-  task: { id: string; title: string };
+-  user: { id: string; name: string };
+-}
+-
+-interface TimeLogItem {
+-  id: string;
+-  taskId: string;
+-  userId: string;
+-  timeSpentMinutes: number;
+-  description: string;
+-  logDate: string;
+-  task: { id: string; title: string };
+-}
++const MOCK_HISTORY = [
++    { id: "9911", name: "Alibaba Minisite", company: "MELSFIT SPORTS", date: "12 Mar 2026", status: "Pending", taskTime: "2:0", spentTime: "0:0:0" },
++    { id: "9586", name: "Alibaba Minisite", company: "BRONO SPORTS WEARS", date: "16 Mar 2026", status: "Pending", taskTime: "2:0", spentTime: "0:0:0" },
++    { id: "9939", name: "Dynamic Website", company: "SOCKER TEAMSPORT", date: "09 Mar 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
++    { id: "9939", name: "Dynamic Website", company: "SOCKER TEAMSPORT", date: "09 Mar 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
++    { id: "9399", name: "Alibaba Minisite", company: "MOZLAN SPORTS", date: "03 Apr 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
++];
+ 
+ export default function PmsTaskHistory() {
+-  const [dateFrom, setDateFrom] = useState("");
+-  const [dateTo, setDateTo] = useState("");
+-  const [limit, setLimit] = useState("50");
+-
+-  const { data: statusHistory, isLoading: historyLoading } = useQuery<TaskStatusHistoryItem[]>({
+-    queryKey: ["/api/pms/task-history", dateFrom, dateTo, limit],
+-    queryFn: async () => {
+-      const params = new URLSearchParams();
+-      if (dateFrom) params.append("dateFrom", dateFrom);
+-      if (dateTo) params.append("dateTo", dateTo);
+-      params.append("limit", limit);
+-      const res = await fetch(`/api/pms/task-history?${params.toString()}`, {
+-        headers: getAuthHeader(),
+-        credentials: "include",
+-      });
+-      const data = await res.json();
+-      return Array.isArray(data) ? data : (data?.items ?? []);
+-    },
+-  });
+-
+-  const { data: timeLogs, isLoading: logsLoading } = useQuery<TimeLogItem[]>({
+-    queryKey: ["/api/pms/my-time-logs", dateFrom, dateTo],
+-    queryFn: async () => {
+-      const params = new URLSearchParams();
+-      if (dateFrom) params.append("dateFrom", dateFrom);
+-      if (dateTo) params.append("dateTo", dateTo);
+-      const res = await fetch(`/api/pms/my-time-logs?${params.toString()}`, {
+-        headers: getAuthHeader(),
+-        credentials: "include",
+-      });
+-      const data = await res.json();
+-      return Array.isArray(data) ? data : (data?.items ?? []);
+-    },
+-  });
+-
+-  const getStatusBadge = (status: string) => {
+-    const colors: Record<string, string> = {
+-      ToDo: "bg-slate-500/10 text-slate-500",
+-      InProgress: "bg-blue-500/10 text-blue-500",
+-      Blocked: "bg-red-500/10 text-red-500",
+-      Completed: "bg-green-500/10 text-green-500",
+-    };
+-    return <Badge className={colors[status] || ""} data-testid={`badge-status-${status.toLowerCase()}`}>{status}</Badge>;
+-  };
+-
+-  const formatMinutes = (minutes: number) => {
+-    const hours = Math.floor(minutes / 60);
+-    const mins = minutes % 60;
+-    if (hours > 0) {
+-      return `${hours}h ${mins}m`;
+-    }
+-    return `${mins}m`;
+-  };
+-
+-  const totalTimeLogged = timeLogs?.reduce((sum, log) => sum + log.timeSpentMinutes, 0) || 0;
+-
+-  const isLoading = historyLoading || logsLoading;
+-
+-  return (
+-    <ScrollArea className="flex-1">
+-      <div className="p-6 space-y-6">
+-        <div className="flex items-center justify-between gap-4 flex-wrap">
+-          <div>
+-            <h1 className="text-2xl font-bold" data-testid="text-page-title">Task History</h1>
+-            <p className="text-muted-foreground">View task status changes and time tracking logs</p>
+-          </div>
+-        </div>
+-
+-        <div className="grid gap-4 md:grid-cols-3">
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Status Changes</CardTitle>
+-              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold" data-testid="text-status-changes-count">
+-                {statusHistory?.length || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Total transitions</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Time Logged</CardTitle>
+-              <Clock className="h-4 w-4 text-blue-500" />
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-blue-600" data-testid="text-total-time-logged">
+-                {formatMinutes(totalTimeLogged)}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Across {timeLogs?.length || 0} entries</p>
+-            </CardContent>
+-          </Card>
+-
+-          <Card>
+-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+-              <CardTitle className="text-sm font-medium">Completed Tasks</CardTitle>
+-              <Badge className="bg-green-500/10 text-green-500">Done</Badge>
+-            </CardHeader>
+-            <CardContent>
+-              <div className="text-2xl font-bold text-green-600" data-testid="text-completed-count">
+-                {statusHistory?.filter(h => h.toStatus === "Completed").length || 0}
+-              </div>
+-              <p className="text-xs text-muted-foreground">Tasks finished</p>
+-            </CardContent>
+-          </Card>
++    return (
++        <div className="p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans">
++            <h1 className="text-[17px] font-bold text-[#495057] uppercase tracking-wide mb-8">
++                PROJECT HISTORY
++            </h1>
++
++            <div className="w-full">
++                <table className="w-full text-left border-separate border-spacing-y-3">
++                    <thead>
++                        <tr className="text-[#495057]">
++                            <th className="px-6 py-2 text-[13px] font-bold w-[90px]">#P-ID</th>
++                            <th className="px-6 py-2 text-[13px] font-bold">Projects</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[160px]">Date</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[140px]">Status</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[140px]">Task Time</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[150px]">Spent Time</th>
++                            <th className="px-6 py-2 text-[13px] font-bold w-[100px] text-center">Link</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        {MOCK_HISTORY.map((row, index) => (
++                            <tr key={index} className="bg-white shadow-[0_2px_10px_-4px_rgba(0,0,0,0.05)] rounded-md transition-transform hover:scale-[1.01]">
++                                <td className="px-6 py-4 rounded-l-md">
++                                    <div className="w-9 h-9 rounded-full bg-[#2bc18c] flex items-center justify-center text-white text-[11px] font-bold shadow-sm">
++                                        {row.id}
++                                    </div>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <div className="flex flex-col gap-1">
++                                        <span className="text-[14.5px] font-semibold text-[#343a40] tracking-wide">{row.name}</span>
++                                        <span className="text-[12px] font-medium text-[#adb5bd] uppercase tracking-wider">{row.company}</span>
++                                    </div>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="text-[12.5px] text-[#495057] font-medium">{row.date}</span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="inline-flex bg-[#2bc18c] text-white text-[10.5px] px-3 py-1 rounded-[4px] font-bold shadow-sm">
++                                        {row.status}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="inline-flex bg-[#2bc18c] text-white text-[10.5px] px-2.5 py-1 rounded shadow-sm font-bold min-w-[32px] justify-center">
++                                        {row.taskTime}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4">
++                                    <span className="inline-flex bg-[#6c757d] text-white text-[10.5px] px-2.5 py-1 rounded shadow-sm font-bold tracking-wider min-w-[42px] justify-center">
++                                        {row.spentTime}
++                                    </span>
++                                </td>
++                                <td className="px-6 py-4 rounded-r-md text-center">
++                                    <button className="text-[#6c757d] hover:text-[#495057] transition-colors p-2 rounded-full hover:bg-gray-100/60 inline-flex items-center justify-center">
++                                        <Link2 size={18} strokeWidth={2} />
++                                    </button>
++                                </td>
++                            </tr>
++                        ))}
++                    </tbody>
++                </table>
++            </div>
++
++            <div className="mt-10 flex justify-center w-full">
++                <Button 
++                    variant="ghost" 
++                    className="text-[#2bc18c] hover:bg-transparent hover:text-[#21a476] font-medium flex items-center gap-2 text-[14px]"
++                >
++                    <Loader2 className="w-[18px] h-[18px]" strokeWidth={2.5} />
++                    Load more
++                </Button>
++            </div>
+         </div>
+-
+-        <div className="flex items-center gap-4 flex-wrap">
+-          <div className="flex items-center gap-2">
+-            <Filter className="h-4 w-4 text-muted-foreground" />
+-            <span className="text-sm font-medium">Filters:</span>
+-          </div>
+-          <div className="flex items-center gap-2">
+-            <Calendar className="h-4 w-4 text-muted-foreground" />
+-            <Input
+-              type="date"
+-              value={dateFrom}
+-              onChange={(e) => setDateFrom(e.target.value)}
+-              className="w-auto"
+-              data-testid="input-date-from"
+-            />
+-            <span className="text-muted-foreground">to</span>
+-            <Input
+-              type="date"
+-              value={dateTo}
+-              onChange={(e) => setDateTo(e.target.value)}
+-              className="w-auto"
+-              data-testid="input-date-to"
+-            />
+-          </div>
+-          <Select value={limit} onValueChange={setLimit}>
+-            <SelectTrigger className="w-32" data-testid="select-limit">
+-              <SelectValue />
+-            </SelectTrigger>
+-            <SelectContent>
+-              <SelectItem value="25">Last 25</SelectItem>
+-              <SelectItem value="50">Last 50</SelectItem>
+-              <SelectItem value="100">Last 100</SelectItem>
+-            </SelectContent>
+-          </Select>
+-        </div>
+-
+-        {isLoading ? (
+-          <div className="flex items-center justify-center h-64">
+-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+-          </div>
+-        ) : (
+-          <div className="grid gap-6 lg:grid-cols-2">
+-            <Card>
+-              <CardHeader>
+-                <CardTitle className="flex items-center gap-2">
+-                  <ArrowRight className="h-5 w-5" />
+-                  Status Changes
+-                </CardTitle>
+-              </CardHeader>
+-              <CardContent className="space-y-4">
+-                {statusHistory?.length === 0 ? (
+-                  <p className="text-muted-foreground text-center py-8">No status changes found</p>
+-                ) : (
+-                  statusHistory?.map((item) => (
+-                    <div
+-                      key={item.id}
+-                      className="flex items-start gap-4 p-3 rounded-lg bg-muted/50"
+-                      data-testid={`item-status-history-${item.id}`}
+-                    >
+-                      <Avatar className="h-8 w-8">
+-                        <AvatarFallback className="text-xs">
+-                          {item.user.name.split(" ").map(n => n[0]).join("")}
+-                        </AvatarFallback>
+-                      </Avatar>
+-                      <div className="flex-1 space-y-1">
+-                        <div className="flex items-center gap-2 flex-wrap">
+-                          <span className="font-medium">{item.task.title}</span>
+-                        </div>
+-                        <div className="flex items-center gap-2 text-sm">
+-                          {getStatusBadge(item.fromStatus)}
+-                          <ArrowRight className="h-3 w-3 text-muted-foreground" />
+-                          {getStatusBadge(item.toStatus)}
+-                        </div>
+-                        {item.notes && (
+-                          <p className="text-sm text-muted-foreground">{item.notes}</p>
+-                        )}
+-                        <p className="text-xs text-muted-foreground">
+-                          {format(new Date(item.changedAt), "MMM dd, yyyy HH:mm")} by {item.user.name}
+-                        </p>
+-                      </div>
+-                    </div>
+-                  ))
+-                )}
+-              </CardContent>
+-            </Card>
+-
+-            <Card>
+-              <CardHeader>
+-                <CardTitle className="flex items-center gap-2">
+-                  <Clock className="h-5 w-5" />
+-                  Time Logs
+-                </CardTitle>
+-              </CardHeader>
+-              <CardContent className="space-y-4">
+-                {timeLogs?.length === 0 ? (
+-                  <p className="text-muted-foreground text-center py-8">No time logs found</p>
+-                ) : (
+-                  timeLogs?.map((log) => (
+-                    <div
+-                      key={log.id}
+-                      className="flex items-start gap-4 p-3 rounded-lg bg-muted/50"
+-                      data-testid={`item-time-log-${log.id}`}
+-                    >
+-                      <div className="flex items-center justify-center h-10 w-10 rounded-full bg-blue-500/10">
+-                        <Clock className="h-5 w-5 text-blue-500" />
+-                      </div>
+-                      <div className="flex-1 space-y-1">
+-                        <div className="flex items-center justify-between">
+-                          <span className="font-medium">{log.task.title}</span>
+-                          <Badge variant="outline" className="font-mono" data-testid={`text-time-spent-${log.id}`}>
+-                            {formatMinutes(log.timeSpentMinutes)}
+-                          </Badge>
+-                        </div>
+-                        {log.description && (
+-                          <p className="text-sm text-muted-foreground">{log.description}</p>
+-                        )}
+-                        <p className="text-xs text-muted-foreground">
+-                          {format(new Date(log.logDate), "MMM dd, yyyy")}
+-                        </p>
+-                      </div>
+-                    </div>
+-                  ))
+-                )}
+-              </CardContent>
+-            </Card>
+-          </div>
+-        )}
+-      </div>
+-    </ScrollArea>
+-  );
++    );
+ }
+diff --git a/client/src/pages/pms-tasks.tsx b/client/src/pages/pms-tasks.tsx
+index 8aa4845..ffacbfc 100644
+--- a/client/src/pages/pms-tasks.tsx
++++ b/client/src/pages/pms-tasks.tsx
+@@ -1,305 +1,258 @@
+ import { useState } from "react";
+-import { useModuleData } from "@/hooks/use-module-data";
+-import { Input } from "@/components/ui/input";
+-import { Badge } from "@/components/ui/badge";
+-import {
+-  PlusCircle, Search, ChevronDown, Check, X
+-} from "lucide-react";
+-import {
+-  Table,
+-  TableBody,
+-  TableCell,
+-  TableHead,
+-  TableHeader,
+-  TableRow,
+-} from "@/components/ui/table";
+-import {
+-  Dialog,
+-  DialogContent,
+-  DialogHeader,
+-  DialogTitle,
+-} from "@/components/ui/dialog";
+-import {
+-  Command,
+-  CommandEmpty,
+-  CommandGroup,
+-  CommandInput,
+-  CommandItem,
+-  CommandList,
+-} from "@/components/ui/command";
+-import {
+-  Popover,
+-  PopoverContent,
+-  PopoverTrigger,
+-} from "@/components/ui/popover";
+ import { Button } from "@/components/ui/button";
+-import { cn } from "@/lib/utils";
++import { Input } from "@/components/ui/input";
++import { Checkbox } from "@/components/ui/checkbox";
++import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
++import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
++import { Textarea } from "@/components/ui/textarea";
++import { Trash2, X, AlertCircle } from "lucide-react";
+ 
+-interface ProjectRow {
+-  no: number;
+-  create: string;
+-  company: string;
+-  person: string;
+-  city: string;
+-  project: string;
+-  itemStatus: string;
+-  finish: string;
+-  qa: string;
+-  verification: string;
+-  method: string;
+-  department: string;
+-  status: string;
+-  itemTime: string;
+-  projectTime: string;
+-  links: number;
+-  upload: number;
+-  task: number;
+-  package: string;
+-  type: string;
+-  cashStatus: string;
++interface TaskItem {
++    id: number;
++    name: string;
++    time: string;
++    detail: string;
++    repeatDaily: string;
+ }
+ 
+-const mockData: ProjectRow[] = [
+-  { no: 1, create: "2026-03-25 11:45:44", company: "KASHI FIGHT GEAR", person: "Khadija jamil", city: "Sialkot", project: "Listing Page", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Bank Transfar", department: "", status: "verified", itemTime: "2 days", projectTime: "2 days / Left -1", links: 1, upload: 2, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 2, create: "2026-03-16 15:27:46", company: "LAPA MASTER INDUSTRY", person: "Fareha", city: "Sialkot", project: "Listing Page", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "2 days", projectTime: "2 days / Left -10", links: 1, upload: 2, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 3, create: "2026-02-25 15:56:56", company: "CHOUHAN APPARELS", person: "Ramish Khurram", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -26", links: 1, upload: 10, task: 45, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 4, create: "2026-02-25 11:39:45", company: "SIWIJAS SPORTS", person: "Hafsa Naseer", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -26", links: 1, upload: 5, task: 21, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 5, create: "2026-02-25 11:37:04", company: "STYLE HUSTLE INTERNATIONAL", person: "Laiba fatima", city: "Sialkot", project: "Basic Dynamic Website", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "15 days", projectTime: "15 days / Left -16", links: 1, upload: 5, task: 6, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 6, create: "2026-02-11 09:45:05", company: "RYBIC SPORTS", person: "Warda Akhtar", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -40", links: 1, upload: 4, task: 6, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 7, create: "2026-02-11 09:44:21", company: "AZORES SPORTS", person: "Rehman Faisal", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -40", links: 1, upload: 2, task: 1, package: "Basic", type: "", cashStatus: "Customer Paid" },
+-  { no: 8, create: "2026-02-10 12:32:04", company: "AHLAN SPORTS", person: "Warda Akhtar", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -41", links: 1, upload: 7, task: 36, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 9, create: "2026-02-06 11:07:41", company: "BETA APPARELS", person: "Rohina Munir", city: "Sialkot", project: "Alibaba Product Posting", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Bank Transfar", department: "", status: "verified", itemTime: "15 days", projectTime: "15 days / Left -35", links: 1, upload: 310, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 10, create: "2026-01-30 16:37:06", company: "STYLE HUSTLE INTERNATIONAL", person: "Laiba fatima", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -52", links: 1, upload: 2, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 11, create: "2026-01-28 09:38:17", company: "ARTISAN IMPEX", person: "Atia Rani", city: "Sialkot", project: "Alibaba Minisite", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -54", links: 1, upload: 2, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" },
+-  { no: 12, create: "2026-01-26 17:54:52", company: "EVEN YOU", person: "Zohaib Nisar Ahmad", city: "Sialkot", project: "Alibaba Product Posting", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Bank Transfar", department: "", status: "verified", itemTime: "15 days", projectTime: "15 days / Left -46", links: 0, upload: 507, task: 3, package: "Basic Plus", type: "", cashStatus: "Customer Paid" },
+-  { no: 13, create: "2026-01-26 09:51:45", company: "Five Hash Enterprises", person: "Ezza Nasir", city: "Sialkot", project: "Alibaba Product Posting", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "15 days", projectTime: "15 days / Left -46", links: 1, upload: 205, task: 3, package: "Basic Plus", type: "", cashStatus: "Cash Received" },
+-  { no: 14, create: "2026-01-23 15:02:45", company: "EPIC WARRIOR INTERNATIONAL", person: "Rohina Munir", city: "Sialkot", project: "Alibaba Product Posting", itemStatus: "Start", finish: "Complete", qa: "Pending", verification: "Pending", method: "Free", department: "", status: "verified", itemTime: "5 days", projectTime: "5 days / Left -59", links: 1, upload: 2, task: 1, package: "Basic Plus", type: "", cashStatus: "Online Paid" }
++const MOCK_TASKS: TaskItem[] = [
++    { id: 1, name: "Video Creation", time: "1:30", detail: "", repeatDaily: "Yes" },
++    { id: 2, name: "Campaing Design", time: "2:0", detail: "", repeatDaily: "No" },
++    { id: 3, name: "Workshop Design in a Week for WELC", time: "1:0", detail: "Workshop Creatives", repeatDaily: "No" },
++    { id: 4, name: "B2B Business Growth Creative Design 1 for Web Exce", time: "1:0", detail: "Make 1 Design for Web Excels ( B2B Business growth Plan)", repeatDaily: "Yes" },
++    { id: 5, name: "Alibaba Creative Daily 2", time: "2:30", detail: "Make 2 Design for Alibaba Certification for All Formats", repeatDaily: "Yes" },
++    { id: 6, name: "Alibaba Creative Daily 2", time: "2:30", detail: "Make 2 Design for Alibaba Certification for All Formats", repeatDaily: "Yes" },
++    { id: 7, name: "Creative Related to Courses 2", time: "2:0", detail: "Make 2 Design for Welc Certification for All Formats", repeatDaily: "Yes" },
++    { id: 8, name: "Daily quotes of the day", time: "1:0", detail: "Daily One quotes for Welc", repeatDaily: "Yes" },
++    { id: 9, name: "PR Manager and Media Appearance", time: "2:0", detail: "Find New Channel for Sir Shahbaz Interview and Guest Apperance in different events", repeatDaily: "Yes" },
++    { id: 10, name: "Accounts Work to Assist Arsalan Sab", time: "1:0", detail: "Account Work", repeatDaily: "Yes" },
++    { id: 11, name: "Msg forwarded to Students", time: "1:30", detail: "Message forward to Students and Share different Content", repeatDaily: "Yes" },
+ ];
+ 
+ export default function PmsTasks() {
+-  useModuleData("/pms/tasks");
+-  const [search, setSearch] = useState("");
+-  const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
+-  const [selectedProject, setSelectedProject] = useState<ProjectRow | null>(null);
+-  const [openStatusSelect, setOpenStatusSelect] = useState(false);
+-  const [statusValue, setStatusValue] = useState("Cancel");
++    const [isAddOpen, setIsAddOpen] = useState(false);
++    const [isDeleteOpen, setIsDeleteOpen] = useState(false);
++    const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
+ 
+-  const statuses = [
+-    { value: "Cancel", label: "Cancel" },
+-    { value: "Pending", label: "Pending" },
+-    { value: "Complete", label: "Complete" },
+-  ];
++    const handleDeleteClick = (id: number) => {
++        setTaskToDelete(id);
++        setIsDeleteOpen(true);
++    };
+ 
+-  const openStatusDialog = (project: ProjectRow) => {
+-    setSelectedProject(project);
+-    setStatusValue("Cancel"); // Default as in screenshot
+-    setIsStatusDialogOpen(true);
+-  };
++    const confirmDelete = () => {
++        // Implement backend delete logic here
++        setIsDeleteOpen(false);
++        setTaskToDelete(null);
++    };
+ 
+-  const filteredData = mockData.filter(row =>
+-    row.company.toLowerCase().includes(search.toLowerCase()) ||
+-    row.person.toLowerCase().includes(search.toLowerCase())
+-  );
++    return (
++        <div className="flex-1 bg-white min-h-[calc(100vh-60px)] font-sans">
++            <div className="p-6">
++                {/* Header Title */}
++                <h1 className="text-[16px] font-bold text-slate-500 uppercase mb-8">TASK MANAMENT SYSTEM</h1>
+ 
+-  return (
+-    <div className="flex-1 bg-[#f8f9fc] min-h-screen">
+-      <div className="px-8 py-6">
+-        <div className="flex items-center justify-between mb-8">
+-          <h1 className="text-[22px] font-bold text-gray-700 tracking-tight">PROJECTS OVERVIEW</h1>
+-        </div>
++                {/* Add task button */}
++                <Button 
++                    onClick={() => setIsAddOpen(true)}
++                    className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-medium h-[35px] px-4 rounded text-[13px] shadow-none mb-8"
++                >
++                    Add new Task
++                </Button>
++
++                {/* Sub Title */}
++                <div className="mb-4">
++                    <h2 className="text-[14px] font-bold text-[#495057]">
++                        Task details / <span className="text-[#00a65a] font-semibold">SEO/SMM Department</span>
++                    </h2>
++                </div>
+ 
+-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+-          <div className="p-5 border-b border-gray-100 bg-white">
+-            <div className="relative max-w-full">
+-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+-              <Input
+-                placeholder="Search..."
+-                value={search}
+-                onChange={(e) => setSearch(e.target.value)}
+-                className="pl-10 h-11 bg-[#fcfdfe] border-gray-200 focus:ring-[#00a65a] focus:border-[#00a65a] rounded-lg"
+-              />
++                {/* Data Table */}
++                <div className="w-full">
++                    <table className="w-full text-left border-collapse border border-gray-100">
++                        <thead>
++                            <tr className="bg-[#e4fcde] text-[#495057] text-[13px] font-bold border-b border-gray-200">
++                                <th className="px-4 py-3 border-r border-[#d3fad5] w-[50px]">#</th>
++                                <th className="px-4 py-3 border-r border-[#d3fad5] text-center w-[350px]">Name</th>
++                                <th className="px-4 py-3 border-r border-[#d3fad5] text-center w-[120px]">Time</th>
++                                <th className="px-4 py-3 border-r border-[#d3fad5] text-center">Detail</th>
++                                <th className="px-4 py-3 border-r border-[#d3fad5] text-center w-[120px]">Repeat Daily</th>
++                                <th className="px-4 py-3 text-center w-[100px]">Action</th>
++                            </tr>
++                        </thead>
++                        <tbody>
++                            {MOCK_TASKS.map((task) => (
++                                <tr key={task.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
++                                    <td className="px-4 py-4 text-[12px] font-bold text-[#495057]">{task.id}</td>
++                                    <td className="px-4 py-4 text-[13px] text-gray-500 text-center">{task.name}</td>
++                                    <td className="px-4 py-4 text-center">
++                                        <span className="inline-block bg-[#f1f3f5] text-gray-600 rounded-[3px] px-3 py-1 text-[11px] font-medium border border-gray-200">
++                                            {task.time}
++                                        </span>
++                                    </td>
++                                    <td className="px-4 py-4 text-[13px] text-gray-500 text-center">{task.detail}</td>
++                                    <td className="px-4 py-4 text-[13px] text-[#3b82f6] text-center hover:underline cursor-pointer">{task.repeatDaily}</td>
++                                    <td className="px-4 py-4 text-center">
++                                        <button 
++                                            onClick={() => handleDeleteClick(task.id)}
++                                            className="text-[#fca5a5] hover:text-red-600 hover:scale-110 transition-transform flex items-center justify-center mx-auto"
++                                        >
++                                            <Trash2 size={16} fill="currentColor" strokeWidth={0} className="text-[#ff6b6b]" />
++                                        </button>
++                                    </td>
++                                </tr>
++                            ))}
++                        </tbody>
++                    </table>
++                </div>
+             </div>
+-          </div>
+ 
+-          <div className="overflow-x-auto">
+-            <Table>
+-              <TableHeader className="bg-[#f0f2f5]">
+-                <TableRow className="hover:bg-transparent border-gray-200">
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">No#</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Create</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Action</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Company</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Person</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">City</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Project</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Item Status</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Finish</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Qa</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Verification</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Method</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Department</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Status</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Item Time</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Project Time</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Links</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Upload</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Task</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Package</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap text-center">Type</TableHead>
+-                  <TableHead className="font-bold text-gray-700 text-[13px] py-4 whitespace-nowrap">Cash Status</TableHead>
+-                </TableRow>
+-              </TableHeader>
+-              <TableBody>
+-                {filteredData.map((row) => (
+-                  <TableRow key={row.no} className="hover:bg-gray-50 border-gray-100 group">
+-                    <TableCell className="py-4 text-[13px] font-medium text-gray-600">{row.no}</TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-500 whitespace-nowrap">{row.create}</TableCell>
+-                    <TableCell className="py-4">
+-                      <div
+-                        onClick={() => openStatusDialog(row)}
+-                        className="w-6 h-6 bg-[#00a65a] rounded-full flex items-center justify-center text-white cursor-pointer hover:bg-[#008d4c] transition-all shadow-sm"
+-                      >
+-                        <PlusCircle className="h-4 w-4" />
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-[13px] font-bold text-gray-700 whitespace-nowrap">{row.company}</TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-600 whitespace-nowrap">{row.person}</TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-500">{row.city}</TableCell>
+-                    <TableCell className="py-4">
+-                      <a href="#" className="text-[13px] text-[#3b82f6] hover:underline font-semibold whitespace-nowrap">
+-                        {row.project}
+-                      </a>
+-                    </TableCell>
+-                    <TableCell className="py-2 px-1">
+-                      <div className="bg-[#e8f4fd] text-[#3b82f6] text-[11px] font-bold px-3 py-1 rounded-md text-center border border-[#dbeafe] cursor-pointer hover:bg-blue-100 transition-colors">
+-                        {row.itemStatus}
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-2 px-1">
+-                      <div className="bg-[#e8f4fd] text-[#3b82f6] text-[11px] font-bold px-3 py-1 rounded-md text-center border border-[#dbeafe] cursor-pointer hover:bg-blue-100 transition-colors">
+-                        {row.finish}
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-2 px-1">
+-                      <div className="bg-[#e8f4fd] text-[#3b82f6] text-[11px] font-bold px-3 py-1 rounded-md text-center border border-[#dbeafe] cursor-pointer hover:bg-blue-100 transition-colors">
+-                        {row.qa}
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-2 px-1">
+-                      <div className="bg-[#e8f4fd] text-[#3b82f6] text-[11px] font-bold px-3 py-1 rounded-md text-center border border-[#dbeafe] cursor-pointer hover:bg-blue-100 transition-colors">
+-                        {row.verification}
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-600 whitespace-nowrap">{row.method}</TableCell>
+-                    <TableCell className="py-4 text-center">{row.department}</TableCell>
+-                    <TableCell className="py-4">
+-                      <div className="flex justify-center">
+-                        <div className="border border-[#00a65a] text-[#00a65a] text-[10px] font-bold px-2 py-0.5 rounded uppercase">
+-                          {row.status}
++            {/* Add Task Modal */}
++            <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
++                <DialogContent className="max-w-[550px] p-0 border-0 shadow-xl font-sans bg-white overflow-hidden [&>button]:hidden rounded-md">
++                    {/* Header */}
++                    <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 bg-white">
++                        <DialogTitle className="text-[18px] font-bold text-[#495057] m-0 p-0">
++                            ADD Task
++                        </DialogTitle>
++                        <button 
++                            onClick={() => setIsAddOpen(false)}
++                            className="text-gray-400 hover:text-gray-600 transition-colors"
++                        >
++                            <X size={20} strokeWidth={1.5} />
++                        </button>
++                    </div>
++
++                    {/* Body */}
++                    <div className="px-6 py-6 pb-2">
++                        {/* Task Name */}
++                        <div className="space-y-2 mb-5">
++                            <label className="text-[13px] font-bold text-gray-700">Task Name:</label>
++                            <Input 
++                                placeholder="Create task name"
++                                className="h-10 border-gray-200 shadow-none text-[13px] text-gray-600 focus-visible:ring-1 focus-visible:ring-[#00a65a] rounded-sm"
++                            />
+                         </div>
+-                      </div>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-[13px] text-[#00a65a] font-bold whitespace-nowrap">{row.itemTime}</TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-600 whitespace-nowrap">{row.projectTime}</TableCell>
+-                    <TableCell className="py-4 text-center">
+-                      <Badge variant="outline" className="bg-[#f0fdf4] text-[#166534] border-[#dcfce7] text-[11px]">{row.links}</Badge>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-center">
+-                      <Badge variant="outline" className="bg-[#eff6ff] text-[#1e40af] border-[#dbeafe] text-[11px]">{row.upload}</Badge>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-center">
+-                      <Badge variant="outline" className="bg-[#f5f3ff] text-[#5b21b6] border-[#ede9fe] text-[11px]">{row.task}</Badge>
+-                    </TableCell>
+-                    <TableCell className="py-4 text-[13px] text-gray-600 whitespace-nowrap">{row.package}</TableCell>
+-                    <TableCell className="py-4 text-center">{row.type}</TableCell>
+-                    <TableCell className="py-4 text-[13px] font-medium text-gray-700 whitespace-nowrap">{row.cashStatus}</TableCell>
+-                  </TableRow>
+-                ))}
+-              </TableBody>
+-            </Table>
+-          </div>
+-        </div>
+ 
+-        {/* Project Status Dialog */}
+-        <Dialog open={isStatusDialogOpen} onOpenChange={setIsStatusDialogOpen}>
+-          <DialogContent className="max-w-[450px] p-0 overflow-hidden border-none shadow-2xl bg-white rounded-xl">
+-            <DialogHeader className="bg-white px-6 py-5 flex flex-row items-center justify-between border-b">
+-              <DialogTitle className="text-[20px] font-bold text-gray-700">Project Status</DialogTitle>
+-            </DialogHeader>
++                        {/* Group and Department */}
++                        <div className="grid grid-cols-2 gap-5 mb-5">
++                            <div className="space-y-2">
++                                <label className="text-[13px] font-bold text-gray-700">Group:</label>
++                                <Select defaultValue="main">
++                                    <SelectTrigger className="h-10 border-gray-200 shadow-none text-[13px] text-gray-600 focus-visible:ring-1 focus-visible:ring-[#00a65a] rounded-sm bg-white">
++                                        <SelectValue placeholder="Main" />
++                                    </SelectTrigger>
++                                    <SelectContent>
++                                        <SelectItem value="main">Main</SelectItem>
++                                        <SelectItem value="other">Other</SelectItem>
++                                    </SelectContent>
++                                </Select>
++                            </div>
++                            <div className="space-y-2">
++                                <label className="text-[13px] font-bold text-gray-700">Departmant:</label>
++                                <Select>
++                                    <SelectTrigger className="h-10 border-gray-200 shadow-none text-[13px] text-gray-500 focus-visible:ring-1 focus-visible:ring-[#00a65a] rounded-sm bg-white">
++                                        <SelectValue placeholder="Choose..." />
++                                    </SelectTrigger>
++                                    <SelectContent>
++                                        <SelectItem value="d1">SEO/SMM</SelectItem>
++                                        <SelectItem value="d2">Development</SelectItem>
++                                    </SelectContent>
++                                </Select>
++                            </div>
++                        </div>
+ 
+-            <div className="p-6 space-y-6">
+-              <div className="space-y-2">
+-                <label className="text-[14px] font-bold text-gray-600">Name</label>
+-                <div className="w-full h-12 px-4 bg-[#f1f4f9] border border-gray-200 rounded-lg flex items-center text-gray-600 font-medium">
+-                  {selectedProject?.company || "SAMPLE NAME"}
+-                </div>
+-              </div>
++                        {/* Hours and Minutes */}
++                        <div className="grid grid-cols-2 gap-5 mb-5">
++                            <div className="space-y-2">
++                                <label className="text-[13px] font-bold text-gray-700">Hours:</label>
++                                <Select defaultValue="00">
++                                    <SelectTrigger className="h-10 border-gray-200 shadow-none text-[13px] text-gray-600 focus-visible:ring-1 focus-visible:ring-[#00a65a] rounded-sm bg-white font-medium">
++                                        <SelectValue placeholder="00" />
++                                    </SelectTrigger>
++                                    <SelectContent>
++                                        <SelectItem value="00">00</SelectItem>
++                                        <SelectItem value="01">01</SelectItem>
++                                        <SelectItem value="02">02</SelectItem>
++                                    </SelectContent>
++                                </Select>
++                            </div>
++                            <div className="space-y-2">
++                                <label className="text-[13px] font-bold text-gray-700">Min:</label>
++                                <Select defaultValue="00">
++                                    <SelectTrigger className="h-10 border-gray-200 shadow-none text-[13px] text-gray-600 focus-visible:ring-1 focus-visible:ring-[#00a65a] rounded-sm bg-white font-medium">
++                                        <SelectValue placeholder="00" />
++                                    </SelectTrigger>
++                                    <SelectContent>
++                                        <SelectItem value="00">00</SelectItem>
++                                        <SelectItem value="15">15</SelectItem>
++                                        <SelectItem value="30">30</SelectItem>
++                                        <SelectItem value="45">45</SelectItem>
++                                    </SelectContent>
++                                </Select>
++                            </div>
++                        </div>
+ 
+-              <div className="space-y-2">
+-                <label className="text-[14px] font-bold text-gray-600">Status</label>
+-                <Popover open={openStatusSelect} onOpenChange={setOpenStatusSelect}>
+-                  <PopoverTrigger asChild>
+-                    <Button
+-                      variant="outline"
+-                      role="combobox"
+-                      aria-expanded={openStatusSelect}
+-                      className="w-full h-12 justify-between bg-white border-gray-200 text-gray-700 hover:bg-gray-50 text-[15px] font-medium rounded-lg px-4"
+-                    >
+-                      {statusValue ? statuses.find((s) => s.value === statusValue)?.label : "Select status..."}
+-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50 text-gray-400" />
+-                    </Button>
+-                  </PopoverTrigger>
+-                  <PopoverContent className="w-[400px] p-0" align="start">
+-                    <Command className="rounded-lg shadow-xl border border-gray-100">
+-                      <CommandInput placeholder="Search status..." className="h-11" />
+-                      <CommandList>
+-                        <CommandEmpty>No status found.</CommandEmpty>
+-                        <CommandGroup>
+-                          {statuses.map((s) => (
+-                            <CommandItem
+-                              key={s.value}
+-                              value={s.value}
+-                              onSelect={(currentValue) => {
+-                                setStatusValue(currentValue === statusValue ? "" : currentValue);
+-                                setOpenStatusSelect(false);
+-                              }}
+-                              className="py-3 px-4 text-[14px] font-medium text-gray-700"
+-                            >
+-                              <Check
+-                                className={cn(
+-                                  "mr-3 h-4 w-4 text-[#00a65a]",
+-                                  statusValue === s.value ? "opacity-100" : "opacity-0"
+-                                )}
+-                              />
+-                              {s.label}
+-                            </CommandItem>
+-                          ))}
+-                        </CommandGroup>
+-                      </CommandList>
+-                    </Command>
+-                  </PopoverContent>
+-                </Popover>
+-              </div>
+-            </div>
++                        {/* Detail Textarea */}
++                        <div className="space-y-2 mb-6">
++                            <div className="flex items-center gap-2 mb-1">
++                                <label className="text-[14px] font-bold text-gray-700">Detail:</label>
++                                <div className="flex items-center gap-1.5 ml-1">
++                                    <Checkbox id="repeat-daily" className="w-4 h-4 rounded-sm border-gray-300 data-[state=checked]:bg-[#00a65a] data-[state=checked]:border-[#00a65a]" />
++                                    <label htmlFor="repeat-daily" className="text-[13px] font-bold text-[#495057] cursor-pointer cursor-default">
++                                        Repeat Daily
++                                    </label>
++                                </div>
++                            </div>
++                            <Textarea 
++                                className="min-h-[90px] w-full border-gray-200 shadow-none text-[13px] text-gray-600 focus-visible:ring-1 focus-visible:ring-[#00a65a] resize-y rounded-sm bg-white" 
++                            />
++                        </div>
++                    </div>
+ 
+-            <div className="bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t">
+-              <Button
+-                variant="secondary"
+-                onClick={() => setIsStatusDialogOpen(false)}
+-                className="bg-[#f0f2f5] hover:bg-gray-200 text-gray-700 px-6 font-semibold"
+-              >
+-                Close
+-              </Button>
+-              <Button
+-                onClick={() => setIsStatusDialogOpen(false)}
+-                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-6 font-semibold shadow-sm"
+-              >
+-                Save
+-              </Button>
+-            </div>
+-          </DialogContent>
+-        </Dialog>
+-      </div>
+-    </div>
+-  );
++                    {/* Footer */}
++                    <div className="flex justify-end gap-3 px-6 py-4 bg-white border-t border-gray-100">
++                        <Button 
++                            variant="secondary" 
++                            onClick={() => setIsAddOpen(false)}
++                            className="bg-[#f1f4f9] hover:bg-[#e2e8f0] text-slate-700 font-medium h-[38px] px-6 text-[14px] shadow-none rounded-[4px]"
++                        >
++                            Close
++                        </Button>
++                        <Button 
++                            className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-medium h-[38px] px-6 text-[14px] shadow-none rounded-[4px]"
++                        >
++                            Save
++                        </Button>
++                    </div>
++                </DialogContent>
++            </Dialog>
++
++            {/* Delete Confirmation Modal */}
++            <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
++                <DialogContent className="max-w-[450px] p-8 border-0 shadow-2xl font-sans bg-white overflow-hidden rounded-xl [&>button]:hidden flex flex-col items-center text-center">
++                    <div className="w-20 h-20 rounded-full border-[3px] border-[#f8d79b] flex items-center justify-center mb-6">
++                        <AlertCircle size={40} strokeWidth={2.5} className="text-[#f8b85b]" />
++                    </div>
++                    
++                    <h2 className="text-[26px] font-bold text-[#555] mb-8">Are you sure to Delete Task?</h2>
++                    
++                    <div className="flex items-center justify-center gap-4 w-full">
++                        <Button 
++                            variant="secondary" 
++                            onClick={() => setIsDeleteOpen(false)}
++                            className="bg-[#f1f3f5] hover:bg-[#e9ecef] border border-[#dee2e6] text-[#495057] font-bold h-[42px] px-6 text-[15px] shadow-none rounded w-[110px]"
++                        >
++                            Cancel
++                        </Button>
++                        <Button 
++                            onClick={confirmDelete}
++                            className="bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold h-[42px] px-6 text-[15px] shadow-none rounded w-[110px]"
++                        >
++                            OK
++                        </Button>
++                    </div>
++                </DialogContent>
++            </Dialog>
++        </div>
++    );
+ }
+diff --git a/server/repositories/service-pool.repository.ts b/server/repositories/service-pool.repository.ts
+index cbc952d..5431325 100644
+--- a/server/repositories/service-pool.repository.ts
++++ b/server/repositories/service-pool.repository.ts
+@@ -2,14 +2,16 @@ import { pool } from "../db";
+ 
+ export class ServicePoolRepository {
+   async ensureTable() {
+-    const ddl = `
++    const enumDdl = `
+       do $$ 
+       begin
+         if not exists (select 1 from pg_type where typname = 'service_pool_status') then
+           create type service_pool_status as enum ('active', 'dropout', 'completed', 'refund', 'temp', 'pending');
+         end if;
+       end $$;
++    `;
+ 
++    const tableDdl = `
+       create table if not exists service_pool_entries (
+         id uuid primary key default gen_random_uuid(),
+         customer_id uuid not null references customers(id) on delete cascade,
+@@ -36,7 +38,8 @@ export class ServicePoolRepository {
+       where status = 'active';
+     `;
+     try {
+-      await pool.query(ddl);
++      await pool.query(enumDdl);
++      await pool.query(tableDdl);
+     } catch (err) {
+       console.error("Failed ensuring service_pool_entries table:", err);
+     }

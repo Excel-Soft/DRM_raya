@@ -1,0 +1,2601 @@
+
+> rest-express@1.0.0 dev
+> cross-env NODE_ENV=development tsx watch server/index.ts
+
+[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=6543 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+7:34:02 am [tsx] change in ./server\utils\role-utils.ts Restarting...
+c[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=6543 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+8:38:56 am [tsx] unlink in ./server\utils\invoice-utils.ts Restarting...
+c8:38:56 am [tsx] unlink in ./server\routes\project-doc-routes.ts Restarting...
+c[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=5432 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[startup] HOD routes mounted at /api/hod
+8:40:00 am [tsx] unlink in ./server\gm-pool-routes.ts Restarting...
+c[db] connecting host=aws-1-us-east-2.pooler.supabase.com port=6543 db=postgres user=postgres.tdofmdaeahxfgmlmjgbp ssl=on
+[startup] HOD routes mounted at /api/hod
+8:40:15 AM [express] serving on fixed port 5000
+[accounts] schema maintenance completed successfully
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:44:32.936Z] GET /api/me/navigation -> 200 (1954ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:44:47.287Z] GET /api/project-activity?page=1&pageSize=10 -> 200 (1210ms)
+[2026-04-20T15:44:47.526Z] GET /api/gm-pool?page=1&pageSize=10 -> 200 (1450ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:44:47.774Z] GET /api/me/navigation -> 200 (476ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:44:48.222Z] GET /api/drm/permissions -> 200 (2162ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:44:48.262Z] GET /api/sales/tracing/summary?pool=private -> 200 (725ms)
+[2026-04-20T15:44:48.288Z] GET /api/notifications -> 200 (2216ms)
+[2026-04-20T15:44:48.502Z] GET /api/sales/services -> 500 (726ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[AUTH_MW] userId=0dccb495-9eb3-4ad8-923d-5e6a9677beff rawRole="sales_executive" normalizedRole="sales_executive" activeRole="sales_executive" source=header
+[2026-04-20T15:44:49.004Z] GET /api/sales/lead-pools/list?pool=private&page=1&pageSize=10 -> 500 (2929ms)
+[2026-04-20T15:44:49.027Z] GET /api/auth/me -> 200 (804ms)
+[2026-04-20T15:44:50.412Z] GET /api/sales/tracing/summary?pool=public -> 500 (2148ms)
+[2026-04-20T15:44:50.643Z] GET /api/sales/lead-pools/summary -> 200 (4569ms)
+[2026-04-20T15:44:50.696Z] GET /api/sales/lead-pools/list?pool=public&page=1&pageSize=10 -> 200 (2407ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:44:53.774Z] GET /api/notifications -> 200 (477ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:44:59.271Z] GET /api/notifications -> 200 (490ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:04.762Z] GET /api/notifications -> 200 (481ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:10.259Z] GET /api/notifications -> 200 (479ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:17.426Z] GET /api/notifications -> 200 (2146ms)
+[2026-04-20T15:45:17.775Z] GET /api/project-activity?page=1&pageSize=10 -> 200 (478ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:45:18.034Z] GET /api/me/navigation -> 200 (249ms)
+[2026-04-20T15:45:18.242Z] GET /api/gm-pool?page=1&pageSize=10 -> 200 (711ms)
+[2026-04-20T15:45:18.702Z] GET /api/drm/permissions -> 200 (473ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:45:20.930Z] GET /api/sales/tracing/summary?pool=public -> 200 (500ms)
+[2026-04-20T15:45:21.838Z] GET /api/sales/lead-pools/summary -> 200 (1189ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:22.916Z] GET /api/notifications -> 200 (473ms)
+[2026-04-20T15:45:23.327Z] GET /api/sales/lead-pools/list?pool=public&page=1&pageSize=10 -> 200 (2627ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:28.405Z] GET /api/notifications -> 200 (474ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:33.899Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:39.388Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:44.880Z] GET /api/notifications -> 200 (485ms)
+[2026-04-20T15:45:48.256Z] GET /api/project-activity?page=1&pageSize=10 -> 200 (476ms)
+[2026-04-20T15:45:48.977Z] GET /api/gm-pool?page=1&pageSize=10 -> 200 (710ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:45:49.973Z] GET /api/me/navigation -> 200 (1927ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:50.331Z] GET /api/auth/me -> 401 (1ms)
+[2026-04-20T15:45:50.360Z] GET /api/notifications -> 200 (475ms)
+[2026-04-20T15:45:50.849Z] GET /api/drm/permissions -> 200 (2130ms)
+[2026-04-20T15:45:53.167Z] POST /api/auth/login -> 200 (332ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:45:53.464Z] GET /api/me/navigation -> 200 (238ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:53.697Z] GET /api/drm/permissions -> 200 (473ms)
+[2026-04-20T15:45:53.704Z] GET /api/notifications -> 200 (479ms)
+[2026-04-20T15:45:54.184Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (717ms)
+[db] query ok duration=246ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=256ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T15:45:53.942Z
+[2026-04-20T15:45:54.437Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (737ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T15:45:54.639Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (934ms)
+[route:team-queue-performance] total_duration=725ms
+[2026-04-20T15:45:54.875Z] GET /api/dashboard/activities?period=WC -> 200 (1644ms)
+[2026-04-20T15:45:54.906Z] GET /api/auth/me -> 200 (468ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:45:55.154Z] GET /api/dashboard/current-month-trend -> 200 (513ms)
+[db] query ok duration=237ms rows=4
+[db] query ok duration=237ms rows=0
+[db] query ok duration=239ms rows=0
+[2026-04-20T15:45:55.825Z] GET /api/dashboard/team-work-performance -> 200 (1640ms)
+[2026-04-20T15:45:55.833Z] GET /api/dashboard/summary?period=MONTH -> 200 (2603ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T15:45:55.841Z] GET /api/sales/appointments/today -> 200 (2612ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:45:59.215Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:04.699Z] GET /api/notifications -> 200 (475ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:10.205Z] GET /api/notifications -> 200 (503ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T15:46:16.249Z] GET /api/auth/me -> 200 (1893ms)
+[2026-04-20T15:46:16.741Z] GET /api/account/dollar-system/list -> 200 (2387ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:17.360Z] GET /api/notifications -> 200 (2149ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:22.862Z] GET /api/notifications -> 200 (490ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:46:23.719Z] GET /api/me/navigation -> 200 (242ms)
+[2026-04-20T15:46:23.946Z] GET /api/drm/permissions -> 200 (239ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:28.357Z] GET /api/notifications -> 200 (483ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:33.882Z] GET /api/notifications -> 200 (509ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T15:46:39.380Z] GET /api/notifications -> 200 (483ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:51:25.096Z] GET /api/me/navigation -> 200 (1951ms)
+[2026-04-20T15:51:25.104Z] GET /api/drm/permissions -> 200 (1960ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:51:25.329Z] GET /api/me/navigation -> 200 (1610ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:51:25.592Z] GET /api/notifications -> 200 (2446ms)
+[sales/appointments/today] { count: 0 }
+[db] query ok duration=260ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=261ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T15:51:25.830Z
+[db] query ok duration=253ms rows=4
+[route:team-queue-performance] total_duration=737ms
+[db] query ok duration=248ms rows=0
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:51:27.088Z] GET /api/me/navigation -> 200 (245ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T15:51:27.306Z] GET /api/drm/permissions -> 200 (470ms)
+[2026-04-20T15:51:27.560Z] GET /api/notifications -> 200 (718ms)
+[2026-04-20T15:51:27.581Z] GET /api/sales/appointments/today -> 500 (734ms)
+[2026-04-20T15:51:28.067Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (759ms)
+[2026-04-20T15:51:28.388Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (804ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T15:51:28.532Z] GET /api/dashboard/summary?period=MONTH -> 200 (1685ms)
+[2026-04-20T15:51:28.644Z] GET /api/dashboard/activities?period=WC -> 200 (1795ms)
+[2026-04-20T15:51:28.766Z] GET /api/auth/me -> 200 (376ms)
+[db] query ok duration=241ms rows=4
+[2026-04-20T15:51:28.888Z] GET /api/dashboard/current-month-trend -> 200 (810ms)
+[2026-04-20T15:51:28.985Z] GET /api/account/dollar-system/list -> 200 (5837ms)
+[db] query ok duration=245ms rows=0
+[db] query ok duration=244ms rows=0
+[2026-04-20T15:51:29.279Z] GET /api/dashboard/team-work-performance -> 200 (1717ms)
+[db] query ok duration=238ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=239ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T15:51:27.583Z
+[2026-04-20T15:51:29.810Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2721ms)
+[route:team-queue-performance] total_duration=968ms
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T15:56:11.779Z] GET /api/me/navigation -> 200 (1941ms)
+[2026-04-20T15:56:12.011Z] GET /api/drm/permissions -> 200 (2173ms)
+[2026-04-20T15:56:12.022Z] GET /api/notifications -> 200 (2182ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T15:56:12.281Z] GET /api/sales/appointments/today -> 200 (2440ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:14:37.560Z] GET /api/me/navigation -> 200 (2208ms)
+[2026-04-20T16:14:37.788Z] GET /api/drm/permissions -> 200 (2437ms)
+[2026-04-20T16:14:37.801Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 500 (2441ms)
+[2026-04-20T16:14:38.105Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2734ms)
+[2026-04-20T16:14:38.121Z] GET /api/notifications -> 200 (2766ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T16:14:38.300Z] GET /api/sales/appointments/today -> 200 (2942ms)
+[2026-04-20T16:14:38.824Z] GET /api/dashboard/summary?period=MONTH -> 200 (1246ms)
+[2026-04-20T16:14:38.839Z] GET /api/dashboard/activities?period=WC -> 200 (1039ms)
+[db] query ok duration=251ms rows=4
+[db] query ok duration=239ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=240ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T16:14:38.537Z
+[2026-04-20T16:14:39.014Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (891ms)
+[db] query ok duration=240ms rows=0
+[route:team-queue-performance] total_duration=714ms
+[db] query ok duration=241ms rows=0
+[2026-04-20T16:14:39.338Z] GET /api/dashboard/team-work-performance -> 200 (1223ms)
+[2026-04-20T16:14:39.980Z] GET /api/dashboard/current-month-trend -> 200 (2178ms)
+[2026-04-20T16:15:26.470Z] GET /api/drm/permissions -> 200 (477ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:15:27.918Z] GET /api/me/navigation -> 200 (1925ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:15:28.164Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2167ms)
+[2026-04-20T16:15:28.176Z] GET /api/notifications -> 200 (2181ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T16:15:28.391Z] GET /api/sales/appointments/today -> 200 (2395ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:21:57.654Z] GET /api/drm/permissions -> 200 (1994ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:21:57.656Z] GET /api/me/navigation -> 200 (1995ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T16:21:57.958Z] GET /api/notifications -> 200 (2295ms)
+[2026-04-20T16:21:57.974Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2255ms)
+[2026-04-20T16:21:58.160Z] GET /api/dashboard/activities?period=WC -> 500 (495ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T16:21:58.214Z] GET /api/sales/appointments/today -> 200 (2550ms)
+[2026-04-20T16:21:58.590Z] GET /api/dashboard/current-month-trend -> 500 (597ms)
+[db] query ok duration=249ms rows=4
+[route:team-queue-performance] total_duration=736ms
+[2026-04-20T16:21:58.928Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 500 (1262ms)
+[db] query ok duration=243ms rows=0
+[db] query ok duration=238ms rows=0
+[2026-04-20T16:21:59.182Z] GET /api/dashboard/team-work-performance -> 200 (1212ms)
+[2026-04-20T16:22:00.344Z] GET /api/dashboard/summary?period=MONTH -> 200 (4623ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:54:04.589Z] GET /api/me/navigation -> 200 (2334ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:04.763Z] GET /api/drm/permissions -> 200 (2509ms)
+[2026-04-20T16:54:04.836Z] GET /api/dashboard/activities?period=WC -> 500 (2575ms)
+[2026-04-20T16:54:04.932Z] GET /api/notifications -> 200 (2676ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T16:54:05.226Z] GET /api/sales/appointments/today -> 200 (2968ms)
+[2026-04-20T16:54:05.282Z] GET /api/dashboard/current-month-trend -> 200 (689ms)
+[db] query ok duration=277ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=315ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T16:54:04.771Z
+[2026-04-20T16:54:05.457Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (3194ms)
+[2026-04-20T16:54:05.459Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (693ms)
+[route:team-queue-performance] total_duration=791ms
+[db] query ok duration=247ms rows=4
+[db] query ok duration=250ms rows=0
+[2026-04-20T16:54:06.220Z] GET /api/dashboard/summary?period=MONTH -> 200 (992ms)
+[db] query ok duration=240ms rows=0
+[2026-04-20T16:54:06.296Z] GET /api/dashboard/team-work-performance -> 200 (1359ms)
+[2026-04-20T16:54:07.104Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2266ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:10.524Z] GET /api/notifications -> 200 (567ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T16:54:11.589Z] GET /api/auth/me -> 200 (247ms)
+[2026-04-20T16:54:14.415Z] GET /api/account/dollar-system/list -> 200 (3075ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:16.086Z] GET /api/notifications -> 200 (523ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:21.584Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:27.215Z] GET /api/notifications -> 200 (622ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:32.847Z] GET /api/notifications -> 200 (622ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:54:34.884Z] GET /api/me/navigation -> 200 (280ms)
+[2026-04-20T16:54:37.150Z] GET /api/drm/permissions -> 200 (2376ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:38.476Z] GET /api/notifications -> 200 (604ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:44.111Z] GET /api/notifications -> 200 (615ms)
+[2026-04-20T16:54:47.221Z] GET /api/account/dollar-system/list -> 200 (2798ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:49.686Z] GET /api/notifications -> 200 (568ms)
+[2026-04-20T16:54:53.261Z] GET /api/drm/permissions -> 200 (616ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:54:56.042Z] GET /api/me/navigation -> 200 (3394ms)
+[2026-04-20T16:54:56.282Z] GET /api/notifications -> 200 (3632ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:54:57.203Z] GET /api/me/navigation -> 200 (242ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:54:57.466Z] GET /api/drm/permissions -> 200 (506ms)
+[2026-04-20T16:54:57.504Z] GET /api/notifications -> 200 (542ms)
+[2026-04-20T16:54:58.653Z] GET /api/account/dollar-system/list -> 200 (6002ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:03.138Z] GET /api/notifications -> 200 (623ms)
+[2026-04-20T16:55:08.413Z] GET /api/drm/permissions -> 200 (251ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:55:10.675Z] GET /api/me/navigation -> 200 (2512ms)
+[2026-04-20T16:55:10.677Z] GET /api/notifications -> 200 (2512ms)
+[2026-04-20T16:55:12.818Z] GET /api/account/dollar-system/list -> 200 (4648ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:55:12.985Z] GET /api/me/navigation -> 200 (278ms)
+[2026-04-20T16:55:12.987Z] GET /api/drm/permissions -> 200 (282ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:13.306Z] GET /api/notifications -> 200 (598ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:18.927Z] GET /api/notifications -> 200 (603ms)
+[2026-04-20T16:55:22.993Z] GET /api/drm/permissions -> 200 (245ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:55:22.997Z] GET /api/me/navigation -> 200 (248ms)
+[2026-04-20T16:55:23.235Z] GET /api/notifications -> 200 (484ms)
+[2026-04-20T16:55:25.379Z] GET /api/account/dollar-system/list -> 200 (2627ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:55:27.430Z] GET /api/me/navigation -> 200 (271ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:27.735Z] GET /api/drm/permissions -> 200 (578ms)
+[2026-04-20T16:55:27.773Z] GET /api/notifications -> 200 (610ms)
+[2026-04-20T16:55:29.987Z] GET /api/account/dollar-system/list -> 200 (2822ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:33.366Z] GET /api/notifications -> 200 (575ms)
+[2026-04-20T16:55:42.673Z] GET /api/drm/permissions -> 200 (481ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:55:44.497Z] GET /api/me/navigation -> 200 (2301ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:44.851Z] GET /api/notifications -> 200 (2652ms)
+[2026-04-20T16:55:47.293Z] GET /api/account/dollar-system/list -> 200 (5091ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:55:50.373Z] GET /api/notifications -> 200 (498ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T16:57:07.309Z] GET /api/me/navigation -> 200 (2829ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:57:07.576Z] GET /api/drm/permissions -> 200 (3099ms)
+[2026-04-20T16:57:07.593Z] GET /api/notifications -> 200 (3110ms)
+[2026-04-20T16:57:09.932Z] GET /api/account/dollar-system/list -> 200 (5446ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T16:57:13.720Z] GET /api/notifications -> 200 (1113ms)
+[2m10:09:44 am[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/dollar-system.tsx, /src/index.css?v=eKF_RZr1JYN3v9JfDD5eq[22m
+[2026-04-20T17:09:52.928Z] GET /api/account/dollar-system/list -> 200 (6367ms)
+[2026-04-20T17:09:53.276Z] GET /api/account/dollar-system/list -> 200 (6712ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:17:55.371Z] GET /api/me/navigation -> 200 (2083ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:17:55.566Z] GET /api/drm/permissions -> 200 (2279ms)
+[2026-04-20T17:17:55.722Z] GET /api/notifications -> 200 (2432ms)
+[2026-04-20T17:17:57.584Z] GET /api/account/dollar-system/list -> 200 (4293ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:22:43.084Z] GET /api/me/navigation -> 200 (2192ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:22:43.319Z] GET /api/drm/permissions -> 200 (2428ms)
+[2026-04-20T17:22:43.336Z] GET /api/notifications -> 200 (2442ms)
+[2026-04-20T17:22:45.307Z] GET /api/account/dollar-system/list -> 200 (4411ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:23:15.271Z] GET /api/me/navigation -> 200 (2207ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:23:15.519Z] GET /api/drm/permissions -> 200 (2470ms)
+[2026-04-20T17:23:15.558Z] GET /api/notifications -> 200 (2492ms)
+[2026-04-20T17:23:17.726Z] GET /api/account/dollar-system/list -> 200 (4653ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:59:21.641Z] GET /api/me/navigation -> 200 (2474ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:59:21.884Z] GET /api/drm/permissions -> 200 (2719ms)
+[2026-04-20T17:59:21.933Z] GET /api/notifications -> 200 (2762ms)
+[2026-04-20T17:59:24.186Z] GET /api/account/dollar-system/list -> 200 (5013ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:59:27.550Z] GET /api/notifications -> 200 (600ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T17:59:28.495Z] GET /api/auth/me -> 200 (254ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:59:33.100Z] GET /api/notifications -> 200 (539ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:59:38.637Z] GET /api/notifications -> 200 (523ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T17:59:40.745Z] GET /api/drm/permissions -> 200 (274ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:59:43.277Z] GET /api/me/navigation -> 200 (2800ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T17:59:43.530Z] GET /api/notifications -> 200 (3054ms)
+[2026-04-20T17:59:44.364Z] GET /api/auth/me -> 200 (3885ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T17:59:59.158Z] GET /api/me/navigation -> 200 (2830ms)
+[2026-04-20T17:59:59.356Z] GET /api/drm/permissions -> 200 (3029ms)
+[2026-04-20T17:59:59.396Z] GET /api/notifications -> 200 (3065ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:05.016Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:10.682Z] GET /api/notifications -> 200 (656ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:18.157Z] GET /api/notifications -> 200 (2469ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:23.709Z] GET /api/notifications -> 200 (539ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:29.288Z] GET /api/notifications -> 200 (562ms)
+[2026-04-20T18:00:29.631Z] GET /api/drm/permissions -> 200 (256ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:00:31.504Z] GET /api/me/navigation -> 200 (2335ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:34.847Z] GET /api/notifications -> 200 (537ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:40.479Z] GET /api/notifications -> 200 (624ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:46.116Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:51.653Z] GET /api/notifications -> 200 (520ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:00:57.242Z] GET /api/notifications -> 200 (576ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:21:13.927Z] GET /api/me/navigation -> 200 (2762ms)
+[2026-04-20T18:21:14.114Z] GET /api/drm/permissions -> 200 (2951ms)
+[2026-04-20T18:21:14.268Z] GET /api/notifications -> 200 (3101ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:19.947Z] GET /api/notifications -> 200 (661ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:25.608Z] GET /api/notifications -> 200 (652ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:31.204Z] GET /api/notifications -> 200 (581ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:36.838Z] GET /api/notifications -> 200 (613ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:42.471Z] GET /api/notifications -> 200 (625ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:21:44.218Z] GET /api/me/navigation -> 200 (281ms)
+[2026-04-20T18:21:46.566Z] GET /api/drm/permissions -> 200 (2444ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:48.103Z] GET /api/notifications -> 200 (611ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:53.630Z] GET /api/notifications -> 200 (517ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:21:59.377Z] GET /api/notifications -> 200 (739ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:04.998Z] GET /api/notifications -> 200 (611ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:10.630Z] GET /api/notifications -> 200 (621ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:22:14.558Z] GET /api/me/navigation -> 200 (324ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:16.263Z] GET /api/notifications -> 200 (614ms)
+[2026-04-20T18:22:17.183Z] GET /api/drm/permissions -> 200 (602ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:21.770Z] GET /api/notifications -> 200 (490ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:27.392Z] GET /api/notifications -> 200 (611ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:33.056Z] GET /api/notifications -> 200 (645ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:38.688Z] GET /api/notifications -> 200 (612ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:44.319Z] GET /api/notifications -> 200 (611ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:22:44.870Z] GET /api/me/navigation -> 200 (296ms)
+[2026-04-20T18:22:47.700Z] GET /api/drm/permissions -> 200 (502ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:49.918Z] GET /api/notifications -> 200 (594ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:22:55.453Z] GET /api/notifications -> 200 (516ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:01.054Z] GET /api/notifications -> 200 (584ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:06.639Z] GET /api/notifications -> 200 (580ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:12.284Z] GET /api/notifications -> 200 (633ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:23:15.189Z] GET /api/me/navigation -> 200 (306ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:17.907Z] GET /api/notifications -> 200 (611ms)
+[2026-04-20T18:23:19.956Z] GET /api/drm/permissions -> 200 (2246ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:23.539Z] GET /api/notifications -> 200 (617ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:29.094Z] GET /api/notifications -> 200 (538ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:34.650Z] GET /api/notifications -> 200 (542ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:40.232Z] GET /api/notifications -> 200 (577ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:23:45.474Z] GET /api/me/navigation -> 200 (280ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:48.730Z] GET /api/notifications -> 200 (3435ms)
+[2026-04-20T18:23:50.272Z] GET /api/drm/permissions -> 200 (297ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:23:54.362Z] GET /api/notifications -> 200 (616ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:00.101Z] GET /api/notifications -> 200 (730ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:05.728Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:11.362Z] GET /api/notifications -> 200 (617ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:24:15.807Z] GET /api/me/navigation -> 200 (312ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:16.890Z] GET /api/notifications -> 200 (517ms)
+[2026-04-20T18:24:20.582Z] GET /api/drm/permissions -> 200 (294ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:22.523Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:28.160Z] GET /api/notifications -> 200 (597ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:33.787Z] GET /api/notifications -> 200 (614ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:39.325Z] GET /api/notifications -> 200 (522ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:44.948Z] GET /api/notifications -> 200 (615ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:24:46.098Z] GET /api/me/navigation -> 200 (283ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:50.581Z] GET /api/notifications -> 200 (624ms)
+[2026-04-20T18:24:51.195Z] GET /api/drm/permissions -> 200 (577ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:24:56.213Z] GET /api/notifications -> 200 (618ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:01.758Z] GET /api/notifications -> 200 (532ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:07.374Z] GET /api/notifications -> 200 (596ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:13.007Z] GET /api/notifications -> 200 (616ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:18.638Z] GET /api/notifications -> 200 (611ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:25:18.677Z] GET /api/me/navigation -> 200 (2570ms)
+[2026-04-20T18:25:21.749Z] GET /api/drm/permissions -> 200 (544ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:24.271Z] GET /api/notifications -> 200 (627ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:29.906Z] GET /api/notifications -> 200 (621ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:35.534Z] GET /api/notifications -> 200 (616ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:41.065Z] GET /api/notifications -> 200 (519ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:46.667Z] GET /api/notifications -> 200 (588ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:25:48.966Z] GET /api/me/navigation -> 200 (279ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:52.225Z] GET /api/notifications -> 200 (550ms)
+[2026-04-20T18:25:54.070Z] GET /api/drm/permissions -> 200 (2310ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:25:57.762Z] GET /api/notifications -> 200 (520ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:03.388Z] GET /api/notifications -> 200 (619ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:09.019Z] GET /api/notifications -> 200 (614ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:14.652Z] GET /api/notifications -> 200 (616ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:26:19.296Z] GET /api/me/navigation -> 200 (315ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:20.283Z] GET /api/notifications -> 200 (619ms)
+[2026-04-20T18:26:24.688Z] GET /api/drm/permissions -> 200 (605ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:25.916Z] GET /api/notifications -> 200 (617ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:31.548Z] GET /api/notifications -> 200 (624ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:37.181Z] GET /api/notifications -> 200 (625ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:42.812Z] GET /api/notifications -> 200 (623ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:48.377Z] GET /api/notifications -> 200 (551ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:26:49.608Z] GET /api/me/navigation -> 200 (297ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:53.975Z] GET /api/notifications -> 200 (586ms)
+[2026-04-20T18:26:55.306Z] GET /api/drm/permissions -> 200 (600ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:26:59.811Z] GET /api/notifications -> 200 (814ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:05.442Z] GET /api/notifications -> 200 (622ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:10.966Z] GET /api/notifications -> 200 (518ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:16.604Z] GET /api/notifications -> 200 (629ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:27:19.918Z] GET /api/me/navigation -> 200 (304ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:22.239Z] GET /api/notifications -> 200 (625ms)
+[2026-04-20T18:27:25.852Z] GET /api/drm/permissions -> 200 (537ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:27.770Z] GET /api/notifications -> 200 (524ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:33.397Z] GET /api/notifications -> 200 (622ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:39.029Z] GET /api/notifications -> 200 (621ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:44.662Z] GET /api/notifications -> 200 (624ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:50.208Z] GET /api/notifications -> 200 (536ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:27:52.073Z] GET /api/me/navigation -> 200 (2148ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:27:55.823Z] GET /api/notifications -> 200 (599ms)
+[2026-04-20T18:27:56.438Z] GET /api/drm/permissions -> 200 (569ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:28:01.348Z] GET /api/notifications -> 200 (517ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:28:06.985Z] GET /api/notifications -> 200 (621ms)
+[2026-04-20T18:39:57.348Z] GET /api/drm/permissions -> 200 (2151ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:39:57.832Z] GET /api/me/navigation -> 200 (2633ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:39:58.251Z] GET /api/notifications -> 200 (3051ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:03.896Z] GET /api/notifications -> 200 (636ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:09.602Z] GET /api/notifications -> 200 (688ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:15.279Z] GET /api/notifications -> 200 (656ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:20.894Z] GET /api/notifications -> 200 (607ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:26.527Z] GET /api/notifications -> 200 (626ms)
+[2026-04-20T18:40:27.670Z] GET /api/drm/permissions -> 200 (248ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:40:28.128Z] GET /api/me/navigation -> 200 (281ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:32.158Z] GET /api/notifications -> 200 (622ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:37.791Z] GET /api/notifications -> 200 (626ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:43.524Z] GET /api/notifications -> 200 (652ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:49.096Z] GET /api/notifications -> 200 (562ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:40:54.631Z] GET /api/notifications -> 200 (522ms)
+[2026-04-20T18:40:58.826Z] GET /api/drm/permissions -> 200 (1147ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:41:00.524Z] GET /api/me/navigation -> 200 (2375ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:48:23.349Z] GET /api/me/navigation -> 200 (2099ms)
+[2026-04-20T18:48:23.364Z] GET /api/drm/permissions -> 200 (2116ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:48:23.719Z] GET /api/notifications -> 200 (2466ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:50:02.431Z] GET /api/me/navigation -> 200 (2341ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:02.737Z] GET /api/drm/permissions -> 200 (2649ms)
+[2026-04-20T18:50:02.738Z] GET /api/notifications -> 200 (2646ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:21.328Z] GET /api/notifications -> 200 (496ms)
+[2026-04-20T18:50:23.148Z] GET /api/drm/permissions -> 200 (2313ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:50:23.152Z] GET /api/me/navigation -> 200 (2317ms)
+[2026-04-20T18:50:25.985Z] GET /api/account/dollar-system/list -> 200 (5152ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:27.005Z] GET /api/notifications -> 200 (630ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:32.637Z] GET /api/notifications -> 200 (623ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:38.274Z] GET /api/notifications -> 200 (624ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:43.857Z] GET /api/notifications -> 200 (560ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:49.390Z] GET /api/notifications -> 200 (521ms)
+[2026-04-20T18:50:53.702Z] GET /api/drm/permissions -> 200 (503ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:50:54.960Z] GET /api/notifications -> 200 (564ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:50:55.612Z] GET /api/me/navigation -> 200 (2412ms)
+[2026-04-20T18:50:58.578Z] GET /api/account/dollar-system/list -> 200 (2582ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:00.595Z] GET /api/notifications -> 200 (626ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:06.224Z] GET /api/notifications -> 200 (611ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:11.857Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:17.488Z] GET /api/notifications -> 200 (575ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:23.011Z] GET /api/notifications -> 200 (515ms)
+[2026-04-20T18:51:24.044Z] GET /api/drm/permissions -> 200 (304ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:51:25.922Z] GET /api/me/navigation -> 200 (292ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:29.059Z] GET /api/notifications -> 200 (1028ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:34.691Z] GET /api/notifications -> 200 (610ms)
+[2026-04-20T18:51:34.967Z] GET /api/account/dollar-system/list -> 200 (6371ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:40.426Z] GET /api/notifications -> 200 (713ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:45.955Z] GET /api/notifications -> 200 (524ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:51.490Z] GET /api/notifications -> 200 (527ms)
+[2026-04-20T18:51:54.841Z] GET /api/drm/permissions -> 200 (777ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:51:56.198Z] GET /api/me/navigation -> 200 (268ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:51:57.080Z] GET /api/notifications -> 200 (567ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:02.750Z] GET /api/notifications -> 200 (654ms)
+[2026-04-20T18:52:07.972Z] GET /api/account/dollar-system/list -> 200 (2991ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:10.328Z] GET /api/notifications -> 200 (2563ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:15.962Z] GET /api/notifications -> 200 (615ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:21.593Z] GET /api/notifications -> 200 (612ms)
+[2026-04-20T18:52:25.483Z] GET /api/drm/permissions -> 200 (636ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:52:26.544Z] GET /api/me/navigation -> 200 (330ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:27.224Z] GET /api/notifications -> 200 (611ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:32.856Z] GET /api/notifications -> 200 (612ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:39.000Z] GET /api/notifications -> 200 (1136ms)
+[2026-04-20T18:52:43.301Z] GET /api/account/dollar-system/list -> 200 (5304ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:44.632Z] GET /api/notifications -> 200 (618ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:50.264Z] GET /api/notifications -> 200 (616ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:52:55.766Z] GET /api/notifications -> 200 (486ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:52:56.844Z] GET /api/me/navigation -> 200 (280ms)
+[2026-04-20T18:52:58.253Z] GET /api/drm/permissions -> 200 (2756ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:01.323Z] GET /api/notifications -> 200 (542ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:06.845Z] GET /api/notifications -> 200 (515ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:12.485Z] GET /api/notifications -> 200 (622ms)
+[2026-04-20T18:53:16.235Z] GET /api/account/dollar-system/list -> 200 (2922ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:18.526Z] GET /api/notifications -> 200 (1029ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:24.158Z] GET /api/notifications -> 200 (612ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T18:53:27.148Z] GET /api/me/navigation -> 200 (285ms)
+[2026-04-20T18:53:28.736Z] GET /api/drm/permissions -> 200 (473ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:29.695Z] GET /api/notifications -> 200 (532ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:35.325Z] GET /api/notifications -> 200 (612ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T18:53:40.955Z] GET /api/notifications -> 200 (610ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:02:16.687Z] GET /api/me/navigation -> 200 (2637ms)
+[2026-04-20T19:02:16.952Z] GET /api/drm/permissions -> 200 (2904ms)
+[2026-04-20T19:02:16.990Z] GET /api/notifications -> 200 (2938ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:02:19.307Z] GET /api/drm/permissions -> 200 (560ms)
+[2026-04-20T19:02:19.345Z] GET /api/auth/me -> 200 (590ms)
+[2026-04-20T19:02:19.545Z] GET /api/notifications -> 200 (796ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:02:21.700Z] GET /api/me/navigation -> 200 (2948ms)
+[2026-04-20T19:02:21.702Z] GET /api/account/dollar-system/list -> 200 (2951ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:02:23.159Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (784ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:02:23.435Z] GET /api/sales/appointments/today -> 200 (1067ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=241ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:02:22.728Z
+[2026-04-20T19:02:23.439Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (1064ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[db] query ok duration=241ms rows=4
+[2026-04-20T19:02:23.507Z] GET /api/dashboard/activities?period=WC -> 200 (1137ms)
+[2026-04-20T19:02:23.636Z] GET /api/dashboard/summary?period=MONTH -> 200 (1265ms)
+[route:team-queue-performance] total_duration=741ms
+[db] query ok duration=237ms rows=0
+[2026-04-20T19:02:23.747Z] GET /api/auth/me -> 200 (306ms)
+[2026-04-20T19:02:23.871Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (675ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:02:23.923Z] GET /api/dashboard/team-work-performance -> 200 (1547ms)
+[2026-04-20T19:02:23.965Z] GET /api/dashboard/current-month-trend -> 200 (525ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:02:25.080Z] GET /api/notifications -> 200 (516ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:06:46.500Z] GET /api/me/navigation -> 200 (2131ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:06:46.725Z] GET /api/drm/permissions -> 200 (2360ms)
+[2026-04-20T19:06:46.777Z] GET /api/notifications -> 200 (2406ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:06:47.087Z] GET /api/sales/appointments/today -> 200 (2713ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:06:52.268Z] GET /api/notifications -> 200 (478ms)
+[2026-04-20T19:06:53.678Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (512ms)
+[db] query ok duration=250ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=250ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:06:53.716Z
+[2026-04-20T19:06:54.206Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (759ms)
+[route:team-queue-performance] total_duration=727ms
+[2026-04-20T19:06:54.480Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (576ms)
+[2026-04-20T19:06:54.608Z] GET /api/dashboard/current-month-trend -> 200 (628ms)
+[2026-04-20T19:06:54.646Z] GET /api/dashboard/activities?period=WC -> 200 (1130ms)
+[2026-04-20T19:06:54.681Z] GET /api/dashboard/summary?period=MONTH -> 200 (1034ms)
+[db] query ok duration=237ms rows=4
+[db] query ok duration=238ms rows=0
+[db] query ok duration=236ms rows=0
+[2026-04-20T19:06:56.912Z] GET /api/dashboard/team-work-performance -> 200 (2965ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:07:12.314Z] GET /api/me/navigation -> 200 (1998ms)
+[2026-04-20T19:07:12.316Z] GET /api/drm/permissions -> 200 (2001ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:12.590Z] GET /api/notifications -> 200 (2269ms)
+[2026-04-20T19:07:16.064Z] GET /api/hod/dashboard/summary -> 403 (312ms)
+[2026-04-20T19:07:16.066Z] GET /api/hod/approvals?status=Pending&page=1&limit=10 -> 403 (312ms)
+[2026-04-20T19:07:16.068Z] GET /api/hod/dashboard/project-deadlines?filter=WK -> 403 (311ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T19:07:16.314Z] GET /api/auth/me -> 200 (243ms)
+[2026-04-20T19:07:16.600Z] GET /api/hod/daily-report
+Status: 200
+Body: {}
+Response: {"success":true,"data":[{"id":"af9a250b-99d9-4415-802a-3072032917dd","name":"executive_test","company":"PP Workflow Verification Pending","project":"Workflow Final Check LLC","free":"0","task":"Posting Task - PP Workflow Verification Pending","status":"READY_FOR_QA","run":"0","spent":"95 mins","createdAt":"2026-04-14T17:57:24.664Z"},{"id":"ca2ed686-dbd7-452e-a2a1-8a5a87b51e05","name":"executive_test","company":"PP Workflow QA Review","project":"Workflow QA House","free":"0","task":"Posting Task - PP Workflow QA Review","status":"READY_FOR_QA","run":"0","spent":"135 mins","createdAt":"2026-04-14T17:57:19.135Z"},{"id":"9d194752-5c99-4b6c-a08f-8123758f4cf3","name":"executive_test","company":"PP Workflow Running Project","project":"Workflow Running Supplies","free":"0","task":"Posting Task - PP Workflow Running Project","status":"InProgress","run":"0","spent":"55 mins","createdAt":"2026-04-14T17:57:13.914Z"},{"id":"ddf8af2e-83f8-4eb7-be85-ea2ef7100d12","name":"admin@example.com","company":"Proj-INV-67bcc","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:51:05.721Z"},{"id":"693a40c7-0a72-4a97-a3f7-40652686ce3d","name":"admin@example.com","company":"Proj-INV-df49a","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:50:30.374Z"},{"id":"5516ea26-7b9c-4522-b621-2327af6f170d","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Backend API","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:31.091Z"},{"id":"c62d4591-d310-4f97-9b2e-d6ea0edff82a","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"UI Design","status":"Blocked","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.684Z"},{"id":"149b49b8-aeae-4d41-b761-bb5b9eb283b1","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Database setup","status":"In Progress","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.375Z"},{"id":"471ee1a7-2a1e-46ea-9be7-25ee466db778","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Kickoff meeting","status":"ToDo","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.098Z"},{"id":"986d2c87-d880-40ee-9076-d2f04208d0f4","name":"talhaexcelstech@gmail.com","company":"Website Revamp","project":null,"free":"0","task":"Kickoff meeting","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-02T17:14:47.084Z"}]}
+[2026-04-20T19:07:16.601Z] GET /api/hod/daily-report -> 200 (532ms)
+[2026-04-20T19:07:17.467Z] GET /api/hod/dashboard/important-stats
+Status: 200
+Body: {}
+Response: {"success":true,"data":{"delayProjects":10,"upcoming":0,"completed":0,"inProgress":31,"pending":2,"qaVerification":2,"leaveApplication":0,"activeTeam":19,"depVerification":12,"activities":{"totalProjects":41,"complete":0,"pending":2,"delay":10,"free":10}}}
+[2026-04-20T19:07:17.506Z] GET /api/hod/dashboard/important-stats -> 200 (1744ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:17.939Z] GET /api/hod/verification/waiting -> 403 (2178ms)
+[2026-04-20T19:07:17.986Z] GET /api/hod/verification/gms -> 403 (2227ms)
+[2026-04-20T19:07:18.119Z] GET /api/notifications -> 200 (514ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=240ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:07:19.856Z
+[2026-04-20T19:07:20.338Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (718ms)
+[2026-04-20T19:07:20.342Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (721ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:07:20.346Z] GET /api/sales/appointments/today -> 200 (731ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[route:team-queue-performance] total_duration=716ms
+[db] query ok duration=238ms rows=4
+[2026-04-20T19:07:20.814Z] GET /api/auth/me -> 200 (466ms)
+[2026-04-20T19:07:20.819Z] GET /api/dashboard/activities?period=WC -> 200 (1201ms)
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:07:20.824Z] GET /api/dashboard/summary?period=MONTH -> 200 (1207ms)
+[2026-04-20T19:07:21.049Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (709ms)
+[2026-04-20T19:07:21.087Z] GET /api/dashboard/current-month-trend -> 200 (743ms)
+[db] query ok duration=266ms rows=0
+[2026-04-20T19:07:21.088Z] GET /api/dashboard/team-work-performance -> 200 (1466ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:23.612Z] GET /api/notifications -> 200 (480ms)
+[2026-04-20T19:07:23.656Z] GET /api/hod/dashboard/project-deadlines?filter=WK -> 403 (236ms)
+[2026-04-20T19:07:23.658Z] GET /api/hod/dashboard/summary -> 403 (242ms)
+[2026-04-20T19:07:23.660Z] GET /api/hod/approvals?status=Pending&page=1&limit=10 -> 403 (242ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T19:07:23.888Z] GET /api/hod/verification/gms -> 403 (466ms)
+[2026-04-20T19:07:23.892Z] GET /api/hod/verification/waiting -> 403 (244ms)
+[2026-04-20T19:07:23.902Z] GET /api/auth/me -> 200 (240ms)
+[2026-04-20T19:07:24.145Z] GET /api/hod/daily-report
+Status: 200
+Body: {}
+Response: {"success":true,"data":[{"id":"af9a250b-99d9-4415-802a-3072032917dd","name":"executive_test","company":"PP Workflow Verification Pending","project":"Workflow Final Check LLC","free":"0","task":"Posting Task - PP Workflow Verification Pending","status":"READY_FOR_QA","run":"0","spent":"95 mins","createdAt":"2026-04-14T17:57:24.664Z"},{"id":"ca2ed686-dbd7-452e-a2a1-8a5a87b51e05","name":"executive_test","company":"PP Workflow QA Review","project":"Workflow QA House","free":"0","task":"Posting Task - PP Workflow QA Review","status":"READY_FOR_QA","run":"0","spent":"135 mins","createdAt":"2026-04-14T17:57:19.135Z"},{"id":"9d194752-5c99-4b6c-a08f-8123758f4cf3","name":"executive_test","company":"PP Workflow Running Project","project":"Workflow Running Supplies","free":"0","task":"Posting Task - PP Workflow Running Project","status":"InProgress","run":"0","spent":"55 mins","createdAt":"2026-04-14T17:57:13.914Z"},{"id":"ddf8af2e-83f8-4eb7-be85-ea2ef7100d12","name":"admin@example.com","company":"Proj-INV-67bcc","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:51:05.721Z"},{"id":"693a40c7-0a72-4a97-a3f7-40652686ce3d","name":"admin@example.com","company":"Proj-INV-df49a","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:50:30.374Z"},{"id":"5516ea26-7b9c-4522-b621-2327af6f170d","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Backend API","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:31.091Z"},{"id":"c62d4591-d310-4f97-9b2e-d6ea0edff82a","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"UI Design","status":"Blocked","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.684Z"},{"id":"149b49b8-aeae-4d41-b761-bb5b9eb283b1","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Database setup","status":"In Progress","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.375Z"},{"id":"471ee1a7-2a1e-46ea-9be7-25ee466db778","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Kickoff meeting","status":"ToDo","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.098Z"},{"id":"986d2c87-d880-40ee-9076-d2f04208d0f4","name":"talhaexcelstech@gmail.com","company":"Website Revamp","project":null,"free":"0","task":"Kickoff meeting","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-02T17:14:47.084Z"}]}
+[2026-04-20T19:07:24.183Z] GET /api/hod/daily-report -> 200 (523ms)
+[2026-04-20T19:07:24.862Z] GET /api/hod/dashboard/important-stats
+Status: 200
+Body: {}
+Response: {"success":true,"data":{"delayProjects":10,"upcoming":0,"completed":0,"inProgress":31,"pending":2,"qaVerification":2,"leaveApplication":0,"activeTeam":19,"depVerification":12,"activities":{"totalProjects":41,"complete":0,"pending":2,"delay":10,"free":10}}}
+[2026-04-20T19:07:24.863Z] GET /api/hod/dashboard/important-stats -> 200 (1444ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:29.138Z] GET /api/notifications -> 200 (517ms)
+[AUTH_MW] userId=b29868ad-e13c-4aed-8c70-444639c3bfaf rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:07:33.927Z] GET /api/auth/me -> 200 (240ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:07:34.410Z] GET /api/sales/appointments/today -> 200 (724ms)
+[2026-04-20T19:07:34.627Z] GET /api/notifications -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:40.123Z] GET /api/notifications -> 200 (477ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:07:42.560Z] GET /api/me/navigation -> 200 (240ms)
+[2026-04-20T19:07:42.809Z] GET /api/drm/permissions -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:45.613Z] GET /api/notifications -> 200 (482ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:07:51.139Z] GET /api/notifications -> 200 (516ms)
+[2026-04-20T19:07:54.580Z] GET /api/drm/permissions -> 200 (243ms)
+[2026-04-20T19:07:55.060Z] GET /api/drm/permissions -> 200 (688ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:07:55.338Z] GET /api/me/navigation -> 200 (961ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:07:56.415Z] GET /api/me/navigation -> 200 (2076ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[db] query ok duration=243ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=243ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:07:54.818Z
+[2026-04-20T19:07:56.499Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2148ms)
+[2026-04-20T19:07:56.598Z] GET /api/notifications -> 200 (2220ms)
+[2026-04-20T19:07:56.655Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2038ms)
+[route:team-queue-performance] total_duration=720ms
+[2026-04-20T19:07:56.835Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2487ms)
+[2026-04-20T19:07:56.894Z] GET /api/notifications -> 200 (2553ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:07:57.108Z] GET /api/sales/appointments/today -> 200 (2726ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:07:57.134Z] GET /api/sales/appointments/today -> 200 (2791ms)
+[2026-04-20T19:07:57.142Z] GET /api/dashboard/current-month-trend -> 200 (723ms)
+[2026-04-20T19:07:57.696Z] GET /api/dashboard/activities?period=WC -> 200 (1195ms)
+[2026-04-20T19:07:57.826Z] GET /api/dashboard/summary?period=MONTH -> 200 (1169ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:10:58.481Z] GET /api/me/navigation -> 200 (2740ms)
+[2026-04-20T19:10:58.686Z] GET /api/drm/permissions -> 200 (2935ms)
+[2026-04-20T19:10:58.725Z] GET /api/drm/permissions -> 200 (2985ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:10:58.727Z] GET /api/me/navigation -> 200 (2975ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:10:58.964Z] GET /api/notifications -> 200 (3221ms)
+[2026-04-20T19:10:59.157Z] GET /api/notifications -> 200 (3403ms)
+[2026-04-20T19:10:59.241Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2574ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:10:59.432Z] GET /api/sales/appointments/today -> 200 (3688ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=241ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:10:58.921Z
+[2026-04-20T19:10:59.479Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2971ms)
+[2026-04-20T19:10:59.481Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (998ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:10:59.745Z] GET /api/sales/appointments/today -> 200 (3990ms)
+[route:team-queue-performance] total_duration=748ms
+[2026-04-20T19:11:00.021Z] GET /api/dashboard/current-month-trend -> 200 (1020ms)
+[db] query ok duration=312ms rows=4
+[db] query ok duration=243ms rows=0
+[db] query ok duration=237ms rows=0
+[2026-04-20T19:11:00.614Z] GET /api/dashboard/team-work-performance -> 200 (1884ms)
+[2026-04-20T19:11:00.615Z] GET /api/dashboard/activities?period=WC -> 200 (1372ms)
+[2026-04-20T19:11:00.616Z] GET /api/dashboard/summary?period=MONTH -> 200 (1182ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[db] query ok duration=307ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=345ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:11:04.012Z
+[2026-04-20T19:11:04.663Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (961ms)
+[2026-04-20T19:11:04.665Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (961ms)
+[2026-04-20T19:11:04.667Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (964ms)
+[route:team-queue-performance] total_duration=921ms
+[db] query ok duration=305ms rows=4
+[2026-04-20T19:11:04.971Z] GET /api/notifications -> 200 (998ms)
+[db] query ok duration=270ms rows=0
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:05.279Z] GET /api/dashboard/activities?period=WC -> 200 (1579ms)
+[2026-04-20T19:11:05.281Z] GET /api/dashboard/summary?period=MONTH -> 200 (1582ms)
+[2026-04-20T19:11:05.546Z] GET /api/dashboard/current-month-trend -> 200 (878ms)
+[db] query ok duration=305ms rows=0
+[2026-04-20T19:11:05.582Z] GET /api/dashboard/team-work-performance -> 200 (1881ms)
+[2026-04-20T19:11:05.583Z] GET /api/notifications -> 200 (914ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:10.563Z] GET /api/notifications -> 200 (583ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:11.280Z] GET /api/notifications -> 200 (654ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:16.913Z] GET /api/notifications -> 200 (620ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:22.546Z] GET /api/notifications -> 200 (623ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:28.146Z] GET /api/notifications -> 200 (592ms)
+[2026-04-20T19:11:29.304Z] GET /api/drm/permissions -> 200 (602ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:11:30.532Z] GET /api/sales/appointments/today -> 200 (775ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:11:30.839Z] GET /api/me/navigation -> 200 (2103ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:33.809Z] GET /api/notifications -> 200 (643ms)
+[2026-04-20T19:11:35.206Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (493ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=276ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:11:34.935Z
+[2026-04-20T19:11:35.482Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (812ms)
+[route:team-queue-performance] total_duration=785ms
+[2026-04-20T19:11:36.267Z] GET /api/dashboard/activities?period=WC -> 200 (981ms)
+[db] query ok duration=259ms rows=4
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:11:37.086Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2372ms)
+[db] query ok duration=267ms rows=0
+[2026-04-20T19:11:37.105Z] GET /api/dashboard/team-work-performance -> 200 (1514ms)
+[2026-04-20T19:11:37.876Z] GET /api/dashboard/current-month-trend -> 200 (2322ms)
+[2026-04-20T19:11:38.122Z] GET /api/dashboard/summary?period=MONTH -> 200 (2798ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:39.417Z] GET /api/notifications -> 200 (601ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:44.991Z] GET /api/notifications -> 200 (565ms)
+[2026-04-20T19:11:51.426Z] GET /api/drm/permissions -> 200 (530ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:11:53.477Z] GET /api/me/navigation -> 200 (2580ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:11:53.720Z] GET /api/notifications -> 200 (2821ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:11:53.789Z] GET /api/sales/appointments/today -> 200 (2889ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:23:34.628Z] GET /api/me/navigation -> 200 (2491ms)
+[2026-04-20T19:23:34.918Z] GET /api/drm/permissions -> 200 (2783ms)
+[2026-04-20T19:23:34.922Z] GET /api/sales/appointments/today -> 500 (2781ms)
+[2026-04-20T19:23:34.926Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 500 (2783ms)
+[2026-04-20T19:23:34.971Z] GET /api/notifications -> 200 (2832ms)
+[2026-04-20T19:23:35.461Z] GET /api/dashboard/current-month-trend -> 200 (830ms)
+[2026-04-20T19:23:35.704Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (771ms)
+[db] query ok duration=269ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=269ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:23:35.450Z
+[2026-04-20T19:23:35.959Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (1025ms)
+[route:team-queue-performance] total_duration=800ms
+[2026-04-20T19:23:36.288Z] GET /api/dashboard/activities?period=WC -> 200 (1314ms)
+[2026-04-20T19:23:36.575Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (634ms)
+[db] query ok duration=243ms rows=4
+[db] query ok duration=296ms rows=0
+[db] query ok duration=272ms rows=0
+[2026-04-20T19:23:38.537Z] GET /api/dashboard/team-work-performance -> 200 (6389ms)
+[2026-04-20T19:23:38.538Z] GET /api/dashboard/summary?period=MONTH -> 200 (3607ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:23:40.667Z] GET /api/notifications -> 200 (670ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:23:46.255Z] GET /api/notifications -> 200 (569ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:23:51.769Z] GET /api/notifications -> 200 (506ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:23:57.444Z] GET /api/notifications -> 200 (662ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:03.077Z] GET /api/notifications -> 200 (612ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:24:04.958Z] GET /api/me/navigation -> 200 (314ms)
+[2026-04-20T19:24:05.483Z] GET /api/drm/permissions -> 200 (524ms)
+[2026-04-20T19:24:06.242Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (529ms)
+[2026-04-20T19:24:07.325Z] GET /api/dashboard/activities?period=WC -> 200 (1027ms)
+[2026-04-20T19:24:07.896Z] GET /api/dashboard/current-month-trend -> 200 (2418ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:08.589Z] GET /api/notifications -> 200 (493ms)
+[2026-04-20T19:24:08.901Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2312ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[db] query ok duration=243ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=280ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:24:08.663Z
+[2026-04-20T19:24:09.316Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (3336ms)
+[db] query ok duration=246ms rows=4
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:24:09.454Z] GET /api/sales/appointments/today -> 200 (4494ms)
+[db] query ok duration=239ms rows=0
+[route:team-queue-performance] total_duration=773ms
+[2026-04-20T19:24:09.618Z] GET /api/dashboard/summary?period=MONTH -> 200 (1045ms)
+[db] query ok duration=278ms rows=0
+[2026-04-20T19:24:09.835Z] GET /api/dashboard/team-work-performance -> 200 (1292ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:14.238Z] GET /api/notifications -> 200 (641ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:19.773Z] GET /api/notifications -> 200 (526ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:25.400Z] GET /api/notifications -> 200 (617ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:31.035Z] GET /api/notifications -> 200 (629ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:24:35.268Z] GET /api/me/navigation -> 200 (296ms)
+[2026-04-20T19:24:35.747Z] GET /api/drm/permissions -> 200 (243ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:24:37.058Z] GET /api/notifications -> 200 (1013ms)
+[2026-04-20T19:24:38.414Z] GET /api/dashboard/activities?period=WC -> 200 (1079ms)
+[2026-04-20T19:24:38.714Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2460ms)
+[2026-04-20T19:24:39.466Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (547ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:24:40.447Z] GET /api/dashboard/current-month-trend -> 200 (2536ms)
+[2026-04-20T19:24:40.594Z] GET /api/dashboard/summary?period=MONTH -> 200 (959ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:24:41.096Z] GET /api/sales/appointments/today -> 200 (1627ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=279ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:24:41.345Z
+[2026-04-20T19:24:41.866Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2531ms)
+[route:team-queue-performance] total_duration=760ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[db] query ok duration=333ms rows=4
+[db] query ok duration=268ms rows=0
+[2026-04-20T19:24:42.742Z] GET /api/notifications -> 200 (669ms)
+[db] query ok duration=271ms rows=0
+[2026-04-20T19:24:43.050Z] GET /api/dashboard/team-work-performance -> 200 (3199ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:25:31.422Z] GET /api/me/navigation -> 200 (2140ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:25:31.624Z] GET /api/drm/permissions -> 200 (2344ms)
+[2026-04-20T19:25:31.664Z] GET /api/notifications -> 200 (2379ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:25:31.897Z] GET /api/sales/appointments/today -> 200 (2609ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:25:37.184Z] GET /api/notifications -> 200 (513ms)
+[2026-04-20T19:25:39.232Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (500ms)
+[2026-04-20T19:25:39.485Z] GET /api/dashboard/activities?period=WC -> 200 (1052ms)
+[2026-04-20T19:25:40.070Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 500 (591ms)
+[2026-04-20T19:25:40.945Z] GET /api/dashboard/current-month-trend -> 200 (481ms)
+[2026-04-20T19:25:42.198Z] GET /api/dashboard/summary?period=MONTH -> 200 (1587ms)
+[db] query ok duration=255ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=292ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:25:42.195Z
+[2026-04-20T19:25:42.740Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (856ms)
+[route:team-queue-performance] total_duration=830ms
+[db] query ok duration=297ms rows=4
+[2026-04-20T19:25:43.841Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2750ms)
+[db] query ok duration=289ms rows=0
+[db] query ok duration=324ms rows=0
+[2026-04-20T19:25:44.493Z] GET /api/dashboard/team-work-performance -> 200 (1430ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:25:45.273Z] GET /api/notifications -> 200 (3083ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:25:50.905Z] GET /api/notifications -> 200 (626ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:25:56.542Z] GET /api/notifications -> 200 (590ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:26:01.719Z] GET /api/me/navigation -> 200 (277ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:26:02.703Z] GET /api/sales/appointments/today -> 200 (795ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:04.116Z] GET /api/drm/permissions -> 200 (2473ms)
+[2026-04-20T19:26:04.153Z] GET /api/notifications -> 200 (2594ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:09.757Z] GET /api/notifications -> 200 (584ms)
+[2026-04-20T19:26:09.794Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (554ms)
+[2026-04-20T19:26:10.566Z] GET /api/dashboard/activities?period=WC -> 200 (1059ms)
+[2026-04-20T19:26:11.591Z] GET /api/dashboard/current-month-trend -> 200 (636ms)
+[2026-04-20T19:26:13.265Z] GET /api/dashboard/summary?period=MONTH -> 200 (1060ms)
+[db] query ok duration=278ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=314ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:26:13.024Z
+[2026-04-20T19:26:13.576Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (821ms)
+[route:team-queue-performance] total_duration=822ms
+[2026-04-20T19:26:14.458Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (607ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:15.380Z] GET /api/notifications -> 200 (617ms)
+[db] query ok duration=307ms rows=4
+[db] query ok duration=268ms rows=0
+[db] query ok duration=270ms rows=0
+[2026-04-20T19:26:16.032Z] GET /api/dashboard/team-work-performance -> 200 (1511ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:20.945Z] GET /api/notifications -> 200 (544ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:26.545Z] GET /api/notifications -> 200 (582ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:32.172Z] GET /api/notifications -> 200 (606ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:26:33.544Z] GET /api/sales/appointments/today -> 200 (830ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:26:33.779Z] GET /api/me/navigation -> 200 (2048ms)
+[2026-04-20T19:26:34.734Z] GET /api/drm/permissions -> 200 (603ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:26:37.669Z] GET /api/notifications -> 200 (477ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:28:17.075Z] GET /api/me/navigation -> 200 (2349ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:28:17.346Z] GET /api/drm/permissions -> 200 (2621ms)
+[2026-04-20T19:28:17.384Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2654ms)
+[2026-04-20T19:28:17.385Z] GET /api/notifications -> 200 (2658ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:28:17.687Z] GET /api/sales/appointments/today -> 200 (2958ms)
+[db] query ok duration=245ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=245ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:28:17.383Z
+[2026-04-20T19:28:17.896Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (3162ms)
+[2026-04-20T19:28:17.929Z] GET /api/dashboard/current-month-trend -> 200 (543ms)
+[2026-04-20T19:28:17.931Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (849ms)
+[route:team-queue-performance] total_duration=752ms
+[db] query ok duration=335ms rows=4
+[db] query ok duration=270ms rows=0
+[2026-04-20T19:28:18.810Z] GET /api/dashboard/activities?period=WC -> 200 (1418ms)
+[db] query ok duration=237ms rows=0
+[2026-04-20T19:28:19.083Z] GET /api/dashboard/team-work-performance -> 200 (1693ms)
+[2026-04-20T19:28:19.084Z] GET /api/dashboard/summary?period=MONTH -> 200 (1390ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:31:11.214Z] GET /api/me/navigation -> 200 (1962ms)
+[2026-04-20T19:31:11.418Z] GET /api/drm/permissions -> 200 (2167ms)
+[2026-04-20T19:31:11.452Z] GET /api/notifications -> 200 (2197ms)
+[2026-04-20T19:31:11.453Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2177ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:31:11.929Z] GET /api/dashboard/current-month-trend -> 200 (685ms)
+[2026-04-20T19:31:12.169Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (700ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:31:12.181Z] GET /api/sales/appointments/today -> 200 (2925ms)
+[db] query ok duration=242ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=243ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:31:11.711Z
+[2026-04-20T19:31:12.242Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (775ms)
+[2026-04-20T19:31:12.412Z] GET /api/dashboard/activities?period=WC -> 200 (3134ms)
+[route:team-queue-performance] total_duration=728ms
+[2026-04-20T19:31:12.618Z] GET /api/dashboard/summary?period=MONTH -> 200 (1199ms)
+[db] query ok duration=241ms rows=4
+[db] query ok duration=240ms rows=0
+[db] query ok duration=241ms rows=0
+[2026-04-20T19:31:13.178Z] GET /api/dashboard/team-work-performance -> 200 (1237ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:39:01.286Z] GET /api/me/navigation -> 200 (1976ms)
+[2026-04-20T19:39:01.513Z] GET /api/drm/permissions -> 200 (2204ms)
+[2026-04-20T19:39:01.525Z] GET /api/notifications -> 200 (2213ms)
+[2026-04-20T19:39:01.526Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2211ms)
+[2026-04-20T19:39:01.753Z] GET /api/dashboard/current-month-trend -> 200 (2436ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:39:01.766Z] GET /api/sales/appointments/today -> 200 (2453ms)
+[2026-04-20T19:39:02.003Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (715ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=252ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:39:01.764Z
+[2026-04-20T19:39:02.266Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (742ms)
+[db] query ok duration=242ms rows=4
+[route:team-queue-performance] total_duration=742ms
+[2026-04-20T19:39:02.675Z] GET /api/dashboard/activities?period=WC -> 200 (1148ms)
+[2026-04-20T19:39:02.713Z] GET /api/dashboard/summary?period=MONTH -> 200 (1184ms)
+[db] query ok duration=240ms rows=0
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:39:02.988Z] GET /api/dashboard/team-work-performance -> 200 (1224ms)
+[2026-04-20T19:45:20.774Z] GET /api/drm/permissions -> 200 (478ms)
+[2026-04-20T19:45:21.499Z] GET /api/dashboard/current-month-trend -> 200 (1168ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:45:22.279Z] GET /api/me/navigation -> 200 (1982ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:45:22.427Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (1616ms)
+[2026-04-20T19:45:22.510Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2209ms)
+[2026-04-20T19:45:22.517Z] GET /api/notifications -> 200 (2218ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:45:22.773Z] GET /api/sales/appointments/today -> 200 (2473ms)
+[db] query ok duration=242ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=252ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:45:22.501Z
+[2026-04-20T19:45:23.002Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (1493ms)
+[route:team-queue-performance] total_duration=732ms
+[db] query ok duration=250ms rows=4
+[2026-04-20T19:45:23.383Z] GET /api/dashboard/activities?period=WC -> 200 (1102ms)
+[2026-04-20T19:45:23.453Z] GET /api/dashboard/summary?period=MONTH -> 200 (1025ms)
+[db] query ok duration=239ms rows=0
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:45:23.741Z] GET /api/dashboard/team-work-performance -> 200 (1230ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:50:17.855Z] GET /api/me/navigation -> 200 (1942ms)
+[2026-04-20T19:50:18.074Z] GET /api/drm/permissions -> 200 (2162ms)
+[2026-04-20T19:50:18.087Z] GET /api/dashboard/current-month-trend -> 200 (2159ms)
+[2026-04-20T19:50:18.157Z] GET /api/notifications -> 200 (2242ms)
+[2026-04-20T19:50:18.326Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2385ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:50:18.562Z] GET /api/sales/appointments/today -> 200 (2637ms)
+[2026-04-20T19:50:18.573Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (717ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=252ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:50:18.395Z
+[2026-04-20T19:50:19.042Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (966ms)
+[db] query ok duration=240ms rows=4
+[route:team-queue-performance] total_duration=730ms
+[2026-04-20T19:50:19.284Z] GET /api/dashboard/activities?period=WC -> 200 (1196ms)
+[2026-04-20T19:50:19.298Z] GET /api/dashboard/summary?period=MONTH -> 200 (1140ms)
+[db] query ok duration=239ms rows=0
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:50:19.600Z] GET /api/dashboard/team-work-performance -> 200 (1273ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:55:15.994Z] GET /api/me/navigation -> 200 (1997ms)
+[2026-04-20T19:55:16.229Z] GET /api/drm/permissions -> 200 (2233ms)
+[2026-04-20T19:55:16.236Z] GET /api/notifications -> 200 (2237ms)
+[2026-04-20T19:55:16.471Z] GET /api/dashboard/current-month-trend -> 200 (2469ms)
+[2026-04-20T19:55:16.485Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2401ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:55:16.488Z] GET /api/sales/appointments/today -> 200 (2487ms)
+[2026-04-20T19:55:16.724Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (728ms)
+[db] query ok duration=238ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=250ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:55:16.689Z
+[2026-04-20T19:55:17.193Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (962ms)
+[db] query ok duration=237ms rows=4
+[route:team-queue-performance] total_duration=723ms
+[2026-04-20T19:55:17.443Z] GET /api/dashboard/activities?period=WC -> 200 (1204ms)
+[2026-04-20T19:55:17.451Z] GET /api/dashboard/summary?period=MONTH -> 200 (967ms)
+[db] query ok duration=237ms rows=0
+[db] query ok duration=237ms rows=0
+[2026-04-20T19:55:17.884Z] GET /api/dashboard/team-work-performance -> 200 (1395ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:21.726Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:27.218Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:32.718Z] GET /api/notifications -> 200 (486ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:38.213Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:43.712Z] GET /api/notifications -> 200 (489ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:55:46.260Z] GET /api/me/navigation -> 200 (250ms)
+[2026-04-20T19:55:46.972Z] GET /api/dashboard/current-month-trend -> 200 (476ms)
+[db] query ok duration=238ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=248ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:55:47.443Z
+[2026-04-20T19:55:47.928Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (724ms)
+[route:team-queue-performance] total_duration=721ms
+[2026-04-20T19:55:48.310Z] GET /api/drm/permissions -> 200 (2069ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:55:48.788Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2291ms)
+[2026-04-20T19:55:49.027Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2287ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:55:49.129Z] GET /api/sales/appointments/today -> 200 (2631ms)
+[db] query ok duration=240ms rows=4
+[2026-04-20T19:55:49.268Z] GET /api/dashboard/activities?period=WC -> 200 (1812ms)
+[2026-04-20T19:55:49.347Z] GET /api/notifications -> 200 (557ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:55:49.395Z] GET /api/dashboard/summary?period=MONTH -> 200 (1465ms)
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:55:49.628Z] GET /api/dashboard/team-work-performance -> 200 (1316ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:55:54.850Z] GET /api/notifications -> 200 (495ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:00.360Z] GET /api/notifications -> 200 (494ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:05.859Z] GET /api/notifications -> 200 (492ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:11.355Z] GET /api/notifications -> 200 (491ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:56:16.518Z] GET /api/me/navigation -> 200 (251ms)
+[2026-04-20T19:56:17.475Z] GET /api/dashboard/current-month-trend -> 200 (480ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:18.586Z] GET /api/notifications -> 200 (2224ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=241ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:56:18.188Z
+[2026-04-20T19:56:18.668Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (721ms)
+[route:team-queue-performance] total_duration=720ms
+[2026-04-20T19:56:19.291Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (496ms)
+[2026-04-20T19:56:20.253Z] GET /api/drm/permissions -> 200 (1926ms)
+[db] query ok duration=240ms rows=4
+[2026-04-20T19:56:20.491Z] GET /api/dashboard/activities?period=WC -> 200 (1207ms)
+[2026-04-20T19:56:20.622Z] GET /api/dashboard/summary?period=MONTH -> 200 (1209ms)
+[db] query ok duration=288ms rows=0
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:56:21.009Z] GET /api/dashboard/team-work-performance -> 200 (1363ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T19:56:21.254Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2210ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:56:21.568Z] GET /api/sales/appointments/today -> 200 (2419ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:24.078Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:29.579Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:35.085Z] GET /api/notifications -> 200 (494ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:40.586Z] GET /api/notifications -> 200 (494ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:46.099Z] GET /api/notifications -> 200 (495ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:56:46.789Z] GET /api/me/navigation -> 200 (253ms)
+[2026-04-20T19:56:47.985Z] GET /api/dashboard/current-month-trend -> 200 (483ms)
+[db] query ok duration=249ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=260ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:56:48.929Z
+[2026-04-20T19:56:49.429Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (742ms)
+[route:team-queue-performance] total_duration=740ms
+[2026-04-20T19:56:50.755Z] GET /api/drm/permissions -> 200 (485ms)
+[db] query ok duration=241ms rows=4
+[db] query ok duration=241ms rows=0
+[2026-04-20T19:56:52.028Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2722ms)
+[db] query ok duration=242ms rows=0
+[2026-04-20T19:56:52.240Z] GET /api/dashboard/team-work-performance -> 200 (1220ms)
+[2026-04-20T19:56:52.266Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (994ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:56:52.992Z] GET /api/sales/appointments/today -> 200 (963ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:53.260Z] GET /api/notifications -> 200 (2138ms)
+[2026-04-20T19:56:53.288Z] GET /api/dashboard/summary?period=MONTH -> 200 (2649ms)
+[2026-04-20T19:56:53.440Z] GET /api/dashboard/activities?period=WC -> 200 (2933ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:56:58.747Z] GET /api/notifications -> 200 (479ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:04.258Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:09.755Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:15.257Z] GET /api/notifications -> 200 (493ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:57:17.047Z] GET /api/me/navigation -> 200 (251ms)
+[2026-04-20T19:57:18.488Z] GET /api/dashboard/current-month-trend -> 200 (478ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=251ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:57:19.690Z
+[2026-04-20T19:57:20.181Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (737ms)
+[route:team-queue-performance] total_duration=729ms
+[2026-04-20T19:57:21.256Z] GET /api/drm/permissions -> 200 (477ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:22.473Z] GET /api/notifications -> 200 (2210ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:57:23.774Z] GET /api/sales/appointments/today -> 200 (762ms)
+[2026-04-20T19:57:24.198Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2155ms)
+[2026-04-20T19:57:24.432Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2157ms)
+[2026-04-20T19:57:24.472Z] GET /api/dashboard/summary?period=MONTH -> 200 (1178ms)
+[2026-04-20T19:57:24.503Z] GET /api/dashboard/activities?period=WC -> 200 (1047ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=241ms rows=0
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:57:25.162Z] GET /api/dashboard/team-work-performance -> 200 (2902ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:28.013Z] GET /api/notifications -> 200 (490ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:33.513Z] GET /api/notifications -> 200 (491ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:39.000Z] GET /api/notifications -> 200 (481ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:44.501Z] GET /api/notifications -> 200 (482ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:57:47.304Z] GET /api/me/navigation -> 200 (250ms)
+[2026-04-20T19:57:48.977Z] GET /api/dashboard/current-month-trend -> 200 (479ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:49.995Z] GET /api/notifications -> 200 (482ms)
+[db] query ok duration=244ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=244ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:57:50.437Z
+[2026-04-20T19:57:50.920Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (722ms)
+[route:team-queue-performance] total_duration=720ms
+[2026-04-20T19:57:51.744Z] GET /api/drm/permissions -> 200 (479ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:57:54.526Z] GET /api/sales/appointments/today -> 200 (742ms)
+[2026-04-20T19:57:55.725Z] GET /api/dashboard/activities?period=WC -> 200 (1195ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=240ms rows=0
+[2026-04-20T19:57:56.591Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2373ms)
+[2026-04-20T19:57:56.656Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2207ms)
+[db] query ok duration=239ms rows=0
+[2026-04-20T19:57:56.706Z] GET /api/dashboard/team-work-performance -> 200 (1522ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:57:57.196Z] GET /api/notifications -> 200 (2179ms)
+[2026-04-20T19:57:57.207Z] GET /api/dashboard/summary?period=MONTH -> 200 (2711ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:02.701Z] GET /api/notifications -> 200 (491ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:08.197Z] GET /api/notifications -> 200 (490ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:13.694Z] GET /api/notifications -> 200 (488ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:58:17.559Z] GET /api/me/navigation -> 200 (250ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:19.182Z] GET /api/notifications -> 200 (478ms)
+[2026-04-20T19:58:21.169Z] GET /api/dashboard/current-month-trend -> 200 (2159ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=251ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:58:21.178Z
+[2026-04-20T19:58:21.667Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (729ms)
+[route:team-queue-performance] total_duration=726ms
+[2026-04-20T19:58:21.997Z] GET /api/drm/permissions -> 200 (240ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:24.668Z] GET /api/notifications -> 200 (480ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:58:25.253Z] GET /api/sales/appointments/today -> 200 (717ms)
+[2026-04-20T19:58:26.700Z] GET /api/dashboard/activities?period=WC -> 200 (960ms)
+[db] query ok duration=238ms rows=4
+[db] query ok duration=239ms rows=0
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:58:27.939Z] GET /api/dashboard/team-work-performance -> 200 (1213ms)
+[2026-04-20T19:58:28.180Z] GET /api/dashboard/summary?period=MONTH -> 200 (965ms)
+[2026-04-20T19:58:28.750Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2147ms)
+[2026-04-20T19:58:29.432Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2758ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:30.174Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:35.672Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:41.168Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:46.668Z] GET /api/notifications -> 200 (481ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:58:47.826Z] GET /api/me/navigation -> 200 (249ms)
+[2026-04-20T19:58:51.655Z] GET /api/dashboard/current-month-trend -> 200 (481ms)
+[db] query ok duration=269ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=279ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:58:51.917Z
+[2026-04-20T19:58:52.434Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (758ms)
+[route:team-queue-performance] total_duration=752ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:58:53.862Z] GET /api/notifications -> 200 (2185ms)
+[2026-04-20T19:58:54.155Z] GET /api/drm/permissions -> 200 (2140ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:58:55.987Z] GET /api/sales/appointments/today -> 200 (727ms)
+[2026-04-20T19:58:57.665Z] GET /api/dashboard/activities?period=WC -> 200 (955ms)
+[db] query ok duration=244ms rows=4
+[db] query ok duration=242ms rows=0
+[db] query ok duration=237ms rows=0
+[2026-04-20T19:58:59.188Z] GET /api/dashboard/team-work-performance -> 200 (1233ms)
+[2026-04-20T19:58:59.193Z] GET /api/dashboard/summary?period=MONTH -> 200 (996ms)
+[2026-04-20T19:58:59.924Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:00.904Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2143ms)
+[2026-04-20T19:59:01.110Z] GET /api/notifications -> 200 (2234ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:06.612Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:12.114Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:17.599Z] GET /api/notifications -> 200 (481ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:59:18.088Z] GET /api/me/navigation -> 200 (250ms)
+[2026-04-20T19:59:22.148Z] GET /api/dashboard/current-month-trend -> 200 (480ms)
+[db] query ok duration=250ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=261ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:59:22.688Z
+[2026-04-20T19:59:23.192Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (744ms)
+[route:team-queue-performance] total_duration=741ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:24.709Z] GET /api/drm/permissions -> 200 (540ms)
+[2026-04-20T19:59:24.774Z] GET /api/notifications -> 200 (2159ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:59:26.725Z] GET /api/sales/appointments/today -> 200 (725ms)
+[2026-04-20T19:59:28.621Z] GET /api/dashboard/activities?period=WC -> 200 (950ms)
+[db] query ok duration=238ms rows=4
+[db] query ok duration=236ms rows=0
+[2026-04-20T19:59:30.173Z] GET /api/dashboard/summary?period=MONTH -> 200 (956ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T19:59:30.406Z] GET /api/dashboard/team-work-performance -> 200 (1210ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:31.846Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (932ms)
+[2026-04-20T19:59:31.975Z] GET /api/notifications -> 200 (2188ms)
+[2026-04-20T19:59:32.109Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2163ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:37.485Z] GET /api/notifications -> 200 (493ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:43.001Z] GET /api/notifications -> 200 (492ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:48.491Z] GET /api/notifications -> 200 (480ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T19:59:50.024Z] GET /api/me/navigation -> 200 (1927ms)
+[2026-04-20T19:59:52.640Z] GET /api/dashboard/current-month-trend -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[db] query ok duration=242ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=242ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T19:59:53.450Z
+[2026-04-20T19:59:53.930Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (720ms)
+[2026-04-20T19:59:53.992Z] GET /api/notifications -> 200 (482ms)
+[route:team-queue-performance] total_duration=716ms
+[2026-04-20T19:59:55.201Z] GET /api/drm/permissions -> 200 (476ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T19:59:57.477Z] GET /api/sales/appointments/today -> 200 (738ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T19:59:59.490Z] GET /api/notifications -> 200 (481ms)
+[2026-04-20T19:59:59.583Z] GET /api/dashboard/activities?period=WC -> 200 (957ms)
+[db] query ok duration=239ms rows=4
+[2026-04-20T20:00:01.154Z] GET /api/dashboard/summary?period=MONTH -> 200 (968ms)
+[db] query ok duration=240ms rows=0
+[db] query ok duration=240ms rows=0
+[2026-04-20T20:00:01.656Z] GET /api/dashboard/team-work-performance -> 200 (1230ms)
+[2026-04-20T20:00:02.342Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (484ms)
+[2026-04-20T20:00:04.323Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2200ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:04.978Z] GET /api/notifications -> 200 (477ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:10.479Z] GET /api/notifications -> 200 (475ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:17.656Z] GET /api/notifications -> 200 (2158ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:00:20.273Z] GET /api/me/navigation -> 200 (238ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:23.121Z] GET /api/dashboard/current-month-trend -> 200 (473ms)
+[2026-04-20T20:00:23.148Z] GET /api/notifications -> 200 (484ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=252ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:00:24.189Z
+[2026-04-20T20:00:24.679Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (728ms)
+[route:team-queue-performance] total_duration=727ms
+[2026-04-20T20:00:25.454Z] GET /api/drm/permissions -> 200 (239ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:00:28.228Z] GET /api/sales/appointments/today -> 200 (733ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:28.637Z] GET /api/notifications -> 200 (476ms)
+[2026-04-20T20:00:30.547Z] GET /api/dashboard/activities?period=WC -> 200 (949ms)
+[2026-04-20T20:00:32.113Z] GET /api/dashboard/summary?period=MONTH -> 200 (949ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=235ms rows=0
+[db] query ok duration=237ms rows=0
+[2026-04-20T20:00:32.892Z] GET /api/dashboard/team-work-performance -> 200 (1217ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:34.118Z] GET /api/notifications -> 200 (473ms)
+[2026-04-20T20:00:34.531Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2182ms)
+[2026-04-20T20:00:34.804Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (473ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:39.614Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:45.113Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:50.598Z] GET /api/notifications -> 200 (473ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:00:52.229Z] GET /api/me/navigation -> 200 (1938ms)
+[2026-04-20T20:00:53.619Z] GET /api/dashboard/current-month-trend -> 200 (478ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=240ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:00:54.929Z
+[2026-04-20T20:00:55.408Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (718ms)
+[route:team-queue-performance] total_duration=715ms
+[2026-04-20T20:00:55.711Z] GET /api/drm/permissions -> 200 (238ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:00:57.757Z] GET /api/notifications -> 200 (2153ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:00:58.976Z] GET /api/sales/appointments/today -> 200 (738ms)
+[2026-04-20T20:01:01.501Z] GET /api/dashboard/activities?period=WC -> 200 (944ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:03.069Z] GET /api/dashboard/summary?period=MONTH -> 200 (949ms)
+[2026-04-20T20:01:03.258Z] GET /api/notifications -> 200 (487ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=238ms rows=0
+[db] query ok duration=240ms rows=0
+[2026-04-20T20:01:04.124Z] GET /api/dashboard/team-work-performance -> 200 (1226ms)
+[2026-04-20T20:01:05.032Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (479ms)
+[2026-04-20T20:01:05.293Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (474ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:08.758Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:14.248Z] GET /api/notifications -> 200 (486ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:19.773Z] GET /api/notifications -> 200 (512ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:01:22.496Z] GET /api/me/navigation -> 200 (251ms)
+[2026-04-20T20:01:24.105Z] GET /api/dashboard/current-month-trend -> 200 (475ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:25.278Z] GET /api/notifications -> 200 (485ms)
+[db] query ok duration=237ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=247ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:01:25.667Z
+[2026-04-20T20:01:26.151Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (725ms)
+[route:team-queue-performance] total_duration=721ms
+[2026-04-20T20:01:27.669Z] GET /api/drm/permissions -> 200 (1938ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:01:29.725Z] GET /api/sales/appointments/today -> 200 (729ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:30.772Z] GET /api/notifications -> 200 (478ms)
+[2026-04-20T20:01:32.468Z] GET /api/dashboard/activities?period=WC -> 200 (957ms)
+[2026-04-20T20:01:34.042Z] GET /api/dashboard/summary?period=MONTH -> 200 (965ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=238ms rows=0
+[db] query ok duration=238ms rows=0
+[2026-04-20T20:01:35.369Z] GET /api/dashboard/team-work-performance -> 200 (1227ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:36.267Z] GET /api/notifications -> 200 (480ms)
+[2026-04-20T20:01:37.248Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2207ms)
+[2026-04-20T20:01:37.483Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2175ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:41.758Z] GET /api/notifications -> 200 (481ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:47.246Z] GET /api/notifications -> 200 (479ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:52.735Z] GET /api/notifications -> 200 (481ms)
+[2026-04-20T20:01:54.598Z] GET /api/dashboard/current-month-trend -> 200 (482ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:01:54.610Z] GET /api/me/navigation -> 200 (2107ms)
+[db] query ok duration=243ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=279ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:01:56.406Z
+[2026-04-20T20:01:56.927Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (763ms)
+[route:team-queue-performance] total_duration=761ms
+[2026-04-20T20:01:57.926Z] GET /api/drm/permissions -> 200 (241ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:01:58.229Z] GET /api/notifications -> 200 (481ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:02:00.478Z] GET /api/sales/appointments/today -> 200 (744ms)
+[2026-04-20T20:02:03.443Z] GET /api/dashboard/activities?period=WC -> 200 (961ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:03.728Z] GET /api/notifications -> 200 (482ms)
+[2026-04-20T20:02:05.040Z] GET /api/dashboard/summary?period=MONTH -> 200 (994ms)
+[db] query ok duration=240ms rows=4
+[db] query ok duration=239ms rows=0
+[db] query ok duration=240ms rows=0
+[2026-04-20T20:02:06.599Z] GET /api/dashboard/team-work-performance -> 200 (1223ms)
+[2026-04-20T20:02:07.976Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (482ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:09.236Z] GET /api/notifications -> 200 (491ms)
+[2026-04-20T20:02:09.449Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2186ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:14.736Z] GET /api/notifications -> 200 (494ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:20.236Z] GET /api/notifications -> 200 (492ms)
+[2026-04-20T20:02:25.088Z] GET /api/dashboard/current-month-trend -> 200 (483ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:25.737Z] GET /api/notifications -> 200 (495ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:02:26.625Z] GET /api/me/navigation -> 200 (2003ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=241ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:02:27.179Z
+[2026-04-20T20:02:27.659Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (719ms)
+[route:team-queue-performance] total_duration=716ms
+[2026-04-20T20:02:28.412Z] GET /api/drm/permissions -> 200 (475ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:02:31.271Z] GET /api/sales/appointments/today -> 200 (763ms)
+[2026-04-20T20:02:31.276Z] GET /api/notifications -> 200 (493ms)
+[2026-04-20T20:02:34.417Z] GET /api/dashboard/activities?period=WC -> 200 (961ms)
+[2026-04-20T20:02:36.024Z] GET /api/dashboard/summary?period=MONTH -> 200 (970ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:36.777Z] GET /api/notifications -> 200 (494ms)
+[db] query ok duration=238ms rows=4
+[db] query ok duration=238ms rows=0
+[db] query ok duration=241ms rows=0
+[2026-04-20T20:02:37.829Z] GET /api/dashboard/team-work-performance -> 200 (1216ms)
+[2026-04-20T20:02:38.488Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (486ms)
+[2026-04-20T20:02:39.937Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (482ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:02:42.279Z] GET /api/notifications -> 200 (493ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:07:04.804Z] GET /api/me/navigation -> 200 (2515ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T20:07:05.044Z] GET /api/notifications -> 200 (2754ms)
+[2026-04-20T20:07:05.281Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2966ms)
+[2026-04-20T20:07:05.293Z] GET /api/drm/permissions -> 200 (3004ms)
+[2026-04-20T20:07:05.517Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (711ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:07:05.531Z] GET /api/sales/appointments/today -> 200 (3238ms)
+[2026-04-20T20:07:05.756Z] GET /api/dashboard/current-month-trend -> 200 (701ms)
+[db] query ok duration=242ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=252ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:07:05.534Z
+[2026-04-20T20:07:06.025Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (734ms)
+[db] query ok duration=239ms rows=4
+[route:team-queue-performance] total_duration=729ms
+[db] query ok duration=240ms rows=0
+[2026-04-20T20:07:06.465Z] GET /api/dashboard/activities?period=WC -> 200 (1170ms)
+[db] query ok duration=240ms rows=0
+[2026-04-20T20:07:06.602Z] GET /api/dashboard/team-work-performance -> 200 (4294ms)
+[2026-04-20T20:07:06.979Z] GET /api/dashboard/summary?period=MONTH -> 200 (951ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:10.542Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:16.033Z] GET /api/notifications -> 200 (486ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:21.524Z] GET /api/notifications -> 200 (486ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:27.019Z] GET /api/notifications -> 200 (485ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:32.546Z] GET /api/notifications -> 200 (511ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:07:35.088Z] GET /api/me/navigation -> 200 (270ms)
+[2026-04-20T20:07:35.760Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (474ms)
+[2026-04-20T20:07:36.237Z] GET /api/dashboard/current-month-trend -> 200 (475ms)
+[2026-04-20T20:07:37.460Z] GET /api/drm/permissions -> 200 (2158ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[db] query ok duration=236ms rows=4
+[2026-04-20T20:07:37.709Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2170ms)
+[db] query ok duration=239ms rows=0
+[2026-04-20T20:07:37.959Z] GET /api/dashboard/activities?period=WC -> 200 (1490ms)
+[db] query ok duration=237ms rows=0
+[2026-04-20T20:07:38.128Z] GET /api/dashboard/team-work-performance -> 200 (1512ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:07:38.199Z] GET /api/sales/appointments/today -> 200 (2650ms)
+[2026-04-20T20:07:38.408Z] GET /api/notifications -> 200 (694ms)
+[db] query ok duration=241ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=241ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:07:37.960Z
+[2026-04-20T20:07:38.442Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2405ms)
+[2026-04-20T20:07:38.656Z] GET /api/dashboard/summary?period=MONTH -> 200 (1185ms)
+[route:team-queue-performance] total_duration=720ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:43.903Z] GET /api/notifications -> 200 (490ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:49.391Z] GET /api/notifications -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:07:54.890Z] GET /api/notifications -> 200 (479ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:00.387Z] GET /api/notifications -> 200 (478ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:08:05.343Z] GET /api/me/navigation -> 200 (251ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:05.887Z] GET /api/notifications -> 200 (479ms)
+[2026-04-20T20:08:06.722Z] GET /api/dashboard/current-month-trend -> 200 (480ms)
+[2026-04-20T20:08:07.947Z] GET /api/drm/permissions -> 200 (475ms)
+[2026-04-20T20:08:07.964Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2189ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=238ms rows=0
+[2026-04-20T20:08:09.157Z] GET /api/dashboard/activities?period=WC -> 200 (1190ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T20:08:09.354Z] GET /api/dashboard/team-work-performance -> 200 (1215ms)
+[2026-04-20T20:08:09.872Z] GET /api/dashboard/summary?period=MONTH -> 200 (1197ms)
+[2026-04-20T20:08:10.028Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2306ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:08:10.619Z] GET /api/sales/appointments/today -> 200 (2413ms)
+[db] query ok duration=239ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=248ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:08:10.375Z
+[2026-04-20T20:08:10.869Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (2415ms)
+[route:team-queue-performance] total_duration=732ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:11.369Z] GET /api/notifications -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:16.877Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:22.364Z] GET /api/notifications -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:27.857Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:33.353Z] GET /api/notifications -> 200 (487ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:08:35.588Z] GET /api/me/navigation -> 200 (239ms)
+[2026-04-20T20:08:37.207Z] GET /api/dashboard/current-month-trend -> 200 (478ms)
+[2026-04-20T20:08:38.205Z] GET /api/drm/permissions -> 200 (240ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:38.851Z] GET /api/notifications -> 200 (489ms)
+[2026-04-20T20:08:40.117Z] GET /api/dashboard/activities?period=WC -> 200 (953ms)
+[2026-04-20T20:08:40.232Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2251ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:08:41.367Z] GET /api/sales/appointments/today -> 200 (717ms)
+[db] query ok duration=240ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=250ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:08:41.119Z
+[2026-04-20T20:08:41.607Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (727ms)
+[db] query ok duration=237ms rows=4
+[route:team-queue-performance] total_duration=726ms
+[db] query ok duration=235ms rows=0
+[2026-04-20T20:08:42.179Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2133ms)
+[db] query ok duration=235ms rows=0
+[2026-04-20T20:08:42.196Z] GET /api/dashboard/team-work-performance -> 200 (2835ms)
+[2026-04-20T20:08:42.480Z] GET /api/dashboard/summary?period=MONTH -> 200 (2599ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:44.344Z] GET /api/notifications -> 200 (483ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:49.843Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:08:55.329Z] GET /api/notifications -> 200 (473ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:00.824Z] GET /api/notifications -> 200 (483ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:09:05.852Z] GET /api/me/navigation -> 200 (248ms)
+[2026-04-20T20:09:07.693Z] GET /api/dashboard/current-month-trend -> 200 (472ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:08.029Z] GET /api/notifications -> 200 (2190ms)
+[2026-04-20T20:09:08.458Z] GET /api/drm/permissions -> 200 (239ms)
+[2026-04-20T20:09:10.708Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (471ms)
+[2026-04-20T20:09:11.090Z] GET /api/dashboard/activities?period=WC -> 200 (953ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:09:12.122Z] GET /api/sales/appointments/today -> 200 (737ms)
+[db] query ok duration=238ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=238ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:09:11.855Z
+[2026-04-20T20:09:12.328Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (709ms)
+[route:team-queue-performance] total_duration=708ms
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:13.529Z] GET /api/notifications -> 200 (494ms)
+[2026-04-20T20:09:14.320Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (2136ms)
+[db] query ok duration=239ms rows=4
+[db] query ok duration=239ms rows=0
+[2026-04-20T20:09:15.107Z] GET /api/dashboard/summary?period=MONTH -> 200 (2615ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T20:09:15.109Z] GET /api/dashboard/team-work-performance -> 200 (2905ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:19.024Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:24.520Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:09:30.017Z] GET /api/notifications -> 200 (491ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:13:40.733Z] GET /api/me/navigation -> 200 (1978ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T20:13:40.956Z] GET /api/drm/permissions -> 200 (2201ms)
+[2026-04-20T20:13:40.963Z] GET /api/dashboard/current-month-trend -> 200 (2203ms)
+[2026-04-20T20:13:40.975Z] GET /api/notifications -> 200 (2218ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:13:41.223Z] GET /api/sales/appointments/today -> 200 (2464ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:19:52.112Z] GET /api/me/navigation -> 200 (2675ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T20:19:52.369Z] GET /api/drm/permissions -> 200 (2933ms)
+[2026-04-20T20:19:52.419Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2969ms)
+[2026-04-20T20:19:52.439Z] GET /api/notifications -> 200 (2999ms)
+[2026-04-20T20:19:52.616Z] GET /api/dashboard/current-month-trend -> 200 (3135ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:19:52.877Z] GET /api/sales/appointments/today -> 200 (3430ms)
+[2026-04-20T20:19:53.080Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (658ms)
+[db] query ok duration=239ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=240ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:19:52.622Z
+[2026-04-20T20:19:53.152Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (779ms)
+[2026-04-20T20:19:53.331Z] GET /api/dashboard/activities?period=WC -> 200 (1217ms)
+[route:team-queue-performance] total_duration=713ms
+[db] query ok duration=237ms rows=4
+[2026-04-20T20:19:53.576Z] GET /api/dashboard/summary?period=MONTH -> 200 (1136ms)
+[db] query ok duration=237ms rows=0
+[db] query ok duration=237ms rows=0
+[2026-04-20T20:19:53.891Z] GET /api/dashboard/team-work-performance -> 200 (1273ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:19:56.079Z] GET /api/me/navigation -> 200 (237ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T20:19:56.311Z] GET /api/drm/permissions -> 200 (471ms)
+[2026-04-20T20:19:56.322Z] GET /api/notifications -> 200 (479ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:19:56.579Z] GET /api/sales/appointments/today -> 200 (735ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:01.815Z] GET /api/notifications -> 200 (485ms)
+[2026-04-20T20:20:02.534Z] GET /api/dd-manager/activities-summary -> 200 (486ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:02.550Z] GET /api/dd-manager/user-performance -> 200 (501ms)
+[2026-04-20T20:20:02.574Z] GET /api/dd-manager/summary -> 200 (527ms)
+[2026-04-20T20:20:02.759Z] GET /api/dd-manager/my-daily-report -> 500 (707ms)
+[2026-04-20T20:20:02.770Z] GET /api/dd-manager/projects -> 200 (718ms)
+[2026-04-20T20:20:02.790Z] GET /api/auth/me -> 200 (255ms)
+[2026-04-20T20:20:02.915Z] GET /api/dd-manager/tasks/waiting -> 200 (864ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:07.308Z] GET /api/notifications -> 200 (478ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:12.794Z] GET /api/notifications -> 200 (482ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:17.497Z] GET /api/auth/me -> 200 (237ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:18.294Z] GET /api/notifications -> 200 (484ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:23.791Z] GET /api/notifications -> 200 (485ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:24.865Z] GET /api/dd-manager/tasks/waiting -> 200 (723ms)
+[2026-04-20T20:20:26.097Z] GET /api/auth/me -> 200 (1914ms)
+[2026-04-20T20:20:26.316Z] GET /api/dd-manager/my-daily-report -> 200 (2173ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:20:26.333Z] GET /api/me/navigation -> 200 (238ms)
+[2026-04-20T20:20:26.560Z] GET /api/drm/permissions -> 200 (241ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:27.082Z] GET /api/auth/me -> 200 (238ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:29.292Z] GET /api/notifications -> 200 (485ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:34.232Z] GET /api/dd-manager/summary -> 200 (493ms)
+[2026-04-20T20:20:34.289Z] GET /api/dd-manager/activities-summary -> 200 (549ms)
+[2026-04-20T20:20:34.293Z] GET /api/dd-manager/user-performance -> 200 (553ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:34.782Z] GET /api/notifications -> 200 (487ms)
+[2026-04-20T20:20:35.766Z] GET /api/auth/me -> 200 (1979ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[2026-04-20T20:20:40.059Z] GET /api/dashboard/activities?period=TD -> 200 (1226ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:40.299Z] GET /api/pms/stats -> 200 (1467ms)
+[2026-04-20T20:20:40.360Z] GET /api/auth/me -> 200 (290ms)
+[2026-04-20T20:20:40.586Z] GET /api/hod/dashboard/important-stats
+Status: 200
+Body: {}
+Response: {"success":true,"data":{"delayProjects":10,"upcoming":0,"completed":0,"inProgress":31,"pending":2,"qaVerification":2,"leaveApplication":0,"activeTeam":19,"depVerification":12,"activities":{"totalProjects":41,"complete":0,"pending":2,"delay":10,"free":10}}}
+[2026-04-20T20:20:40.597Z] GET /api/hod/dashboard/important-stats -> 200 (1760ms)
+[2026-04-20T20:20:40.600Z] GET /api/projects/documents/pending -> 403 (298ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:41.040Z] GET /api/hod/daily-report
+Status: 200
+Body: {}
+Response: {"success":true,"data":[{"id":"af9a250b-99d9-4415-802a-3072032917dd","name":"executive_test","company":"PP Workflow Verification Pending","project":"Workflow Final Check LLC","free":"0","task":"Posting Task - PP Workflow Verification Pending","status":"READY_FOR_QA","run":"0","spent":"95 mins","createdAt":"2026-04-14T17:57:24.664Z"},{"id":"ca2ed686-dbd7-452e-a2a1-8a5a87b51e05","name":"executive_test","company":"PP Workflow QA Review","project":"Workflow QA House","free":"0","task":"Posting Task - PP Workflow QA Review","status":"READY_FOR_QA","run":"0","spent":"135 mins","createdAt":"2026-04-14T17:57:19.135Z"},{"id":"9d194752-5c99-4b6c-a08f-8123758f4cf3","name":"executive_test","company":"PP Workflow Running Project","project":"Workflow Running Supplies","free":"0","task":"Posting Task - PP Workflow Running Project","status":"InProgress","run":"0","spent":"55 mins","createdAt":"2026-04-14T17:57:13.914Z"},{"id":"ddf8af2e-83f8-4eb7-be85-ea2ef7100d12","name":"admin@example.com","company":"Proj-INV-67bcc","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:51:05.721Z"},{"id":"693a40c7-0a72-4a97-a3f7-40652686ce3d","name":"admin@example.com","company":"Proj-INV-df49a","project":null,"free":"0","task":"Initial Posting Setup","status":"READY_FOR_QA","run":"0","spent":"0 mins","createdAt":"2026-03-05T17:50:30.374Z"},{"id":"5516ea26-7b9c-4522-b621-2327af6f170d","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Backend API","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:31.091Z"},{"id":"c62d4591-d310-4f97-9b2e-d6ea0edff82a","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"UI Design","status":"Blocked","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.684Z"},{"id":"149b49b8-aeae-4d41-b761-bb5b9eb283b1","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Database setup","status":"In Progress","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.375Z"},{"id":"471ee1a7-2a1e-46ea-9be7-25ee466db778","name":"talhaexcelstech@gmail.com","company":"My First Project","project":"Development","free":"0","task":"Kickoff meeting","status":"ToDo","run":"0","spent":"0 mins","createdAt":"2026-03-05T16:06:30.098Z"},{"id":"986d2c87-d880-40ee-9076-d2f04208d0f4","name":"talhaexcelstech@gmail.com","company":"Website Revamp","project":null,"free":"0","task":"Kickoff meeting","status":"Completed","run":"0","spent":"0 mins","createdAt":"2026-03-02T17:14:47.084Z"}]}
+[2026-04-20T20:20:41.041Z] GET /api/hod/daily-report -> 200 (2205ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:41.243Z] GET /api/users?role=product_posting_executive -> 200 (642ms)
+[2026-04-20T20:20:41.284Z] GET /api/notifications -> 200 (681ms)
+[2026-04-20T20:20:41.317Z] GET /api/auth/me -> 200 (274ms)
+[sales/targets/ab] {
+  rows: [
+    {
+      target: '4/2026',
+      bonus: '10%',
+      priceTarget: '50000.00',
+      reward: '$500',
+      kwa: '',
+      vas: ''
+    }
+  ]
+}
+[2026-04-20T20:20:41.523Z] GET /api/sales/targets/ab -> 200 (2689ms)
+[2026-04-20T20:20:43.962Z] GET /api/product-posting/manager/queue -> 403 (3600ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:46.788Z] GET /api/notifications -> 200 (488ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:52.309Z] GET /api/notifications -> 200 (512ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:20:56.585Z] GET /api/me/navigation -> 200 (239ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:20:57.813Z] GET /api/notifications -> 200 (486ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:20:58.558Z] GET /api/dd-manager/tasks/waiting -> 200 (726ms)
+[2026-04-20T20:20:58.790Z] GET /api/drm/permissions -> 200 (2212ms)
+[2026-04-20T20:20:59.819Z] GET /api/auth/me -> 200 (1936ms)
+[2026-04-20T20:21:00.306Z] GET /api/pms/projects?withStats=true -> 200 (21475ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:03.472Z] GET /api/notifications -> 200 (478ms)
+[AUTH_MW] userId=9ea6656a-bed3-4549-b60d-cba847c1c5ab rawRole="admin" normalizedRole="admin" activeRole="admin" source=header
+[2026-04-20T20:21:07.650Z] GET /api/auth/me -> 200 (249ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:08.953Z] GET /api/notifications -> 200 (476ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:14.446Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:19.942Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:25.433Z] GET /api/notifications -> 200 (480ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:21:26.867Z] GET /api/me/navigation -> 200 (264ms)
+[2026-04-20T20:21:29.279Z] GET /api/drm/permissions -> 200 (475ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:30.948Z] GET /api/notifications -> 200 (495ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:36.449Z] GET /api/notifications -> 200 (497ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:41.956Z] GET /api/notifications -> 200 (492ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:47.440Z] GET /api/notifications -> 200 (476ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:52.939Z] GET /api/notifications -> 200 (494ms)
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:21:57.126Z] GET /api/me/navigation -> 200 (248ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:21:58.423Z] GET /api/notifications -> 200 (479ms)
+[2026-04-20T20:21:59.767Z] GET /api/drm/permissions -> 200 (473ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:22:03.927Z] GET /api/notifications -> 200 (487ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:22:09.442Z] GET /api/notifications -> 200 (504ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:22:14.937Z] GET /api/notifications -> 200 (489ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:22:20.429Z] GET /api/notifications -> 200 (488ms)
+[sales] user {
+  userId: '292134ce-af47-413f-b635-c1becef59485',
+  email: 'shahzaib@excelstech.com',
+  roleId: 'service_manager',
+  activeRoleId: 'service_manager',
+  role: 'service_manager',
+  roles: [ 'service_manager' ],
+  branch: 'Lahore Gulburg',
+  country: 'Pakistan'
+}
+[RBAC] User: shahzaib@excelstech.com, Role: service_manager, IsAdmin: false, Impersonating: false, ManageableRoles: 0
+[2026-04-20T20:31:30.593Z] GET /api/me/navigation -> 200 (2018ms)
+[API] Fetching notifications for userId: 292134ce-af47-413f-b635-c1becef59485
+[2026-04-20T20:31:30.851Z] GET /api/drm/permissions -> 200 (2277ms)
+[2026-04-20T20:31:30.892Z] GET /api/dashboard/daily-team-meeting?date=2026-04-20 -> 200 (2312ms)
+[2026-04-20T20:31:31.099Z] GET /api/dashboard/current-month-trend -> 200 (2505ms)
+[2026-04-20T20:31:31.119Z] GET /api/notifications -> 200 (2543ms)
+[2026-04-20T20:31:31.127Z] GET /api/dashboard/followups?page=1&pageSize=50 -> 200 (533ms)
+[sales/appointments/today] { count: 0 }
+[2026-04-20T20:31:31.351Z] GET /api/sales/appointments/today -> 200 (2769ms)
+[db] query ok duration=251ms rows=28
+[route:team-queue-performance] user=292134ce-af47-413f-b635-c1becef59485 duration=261ms rows=28 from=2026-04-01T07:00:00.000Z to=2026-04-20T20:31:31.133Z
+[2026-04-20T20:31:31.635Z] GET /api/dashboard/team-queue-performance?period=MONTH -> 200 (782ms)
+[db] query ok duration=240ms rows=4
+[route:team-queue-performance] total_duration=743ms
+[db] query ok duration=239ms rows=0
+[2026-04-20T20:31:32.092Z] GET /api/dashboard/activities?period=WC -> 200 (1199ms)
+[2026-04-20T20:31:32.116Z] GET /api/dashboard/summary?period=MONTH -> 200 (1016ms)
+[db] query ok duration=238ms rows=0
+[2026-04-20T20:31:32.322Z] GET /api/dashboard/team-work-performance -> 200 (1202ms)

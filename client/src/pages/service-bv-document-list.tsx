@@ -1,0 +1,172 @@
+import { useState } from "react";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ArrowRight } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+
+type RowData = { company: string; package: string; renwal: string; status: string; payDate: string; };
+
+export default function ServiceBvDocumentList() {
+    const [searchTerm, setSearchTerm] = useState("");
+    const [mockData] = useState<RowData[]>([]);
+
+    const [columns, setColumns] = useState({
+        company: true,
+        package: true,
+        renwal: true,
+        status: true,
+        payDate: true
+    });
+
+    const filteredData = mockData.filter(row =>
+        row.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        row.package.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    const handleCopy = () => {
+        const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].map(k => k === "payDate" ? "Pay Date" : k.charAt(0).toUpperCase() + k.slice(1)).join("\t");
+        const rows = filteredData.map((row, idx) => {
+            const rowData: string[] = [(idx + 1).toString()];
+            if (columns.company) rowData.push(row.company);
+            if (columns.package) rowData.push(row.package);
+            if (columns.renwal) rowData.push(row.renwal);
+            if (columns.status) rowData.push(row.status);
+            if (columns.payDate) rowData.push(row.payDate);
+            return rowData.join("\t");
+        }).join("\n");
+        navigator.clipboard.writeText(`${headers}\n${rows}`);
+        alert("Table data copied to clipboard!");
+    };
+
+    const handleExcel = () => {
+        const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].map(k => k === "payDate" ? "Pay Date" : k.charAt(0).toUpperCase() + k.slice(1)).join(",");
+        const rows = filteredData.map((row, idx) => {
+            const rowData: string[] = [(idx + 1).toString()];
+            if (columns.company) rowData.push(`"${row.company}"`);
+            if (columns.package) rowData.push(`"${row.package}"`);
+            if (columns.renwal) rowData.push(`"${row.renwal}"`);
+            if (columns.status) rowData.push(`"${row.status}"`);
+            if (columns.payDate) rowData.push(`"${row.payDate}"`);
+            return rowData.join(",");
+        }).join("\n");
+        const blob = new Blob([`${headers}\n${rows}`], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "bv-document.csv";
+        a.click();
+    };
+
+    const handlePDF = () => {
+        window.print();
+    };
+
+    return (
+        <div className="bg-[#f8fafc] font-sans p-4 min-h-screen printable-area dark:bg-zinc-950">
+            {/* Header Title */}
+            <div className="mb-4 flex items-center gap-2 text-[#059669] dark:text-zinc-400">
+                <ArrowRight className="w-5 h-5" />
+                <h2 className="text-[17px] font-bold uppercase tracking-tight text-[#475569] dark:text-zinc-400">
+                    BV DOCUMENT
+                </h2>
+            </div>
+
+            {/* Main Content Area */}
+            <div className="bg-white rounded-[4px] shadow-sm border border-slate-100 p-4 dark:bg-zinc-900 dark:border-zinc-800">
+                <div className="mb-4">
+                    <h3 className="text-[15px] font-bold text-[#475569] dark:text-zinc-400">View Detail</h3>
+                </div>
+
+                <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4 print:hidden">
+                    {/* Top Left Buttons */}
+                    <div className="flex bg-[#64748b] rounded-[4px] overflow-hidden">
+                        <button onClick={handleCopy} className="px-4 py-2 text-white text-[13px] font-medium hover:bg-[#475569] border-r border-[#475569]/50 transition-colors dark:border-zinc-800">
+                            Copy
+                        </button>
+                        <button onClick={handleExcel} className="px-4 py-2 text-white text-[13px] font-medium hover:bg-[#475569] border-r border-[#475569]/50 transition-colors dark:border-zinc-800">
+                            Excel
+                        </button>
+                        <button onClick={handlePDF} className="px-4 py-2 text-white text-[13px] font-medium hover:bg-[#475569] border-r border-[#475569]/50 transition-colors dark:border-zinc-800">
+                            PDF
+                        </button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button className="px-4 py-2 text-white text-[13px] font-medium hover:bg-[#475569] transition-colors">
+                                    Column visibility
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuCheckboxItem checked={columns.company} onCheckedChange={(v) => setColumns(p => ({ ...p, company: v }))}>Company</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.package} onCheckedChange={(v) => setColumns(p => ({ ...p, package: v }))}>Package</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.renwal} onCheckedChange={(v) => setColumns(p => ({ ...p, renwal: v }))}>Renwal</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.status} onCheckedChange={(v) => setColumns(p => ({ ...p, status: v }))}>Status</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.payDate} onCheckedChange={(v) => setColumns(p => ({ ...p, payDate: v }))}>Pay Date</DropdownMenuCheckboxItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
+
+                    {/* Top Right Search */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-[13px] text-slate-600 font-medium dark:text-zinc-300">Search:</span>
+                        <Input
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="h-8 w-48 text-[13px] border-slate-300 rounded-[4px] dark:border-zinc-800"
+                        />
+                    </div>
+                </div>
+
+                {/* Table */}
+                <div className="overflow-x-auto border-t border-l border-r border-slate-200 dark:border-zinc-800">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-[#d1fae5] border-b border-slate-200 hover:bg-[#d1fae5] dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                                <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 w-16 dark:text-zinc-100">#</TableHead>
+                                {columns.company && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Company</TableHead>}
+                                {columns.package && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Package</TableHead>}
+                                {columns.renwal && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Renwal</TableHead>}
+                                {columns.status && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Status</TableHead>}
+                                {columns.payDate && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Pay Date</TableHead>}
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filteredData.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={6} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
+                                        No data available in table
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                filteredData.map((row, idx) => (
+                                    <TableRow key={idx} className="border-b border-slate-200 dark:border-zinc-800">
+                                        <TableCell className="py-2 text-[13px]">{idx + 1}</TableCell>
+                                        {columns.company && <TableCell className="py-2 text-[13px]">{row.company}</TableCell>}
+                                        {columns.package && <TableCell className="py-2 text-[13px]">{row.package}</TableCell>}
+                                        {columns.renwal && <TableCell className="py-2 text-[13px]">{row.renwal}</TableCell>}
+                                        {columns.status && <TableCell className="py-2 text-[13px]">{row.status}</TableCell>}
+                                        {columns.payDate && <TableCell className="py-2 text-[13px]">{row.payDate}</TableCell>}
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+
+                {/* Footer Pagination */}
+                <div className="flex flex-col md:flex-row justify-between items-center mt-4 text-[13px] text-slate-500 print:hidden dark:text-zinc-400">
+                    <div>
+                        Showing {filteredData.length === 0 ? "0 to 0 of 0" : `1 to ${filteredData.length} of ${filteredData.length}`} entries
+                    </div>
+                    <div className="flex mt-2 md:mt-0">
+                        <button className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                            Previous
+                        </button>
+                        <button className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}

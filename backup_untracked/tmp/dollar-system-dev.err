@@ -1,0 +1,599 @@
+MOCK_AUTH=true: Using header/env-based mock user (unsafe for multi-user deployments).
+[server] Unhandled rejection: Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1948:16)
+    at listenInCluster (node:net:2005:12)
+    at node:net:2214:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+MOCK_AUTH=true: Using header/env-based mock user (unsafe for multi-user deployments).
+[server] Unhandled rejection: Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1948:16)
+    at listenInCluster (node:net:2005:12)
+    at node:net:2214:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+MOCK_AUTH=true: Using header/env-based mock user (unsafe for multi-user deployments).
+[server] Unhandled rejection: Error: listen EADDRINUSE: address already in use :::5000
+    at Server.setupListenHandle [as _listen2] (node:net:1948:16)
+    at listenInCluster (node:net:2005:12)
+    at node:net:2214:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 5000
+}
+[accounts] schema maintenance failed: error: Max client connections reached
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\account-routes.ts:46:7) {
+  length: 58,
+  severity: 'FATAL',
+  code: 'XX000',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: undefined,
+  line: undefined,
+  routine: undefined
+}
+MOCK_AUTH=true: Using header/env-based mock user (unsafe for multi-user deployments).
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+Error fetching tracing summary: error: relation "customers" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:2092:22) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '495',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching project activity: error: relation "projects" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\project-activity-routes.ts:66:24) {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '589',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Failed to count GM BV entries error: relation "bv_reports" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async countGmBvEntries (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:329:22)
+    at async buildLeadPoolSummary (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:418:21)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3504:23) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '47',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Failed to sync GMBV pool from bv_reports error: column "pool_type" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async syncGmBvPool (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:660:7)
+    at async buildLeadPoolList (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:493:3)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3522:20) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '91',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn'
+}
+Error fetching lead pool summary error: column c.status does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async buildLeadPoolSummary (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:454:20)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3504:23) {
+  length: 106,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '42',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn'
+}
+Failed to sync GMBV pool from gm_entries error: column "pool_type" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async syncGmBvPool (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:652:5)
+    at async buildLeadPoolSummary (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:417:3)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3504:23) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '87',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn'
+}
+Error fetching services list: error: relation "services" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Object.listActiveWithSubservices (C:\webexcel\WebExcelsDRM\server\repositories\services.repository.ts:163:17)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:2312:20) {
+  length: 108,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '404',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Failed to sync GMBV pool from gm_entries error: column "pool_type" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async syncGmBvPool (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:652:5)
+    at async buildLeadPoolList (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:493:3)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3522:20) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '87',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn'
+}
+Error fetching lead pool list error: column c.drm_id does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async buildLeadPoolList (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:619:20)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3522:20) {
+  length: 161,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "c.org_id".',
+  position: '31',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn'
+}
+Failed to count GM BV entries error: relation "bv_reports" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async countGmBvEntries (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:329:22)
+    at async buildLeadPoolSummary (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:418:21)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:3504:23) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '47',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching tracing summary: error: column "grade" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:2092:22) {
+  length: 105,
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '51',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn'
+}
+[AUTH] 401 GET /api/auth/me reason=missing-token header=n cookie=n userId=none
+[db] query failed attempt=1 duration=244ms code=42P01
+Error fetching team work performance error: relation "appointments" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg\lib\client.js:545:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async queryWithRetry (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:93:22)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:947:35) {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '103',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching appointments: error: relation "appointments" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async AppointmentsRepository.findByUserId (C:\webexcel\WebExcelsDRM\server\repositories\appointments.repository.ts:64:20)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:1306:28) {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '109',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching dashboard followups error: relation "follow_ups" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 0)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:842:29) {
+  length: 110,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '623',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching dashboard activities error: relation "activities" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:444:28) {
+  length: 110,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '691',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching current month trend error: relation "opportunities" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:600:20) {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '182',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+[db] query failed attempt=1 duration=253ms code=42P01
+Error fetching team queue performance error: relation "opportunities" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg\lib\client.js:545:17
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async queryWithRetry (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:93:22)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:740:22) {
+  length: 113,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '599',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching dashboard activities error: relation "activities" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:444:28) {
+  length: 110,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '691',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+[2026-04-20T19:07:16.026Z] HOD_GUARD 403 GET /api/hod/dashboard/summary userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:16.065Z] HOD_GUARD 403 GET /api/hod/approvals?status=Pending&page=1&limit=10 userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:16.067Z] HOD_GUARD 403 GET /api/hod/dashboard/project-deadlines?filter=WK userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:17.938Z] HOD_GUARD 403 GET /api/hod/verification/waiting userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:17.986Z] HOD_GUARD 403 GET /api/hod/verification/gms userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:23.655Z] HOD_GUARD 403 GET /api/hod/dashboard/project-deadlines?filter=WK userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:23.657Z] HOD_GUARD 403 GET /api/hod/dashboard/summary userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:23.659Z] HOD_GUARD 403 GET /api/hod/approvals?status=Pending&page=1&limit=10 userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:23.849Z] HOD_GUARD 403 GET /api/hod/verification/gms userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+[2026-04-20T19:07:23.891Z] HOD_GUARD 403 GET /api/hod/verification/waiting userId=292134ce-af47-413f-b635-c1becef59485 rawRole="service_manager" tokenRole="service_manager" allowed="hod,admin,manager"
+Error fetching appointments: error: relation "appointments" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async AppointmentsRepository.findByUserId (C:\webexcel\WebExcelsDRM\server\repositories\appointments.repository.ts:64:20)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\sales-routes.ts:1306:28) {
+  length: 112,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '109',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching dashboard followups error: relation "follow_ups" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 0)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:842:29) {
+  length: 110,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '623',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching dashboard followups error: relation "follow_ups" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 1)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dashboard-routes.ts:842:29) {
+  length: 109,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '36',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+Error fetching my daily report: error: relation "tasks" does not exist
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\server\dd-manager-routes.ts:238:38) {
+  length: 105,
+  severity: 'ERROR',
+  code: '42P01',
+  detail: undefined,
+  hint: undefined,
+  position: '266',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '1449',
+  routine: 'parserOpenTable'
+}
+[OverdueChecker] failed to run: Error: getaddrinfo ENOTFOUND aws-1-us-east-2.pooler.supabase.com
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\node_modules\src\node-postgres\session.ts:104:19)
+    at async Timeout.checkOverdueTasks (C:\webexcel\WebExcelsDRM\server\jobs\overdue-checker.ts:16:30) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'aws-1-us-east-2.pooler.supabase.com'
+}
+[OverdueChecker] failed to run: Error: getaddrinfo ENOTFOUND aws-1-us-east-2.pooler.supabase.com
+    at C:\webexcel\WebExcelsDRM\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (C:\webexcel\WebExcelsDRM\node_modules\src\node-postgres\session.ts:104:19)
+    at async Timeout.checkOverdueTasks (C:\webexcel\WebExcelsDRM\server\jobs\overdue-checker.ts:16:30) {
+  errno: -3008,
+  code: 'ENOTFOUND',
+  syscall: 'getaddrinfo',
+  hostname: 'aws-1-us-east-2.pooler.supabase.com'
+}
