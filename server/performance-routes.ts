@@ -183,11 +183,25 @@ export function registerPerformanceRoutes(app: Express) {
         where.push(`department = $${params.length}`);
       }
 
+      // Safety bound on how many employees we score in one request so the
+      // connection pool isn't overwhelmed (scoring itself stays batched in
+      // buildTeamComparison). When the scope has more employees than this we
+      // surface the true total so the UI can tell the manager results were
+      // truncated, instead of silently dropping employees past the old cap.
+      const MAX_TEAM_USERS = 1000;
+
+      const whereSql = where.join(" and ");
+      const countResult = await pool.query(
+        `select count(*)::int as total from drm.users where ${whereSql}`,
+        params,
+      );
+      const total = Number(countResult.rows[0]?.total ?? 0);
+
       const { rows } = await pool.query(
         `select id from drm.users
-          where ${where.join(" and ")}
+          where ${whereSql}
           order by coalesce(full_name, name, email) asc
-          limit 200`,
+          limit ${MAX_TEAM_USERS}`,
         params,
       );
       const ids = rows.map((r) => String(r.id));
@@ -195,6 +209,9 @@ export function registerPerformanceRoutes(app: Express) {
       res.json({
         dateRange: { startDate: range.from.toISOString(), endDate: range.to.toISOString() },
         count: team.length,
+        total,
+        truncated: total > ids.length,
+        limit: MAX_TEAM_USERS,
         team,
       });
     } catch (err: any) {
