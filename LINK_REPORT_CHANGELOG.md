@@ -61,12 +61,15 @@ project name, then `Unknown`).
 Base path `/api/team-report/link-report` with a compatibility alias
 `/api/posting-data/link-report` (matches the page URL). All require auth.
 - `GET  /users` — active users for the dropdown (access-scoped).
-- `GET  /?userId=&startDate=&endDate=` — normalized report rows + summary
-  (`total`, `reward`, `commissionVerified`) + `canVerify`. Validates that dates
-  are present (`YYYY-MM-DD`) and `startDate <= endDate`.
-- `POST /verify-commission` — records a verification (reward defaults to 0).
-  Submitted `linkReportIds` must all belong to the rows for that filter. Idempotent
-  per user + date range.
+- `GET  /?userId=&startDate=&endDate=` — returns `filters` (echoed userId/dates),
+  normalized `rows`, `summary` (`total`, `reward`, `commissionVerified`,
+  `verificationId`), and `canVerify`. Validates that dates are present
+  (`YYYY-MM-DD`) and `startDate <= endDate`.
+- `POST /verify-commission` — records a verification (reward defaults to 0) and
+  returns `{ success, verification }` with the full verification record
+  (`id`, `userId`, `verifiedByUserId`, `startDate`, `endDate`, `totalLinks`,
+  `reward`, `status`, `createdAt`). Submitted `linkReportIds` are de-duped and must
+  all belong to the rows for that filter. Idempotent per user + date range.
 - `POST /` — optional: create a manual link report row.
 
 ## Access control (backend-enforced)
