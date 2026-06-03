@@ -12,7 +12,22 @@
  * Each source adapter never throws on empty/missing tables; it returns [] so a
  * department with no rows simply contributes nothing rather than failing.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { pool } from "../db";
+
+// Request-scoped collector for adapter failures. A thrown query error (missing
+// table/column, bad cast, etc.) is a genuine failure that must NOT be silently
+// turned into "no data" — it is recorded here and surfaced to the caller as
+// `dataWarnings` / `partialDataFailure` so the UI can distinguish "no rows" from
+// "a source failed to load".
+const perfWarnings = new AsyncLocalStorage<string[]>();
+
+function adapterCatch(label: string, e: any): void {
+  const code = e?.code ? ` [${e.code}]` : "";
+  console.warn(`[performance] ${label} skipped:${code}`, e?.message);
+  const store = perfWarnings.getStore();
+  if (store) store.push(`${label}: ${e?.message || "query failed"}${code}`);
+}
 
 export interface PerfRecord {
   sourceModule: string;
@@ -59,12 +74,40 @@ const num = (v: any): number | null => {
   return isNaN(n) ? null : n;
 };
 
-const GM_APPROVED_SQL = `(
-  lower(coalesce(status::text,'')) in ('approved','completed')
-  or lower(coalesce(approval_status,'')) in ('approved','approved_by_account')
-  or lower(coalesce(final_status,'')) = 'approved'
-  or lower(coalesce(hod_status,'')) = 'approved'
-)`;
+// The set of "approval" columns on drm.gm_entries differs between the Drizzle
+// schema (shared/schema.ts) and the live database, so we detect which columns
+// actually exist at runtime and build the approval predicate (and SELECT list)
+// only from those. This keeps every gm_entries query schema-grounded and avoids
+// referencing a non-existent column.
+const GM_APPROVAL_COLS = ["approval_status", "final_status", "hod_status", "super_hod_status"] as const;
+let _gmColsCache: Set<string> | null = null;
+async function getGmColumns(): Promise<Set<string>> {
+  if (_gmColsCache) return _gmColsCache;
+  try {
+    const { rows } = await pool.query(
+      `select column_name from information_schema.columns
+        where table_schema = 'drm' and table_name = 'gm_entries'`,
+    );
+    _gmColsCache = new Set(rows.map((r: any) => String(r.column_name)));
+  } catch {
+    _gmColsCache = new Set<string>(["status"]);
+  }
+  return _gmColsCache;
+}
+async function gmApprovedClause(): Promise<string> {
+  const cols = await getGmColumns();
+  const parts: string[] = [];
+  if (cols.has("status")) parts.push(`lower(coalesce(status::text,'')) in ('approved','completed')`);
+  if (cols.has("approval_status")) parts.push(`lower(coalesce(approval_status::text,'')) in ('approved','approved_by_account')`);
+  if (cols.has("final_status")) parts.push(`lower(coalesce(final_status::text,'')) = 'approved'`);
+  if (cols.has("hod_status")) parts.push(`lower(coalesce(hod_status::text,'')) = 'approved'`);
+  if (cols.has("super_hod_status")) parts.push(`lower(coalesce(super_hod_status::text,'')) = 'approved'`);
+  return parts.length ? `(${parts.join(" or ")})` : `(false)`;
+}
+function gmApprovalSelectCols(cols: Set<string>): string {
+  const out = GM_APPROVAL_COLS.filter((c) => cols.has(c));
+  return out.length ? ", " + out.map((c) => `${c}::text as ${c}`).join(", ") : "";
+}
 
 // ----------------------------------------------------------------------------
 // Source adapters. Signature: (userId, from, to) => PerfRecord[]
@@ -74,10 +117,12 @@ export async function getSalesPerformanceData(userId: string, from: Date, to: Da
   const records: PerfRecord[] = [];
   // GM / BV entries (achievement + approval quality signal; not "assignable" work)
   try {
+    const cols = await getGmColumns();
+    const approvedClause = await gmApprovedClause();
     const { rows } = await pool.query(
-      `select id, company_name, amount_usd, status::text as status, approval_status, final_status, hod_status,
+      `select id, company_name, amount_usd, status::text as status${gmApprovalSelectCols(cols)},
               created_at, approved_at,
-              ${GM_APPROVED_SQL} as is_approved
+              ${approvedClause} as is_approved
          from drm.gm_entries
         where coalesce(is_deleted,false) = false
           and (sales_person_id::text = $1::text or created_by::text = $1::text)
@@ -110,7 +155,7 @@ export async function getSalesPerformanceData(userId: string, from: Date, to: Da
       });
     }
   } catch (e: any) {
-    console.warn("[performance] sales gm_entries adapter skipped:", e?.message);
+    adapterCatch("sales gm_entries adapter skipped", e);
   }
   // Follow-ups (assignable work: Open vs Completed, has a due date)
   try {
@@ -149,7 +194,7 @@ export async function getSalesPerformanceData(userId: string, from: Date, to: Da
       });
     }
   } catch (e: any) {
-    console.warn("[performance] sales follow_ups adapter skipped:", e?.message);
+    adapterCatch("sales follow_ups adapter skipped", e);
   }
   // Activities (logged completed actions; context only, not assignable/reviewed)
   try {
@@ -185,7 +230,7 @@ export async function getSalesPerformanceData(userId: string, from: Date, to: Da
       });
     }
   } catch (e: any) {
-    console.warn("[performance] sales activities adapter skipped:", e?.message);
+    adapterCatch("sales activities adapter skipped", e);
   }
   return records;
 }
@@ -232,7 +277,7 @@ export async function getPmsPerformanceData(userId: string, from: Date, to: Date
       });
     }
   } catch (e: any) {
-    console.warn("[performance] pms adapter skipped:", e?.message);
+    adapterCatch("pms adapter skipped", e);
   }
   return records;
 }
@@ -291,7 +336,7 @@ async function getWorkflowPerformanceData(
       });
     }
   } catch (e: any) {
-    console.warn(`[performance] ${table} adapter skipped:`, e?.message);
+    adapterCatch(`${table} adapter`, e);
   }
   return records;
 }
@@ -339,7 +384,7 @@ export async function getServicePerformanceData(userId: string, from: Date, to: 
       });
     }
   } catch (e: any) {
-    console.warn("[performance] service_complaints adapter skipped:", e?.message);
+    adapterCatch("service_complaints adapter skipped", e);
   }
   // Service activities (context; carry target/achieved for target-achievement)
   try {
@@ -374,7 +419,7 @@ export async function getServicePerformanceData(userId: string, from: Date, to: 
       });
     }
   } catch (e: any) {
-    console.warn("[performance] service_activities adapter skipped:", e?.message);
+    adapterCatch("service_activities adapter skipped", e);
   }
   // Dropout recoveries (context)
   try {
@@ -410,7 +455,7 @@ export async function getServicePerformanceData(userId: string, from: Date, to: 
       });
     }
   } catch (e: any) {
-    console.warn("[performance] service_dropouts adapter skipped:", e?.message);
+    adapterCatch("service_dropouts adapter skipped", e);
   }
   return records;
 }
@@ -453,7 +498,7 @@ export async function getSupportPerformanceData(userId: string, from: Date, to: 
       });
     }
   } catch (e: any) {
-    console.warn("[performance] support adapter skipped:", e?.message);
+    adapterCatch("support adapter skipped", e);
   }
   return records;
 }
@@ -493,7 +538,7 @@ export async function getCallSessionsPerformanceData(userId: string, from: Date,
       });
     }
   } catch (e: any) {
-    console.warn("[performance] call_sessions adapter skipped:", e?.message);
+    adapterCatch("call_sessions adapter skipped", e);
   }
   return records;
 }
@@ -533,7 +578,7 @@ export async function getAppointmentsPerformanceData(userId: string, from: Date,
       });
     }
   } catch (e: any) {
-    console.warn("[performance] appointments adapter skipped:", e?.message);
+    adapterCatch("appointments adapter skipped", e);
   }
   return records;
 }
@@ -573,7 +618,7 @@ export async function getTaskTimeLogsPerformanceData(userId: string, from: Date,
       });
     }
   } catch (e: any) {
-    console.warn("[performance] task_time_logs adapter skipped:", e?.message);
+    adapterCatch("task_time_logs adapter skipped", e);
   }
   return records;
 }
@@ -613,7 +658,7 @@ export async function getServiceRenewalsPerformanceData(userId: string, from: Da
       });
     }
   } catch (e: any) {
-    console.warn("[performance] service_renewals adapter skipped:", e?.message);
+    adapterCatch("service_renewals adapter skipped", e);
   }
   return records;
 }
@@ -661,7 +706,7 @@ async function getReworkHistoryData(
       });
     }
   } catch (e: any) {
-    console.warn(`[performance] ${table} adapter skipped:`, e?.message);
+    adapterCatch(`${table} adapter`, e);
   }
   return records;
 }
@@ -701,22 +746,23 @@ export async function getTargetAchievementData(userId: string, from: Date, to: D
       notes.push(`assigned target ${t} from target system`);
     }
   } catch (e: any) {
-    console.warn("[performance] target_system_user_targets adapter skipped:", e?.message);
+    adapterCatch("target_system_user_targets adapter skipped", e);
   }
   // Achieved = approved GM amount in window
   try {
+    const approvedClause = await gmApprovedClause();
     const { rows } = await pool.query(
       `select coalesce(sum(coalesce(amount_usd,0)),0)::float as amount
          from drm.gm_entries
         where coalesce(is_deleted,false) = false
           and (sales_person_id::text = $1::text or created_by::text = $1::text)
           and created_at between $2 and $3
-          and ${GM_APPROVED_SQL}`,
+          and ${approvedClause}`,
       [userId, from, to],
     );
     achievedTarget += Number(rows[0]?.amount ?? 0);
   } catch (e: any) {
-    console.warn("[performance] gm achieved adapter skipped:", e?.message);
+    adapterCatch("gm achieved adapter", e);
   }
   // Service activity targets (additive, only counts as target if values present)
   try {
@@ -737,7 +783,7 @@ export async function getTargetAchievementData(userId: string, from: Date, to: D
       notes.push(`service target ${st}`);
     }
   } catch (e: any) {
-    console.warn("[performance] service target adapter skipped:", e?.message);
+    adapterCatch("service target adapter skipped", e);
   }
   return {
     assignedTarget: round1(assignedTarget),
@@ -784,7 +830,7 @@ export async function getAttendanceContext(userId: string, from: Date, to: Date)
     }
     if (rows.length > 0) ctx.available = true;
   } catch (e: any) {
-    console.warn("[performance] attendance context skipped:", e?.message);
+    adapterCatch("attendance context skipped", e);
   }
   // count "Late" flag separately for Present-but-late days
   try {
@@ -806,7 +852,7 @@ export async function getAttendanceContext(userId: string, from: Date, to: Date)
     ctx.overtimeApprovedMinutes = Number(rows[0]?.mins ?? 0);
     if (ctx.overtimeApprovedMinutes > 0) ctx.available = true;
   } catch (e: any) {
-    console.warn("[performance] overtime context skipped:", e?.message);
+    adapterCatch("overtime context skipped", e);
   }
   return ctx;
 }
@@ -999,7 +1045,7 @@ export async function getEmployee(userId: string): Promise<any | null> {
     );
     return rows[0] ?? null;
   } catch (e: any) {
-    console.warn("[performance] getEmployee skipped:", e?.message);
+    adapterCatch("getEmployee skipped", e);
     return null;
   }
 }
@@ -1010,6 +1056,8 @@ export function publicRecord(r: PerfRecord) {
 }
 
 export async function buildSummary(userId: string, from: Date, to: Date, includeRecords: boolean) {
+  const dataWarnings: string[] = [];
+  return perfWarnings.run(dataWarnings, async () => {
   const employee = await getEmployee(userId);
   const [records, targetData, attendanceContext] = await Promise.all([
     gatherRecords(userId, from, to),
@@ -1044,8 +1092,11 @@ export async function buildSummary(userId: string, from: Date, to: Date, include
     sourceBreakdown: sourceBreakdown(records),
     attendanceContext,
     totalRecords: records.length,
+    partialDataFailure: dataWarnings.length > 0,
+    dataWarnings,
     records: includeRecords ? records.map(publicRecord) : undefined,
   };
+  });
 }
 
 export async function buildRecords(

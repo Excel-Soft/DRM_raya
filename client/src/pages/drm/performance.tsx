@@ -35,6 +35,8 @@ type Summary = {
   sourceBreakdown: Record<string, { total: number; assigned: number; completed: number; approved: number; returned: number }>;
   attendanceContext: { present: number; absent: number; late: number; halfDay: number; leave: number; totalDays: number; overtimeApprovedMinutes: number; available: boolean };
   totalRecords: number;
+  partialDataFailure?: boolean;
+  dataWarnings?: string[];
   records?: any[];
 };
 
@@ -235,6 +237,22 @@ export default function PerformancePage() {
               <div><span className="text-[12px] text-slate-400">Records found</span><div className="font-medium text-[#495057] dark:text-zinc-300">{summary.totalRecords}</div></div>
             </CardContent>
           </Card>
+
+          {summary.partialDataFailure && (summary.dataWarnings?.length ?? 0) > 0 && (
+            <Card className="border border-amber-300 bg-amber-50 shadow-sm dark:bg-amber-950/30 dark:border-amber-800" data-testid="card-data-warnings">
+              <CardContent className="p-4 text-[12px] text-amber-800 dark:text-amber-300">
+                <div className="font-semibold mb-1">Some data sources could not be loaded</div>
+                <div className="text-amber-700 dark:text-amber-400">
+                  The score below is based only on the sources that loaded successfully; the following could not be read and were skipped (not treated as zero):
+                </div>
+                <ul className="mt-1 list-disc pl-5">
+                  {summary.dataWarnings!.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* B. Score summary cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
