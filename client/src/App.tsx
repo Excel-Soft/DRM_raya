@@ -378,7 +378,8 @@ function Router() {
       <Route path="/posting-data/verified" component={PostingData} />
       <Route path="/posting-data/view-keywords" component={PostingData} />
       <Route path="/posting-data/view-products" component={PostingData} />
-      <Route path="/posting-data/link-report" component={PostingData} />
+      <Route path="/posting-data/link-report" component={PostingDataLinkReport} />
+      <Route path="/team-report/link-report" component={PostingDataLinkReport} />
       <Route path="/posting-data/data-verify" component={PostingData} />
       <Route path="/posting-data/restricted-keywords" component={PostingData} />
       <Route path="/portfolio-add" component={AddPortfolio} />
