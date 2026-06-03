@@ -52,6 +52,26 @@ type Summary = {
 };
 
 type FetchParams = { userId: string; startDate: string; endDate: string };
+type TeamParams = { department: string; startDate: string; endDate: string };
+
+type TeamRow = {
+  employee: { id: string; name: string | null; email: string | null; role: string | null; department: string | null };
+  finalScore: number | null;
+  normalizedFinalScore: number | null;
+  effectiveScore: number | null;
+  rating: string;
+  components: { workCompletion: number | null; quality: number | null; targetAchievement: number | null; timeliness: number | null };
+  formulaCompletenessPercent: number;
+  dataQuality: "complete" | "partial" | "none";
+  totalRecords: number;
+  partialDataFailure: boolean;
+};
+
+type TeamResponse = {
+  dateRange: { startDate: string; endDate: string };
+  count: number;
+  team: TeamRow[];
+};
 
 const ratingColor = (rating: string) => {
   switch (rating) {
@@ -73,11 +93,13 @@ const fmtDate = (v: string | null | undefined) => {
 
 export default function PerformancePage() {
   const { toast } = useToast();
+  const [mode, setMode] = useState<"individual" | "team">("individual");
   const [selectedUser, setSelectedUser] = useState<string>("");
   const [department, setDepartment] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [fetchParams, setFetchParams] = useState<FetchParams | null>(null);
+  const [teamParams, setTeamParams] = useState<TeamParams | null>(null);
   const [formError, setFormError] = useState<string>("");
   const queryClient = useQueryClient();
 
@@ -140,11 +162,33 @@ export default function PerformancePage() {
     },
   });
 
+  const teamQuery = useQuery<TeamResponse | null>({
+    queryKey: ["/api/drm/performance/team", teamParams],
+    queryFn: async () => {
+      if (!teamParams) return null;
+      const { department, startDate, endDate } = teamParams;
+      const params = new URLSearchParams({ startDate, endDate });
+      if (department) params.set("department", department);
+      const res = await apiRequest("GET", `/api/drm/performance/team?${params.toString()}`);
+      if (res.status === 403) throw new Error("You are not authorized to view team performance.");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Failed to load team comparison.");
+      }
+      return res.json();
+    },
+    enabled: !!teamParams,
+  });
+
   const handleView = () => {
     setFormError("");
-    if (!selectedUser) { setFormError("Please select an employee."); return; }
     if (!startDate || !endDate) { setFormError("Please select a start and end date."); return; }
     if (new Date(startDate) > new Date(endDate)) { setFormError("Start date must be on or before end date."); return; }
+    if (mode === "team") {
+      setTeamParams({ department, startDate, endDate });
+      return;
+    }
+    if (!selectedUser) { setFormError("Please select an employee."); return; }
     setFetchParams({ userId: selectedUser, startDate, endDate });
   };
 
@@ -154,7 +198,16 @@ export default function PerformancePage() {
     setStartDate("");
     setEndDate("");
     setFetchParams(null);
+    setTeamParams(null);
     setFormError("");
+  };
+
+  const switchMode = (next: "individual" | "team") => {
+    if (next === mode) return;
+    setMode(next);
+    setFormError("");
+    setFetchParams(null);
+    setTeamParams(null);
   };
 
   const summary = summaryQuery.data ?? null;
@@ -196,6 +249,26 @@ export default function PerformancePage() {
         PERFORMANCE SYSTEM
       </h1>
 
+      {/* Mode toggle */}
+      <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 shadow-sm dark:bg-zinc-900 dark:border-zinc-800" data-testid="mode-toggle">
+        <button
+          type="button"
+          onClick={() => switchMode("individual")}
+          className={`px-4 h-9 rounded-md text-[13px] font-semibold transition-colors ${mode === "individual" ? "bg-[#00a65a] text-white" : "text-[#495057] dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-800"}`}
+          data-testid="button-mode-individual"
+        >
+          Individual
+        </button>
+        <button
+          type="button"
+          onClick={() => switchMode("team")}
+          className={`px-4 h-9 rounded-md text-[13px] font-semibold transition-colors ${mode === "team" ? "bg-[#00a65a] text-white" : "text-[#495057] dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-800"}`}
+          data-testid="button-mode-team"
+        >
+          Team comparison
+        </button>
+      </div>
+
       {/* A. Filter Section */}
       <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
         <CardContent className="p-6">
@@ -210,17 +283,19 @@ export default function PerformancePage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Employee</label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger className="h-10 text-[13px]" data-testid="select-employee"><SelectValue placeholder="Choose employee..." /></SelectTrigger>
-                <SelectContent>
-                  {filteredUsers.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>{u.fullName || u.name || u.email}{u.role ? ` — ${u.role}` : ""}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {mode === "individual" && (
+              <div className="flex flex-col gap-2">
+                <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Employee</label>
+                <Select value={selectedUser} onValueChange={setSelectedUser}>
+                  <SelectTrigger className="h-10 text-[13px]" data-testid="select-employee"><SelectValue placeholder="Choose employee..." /></SelectTrigger>
+                  <SelectContent>
+                    {filteredUsers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.fullName || u.name || u.email}{u.role ? ` — ${u.role}` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex flex-col gap-2 relative">
               <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Start Date</label>
               <div className="relative">
@@ -256,7 +331,7 @@ export default function PerformancePage() {
       )}
 
       {/* States */}
-      {!fetchParams && (
+      {mode === "individual" && !fetchParams && (
         <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
           <CardContent className="p-10 text-center text-slate-500 dark:text-zinc-400 text-[14px]">
             Select an employee and date range, then click <span className="font-semibold">View</span> to calculate performance.
@@ -264,13 +339,37 @@ export default function PerformancePage() {
         </Card>
       )}
 
-      {fetchParams && summaryQuery.isLoading && (
+      {mode === "team" && !teamParams && (
+        <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
+          <CardContent className="p-10 text-center text-slate-500 dark:text-zinc-400 text-[14px]">
+            Pick a date range (and optionally a department), then click <span className="font-semibold">View</span> to compare your whole team side by side.
+          </CardContent>
+        </Card>
+      )}
+
+      {mode === "team" && teamParams && teamQuery.isLoading && (
+        <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
+          <CardContent className="p-10 text-center text-slate-500 dark:text-zinc-400">Comparing team performance…</CardContent>
+        </Card>
+      )}
+
+      {mode === "team" && teamParams && teamQuery.isError && (
+        <Card className="border border-red-200 shadow-sm dark:bg-zinc-900 dark:border-red-900/40">
+          <CardContent className="p-8 text-center text-red-600 dark:text-red-400 text-[14px]">
+            {(teamQuery.error as Error)?.message || "Failed to load team comparison."}
+          </CardContent>
+        </Card>
+      )}
+
+      {mode === "team" && teamQuery.data && <TeamComparison data={teamQuery.data} />}
+
+      {mode === "individual" && fetchParams && summaryQuery.isLoading && (
         <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
           <CardContent className="p-10 text-center text-slate-500 dark:text-zinc-400">Calculating performance…</CardContent>
         </Card>
       )}
 
-      {fetchParams && summaryQuery.isError && (
+      {mode === "individual" && fetchParams && summaryQuery.isError && (
         <Card className="border border-red-200 shadow-sm dark:bg-zinc-900 dark:border-red-900/40">
           <CardContent className="p-8 text-center text-red-600 dark:text-red-400 text-[14px]">
             {(summaryQuery.error as Error)?.message || "Failed to load performance data."}
@@ -278,7 +377,7 @@ export default function PerformancePage() {
         </Card>
       )}
 
-      {summary && (
+      {mode === "individual" && summary && (
         <>
           {/* Employee header */}
           <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
@@ -622,5 +721,77 @@ function ScoringConfigEditor({ initial, onSaved }: { initial: ScoringConfig; onS
         </CardContent>
       )}
     </Card>
+  );
+}
+
+function TeamComparison({ data }: { data: TeamResponse }) {
+  const team = data.team ?? [];
+  const scored = team.filter((r) => r.effectiveScore !== null);
+  const topScore = scored.length ? scored[0].effectiveScore : null;
+  const bottomScore = scored.length ? scored[scored.length - 1].effectiveScore : null;
+  const avgScore = scored.length
+    ? Math.round((scored.reduce((s, r) => s + (r.effectiveScore as number), 0) / scored.length) * 10) / 10
+    : null;
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <ScoreCard label="Employees" value={`${team.length}`} testid="card-team-count" />
+        <ScoreCard label="Top Score" value={fmtScore(topScore)} highlight testid="card-team-top" />
+        <ScoreCard label="Average Score" value={fmtScore(avgScore)} testid="card-team-avg" />
+        <ScoreCard label="Lowest Score" value={fmtScore(bottomScore)} testid="card-team-bottom" />
+      </div>
+
+      <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
+        <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-300 dark:border-zinc-800">
+          Team Leaderboard <span className="text-[12px] font-normal text-slate-400">(ranked by final score; normalized over available components)</span>
+        </div>
+        <CardContent className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] dark:bg-zinc-800 dark:hover:bg-zinc-800">
+                {["#", "Employee", "Role", "Department", "Final", "Rating", "Work", "Quality", "Target", "Timeliness", "Data", "Records"].map((h) => (
+                  <TableHead key={h} className="font-bold text-[#212529] dark:text-zinc-100 whitespace-nowrap">{h}</TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {team.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={12} className="text-center py-8 text-slate-500 dark:text-zinc-400">
+                    No employees found in your scope for this date range.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                team.map((r, i) => {
+                  const isTop = r.effectiveScore !== null && r.effectiveScore === topScore;
+                  const isBottom = r.effectiveScore !== null && r.effectiveScore === bottomScore && scored.length > 1;
+                  return (
+                    <TableRow key={r.employee.id} data-testid="row-team-member">
+                      <TableCell className="text-[12px] font-semibold text-slate-600 dark:text-zinc-400">{i + 1}</TableCell>
+                      <TableCell className="text-[13px] font-medium text-[#495057] dark:text-zinc-200 whitespace-nowrap">
+                        {r.employee.name || r.employee.email || "—"}
+                        {isTop && <span className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">TOP</span>}
+                        {isBottom && <span className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">LOW</span>}
+                      </TableCell>
+                      <TableCell className="text-[12px] text-slate-600 dark:text-zinc-400 whitespace-nowrap">{r.employee.role || "—"}</TableCell>
+                      <TableCell className="text-[12px] text-slate-600 dark:text-zinc-400 whitespace-nowrap">{r.employee.department || "—"}</TableCell>
+                      <TableCell className="text-[13px] font-bold text-[#495057] dark:text-zinc-200">{fmtScore(r.effectiveScore)}</TableCell>
+                      <TableCell className={`text-[12px] font-semibold whitespace-nowrap ${ratingColor(r.rating)}`}>{r.rating}</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-600 dark:text-zinc-400">{fmtScore(r.components.workCompletion)}</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-600 dark:text-zinc-400">{fmtScore(r.components.quality)}</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-600 dark:text-zinc-400">{fmtScore(r.components.targetAchievement)}</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-600 dark:text-zinc-400">{fmtScore(r.components.timeliness)}</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-500 dark:text-zinc-400">{r.formulaCompletenessPercent}%</TableCell>
+                      <TableCell className="text-[12px] text-center text-slate-500 dark:text-zinc-400">{r.totalRecords}</TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </>
   );
 }

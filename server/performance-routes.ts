@@ -12,7 +12,7 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import {
-  buildSummary, buildRecords, buildTrends,
+  buildSummary, buildRecords, buildTrends, buildTeamComparison,
   getScoringConfig, saveScoringConfig, validateScoringConfig,
 } from "./services/performance.service";
 
@@ -154,6 +154,52 @@ export function registerPerformanceRoutes(app: Express) {
     } catch (err: any) {
       console.error("[performance] /users error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to fetch users" });
+    }
+  });
+
+  // GET /api/drm/performance/team
+  // Side-by-side leaderboard of every employee the caller may see (scoped by
+  // getAllowedUserIds), with each employee's normalized final score, rating and
+  // per-component scores for the selected range.
+  app.get("/api/drm/performance/team", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const range = parseDateRange(req, res);
+      if (!range) return;
+
+      const allowed = await getAllowedUserIds(req);
+      const activeOnly = String(req.query.activeOnly ?? "true") !== "false";
+      const department = req.query.department ? String(req.query.department) : "";
+
+      const where: string[] = ["1=1"];
+      const params: any[] = [];
+      if (activeOnly) where.push("is_active = true");
+      if (allowed !== null) {
+        params.push(allowed);
+        where.push(`id::text = ANY($${params.length}::text[])`);
+      }
+      if (department) {
+        params.push(department);
+        where.push(`department = $${params.length}`);
+      }
+
+      const { rows } = await pool.query(
+        `select id from drm.users
+          where ${where.join(" and ")}
+          order by coalesce(full_name, name, email) asc
+          limit 200`,
+        params,
+      );
+      const ids = rows.map((r) => String(r.id));
+      const team = await buildTeamComparison(ids, range.from, range.to);
+      res.json({
+        dateRange: { startDate: range.from.toISOString(), endDate: range.to.toISOString() },
+        count: team.length,
+        team,
+      });
+    } catch (err: any) {
+      console.error("[performance] /team error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to build team comparison" });
     }
   });
 

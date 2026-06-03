@@ -1211,6 +1211,76 @@ export async function buildSummary(userId: string, from: Date, to: Date, include
   });
 }
 
+export interface TeamComparisonRow {
+  employee: { id: string; name: string | null; email: string | null; role: string | null; department: string | null };
+  finalScore: number | null;
+  normalizedFinalScore: number | null;
+  effectiveScore: number | null;
+  rating: string;
+  components: {
+    workCompletion: number | null;
+    quality: number | null;
+    targetAchievement: number | null;
+    timeliness: number | null;
+  };
+  formulaCompletenessPercent: number;
+  dataQuality: "complete" | "partial" | "none";
+  totalRecords: number;
+  partialDataFailure: boolean;
+}
+
+// Builds a single compact leaderboard row by reusing the full scoring service
+// (buildSummary) and projecting only the comparison fields. Records are not
+// included to keep the team payload small.
+export async function buildTeamRow(userId: string, from: Date, to: Date): Promise<TeamComparisonRow> {
+  const summary = await buildSummary(userId, from, to, false);
+  const effectiveScore = summary.normalizedFinalScore ?? summary.finalScore;
+  return {
+    employee: summary.employee,
+    finalScore: summary.finalScore,
+    normalizedFinalScore: summary.normalizedFinalScore,
+    effectiveScore,
+    rating: summary.rating,
+    components: {
+      workCompletion: summary.components.workCompletion.score,
+      quality: summary.components.quality.score,
+      targetAchievement: summary.components.targetAchievement.score,
+      timeliness: summary.components.timeliness.score,
+    },
+    formulaCompletenessPercent: summary.formulaCompletenessPercent,
+    dataQuality: summary.dataQuality,
+    totalRecords: summary.totalRecords,
+    partialDataFailure: summary.partialDataFailure,
+  };
+}
+
+// Side-by-side leaderboard for a set of users. Scores are computed in small
+// concurrent batches so a large team doesn't flood the connection pool, then
+// sorted by effective (normalized) final score, highest first. Employees with
+// no score (no data) sort to the bottom.
+export async function buildTeamComparison(
+  userIds: string[],
+  from: Date,
+  to: Date,
+): Promise<TeamComparisonRow[]> {
+  const CONCURRENCY = 5;
+  const rows: TeamComparisonRow[] = [];
+  for (let i = 0; i < userIds.length; i += CONCURRENCY) {
+    const batch = userIds.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((id) => buildTeamRow(id, from, to)));
+    rows.push(...results);
+  }
+  rows.sort((a, b) => {
+    const sa = a.effectiveScore ?? -1;
+    const sb = b.effectiveScore ?? -1;
+    if (sb !== sa) return sb - sa;
+    const na = (a.employee.name || "").toLowerCase();
+    const nb = (b.employee.name || "").toLowerCase();
+    return na.localeCompare(nb);
+  });
+  return rows;
+}
+
 export async function buildRecords(
   userId: string, from: Date, to: Date,
   opts: { sourceModule?: string; status?: string; page: number; limit: number },
