@@ -50,7 +50,7 @@ export default function LoanReportEdit() {
   const [totalLoanAmount, setTotalLoanAmount] = useState<number | undefined>(undefined);
   const [disbursedAmount, setDisbursedAmount] = useState<number | undefined>(undefined);
 
-  const { isLoading } = useQuery({
+  const { isLoading, isError } = useQuery({
     queryKey: ["loan-report", id],
     enabled: !!id,
     queryFn: async () => {
@@ -113,6 +113,24 @@ export default function LoanReportEdit() {
   };
 
   if (!id) return <div className="p-6">Invalid report id</div>;
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <Card className="max-w-3xl mx-auto">
+          <CardHeader>
+            <CardTitle>Edit Loan Report</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="py-10 text-center space-y-4">
+              <p className="text-muted-foreground">This loan report could not be found or you don't have access to it.</p>
+              <Button variant="outline" onClick={() => navigate("/reports/loan")}>Back to Loan Reports</Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">

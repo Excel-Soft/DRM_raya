@@ -68,7 +68,6 @@ import ReportsFollowUp from "@/pages/reports-follow-up";
 import ReportsProjects from "@/pages/reports-projects";
 import ReportsDayTarget from "@/pages/reports-day-target";
 import PostingDataLinkReport from "@/pages/posting-data-link-report";
-import PmsSettings from "@/pages/pms-settings";
 import SupportTickets from "@/pages/support-tickets";
 import SupportTicketDetail from "@/pages/support-ticket-detail";
 import ComplaintsPage from "@/pages/complaints";
@@ -302,8 +301,6 @@ function Router() {
       <Route path="/service/vas-document-list" component={ServiceVasDocumentList} />
       <Route path="/service/due-vas-payment" component={ServiceDueVasPayment} />
       <Route path="/service/todo-list" component={ServiceTodoList} />
-      <Route path="/drm/pms-setting" component={PmsSettings} />
-      <Route path="/drm/delay-project" component={DelayProjectPage} />
       <Route path="/drm/bot-system" component={BotSystem} />
       <Route path="/drm/online-form" component={OnlineForm} />
       <Route path="/drm/fb-post" component={FbPost} />
@@ -343,7 +340,6 @@ function Router() {
       <Route path="/workspace" component={Workspace} />
       <Route path="/policies" component={PoliciesSettings} />
       <Route path="/notice-board" component={NoticeBoard} />
-      <Route path="/account/gm-entries" component={AccountGmEntries} />
       <Route path="/account/temp-gm" component={AccountTempGm} />
       <Route path="/account/refund-gm" component={AccountRefundGm} />
       <Route path="/account/donations" component={AccountDonations} />
@@ -352,7 +348,6 @@ function Router() {
       <Route path="/account/dollar-system" component={DollarSystem} />
       <Route path="/account/ledger" component={AccountLedger} />
       <Route path="/office/expenses" component={OfficeExpenses} />
-      <Route path="/office/chart-of-accounts" component={ChartOfAccounts} />
       <Route path="/office/vas" component={OfficeVasPage} />
       <Route path="/office/cheques" component={ChequeSystem} />
       <Route path="/office/business-customers" component={BusinessCustomers} />
@@ -366,11 +361,8 @@ function Router() {
       <Route path="/drm/users/list" component={UserList} />
       <Route path="/drm/users/groups" component={UserGroups} />
       <Route path="/drm/permission" component={PermissionPage} />
-      <Route path="/drm/delay-project" component={DelayProjectPage} />
       <Route path="/drm/promotion" component={PromotionPage} />
       <Route path="/drm/related-customer" component={RelatedCustomerPage} />
-      <Route path="/product-posting/manager" component={ProductPostingDashboard} />
-      <Route path="/product-posting/executive" component={ProductPostingDashboard} />
       <Route path="/sales/create-invoice/:customerId" component={CreateInvoice} />
       <Route path="/posting-data" component={PostingData} />
       <Route path="/posting-data/add-products" component={PostingData} />
@@ -388,7 +380,6 @@ function Router() {
       <Route path="/it/servers" component={ItServers} />
       <Route path="/it/domains" component={ItDomains} />
       <Route path="/it/backup" component={ItBackup} />
-      <Route path="/pms/project-report" component={PmsProjectReport} />
       <Route path="/it/system-report" component={ItSystemReport} />
       {/* Target System Module Routes */}
       <Route path="/target-system/create" component={CreateTarget} />

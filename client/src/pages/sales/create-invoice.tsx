@@ -107,7 +107,7 @@ export default function CreateInvoice() {
     const [showReceipt, setShowReceipt] = useState(false);
     const [lastSavedInvoice, setLastSavedInvoice] = useState<any>(null);
 
-    const { data: customer, isLoading: isLoadingCustomer } = useQuery<Customer>({
+    const { data: customer, isLoading: isLoadingCustomer, isError: isCustomerError } = useQuery<Customer>({
         queryKey: [`/api/sales/customers/${customerId}`],
         enabled: !!customerId,
         select: (res: any) => res.data || res,
@@ -290,6 +290,26 @@ export default function CreateInvoice() {
         return (
             <div className="flex items-center justify-center h-full">
                 <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            </div>
+        );
+    }
+
+    if (!customerId) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-slate-50 dark:bg-zinc-900 space-y-4">
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-zinc-100">Invalid invoice link</h2>
+                <p className="text-slate-500 dark:text-zinc-400">No customer was specified for this invoice.</p>
+                <Button variant="outline" onClick={() => setLocation("/sales/customers")}>Go to Customers</Button>
+            </div>
+        );
+    }
+
+    if (isCustomerError || !customer) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-slate-50 dark:bg-zinc-900 space-y-4">
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-zinc-100">Customer not found</h2>
+                <p className="text-slate-500 dark:text-zinc-400">We couldn't load the customer for this invoice. They may have been removed.</p>
+                <Button variant="outline" onClick={() => setLocation("/sales/customers")}>Go to Customers</Button>
             </div>
         );
     }

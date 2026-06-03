@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
+import { normalizeRole as normalize } from "@/lib/role-utils";
 
 // Define which roles can access which route patterns
 const ROUTE_PERMISSIONS: Record<string, string[]> = {
@@ -55,9 +56,6 @@ const ROLE_DASHBOARDS: Record<string, string> = {
     lead_executive: "/dashboard/lead-executive",
     marketing_manager: "/dashboard/marketing-manager",
 };
-
-const normalize = (r?: string | null) =>
-    (r || "").toLowerCase().trim().replace(/\s+/g, "_");
 
 interface RouteProtectionState {
     /** Server-validated active role (from /api/auth/me activeRoleId/role). */
