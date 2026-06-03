@@ -78,14 +78,15 @@ Status values are grounded in the actual DB enums, e.g. `task_status.Completed`,
 
 ### Access control (enforced server-side, never trusted from the client)
 - `admin` / `super_admin` / `super_hod` → all users
-- `hod` → users in their department
-- manager roles → their team + self. (There is no team-hierarchy column on
-  `drm.users`, so a manager is scoped to the role family they oversee — e.g. a
-  `*_manager` sees the matching `*_executive` / `*_assistant_manager` roles —
-  plus everyone in their own department, plus themselves. This mirrors the
-  role-based team model the app already uses elsewhere.)
+- `hod` and manager roles → their own **department** (plus self)
 - executive / other roles → self only
 - Cross-user access the caller isn't entitled to → **403**.
+
+There is no team-hierarchy column on `drm.users`, and role normalization is
+lossy (e.g. `service_assistant_manager` normalizes to a sales role), so HOD and
+manager scoping both use the reliable `department` column. This guarantees no
+cross-department exposure (a manager's real team is, at worst, a subset of their
+department) rather than risking a global role-family match leaking users.
 
 Validation: missing/invalid dates → **400**; unknown user → **404**;
 unauthenticated → **401**.
