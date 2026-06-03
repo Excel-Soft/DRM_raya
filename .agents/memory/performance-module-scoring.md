@@ -25,15 +25,18 @@ normalized over whichever components have data.
   **How to apply:** it is safe to fan out `buildSummary` across many users to build leaderboards
   (the team comparison does this in small concurrent batches to avoid flooding the pg pool).
 
-## Team comparison sizing
-- The `/team` endpoint scores every allowed user (batched) up to a `MAX_TEAM_USERS` safety cap,
-  and also runs a `count(*)` over the same WHERE to get the true total. Response carries
-  `total` + `truncated` so the UI can show "Showing N of M" instead of silently dropping employees.
-  **Why:** the old hard `limit 200` dropped employees past the cap with no signal to the manager.
-  **How to apply:** if you raise the cap or change selection, keep the `count(*)` and `truncated`
-  flag in lockstep, and remember selection-before-scoring is by name order, not by score.
-- The cap is overridable via env `PERFORMANCE_TEAM_MAX_USERS` (default 1000) so tests can force
-  truncation with a tiny seeded team instead of seeding 1000+ users.
+## Team comparison: rank the whole scope, then paginate
+  the requested page (`page`/`pageSize`). `buildTeamLeaderboard` does score→rank→slice and returns
+  whole-scope `stats` (top/avg/bottom/scored) + `totalScored`/`totalPages`. Any "select first N (by
+  name) then score" shortcut — or a row cap used as a stand-in for paging — is a correctness bug: it
+  drops the true top/bottom scorers whenever the scope exceeds N.
+  **Why:** a prior implementation pre-truncated by name (and later a 5000 hard cap) before scoring,
+  so extreme scorers past the cap silently vanished from the ranking; raising the cap only moved the
+  same bug to a higher number. There is intentionally NO truncation now — every eligible id is fetched
+  (no `limit`) and scored.
+  **How to apply:** keep per-user scoring batched (small concurrent chunks) so the pool isn't
+  flooded, but feed it ALL ids. Aggregate cards / TOP-LOW badges must come from whole-scope `stats`,
+  not the visible page; global rank = `(page-1)*pageSize + i + 1` (server also sends per-row `rank`).
 
 ## Testing the routes
 - Tests run on vitest (`npm test`, config `vitest.config.ts` with `@shared`/`@` aliases,
@@ -43,3 +46,4 @@ normalized over whichever components have data.
   **Why:** there is no auth layer in the test app, so set `req.user` directly.
   **How to apply:** give each test its own unique `department` value so HOD scoping resolves to
   exactly that test's seeded users; clean up by `delete from drm.users where department = $1`.
+  Drive paging via the `pageSize`/`page` query params (NOT an env cap — the cap was removed).

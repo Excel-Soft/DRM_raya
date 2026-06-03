@@ -1281,6 +1281,61 @@ export async function buildTeamComparison(
   return rows;
 }
 
+export interface TeamLeaderboardStats {
+  top: number | null;
+  average: number | null;
+  bottom: number | null;
+  scored: number;
+}
+
+export interface TeamLeaderboardPage {
+  team: (TeamComparisonRow & { rank: number })[];
+  stats: TeamLeaderboardStats;
+  totalScored: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+// Scores the WHOLE candidate set (batched, via buildTeamComparison), ranks every
+// employee by effective score across the entire scope, then returns just the
+// requested page. This guarantees the leaderboard is ranked across the full set
+// rather than a name-ordered prefix, so the true top/bottom scorers always
+// appear regardless of how large the scope is. Aggregate stats (top/avg/bottom)
+// are computed over the entire scored scope, not the page, so summary cards stay
+// stable as the manager pages through results.
+export async function buildTeamLeaderboard(
+  userIds: string[],
+  from: Date,
+  to: Date,
+  opts: { page: number; pageSize: number },
+): Promise<TeamLeaderboardPage> {
+  const all = await buildTeamComparison(userIds, from, to);
+  const totalScored = all.length;
+
+  const scoredValues = all
+    .map((r) => r.effectiveScore)
+    .filter((s): s is number => s !== null);
+  const stats: TeamLeaderboardStats = {
+    top: scoredValues.length ? scoredValues[0] : null,
+    bottom: scoredValues.length ? scoredValues[scoredValues.length - 1] : null,
+    average: scoredValues.length
+      ? Math.round((scoredValues.reduce((s, v) => s + v, 0) / scoredValues.length) * 10) / 10
+      : null,
+    scored: scoredValues.length,
+  };
+
+  const pageSize = Math.max(1, opts.pageSize);
+  const totalPages = Math.max(1, Math.ceil(totalScored / pageSize));
+  const page = Math.min(Math.max(1, opts.page), totalPages);
+  const start = (page - 1) * pageSize;
+  const team = all
+    .slice(start, start + pageSize)
+    .map((row, idx) => ({ ...row, rank: start + idx + 1 }));
+
+  return { team, stats, totalScored, page, pageSize, totalPages };
+}
+
 export async function buildRecords(
   userId: string, from: Date, to: Date,
   opts: { sourceModule?: string; status?: string; page: number; limit: number },
