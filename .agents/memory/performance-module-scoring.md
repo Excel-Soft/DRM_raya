@@ -24,3 +24,11 @@ normalized over whichever components have data.
   cross-contaminate each other's `dataWarnings`.
   **How to apply:** it is safe to fan out `buildSummary` across many users to build leaderboards
   (the team comparison does this in small concurrent batches to avoid flooding the pg pool).
+
+## Team comparison sizing
+- The `/team` endpoint scores every allowed user (batched) up to a `MAX_TEAM_USERS` safety cap,
+  and also runs a `count(*)` over the same WHERE to get the true total. Response carries
+  `total` + `truncated` so the UI can show "Showing N of M" instead of silently dropping employees.
+  **Why:** the old hard `limit 200` dropped employees past the cap with no signal to the manager.
+  **How to apply:** if you raise the cap or change selection, keep the `count(*)` and `truncated`
+  flag in lockstep, and remember selection-before-scoring is by name order, not by score.

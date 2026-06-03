@@ -71,6 +71,9 @@ type TeamRow = {
 type TeamResponse = {
   dateRange: { startDate: string; endDate: string };
   count: number;
+  total?: number;
+  truncated?: boolean;
+  limit?: number;
   team: TeamRow[];
 };
 
@@ -744,6 +747,8 @@ function TeamComparison({ data }: { data: TeamResponse }) {
   const avgScore = scored.length
     ? Math.round((scored.reduce((s, r) => s + (r.effectiveScore as number), 0) / scored.length) * 10) / 10
     : null;
+  const total = data.total ?? team.length;
+  const truncated = data.truncated ?? false;
 
   const chartData = team.map((r) => ({
     name: r.employee.name || r.employee.email || "—",
@@ -755,6 +760,15 @@ function TeamComparison({ data }: { data: TeamResponse }) {
 
   return (
     <>
+      {truncated && (
+        <div
+          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
+          data-testid="banner-team-truncated"
+        >
+          Showing {team.length} of {total} employees. Not all employees in your
+          scope are shown — narrow by department to compare a complete team.
+        </div>
+      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <ScoreCard label="Employees" value={`${team.length}`} testid="card-team-count" />
         <ScoreCard label="Top Score" value={fmtScore(topScore)} highlight testid="card-team-top" />
