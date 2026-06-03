@@ -32,3 +32,14 @@ normalized over whichever components have data.
   **Why:** the old hard `limit 200` dropped employees past the cap with no signal to the manager.
   **How to apply:** if you raise the cap or change selection, keep the `count(*)` and `truncated`
   flag in lockstep, and remember selection-before-scoring is by name order, not by score.
+- The cap is overridable via env `PERFORMANCE_TEAM_MAX_USERS` (default 1000) so tests can force
+  truncation with a tiny seeded team instead of seeding 1000+ users.
+
+## Testing the routes
+- Tests run on vitest (`npm test`, config `vitest.config.ts` with `@shared`/`@` aliases,
+  `fileParallelism:false`). They are DB-backed: they import the real `pool` and seed throwaway
+  `drm.users` rows, then mount `registerPerformanceRoutes` on a bare express app with a middleware
+  that injects `req.user` (e.g. `{ userId, roleId: "hod" }`) and drive it with supertest.
+  **Why:** there is no auth layer in the test app, so set `req.user` directly.
+  **How to apply:** give each test its own unique `department` value so HOD scoping resolves to
+  exactly that test's seeded users; clean up by `delete from drm.users where department = $1`.
