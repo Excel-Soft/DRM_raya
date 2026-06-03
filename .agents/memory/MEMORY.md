@@ -1,0 +1,2 @@
+- [WebExcels DRM Replit setup](webexcels-drm-replit-setup.md) — boot/setup specifics for running this imported app on Replit.
+- [Performance module scoring](performance-module-scoring.md) — how access scoping + the scoring service compose; safe to score many users concurrently.
