@@ -4,3 +4,4 @@
 - [Link Report data source](link-report-data-source.md) — Team Report link list = UNION of link_reports + product/software evidence links; md5-derived display IDs; verification upsert per user+date range.
 - [Express route shadowing](express-route-shadowing.md) — exact /api/reports/* routes must mount before registerReportsRoutes or the /reports/:type param route shadows them.
 - [DRM auth mount order](drm-auth-mount-order.md) — global /api authMiddleware mounts AFTER some routers (e.g. /api/drm), leaving them public; secure locally or remount after auth.
+- [RBAC / route model](rbac-route-model.md) — 3-layer access (sidebar/route-guard/backend); wouter Switch first-match-wins; 76 unguarded routes; centralized normalizeRole.

@@ -3,7 +3,15 @@
  */
 export function normalizeRole(roleId: string | null | undefined): string {
     if (!roleId) return "";
-    return roleId.toLowerCase().trim().replace(/\s+/g, '_');
+    return roleId
+        .toLowerCase()
+        .trim()
+        .replace(/d\s*&\s*d/g, 'dd') // 'd & d' / 'd&d' -> 'dd'
+        .replace(/&/g, '')
+        .replace(/[\s-]+/g, '_')      // spaces AND hyphens -> '_'
+        .replace(/_+/g, '_')
+        .replace(/(^|_)d_?n_?d(?=_|$)/g, '$1dd') // 'dnd' / 'd_n_d' -> 'dd'
+        .replace(/(^|_)d_d(?=_|$)/g, '$1dd');    // 'd_d' (incl former 'd-d') -> 'dd'
 }
 
 /**

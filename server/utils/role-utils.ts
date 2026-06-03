@@ -34,11 +34,16 @@ export type RoleKey = (typeof ROLES)[keyof typeof ROLES] | string;
 export function normalizeRole(role: string): RoleKey {
   if (!role) return ROLES.SALES_EXECUTIVE;
 
-  // Replace common special characters that shouldn't lead to underscores
+  // Unify separators (spaces AND hyphens) so hyphenated and spaced variants
+  // normalize identically (e.g. "super-hod" -> "super_hod"), and collapse the
+  // various "design & development" spellings (d&d / dnd / d_d / d-d) to "dd".
   let normalized = role.toLowerCase().trim()
-    .replace(/d\s*&\s*d/g, 'dd') // Map 'd & d' or 'd&d' to 'dd'
+    .replace(/d\s*&\s*d/g, 'dd') // 'd & d' / 'd&d' -> 'dd'
     .replace(/&/g, '')
-    .replace(/\s+/g, '_');
+    .replace(/[\s-]+/g, '_')      // spaces AND hyphens -> '_'
+    .replace(/_+/g, '_')
+    .replace(/(^|_)d_?n_?d(?=_|$)/g, '$1dd') // 'dnd' / 'd_n_d' -> 'dd'
+    .replace(/(^|_)d_d(?=_|$)/g, '$1dd');    // 'd_d' (incl former 'd-d') -> 'dd'
 
   if (normalized === "admin" || normalized === "administrator" || normalized === "adm" || normalized === "super_admin") return ROLES.ADMIN;
   if (normalized === "super_hod" || normalized.includes("super_hod")) return ROLES.SUPER_HOD;
