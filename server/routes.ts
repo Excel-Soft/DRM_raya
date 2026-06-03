@@ -62,6 +62,7 @@ import { productPostingWorkflowRouter } from "./routes/product-posting-workflow-
 import { softwareWorkflowRouter } from "./routes/software-workflow-routes";
 import { registerPostingDataRoutes } from "./posting-data-routes";
 import targetSystemRoutes from "./target-system-routes";
+import { registerPerformanceRoutes } from "./performance-routes";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -312,6 +313,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/software", softwareWorkflowRouter);
   registerPostingDataRoutes(app);
   app.use("/api/target-system", targetSystemRoutes);
+
+  // Performance System routes (protected, read-only) — mounted after auth middleware
+  registerPerformanceRoutes(app);
 
   // put application routes here
   // prefix all routes with /api
