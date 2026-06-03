@@ -2,3 +2,4 @@
 - [Performance module scoring](performance-module-scoring.md) — how access scoping + the scoring service compose; safe to score many users concurrently.
 - [HR feature module pattern](hr-feature-module-pattern.md) — proven shape for new DRM HR modules (increment/penalty): mount after permission, enforce auth in handlers, live-DB migrations not db:push.
 - [Link Report data source](link-report-data-source.md) — Team Report link list = UNION of link_reports + product/software evidence links; md5-derived display IDs; verification upsert per user+date range.
+- [Express route shadowing](express-route-shadowing.md) — exact /api/reports/* routes must mount before registerReportsRoutes or the /reports/:type param route shadows them.

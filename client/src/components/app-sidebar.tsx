@@ -161,6 +161,7 @@ const menuItems: MenuItem[] = [
       { title: "Pending Approvals", url: "/pms/approvals", icon: UserCheck },
       { title: "Task History", url: "/pms/task-history", icon: History },
       { title: "Team Workspace", url: "/pms/team-workspace", icon: Users },
+      { title: "Project Report", url: "/pms/project-report", icon: FileText },
     ],
   },
   {

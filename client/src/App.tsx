@@ -280,6 +280,7 @@ function Router() {
       <Route path="/pms/approvals" component={PmsPendingApprovals} />
       <Route path="/pms/task-history" component={PmsTaskHistory} />
       <Route path="/pms/project-report" component={PmsProjectReport} />
+      <Route path="/dd-manager/project-report" component={PmsProjectReport} />
       <Route path="/pms/team-workspace" component={PmsTeamWorkspace} />
       <Route path="/service/pool" component={ServicePoolDashboard} />
       <Route path="/service/bv-checking" component={ServiceBvChecking} />
