@@ -2659,3 +2659,49 @@ export type SoftwarePhaseDefinition = typeof softwarePhaseDefinitions.$inferSele
 export type SoftwareWorkflow = typeof softwareWorkflows.$inferSelect;
 export type SoftwareEvidenceLink = typeof softwareEvidenceLinks.$inferSelect;
 export type SoftwareReworkHistory = typeof softwareReworkHistory.$inferSelect;
+
+// ─── Increment Management ────────────────────────────────────────────────────
+// Persists calculated increment evaluation snapshots and manager decisions.
+// See migrations/20260603_increment_management.sql.
+export const incrementEvaluations = drmSchema.table("increment_evaluations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  employeeId: uuid("employee_id").notNull().references(() => users.id),
+  calculatedBy: uuid("calculated_by").references(() => users.id),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  reviewStartDate: date("review_start_date").notNull(),
+  reviewEndDate: date("review_end_date").notNull(),
+  currentSalary: decimal("current_salary", { precision: 12, scale: 2 }),
+  perDaySalary: decimal("per_day_salary", { precision: 12, scale: 2 }),
+  leaveDays: decimal("leave_days", { precision: 8, scale: 2 }),
+  allowedLeaveDays: decimal("allowed_leave_days", { precision: 8, scale: 2 }),
+  incrementLeaves: decimal("increment_leaves", { precision: 8, scale: 2 }),
+  leaveDeductionAmount: decimal("leave_deduction_amount", { precision: 12, scale: 2 }),
+  totalMinutes: integer("total_minutes"),
+  relaxationMinutes: integer("relaxation_minutes"),
+  incrementMinutes: integer("increment_minutes"),
+  totalTasks: integer("total_tasks"),
+  pendingTasks: integer("pending_tasks"),
+  runningTasks: integer("running_tasks"),
+  completedTasks: integer("completed_tasks"),
+  noticeCount: integer("notice_count"),
+  eligibilityStatus: text("eligibility_status"),
+  proposedIncrementType: text("proposed_increment_type"),
+  proposedIncrementValue: decimal("proposed_increment_value", { precision: 12, scale: 2 }),
+  status: text("status").notNull().default("PENDING"),
+  managerRemarks: text("manager_remarks"),
+  rejectionReason: text("rejection_reason"),
+  effectiveDate: date("effective_date"),
+  calculationSnapshot: jsonb("calculation_snapshot"),
+  missingData: jsonb("missing_data"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  approvedAt: timestamp("approved_at"),
+}, (t) => [
+  index("idx_increment_eval_employee").on(t.employeeId),
+  index("idx_increment_eval_review_dates").on(t.reviewStartDate, t.reviewEndDate),
+  index("idx_increment_eval_status").on(t.status),
+  index("idx_increment_eval_effective").on(t.effectiveDate),
+]);
+
+export type IncrementEvaluation = typeof incrementEvaluations.$inferSelect;
+export type InsertIncrementEvaluation = typeof incrementEvaluations.$inferInsert;
