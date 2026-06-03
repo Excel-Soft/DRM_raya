@@ -44,10 +44,25 @@ async function getAllowedUserIds(req: Request): Promise<string[] | null> {
   }
 
   if (isManagerialRole(activeRole)) {
+    // No team-hierarchy column exists on drm.users, so scope a manager to the
+    // roles they oversee (same role family) using the role naming convention
+    // the app itself uses elsewhere, plus their own department, plus self.
     try {
+      const targetRoles = new Set<string>([activeRole]);
+      if (activeRole.endsWith("_manager")) {
+        targetRoles.add(activeRole.replace("_manager", "_executive"));
+        targetRoles.add(activeRole.replace("_manager", "_assistant_manager"));
+      } else if (activeRole.endsWith("_assistant_manager")) {
+        targetRoles.add(activeRole.replace("_assistant_manager", "_executive"));
+      }
+      const me = await pool.query(`select department from drm.users where id::text = $1::text limit 1`, [myId]);
+      const dept = me.rows[0]?.department ?? null;
       const { rows } = await pool.query(
-        `select id from drm.users where under_works = $1::text or id::text = $1::text`,
-        [myId],
+        `select id from drm.users
+          where role = ANY($1::text[])
+             or (($2::text is not null) and department = $2::text)
+             or id::text = $3::text`,
+        [Array.from(targetRoles), dept, myId],
       );
       const ids = rows.map((r) => String(r.id));
       ids.push(String(myId));

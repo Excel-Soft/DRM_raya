@@ -36,6 +36,13 @@ returns `N/A` everywhere and a `No Data` rating rather than fake numbers.
 | Target Achievement | 20% | Approved GM amount (and service achieved value) vs. assigned target from the target system / service activity targets |
 | Timeliness | 10% | Completed-on-time ratio for items that have a deadline (tasks, workflows, follow-ups) |
 
+**Context-only records** (shown in records/trends for full visibility but
+deliberately NOT counted toward the score, to avoid distortion/double-counting):
+sales activities, call sessions, appointments, task time logs, service renewals,
+and product-posting/software rework history. Workflow rework is already captured
+by each workflow's return count in the Quality penalty, so rework-history rows
+are informational only.
+
 **Attendance context** (present/absent/late/half-day/leave + approved overtime)
 is shown as **supporting information only** and is **not** part of the score.
 
@@ -72,7 +79,11 @@ Status values are grounded in the actual DB enums, e.g. `task_status.Completed`,
 ### Access control (enforced server-side, never trusted from the client)
 - `admin` / `super_admin` / `super_hod` → all users
 - `hod` → users in their department
-- manager roles → their team (users `under_works` them) + self
+- manager roles → their team + self. (There is no team-hierarchy column on
+  `drm.users`, so a manager is scoped to the role family they oversee — e.g. a
+  `*_manager` sees the matching `*_executive` / `*_assistant_manager` roles —
+  plus everyone in their own department, plus themselves. This mirrors the
+  role-based team model the app already uses elsewhere.)
 - executive / other roles → self only
 - Cross-user access the caller isn't entitled to → **403**.
 

@@ -458,6 +458,220 @@ export async function getSupportPerformanceData(userId: string, from: Date, to: 
   return records;
 }
 
+export async function getCallSessionsPerformanceData(userId: string, from: Date, to: Date): Promise<PerfRecord[]> {
+  const records: PerfRecord[] = [];
+  try {
+    const { rows } = await pool.query(
+      `select id, status::text as status, direction, started_at, ended_at, duration_seconds, created_at
+         from drm.call_sessions
+        where (user_id::text = $1::text or assigned_to::text = $1::text)
+          and coalesce(started_at, created_at) between $2 and $3`,
+      [userId, from, to],
+    );
+    for (const r of rows) {
+      const completed = !!r.ended_at;
+      records.push({
+        sourceModule: "sales",
+        sourceId: String(r.id),
+        activityType: r.direction ? `Call (${r.direction})` : "Call",
+        clientCompany: null,
+        title: "Call Session",
+        taskValue: num(r.duration_seconds),
+        status: r.status ?? (completed ? "ended" : "started"),
+        assignedAt: iso(r.started_at ?? r.created_at),
+        completedAt: iso(r.ended_at),
+        dueAt: null,
+        isCompleted: completed,
+        isApproved: false,
+        isRejected: false,
+        isReturned: false,
+        revisionCount: 0,
+        isOnTime: null,
+        remarks: null,
+        _assignable: false,
+        _reviewable: false,
+      });
+    }
+  } catch (e: any) {
+    console.warn("[performance] call_sessions adapter skipped:", e?.message);
+  }
+  return records;
+}
+
+export async function getAppointmentsPerformanceData(userId: string, from: Date, to: Date): Promise<PerfRecord[]> {
+  const records: PerfRecord[] = [];
+  try {
+    const { rows } = await pool.query(
+      `select id, starts_at, notes, created_at
+         from drm.appointments
+        where coalesce(is_deleted,false) = false
+          and assigned_to::text = $1::text
+          and coalesce(starts_at, created_at) between $2 and $3`,
+      [userId, from, to],
+    );
+    for (const r of rows) {
+      records.push({
+        sourceModule: "sales",
+        sourceId: String(r.id),
+        activityType: "Appointment",
+        clientCompany: null,
+        title: "Appointment",
+        taskValue: null,
+        status: "Scheduled",
+        assignedAt: iso(r.created_at),
+        completedAt: iso(r.starts_at),
+        dueAt: null,
+        isCompleted: r.starts_at ? new Date(r.starts_at).getTime() <= Date.now() : false,
+        isApproved: false,
+        isRejected: false,
+        isReturned: false,
+        revisionCount: 0,
+        isOnTime: null,
+        remarks: r.notes ?? null,
+        _assignable: false,
+        _reviewable: false,
+      });
+    }
+  } catch (e: any) {
+    console.warn("[performance] appointments adapter skipped:", e?.message);
+  }
+  return records;
+}
+
+export async function getTaskTimeLogsPerformanceData(userId: string, from: Date, to: Date): Promise<PerfRecord[]> {
+  const records: PerfRecord[] = [];
+  try {
+    const { rows } = await pool.query(
+      `select l.id, l.duration_minutes, l.notes, l.start_at, l.created_at, t.title
+         from drm.task_time_logs l
+         left join drm.tasks t on t.id::text = l.task_id::text
+        where l.user_id::text = $1::text
+          and coalesce(l.start_at, l.created_at) between $2 and $3`,
+      [userId, from, to],
+    );
+    for (const r of rows) {
+      records.push({
+        sourceModule: "pms",
+        sourceId: String(r.id),
+        activityType: "Task Time Log",
+        clientCompany: null,
+        title: r.title ?? "Task Time Log",
+        taskValue: num(r.duration_minutes),
+        status: "Logged",
+        assignedAt: iso(r.start_at ?? r.created_at),
+        completedAt: iso(r.start_at ?? r.created_at),
+        dueAt: null,
+        isCompleted: true,
+        isApproved: false,
+        isRejected: false,
+        isReturned: false,
+        revisionCount: 0,
+        isOnTime: null,
+        remarks: r.notes ?? null,
+        _assignable: false,
+        _reviewable: false,
+      });
+    }
+  } catch (e: any) {
+    console.warn("[performance] task_time_logs adapter skipped:", e?.message);
+  }
+  return records;
+}
+
+export async function getServiceRenewalsPerformanceData(userId: string, from: Date, to: Date): Promise<PerfRecord[]> {
+  const records: PerfRecord[] = [];
+  try {
+    const { rows } = await pool.query(
+      `select id, renewal_type, amount, status::text as status, created_at
+         from drm.service_renewals
+        where created_by::text = $1::text
+          and created_at between $2 and $3`,
+      [userId, from, to],
+    );
+    for (const r of rows) {
+      const completed = String(r.status ?? "").toLowerCase() === "completed";
+      records.push({
+        sourceModule: "service",
+        sourceId: String(r.id),
+        activityType: r.renewal_type ? `Renewal (${r.renewal_type})` : "Renewal",
+        clientCompany: null,
+        title: "Service Renewal",
+        taskValue: num(r.amount),
+        status: r.status ?? null,
+        assignedAt: iso(r.created_at),
+        completedAt: completed ? iso(r.created_at) : null,
+        dueAt: null,
+        isCompleted: completed,
+        isApproved: false,
+        isRejected: false,
+        isReturned: false,
+        revisionCount: 0,
+        isOnTime: null,
+        remarks: null,
+        _assignable: false,
+        _reviewable: false,
+      });
+    }
+  } catch (e: any) {
+    console.warn("[performance] service_renewals adapter skipped:", e?.message);
+  }
+  return records;
+}
+
+async function getReworkHistoryData(
+  table: "product_posting_rework_history" | "software_rework_history",
+  moduleName: string,
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<PerfRecord[]> {
+  const records: PerfRecord[] = [];
+  try {
+    // Context/visibility only — workflow return_count already feeds the quality
+    // penalty, so these rework rows are NOT marked reviewable/returned to avoid
+    // double-counting in the score.
+    const { rows } = await pool.query(
+      `select id, from_phase, to_phase, action, remarks, created_at
+         from drm.${table}
+        where actor_user_id::text = $1::text
+          and created_at between $2 and $3`,
+      [userId, from, to],
+    );
+    for (const r of rows) {
+      records.push({
+        sourceModule: moduleName,
+        sourceId: String(r.id),
+        activityType: r.action ? `Rework: ${r.action}` : "Rework",
+        clientCompany: null,
+        title: [r.from_phase, r.to_phase].filter(Boolean).join(" → ") || "Rework",
+        taskValue: null,
+        status: r.action ?? null,
+        assignedAt: iso(r.created_at),
+        completedAt: iso(r.created_at),
+        dueAt: null,
+        isCompleted: true,
+        isApproved: false,
+        isRejected: false,
+        isReturned: false,
+        revisionCount: 0,
+        isOnTime: null,
+        remarks: r.remarks ?? null,
+        _assignable: false,
+        _reviewable: false,
+      });
+    }
+  } catch (e: any) {
+    console.warn(`[performance] ${table} adapter skipped:`, e?.message);
+  }
+  return records;
+}
+
+export const getProductPostingReworkData = (userId: string, from: Date, to: Date) =>
+  getReworkHistoryData("product_posting_rework_history", "product_posting", userId, from, to);
+
+export const getSoftwareReworkData = (userId: string, from: Date, to: Date) =>
+  getReworkHistoryData("software_rework_history", "software", userId, from, to);
+
 export interface TargetData {
   assignedTarget: number;
   achievedTarget: number;
@@ -746,6 +960,12 @@ export async function gatherRecords(userId: string, from: Date, to: Date): Promi
     getSoftwarePerformanceData(userId, from, to),
     getServicePerformanceData(userId, from, to),
     getSupportPerformanceData(userId, from, to),
+    getCallSessionsPerformanceData(userId, from, to),
+    getAppointmentsPerformanceData(userId, from, to),
+    getTaskTimeLogsPerformanceData(userId, from, to),
+    getServiceRenewalsPerformanceData(userId, from, to),
+    getProductPostingReworkData(userId, from, to),
+    getSoftwareReworkData(userId, from, to),
   ]);
   const all = parts.flat();
   all.sort((a, b) => {
