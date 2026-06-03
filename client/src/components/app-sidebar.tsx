@@ -266,6 +266,7 @@ const menuItems: MenuItem[] = [
       { title: "Edit Att", url: "/reports/edit-att", icon: Edit },
     ],
   },
+  { title: "Increment", icon: TrendingUp, url: "/drm/increment", permKey: "Increment" },
   {
     title: "Domain Hosting", icon: FileText, permKey: "Domain Hosting",
     items: [
@@ -371,6 +372,7 @@ const DEPT_NAME_TO_ROLES: Record<string, string[]> = {
   "Daily Reports": ["admin", "super_admin"],
   "Allowed IP": ["admin", "super_admin"],
   "Report": ["admin", "super_hod", "hod", "service_manager", "service_executive", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager", "it_manager", "reception_manager"],
+  "Increment": ["admin", "super_admin", "super_hod", "hod", "manager", "sales_manager", "sales_assistant_manager", "account_manager", "service_manager", "software_manager", "it_manager", "lead_manager", "marketing_manager", "qa_manager", "verification_manager", "dd_manager", "product_posting_manager", "reception_manager", "seo_smm_manager"],
 };
 
 // ─── Permission check: does this user's role have access? ────────────────────
