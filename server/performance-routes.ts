@@ -12,7 +12,7 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import {
-  buildSummary, buildRecords, buildTrends, buildTeamComparison,
+  buildSummary, buildRecords, buildTrends, buildTeamLeaderboard,
   getScoringConfig, saveScoringConfig, validateScoringConfig,
 } from "./services/performance.service";
 
@@ -183,37 +183,42 @@ export function registerPerformanceRoutes(app: Express) {
         where.push(`department = $${params.length}`);
       }
 
-      // Safety bound on how many employees we score in one request so the
-      // connection pool isn't overwhelmed (scoring itself stays batched in
-      // buildTeamComparison). When the scope has more employees than this we
-      // surface the true total so the UI can tell the manager results were
-      // truncated, instead of silently dropping employees past the old cap.
-      // Overridable via PERFORMANCE_TEAM_MAX_USERS (used by tests); defaults to 1000.
-      const MAX_TEAM_USERS = Number(process.env.PERFORMANCE_TEAM_MAX_USERS) || 1000;
+      // Pagination over a leaderboard that is ranked across the WHOLE scope.
+      // We fetch EVERY eligible user id (no pre-score, name-ordered truncation),
+      // score the entire scope (batched in buildTeamComparison so the pool is
+      // never flooded), rank by score, and only then slice the requested page.
+      // This guarantees the true top/bottom scorers always appear no matter how
+      // large the department is — selection is decoupled from any safety limit.
+      const DEFAULT_PAGE_SIZE = 50;
+      const MAX_PAGE_SIZE = 200;
+      const pageRaw = parseInt(String(req.query.page ?? "1"), 10);
+      const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
+      const pageSizeRaw = parseInt(String(req.query.pageSize ?? DEFAULT_PAGE_SIZE), 10);
+      const pageSize = Math.min(
+        MAX_PAGE_SIZE,
+        Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? pageSizeRaw : DEFAULT_PAGE_SIZE,
+      );
 
       const whereSql = where.join(" and ");
-      const countResult = await pool.query(
-        `select count(*)::int as total from drm.users where ${whereSql}`,
-        params,
-      );
-      const total = Number(countResult.rows[0]?.total ?? 0);
-
       const { rows } = await pool.query(
         `select id from drm.users
           where ${whereSql}
-          order by coalesce(full_name, name, email) asc
-          limit ${MAX_TEAM_USERS}`,
+          order by coalesce(full_name, name, email) asc`,
         params,
       );
       const ids = rows.map((r) => String(r.id));
-      const team = await buildTeamComparison(ids, range.from, range.to);
+      const leaderboard = await buildTeamLeaderboard(ids, range.from, range.to, { page, pageSize });
       res.json({
         dateRange: { startDate: range.from.toISOString(), endDate: range.to.toISOString() },
-        count: team.length,
-        total,
-        truncated: total > ids.length,
-        limit: MAX_TEAM_USERS,
-        team,
+        count: leaderboard.team.length,
+        total: ids.length,
+        scored: leaderboard.stats.scored,
+        totalScored: leaderboard.totalScored,
+        page: leaderboard.page,
+        pageSize: leaderboard.pageSize,
+        totalPages: leaderboard.totalPages,
+        stats: leaderboard.stats,
+        team: leaderboard.team,
       });
     } catch (err: any) {
       console.error("[performance] /team error", err);

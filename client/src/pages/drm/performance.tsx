@@ -72,10 +72,16 @@ type TeamResponse = {
   dateRange: { startDate: string; endDate: string };
   count: number;
   total?: number;
-  truncated?: boolean;
-  limit?: number;
-  team: TeamRow[];
+  scored?: number;
+  totalScored?: number;
+  page?: number;
+  pageSize?: number;
+  totalPages?: number;
+  stats?: { top: number | null; average: number | null; bottom: number | null; scored: number };
+  team: (TeamRow & { rank?: number })[];
 };
+
+const TEAM_PAGE_SIZE = 50;
 
 const ratingColor = (rating: string) => {
   switch (rating) {
@@ -115,6 +121,7 @@ export default function PerformancePage() {
   const [endDate, setEndDate] = useState<string>("");
   const [fetchParams, setFetchParams] = useState<FetchParams | null>(null);
   const [teamParams, setTeamParams] = useState<TeamParams | null>(null);
+  const [teamPage, setTeamPage] = useState<number>(1);
   const [formError, setFormError] = useState<string>("");
   const queryClient = useQueryClient();
 
@@ -178,11 +185,16 @@ export default function PerformancePage() {
   });
 
   const teamQuery = useQuery<TeamResponse | null>({
-    queryKey: ["/api/drm/performance/team", teamParams],
+    queryKey: ["/api/drm/performance/team", teamParams, teamPage],
     queryFn: async () => {
       if (!teamParams) return null;
       const { department, startDate, endDate } = teamParams;
-      const params = new URLSearchParams({ startDate, endDate });
+      const params = new URLSearchParams({
+        startDate,
+        endDate,
+        page: String(teamPage),
+        pageSize: String(TEAM_PAGE_SIZE),
+      });
       if (department) params.set("department", department);
       const res = await apiRequest("GET", `/api/drm/performance/team?${params.toString()}`);
       if (res.status === 403) throw new Error("You are not authorized to view team performance.");
@@ -200,6 +212,7 @@ export default function PerformancePage() {
     if (!startDate || !endDate) { setFormError("Please select a start and end date."); return; }
     if (new Date(startDate) > new Date(endDate)) { setFormError("Start date must be on or before end date."); return; }
     if (mode === "team") {
+      setTeamPage(1);
       setTeamParams({ department, startDate, endDate });
       return;
     }
@@ -214,6 +227,7 @@ export default function PerformancePage() {
     setEndDate("");
     setFetchParams(null);
     setTeamParams(null);
+    setTeamPage(1);
     setFormError("");
   };
 
@@ -223,6 +237,7 @@ export default function PerformancePage() {
     setFormError("");
     setFetchParams(null);
     setTeamParams(null);
+    setTeamPage(1);
   };
 
   const summary = summaryQuery.data ?? null;
@@ -376,7 +391,14 @@ export default function PerformancePage() {
         </Card>
       )}
 
-      {mode === "team" && teamQuery.data && <TeamComparison data={teamQuery.data} />}
+      {mode === "team" && teamQuery.data && (
+        <TeamComparison
+          data={teamQuery.data}
+          page={teamPage}
+          onPageChange={setTeamPage}
+          isFetching={teamQuery.isFetching}
+        />
+      )}
 
       {mode === "individual" && fetchParams && summaryQuery.isLoading && (
         <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
@@ -739,38 +761,46 @@ function ScoringConfigEditor({ initial, onSaved }: { initial: ScoringConfig; onS
   );
 }
 
-function TeamComparison({ data }: { data: TeamResponse }) {
+function TeamComparison({
+  data,
+  page,
+  onPageChange,
+  isFetching,
+}: {
+  data: TeamResponse;
+  page: number;
+  onPageChange: (p: number) => void;
+  isFetching: boolean;
+}) {
   const team = data.team ?? [];
-  const scored = team.filter((r) => r.effectiveScore !== null);
-  const topScore = scored.length ? scored[0].effectiveScore : null;
-  const bottomScore = scored.length ? scored[scored.length - 1].effectiveScore : null;
-  const avgScore = scored.length
-    ? Math.round((scored.reduce((s, r) => s + (r.effectiveScore as number), 0) / scored.length) * 10) / 10
-    : null;
-  const total = data.total ?? team.length;
-  const truncated = data.truncated ?? false;
+  // Stats are computed server-side across the WHOLE scored scope so the summary
+  // cards and TOP/LOW badges stay stable while paging. Fall back to the current
+  // page only if the server didn't send stats (older response shape).
+  const pageScored = team.filter((r) => r.effectiveScore !== null);
+  const topScore = data.stats?.top ?? (pageScored.length ? pageScored[0].effectiveScore : null);
+  const bottomScore =
+    data.stats?.bottom ?? (pageScored.length ? pageScored[pageScored.length - 1].effectiveScore : null);
+  const avgScore = data.stats?.average ?? null;
+  const scoredCount = data.stats?.scored ?? pageScored.length;
+  const totalScored = data.totalScored ?? team.length;
+  const pageSize = data.pageSize ?? TEAM_PAGE_SIZE;
+  const totalPages = data.totalPages ?? 1;
+  const currentPage = data.page ?? page;
+  const startRank = (currentPage - 1) * pageSize;
 
-  const chartData = team.map((r) => ({
+  const chartData = team.map((r, i) => ({
     name: r.employee.name || r.employee.email || "—",
     score: r.effectiveScore,
     rating: r.rating,
     hasScore: r.effectiveScore !== null,
+    rank: r.rank ?? startRank + i + 1,
   }));
   const chartHeight = Math.max(240, chartData.length * 32);
 
   return (
     <>
-      {truncated && (
-        <div
-          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-800 dark:border-amber-700/60 dark:bg-amber-900/20 dark:text-amber-300"
-          data-testid="banner-team-truncated"
-        >
-          Showing {team.length} of {total} employees. Not all employees in your
-          scope are shown — narrow by department to compare a complete team.
-        </div>
-      )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <ScoreCard label="Employees" value={`${team.length}`} testid="card-team-count" />
+        <ScoreCard label="Employees" value={`${totalScored}`} testid="card-team-count" />
         <ScoreCard label="Top Score" value={fmtScore(topScore)} highlight testid="card-team-top" />
         <ScoreCard label="Average Score" value={fmtScore(avgScore)} testid="card-team-avg" />
         <ScoreCard label="Lowest Score" value={fmtScore(bottomScore)} testid="card-team-bottom" />
@@ -829,11 +859,12 @@ function TeamComparison({ data }: { data: TeamResponse }) {
                 </TableRow>
               ) : (
                 team.map((r, i) => {
+                  const rank = r.rank ?? startRank + i + 1;
                   const isTop = r.effectiveScore !== null && r.effectiveScore === topScore;
-                  const isBottom = r.effectiveScore !== null && r.effectiveScore === bottomScore && scored.length > 1;
+                  const isBottom = r.effectiveScore !== null && r.effectiveScore === bottomScore && scoredCount > 1;
                   return (
                     <TableRow key={r.employee.id} data-testid="row-team-member">
-                      <TableCell className="text-[12px] font-semibold text-slate-600 dark:text-zinc-400">{i + 1}</TableCell>
+                      <TableCell className="text-[12px] font-semibold text-slate-600 dark:text-zinc-400">{rank}</TableCell>
                       <TableCell className="text-[13px] font-medium text-[#495057] dark:text-zinc-200 whitespace-nowrap">
                         {r.employee.name || r.employee.email || "—"}
                         {isTop && <span className="ml-2 rounded px-1.5 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">TOP</span>}
@@ -856,6 +887,39 @@ function TeamComparison({ data }: { data: TeamResponse }) {
             </TableBody>
           </Table>
         </CardContent>
+        {totalPages > 1 && (
+          <div
+            className="flex items-center justify-between gap-3 border-t border-gray-100 px-4 py-3 dark:border-zinc-800"
+            data-testid="team-pagination"
+          >
+            <div className="text-[12px] text-slate-500 dark:text-zinc-400">
+              Showing {team.length === 0 ? 0 : startRank + 1}–{startRank + team.length} of {totalScored} ranked employees
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage <= 1 || isFetching}
+                onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+                data-testid="button-team-prev"
+              >
+                Previous
+              </Button>
+              <span className="text-[12px] font-medium text-slate-600 dark:text-zinc-300">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage >= totalPages || isFetching}
+                onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+                data-testid="button-team-next"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
     </>
   );
