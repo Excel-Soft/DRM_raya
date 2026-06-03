@@ -188,7 +188,8 @@ export function registerPerformanceRoutes(app: Express) {
       // buildTeamComparison). When the scope has more employees than this we
       // surface the true total so the UI can tell the manager results were
       // truncated, instead of silently dropping employees past the old cap.
-      const MAX_TEAM_USERS = 1000;
+      // Overridable via PERFORMANCE_TEAM_MAX_USERS (used by tests); defaults to 1000.
+      const MAX_TEAM_USERS = Number(process.env.PERFORMANCE_TEAM_MAX_USERS) || 1000;
 
       const whereSql = where.join(" and ");
       const countResult = await pool.query(
