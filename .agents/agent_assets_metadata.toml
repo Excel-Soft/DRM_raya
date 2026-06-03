@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "XCPB3cxzRG3e3Ql7r7HNV"
+uri = "file://STAGE_0_BASELINE_REPORT.md"
+type = "text"
+title = "Stage 0 Baseline Report"
