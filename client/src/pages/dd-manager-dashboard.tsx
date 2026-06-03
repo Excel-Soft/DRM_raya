@@ -804,7 +804,7 @@ export default function DDManagerDashboard() {
                                         <CategoryHeader label="Performance" />
                                         <div className="space-y-2">
                                             <ProjectOverviewItem icon={FileText} label="Loan Application" onClick={() => setLocation("/hr/loan")} />
-                                            <ProjectOverviewItem icon={TrendingUp} label="Performance" onClick={() => setLocation("/analytics/user-activity")} />
+                                            <ProjectOverviewItem icon={TrendingUp} label="Performance" onClick={() => setLocation("/drm/performance")} />
                                         </div>
                                     </div>
 
