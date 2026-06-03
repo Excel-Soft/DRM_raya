@@ -1,3 +1,4 @@
 - [WebExcels DRM Replit setup](webexcels-drm-replit-setup.md) — boot/setup specifics for running this imported app on Replit.
 - [Performance module scoring](performance-module-scoring.md) — how access scoping + the scoring service compose; safe to score many users concurrently.
 - [HR feature module pattern](hr-feature-module-pattern.md) — proven shape for new DRM HR modules (increment/penalty): mount after permission, enforce auth in handlers, live-DB migrations not db:push.
+- [Link Report data source](link-report-data-source.md) — Team Report link list = UNION of link_reports + product/software evidence links; md5-derived display IDs; verification upsert per user+date range.

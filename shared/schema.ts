@@ -2740,3 +2740,48 @@ export const penalties = drmSchema.table("penalties", {
 
 export type Penalty = typeof penalties.$inferSelect;
 export type InsertPenalty = typeof penalties.$inferInsert;
+
+// Link Report (Team Report submodule) tables.
+export const linkReports = drmSchema.table("link_reports", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  displayId: serial("display_id"),
+  submittedByUserId: uuid("submitted_by_user_id").notNull().references(() => users.id),
+  companyId: uuid("company_id"),
+  companyName: text("company_name").notNull().default(""),
+  linkUrl: text("link_url").notNull(),
+  sourceModule: text("source_module").notNull().default("manual"),
+  sourceRecordId: uuid("source_record_id"),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+}, (t) => [
+  index("idx_link_reports_submitted_by").on(t.submittedByUserId),
+  index("idx_link_reports_submitted_at").on(t.submittedAt),
+  index("idx_link_reports_deleted_at").on(t.deletedAt),
+]);
+
+export const linkReportCommissionVerifications = drmSchema.table("link_report_commission_verifications", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  verifiedByUserId: uuid("verified_by_user_id").notNull().references(() => users.id),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  linkReportIds: jsonb("link_report_ids").notNull().default([]),
+  totalLinks: integer("total_links").notNull().default(0),
+  reward: decimal("reward", { precision: 12, scale: 2 }).notNull().default("0"),
+  status: text("status").notNull().default("VERIFIED"),
+  remarks: text("remarks"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_lrcv_user").on(t.userId),
+  index("idx_lrcv_verified_by").on(t.verifiedByUserId),
+  index("idx_lrcv_start_date").on(t.startDate),
+  index("idx_lrcv_end_date").on(t.endDate),
+]);
+
+export type LinkReport = typeof linkReports.$inferSelect;
+export type InsertLinkReport = typeof linkReports.$inferInsert;
+export type LinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferSelect;
+export type InsertLinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferInsert;

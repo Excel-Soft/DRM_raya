@@ -65,6 +65,7 @@ import targetSystemRoutes from "./target-system-routes";
 import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
 import { registerPenaltyRoutes } from "./penalty-routes";
+import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -324,6 +325,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Penalty Management routes (protected) — mounted after auth + permission middleware
   registerPenaltyRoutes(app);
+
+  // Team Report → Link Report routes (protected) — mounted after auth + permission middleware
+  registerTeamReportLinkReportRoutes(app);
 
   // put application routes here
   // prefix all routes with /api
