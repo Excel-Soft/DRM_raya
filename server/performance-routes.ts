@@ -29,40 +29,23 @@ async function getAllowedUserIds(req: Request): Promise<string[] | null> {
 
   if (FULL_ACCESS_ROLES.includes(activeRole)) return null;
 
-  if (activeRole === "hod") {
+  // HOD and manager roles are scoped to their OWN DEPARTMENT (plus self).
+  //
+  // The task model wants HOD=department and manager=team. There is no
+  // team-hierarchy column on drm.users, and role normalization is lossy (e.g.
+  // normalizeRole("service_assistant_manager") collapses to a sales role), so
+  // deriving a global role-family match (`role = ANY(...)`) would risk leaking
+  // users across teams/departments. Department is a reliable column that
+  // guarantees no cross-department exposure, so we use it for both: a manager's
+  // team is, at worst, a subset of their department.
+  if (activeRole === "hod" || isManagerialRole(activeRole)) {
     try {
-      const me = await pool.query(`select department from drm.users where id::text = $1::text limit 1`, [myId]);
-      const dept = me.rows[0]?.department;
-      if (!dept) return [String(myId)];
-      const { rows } = await pool.query(`select id from drm.users where department = $1`, [dept]);
-      const ids = rows.map((r) => String(r.id));
-      ids.push(String(myId));
-      return Array.from(new Set(ids));
-    } catch {
-      return [String(myId)];
-    }
-  }
-
-  if (isManagerialRole(activeRole)) {
-    // No team-hierarchy column exists on drm.users, so scope a manager to the
-    // roles they oversee (same role family) using the role naming convention
-    // the app itself uses elsewhere, plus their own department, plus self.
-    try {
-      const targetRoles = new Set<string>([activeRole]);
-      if (activeRole.endsWith("_manager")) {
-        targetRoles.add(activeRole.replace("_manager", "_executive"));
-        targetRoles.add(activeRole.replace("_manager", "_assistant_manager"));
-      } else if (activeRole.endsWith("_assistant_manager")) {
-        targetRoles.add(activeRole.replace("_assistant_manager", "_executive"));
-      }
       const me = await pool.query(`select department from drm.users where id::text = $1::text limit 1`, [myId]);
       const dept = me.rows[0]?.department ?? null;
+      if (!dept) return [String(myId)];
       const { rows } = await pool.query(
-        `select id from drm.users
-          where role = ANY($1::text[])
-             or (($2::text is not null) and department = $2::text)
-             or id::text = $3::text`,
-        [Array.from(targetRoles), dept, myId],
+        `select id from drm.users where department = $1 or id::text = $2::text`,
+        [dept, myId],
       );
       const ids = rows.map((r) => String(r.id));
       ids.push(String(myId));
