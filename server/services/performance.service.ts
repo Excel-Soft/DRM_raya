@@ -14,6 +14,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pool } from "../db";
+import { policiesRepository } from "../repositories/policies.repository";
 
 // Request-scoped collector for adapter failures. A thrown query error (missing
 // table/column, bad cast, etc.) is a genuine failure that must NOT be silently
@@ -858,29 +859,136 @@ export async function getAttendanceContext(userId: string, from: Date, to: Date)
 }
 
 // ----------------------------------------------------------------------------
+// Scoring configuration (admin-configurable weights & quality penalties)
+//
+// The formula component weights and the quality penalty amounts used to be
+// hardcoded constants here. They are now persisted in drm.policies under
+// SCORING_CONFIG_KEY and read at scoring time, so an authorized admin can tune
+// scoring policy without code changes. The defaults below reproduce the
+// original 40/30/20/10 weights and the original penalty amounts, so behaviour
+// is unchanged until an admin overrides them.
+// ----------------------------------------------------------------------------
+
+export const SCORING_CONFIG_KEY = "performance_scoring";
+
+export interface ScoringConfig {
+  weights: {
+    workCompletion: number;
+    quality: number;
+    targetAchievement: number;
+    timeliness: number;
+  };
+  penalties: {
+    revision: number;
+    return: number;
+    rejected: number;
+    complaint: number;
+  };
+}
+
+export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
+  weights: { workCompletion: 40, quality: 30, targetAchievement: 20, timeliness: 10 },
+  penalties: { revision: 2, return: 2, rejected: 5, complaint: 5 },
+};
+
+const coerceNonNeg = (v: any, fallback: number): number => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+};
+
+// Lenient: never throws. Used for reads — missing/invalid fields fall back to
+// the default so a corrupt or partial stored value can never break scoring.
+export function normalizeScoringConfig(raw: any): ScoringConfig {
+  const w = raw?.weights ?? {};
+  const p = raw?.penalties ?? {};
+  const d = DEFAULT_SCORING_CONFIG;
+  return {
+    weights: {
+      workCompletion: coerceNonNeg(w.workCompletion, d.weights.workCompletion),
+      quality: coerceNonNeg(w.quality, d.weights.quality),
+      targetAchievement: coerceNonNeg(w.targetAchievement, d.weights.targetAchievement),
+      timeliness: coerceNonNeg(w.timeliness, d.weights.timeliness),
+    },
+    penalties: {
+      revision: coerceNonNeg(p.revision, d.penalties.revision),
+      return: coerceNonNeg(p.return, d.penalties.return),
+      rejected: coerceNonNeg(p.rejected, d.penalties.rejected),
+      complaint: coerceNonNeg(p.complaint, d.penalties.complaint),
+    },
+  };
+}
+
+// Strict: used on write. Returns either a validated config or an error message.
+// Weights must each be a finite number >= 0 and sum to 100 (the final-score
+// formula divides the weighted sum by 100, so any other total would skew it).
+export function validateScoringConfig(raw: any): { config: ScoringConfig } | { error: string } {
+  if (!raw || typeof raw !== "object") return { error: "Body must be an object" };
+  const fields: Array<["weights" | "penalties", string]> = [
+    ["weights", "workCompletion"], ["weights", "quality"],
+    ["weights", "targetAchievement"], ["weights", "timeliness"],
+    ["penalties", "revision"], ["penalties", "return"],
+    ["penalties", "rejected"], ["penalties", "complaint"],
+  ];
+  for (const [grp, key] of fields) {
+    const n = Number(raw?.[grp]?.[key]);
+    if (!Number.isFinite(n) || n < 0) {
+      return { error: `${grp}.${key} must be a number greater than or equal to 0` };
+    }
+  }
+  const w = raw.weights;
+  const sum = Number(w.workCompletion) + Number(w.quality) + Number(w.targetAchievement) + Number(w.timeliness);
+  if (Math.round(sum * 10) / 10 !== 100) {
+    return { error: `Component weights must sum to 100 (received ${Math.round(sum * 10) / 10})` };
+  }
+  return { config: normalizeScoringConfig(raw) };
+}
+
+export async function getScoringConfig(): Promise<ScoringConfig> {
+  try {
+    const policy = await policiesRepository.findByKey(SCORING_CONFIG_KEY);
+    if (policy?.value_json) return normalizeScoringConfig(policy.value_json);
+  } catch (e: any) {
+    adapterCatch("scoring config load skipped", e);
+  }
+  return DEFAULT_SCORING_CONFIG;
+}
+
+export async function saveScoringConfig(config: ScoringConfig): Promise<ScoringConfig> {
+  await policiesRepository.upsertByKey(SCORING_CONFIG_KEY, {
+    key: SCORING_CONFIG_KEY,
+    value_json: config as any,
+    description: "Performance scoring: component weights & quality penalties",
+  } as any);
+  return config;
+}
+
+// ----------------------------------------------------------------------------
 // Calculation helpers
 // ----------------------------------------------------------------------------
 
-export function calculateWorkCompletion(records: PerfRecord[]): ComponentResult {
+export function calculateWorkCompletion(records: PerfRecord[], config: ScoringConfig = DEFAULT_SCORING_CONFIG): ComponentResult {
+  const weight = config.weights.workCompletion;
   const assignable = records.filter((r) => r._assignable);
   const assigned = assignable.length;
   const completed = assignable.filter((r) => r.isCompleted).length;
   if (assigned === 0) {
-    return { weight: 40, score: null, weightedScore: null, assigned: 0, completed: 0, status: "N/A", details: "No assignable work items found in range" };
+    return { weight, score: null, weightedScore: null, assigned: 0, completed: 0, status: "N/A", details: "No assignable work items found in range" };
   }
   const score = round1(clamp((completed / assigned) * 100, 0, 100));
   return {
-    weight: 40, score, weightedScore: round1(score * 0.4),
+    weight, score, weightedScore: round1(score * (weight / 100)),
     assigned, completed, status: "available",
     details: `${completed}/${assigned} assignable items completed`,
   };
 }
 
-export function calculateQuality(records: PerfRecord[]): ComponentResult {
+export function calculateQuality(records: PerfRecord[], config: ScoringConfig = DEFAULT_SCORING_CONFIG): ComponentResult {
+  const weight = config.weights.quality;
+  const pen = config.penalties;
   const reviewable = records.filter((r) => r._reviewable);
   const reviewed = reviewable.length;
   if (reviewed === 0) {
-    return { weight: 30, score: null, weightedScore: null, approved: 0, reviewed: 0, rejected: 0, revisions: 0, returns: 0, approvalRate: null, status: "N/A", details: "No reviewed/approved items found in range" };
+    return { weight, score: null, weightedScore: null, approved: 0, reviewed: 0, rejected: 0, revisions: 0, returns: 0, approvalRate: null, status: "N/A", details: "No reviewed/approved items found in range" };
   }
   const approved = reviewable.filter((r) => r.isApproved).length;
   const rejected = records.filter((r) => r.isRejected).length;
@@ -888,32 +996,34 @@ export function calculateQuality(records: PerfRecord[]): ComponentResult {
   const revisions = records.reduce((s, r) => s + (r.revisionCount || 0), 0);
   const complaints = records.filter((r) => r.sourceModule === "service" && r.activityType === "Complaint" && !r.isCompleted).length;
   const approvalRate = (approved / reviewed) * 100;
-  const score = round1(clamp(approvalRate - revisions * 2 - returns * 2 - rejected * 5 - complaints * 5, 0, 100));
+  const score = round1(clamp(approvalRate - revisions * pen.revision - returns * pen.return - rejected * pen.rejected - complaints * pen.complaint, 0, 100));
   return {
-    weight: 30, score, weightedScore: round1(score * 0.3),
+    weight, score, weightedScore: round1(score * (weight / 100)),
     approved, reviewed, rejected, revisions, returns,
     approvalRate: round1(approvalRate), status: "available",
     details: `${approved}/${reviewed} approved; ${revisions} revisions, ${returns} returns, ${rejected} rejected`,
   };
 }
 
-export function calculateTargetAchievement(target: TargetData): ComponentResult {
+export function calculateTargetAchievement(target: TargetData, config: ScoringConfig = DEFAULT_SCORING_CONFIG): ComponentResult {
+  const weight = config.weights.targetAchievement;
   if (!target.hasTarget || target.assignedTarget <= 0) {
-    return { weight: 20, score: null, weightedScore: null, assignedTarget: target.assignedTarget, achievedTarget: target.achievedTarget, status: "N/A", details: target.details };
+    return { weight, score: null, weightedScore: null, assignedTarget: target.assignedTarget, achievedTarget: target.achievedTarget, status: "N/A", details: target.details };
   }
   const score = round1(clamp((target.achievedTarget / target.assignedTarget) * 100, 0, 100));
   return {
-    weight: 20, score, weightedScore: round1(score * 0.2),
+    weight, score, weightedScore: round1(score * (weight / 100)),
     assignedTarget: target.assignedTarget, achievedTarget: target.achievedTarget,
     status: "available", details: `${target.achievedTarget} / ${target.assignedTarget} achieved`,
   };
 }
 
-export function calculateTimeliness(records: PerfRecord[]): ComponentResult {
+export function calculateTimeliness(records: PerfRecord[], config: ScoringConfig = DEFAULT_SCORING_CONFIG): ComponentResult {
+  const weight = config.weights.timeliness;
   const completedWithDue = records.filter((r) => r.isCompleted && r.dueAt && r.completedAt);
   const completedItems = completedWithDue.length;
   if (completedItems === 0) {
-    return { weight: 10, score: null, weightedScore: null, onTime: 0, late: 0, averageCompletionTime: null, status: "N/A", details: "No completed items with a deadline found in range" };
+    return { weight, score: null, weightedScore: null, onTime: 0, late: 0, averageCompletionTime: null, status: "N/A", details: "No completed items with a deadline found in range" };
   }
   const onTime = completedWithDue.filter((r) => r.isOnTime === true).length;
   const late = completedItems - onTime;
@@ -924,7 +1034,7 @@ export function calculateTimeliness(records: PerfRecord[]): ComponentResult {
   const avgDays = durations.length ? round1(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
   const score = round1(clamp((onTime / completedItems) * 100, 0, 100));
   return {
-    weight: 10, score, weightedScore: round1(score * 0.1),
+    weight, score, weightedScore: round1(score * (weight / 100)),
     onTime, late, averageCompletionTime: avgDays, status: "available",
     details: `${onTime}/${completedItems} completed on time` + (avgDays != null ? `; avg ${avgDays}d` : ""),
   };
@@ -1059,16 +1169,17 @@ export async function buildSummary(userId: string, from: Date, to: Date, include
   const dataWarnings: string[] = [];
   return perfWarnings.run(dataWarnings, async () => {
   const employee = await getEmployee(userId);
-  const [records, targetData, attendanceContext] = await Promise.all([
+  const [records, targetData, attendanceContext, scoringConfig] = await Promise.all([
     gatherRecords(userId, from, to),
     getTargetAchievementData(userId, from, to),
     getAttendanceContext(userId, from, to),
+    getScoringConfig(),
   ]);
 
-  const workCompletion = calculateWorkCompletion(records);
-  const quality = calculateQuality(records);
-  const targetAchievement = calculateTargetAchievement(targetData);
-  const timeliness = calculateTimeliness(records);
+  const workCompletion = calculateWorkCompletion(records, scoringConfig);
+  const quality = calculateQuality(records, scoringConfig);
+  const targetAchievement = calculateTargetAchievement(targetData, scoringConfig);
+  const timeliness = calculateTimeliness(records, scoringConfig);
   const components = { workCompletion, quality, targetAchievement, timeliness };
 
   const final = calculateFinalScore(components);
@@ -1082,6 +1193,7 @@ export async function buildSummary(userId: string, from: Date, to: Date, include
       : { id: userId, name: null, email: null, role: null, department: null },
     dateRange: { startDate: from.toISOString(), endDate: to.toISOString() },
     components,
+    scoringConfig,
     finalScore: final.finalScore,
     normalizedFinalScore: final.normalizedFinalScore,
     formulaCompletenessPercent: final.formulaCompletenessPercent,
