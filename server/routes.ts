@@ -64,6 +64,7 @@ import { registerPostingDataRoutes } from "./posting-data-routes";
 import targetSystemRoutes from "./target-system-routes";
 import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
+import { registerPenaltyRoutes } from "./penalty-routes";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -320,6 +321,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Increment Management routes (protected) — mounted after auth + permission middleware
   registerIncrementRoutes(app);
+
+  // Penalty Management routes (protected) — mounted after auth + permission middleware
+  registerPenaltyRoutes(app);
 
   // put application routes here
   // prefix all routes with /api

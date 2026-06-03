@@ -2705,3 +2705,38 @@ export const incrementEvaluations = drmSchema.table("increment_evaluations", {
 
 export type IncrementEvaluation = typeof incrementEvaluations.$inferSelect;
 export type InsertIncrementEvaluation = typeof incrementEvaluations.$inferInsert;
+
+// ─── D&D Manager Penalty Management ──────────────────────────────────────────
+export const penalties = drmSchema.table("penalties", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  employeeId: uuid("employee_id").notNull().references(() => users.id),
+  department: text("department"),
+  penaltyHead: text("penalty_head").notNull(),
+  reason: text("reason").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  penaltyDate: date("penalty_date").notNull(),
+  createdBy: uuid("created_by").notNull().references(() => users.id),
+  approvalStatus: text("approval_status").notNull().default("PENDING"),
+  attachmentUrl: text("attachment_url"),
+  attachmentName: text("attachment_name"),
+  managerRemarks: text("manager_remarks"),
+  hodRemarks: text("hod_remarks"),
+  approvedBy: uuid("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  rejectedBy: uuid("rejected_by").references(() => users.id),
+  rejectedAt: timestamp("rejected_at"),
+  employeeAcknowledgedAt: timestamp("employee_acknowledged_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+}, (t) => [
+  index("idx_penalties_employee").on(t.employeeId),
+  index("idx_penalties_created_by").on(t.createdBy),
+  index("idx_penalties_date").on(t.penaltyDate),
+  index("idx_penalties_status").on(t.approvalStatus),
+  index("idx_penalties_department").on(t.department),
+  index("idx_penalties_deleted_at").on(t.deletedAt),
+]);
+
+export type Penalty = typeof penalties.$inferSelect;
+export type InsertPenalty = typeof penalties.$inferInsert;
