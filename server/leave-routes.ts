@@ -2,6 +2,12 @@ import type { Express } from "express";
 import { leaveRequestRepository } from "./repositories/leave-request.repository";
 import { z } from "zod";
 import { pool } from "./db";
+import { isManagerialRole } from "./utils/role-utils";
+
+// Resolve the caller's effective (active) role from the auth payload.
+function callerRole(req: any): string {
+  return (req.user?.activeRoleId ?? req.user?.roleId ?? req.user?.role ?? "") as string;
+}
 
 export function registerLeaveRoutes(app: Express) {
   // GET /api/leave/colleagues - Get colleagues of a specific role
@@ -230,7 +236,10 @@ export function registerLeaveRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      // TODO: Add role check for manager/HOD
+      // Only managerial roles (manager/HOD/super_hod/admin) may approve.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to approve leave requests." });
+      }
       const request = await leaveRequestRepository.approve(req.params.id, userId);
       
       if (!request) {
@@ -255,8 +264,11 @@ export function registerLeaveRoutes(app: Express) {
 
       const userId = req.user.userId;
       const { reason } = req.body;
-      
-      // TODO: Add role check for manager/HOD
+
+      // Only managerial roles (manager/HOD/super_hod/admin) may reject.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to reject leave requests." });
+      }
       const request = await leaveRequestRepository.reject(req.params.id, userId, reason);
       
       if (!request) {

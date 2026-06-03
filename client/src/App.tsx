@@ -407,23 +407,35 @@ function Router() {
 
 
 
+type AuthStatus = "loading" | "authed" | "unauthed";
+
 function AppContent() {
   const [location, setLocation] = useLocation();
   const { theme, toggleTheme } = useTheme();
   const [userName, setUserName] = useState<string>("John Doe");
   const [userRole, setUserRole] = useState<string>("Sales Executive");
   const [userRoles, setUserRoles] = useState<string[]>([]);
+  const [activeRoleId, setActiveRoleId] = useState<string>("");
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("loading");
 
-  // Add route protection
-  useRouteProtection();
+  const isAuthRoute = location === "/auth";
+
+  // Add route protection driven by the authoritative server auth state.
+  useRouteProtection({
+    activeRoleId,
+    userRoles,
+    ready: authStatus !== "loading",
+    isAuthenticated: authStatus === "authed",
+  });
 
   const style = {
     "--sidebar-width": "280px",
   };
 
-  const isAuthRoute = location === "/auth";
-
   useEffect(() => {
+    // The auth page does not require a validated session.
+    if (isAuthRoute) return;
+
     const token = sessionStorage.getItem("token");
     const storedName = sessionStorage.getItem("userName");
     const storedRole = sessionStorage.getItem("userRole");
@@ -432,35 +444,56 @@ function AppContent() {
     if (storedRole) setUserRole(storedRole);
     if (storedRoles) try { setUserRoles(JSON.parse(storedRoles)); } catch { }
 
-    // If no token, we still try to fetch /me in case MOCK_AUTH is enabled.
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    fetch("/api/auth/me", {
-      headers,
-    })
+    let cancelled = false;
+
+    // Authoritatively validate the session against the server before showing
+    // any private page. Stale sessionStorage values are NOT trusted on their own.
+    fetch("/api/auth/me", { headers, credentials: "include" })
       .then(async (res) => {
         if (!res.ok) throw new Error("unauthenticated");
         return res.json();
       })
       .then((data) => {
+        if (cancelled) return;
         if (data?.fullName) {
           setUserName(data.fullName);
           sessionStorage.setItem("userName", data.fullName);
         }
+        const effectiveRole = data?.activeRoleId || data?.role;
         if (data?.role) {
           setUserRole(data.role);
           sessionStorage.setItem("userRole", data.role);
         }
+        if (effectiveRole) setActiveRoleId(effectiveRole);
         if (data?.roles && Array.isArray(data.roles)) {
           setUserRoles(data.roles);
           sessionStorage.setItem("userRoles", JSON.stringify(data.roles));
         }
+        setAuthStatus("authed");
       })
       .catch(() => {
-        // ignore; fallback to stored values
+        if (cancelled) return;
+        // Fail-closed: the session is invalid/expired. Clear any stale client
+        // state, surface an expired-session message, and force re-login. This
+        // prevents private pages from flashing for an unauthenticated user.
+        sessionStorage.removeItem("token");
+        sessionStorage.removeItem("userId");
+        sessionStorage.removeItem("userName");
+        sessionStorage.removeItem("userRole");
+        sessionStorage.removeItem("userRoles");
+        sessionStorage.setItem("authMessage", "Your session has expired. Please sign in again.");
+        queryClient.clear();
+        setAuthStatus("unauthed");
+        setLocation("/auth");
       });
-  }, [location]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location, isAuthRoute, setLocation]);
 
   const handleLogout = () => {
     sessionStorage.removeItem("token");
@@ -469,7 +502,46 @@ function AppContent() {
     sessionStorage.removeItem("userRoles");
     // Clear the query cache to ensure subsequent logins do not see cached data
     queryClient.clear();
+    setAuthStatus("unauthed");
     setLocation("/auth");
+  };
+
+  const renderBody = () => {
+    if (isAuthRoute) {
+      return <Router />;
+    }
+    // Hold rendering until the server has validated the session — avoids a
+    // flash of private content before auth resolves.
+    if (authStatus === "loading") {
+      return (
+        <div className="flex h-screen w-full items-center justify-center text-muted-foreground">
+          Loading…
+        </div>
+      );
+    }
+    // Not authenticated: redirect is in flight (handled in the effect / logout).
+    if (authStatus !== "authed") {
+      return null;
+    }
+    return (
+      <div className="flex w-full min-w-0 overflow-x-hidden">
+        <AppSidebar />
+        <div className="flex flex-col flex-1 min-w-0 overflow-x-hidden">
+          <TopBar
+            userRole={userRole}
+            userRoles={userRoles}
+            userName={userName}
+            isDark={theme === "dark"}
+            onThemeToggle={toggleTheme}
+            onLogout={handleLogout}
+            onNavigate={(path) => setLocation(path)}
+          />
+          <main className="page-frame">
+            <Router />
+          </main>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -478,27 +550,7 @@ function AppContent() {
         <ScreenContextProvider>
           <AssistantProvider>
             <SidebarProvider style={style as React.CSSProperties}>
-              {isAuthRoute ? (
-                <Router />
-              ) : (
-                <div className="flex w-full min-w-0 overflow-x-hidden">
-                  <AppSidebar />
-                  <div className="flex flex-col flex-1 min-w-0 overflow-x-hidden">
-                    <TopBar
-                      userRole={userRole}
-                      userRoles={userRoles}
-                      userName={userName}
-                      isDark={theme === "dark"}
-                      onThemeToggle={toggleTheme}
-                      onLogout={handleLogout}
-                      onNavigate={(path) => setLocation(path)}
-                    />
-                    <main className="page-frame">
-                      <Router />
-                    </main>
-                  </div>
-                </div>
-              )}
+              {renderBody()}
             </SidebarProvider>
             <AIAssistantButton />
             <Toaster />

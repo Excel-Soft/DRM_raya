@@ -70,6 +70,16 @@ import { registerProjectReportRoutes } from "./project-report-routes";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // SECURITY (J): MOCK_AUTH bypasses real JWT authentication. It must never be
+  // active in production. If it is enabled in a production build, refuse to start.
+  if (process.env.NODE_ENV === "production" && process.env.MOCK_AUTH === "true") {
+    throw new Error(
+      "FATAL: MOCK_AUTH=true is not allowed when NODE_ENV=production. " +
+        "Mock authentication bypasses real auth and would expose the app. " +
+        "Unset MOCK_AUTH (or set it to false) before starting in production.",
+    );
+  }
+
   // To enable legacy mock auth (NOT recommended), set MOCK_AUTH=true.
   // Refreshing server to apply .env changes...
   if (process.env.MOCK_AUTH === "true") {

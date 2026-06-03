@@ -56,25 +56,56 @@ const ROLE_DASHBOARDS: Record<string, string> = {
     marketing_manager: "/dashboard/marketing-manager",
 };
 
-export function useRouteProtection() {
+const normalize = (r?: string | null) =>
+    (r || "").toLowerCase().trim().replace(/\s+/g, "_");
+
+interface RouteProtectionState {
+    /** Server-validated active role (from /api/auth/me activeRoleId/role). */
+    activeRoleId?: string | null;
+    /** Server-validated full list of assigned roles. */
+    userRoles?: string[];
+    /** True once the authoritative /api/auth/me check has resolved. */
+    ready: boolean;
+    /** True when the server confirmed the session is authenticated. */
+    isAuthenticated: boolean;
+}
+
+export function useRouteProtection(authState: RouteProtectionState) {
     const [location, setLocation] = useLocation();
+    const { activeRoleId, userRoles, ready, isAuthenticated } = authState;
 
     useEffect(() => {
-        const userRole = sessionStorage.getItem("userRole")?.toLowerCase().replace(/\s+/g, "_") || "";
+        // Fail-closed: do not evaluate (and never fail-open) until the
+        // authoritative server check has resolved. While loading we hold the
+        // current location; App-level gating shows a loading state instead.
+        if (!ready) return;
+
+        // If the server says we are not authenticated, App.tsx is responsible
+        // for clearing storage and redirecting to /auth. Nothing to do here.
+        if (!isAuthenticated) return;
+
+        // Build the set of roles the user authoritatively has.
+        const roles = new Set<string>();
+        if (activeRoleId) roles.add(normalize(activeRoleId));
+        (userRoles || []).forEach((r) => roles.add(normalize(r)));
+
+        const primaryRole = normalize(activeRoleId) || Array.from(roles)[0] || "";
 
         // Check if current route requires specific permissions
         for (const [routePattern, allowedRoles] of Object.entries(ROUTE_PERMISSIONS)) {
             if (location.startsWith(routePattern)) {
-                const isAllowed = allowedRoles.some(role => role.toLowerCase() === userRole);
+                const allowed = allowedRoles.map((r) => r.toLowerCase());
+                const isAllowed = Array.from(roles).some((r) => allowed.includes(r));
 
                 if (!isAllowed) {
-                    // Redirect to role's default dashboard
-                    const defaultDashboard = ROLE_DASHBOARDS[userRole] || "/";
-                    console.log(`[Route Protection] Redirecting ${userRole} from ${location} to ${defaultDashboard}`);
+                    // Fail-closed: unauthorized for this route → redirect to the
+                    // user's default dashboard.
+                    const defaultDashboard = ROLE_DASHBOARDS[primaryRole] || "/";
+                    console.log(`[Route Protection] Redirecting ${primaryRole || "unknown"} from ${location} to ${defaultDashboard}`);
                     setLocation(defaultDashboard);
                     return;
                 }
             }
         }
-    }, [location, setLocation]);
+    }, [location, setLocation, activeRoleId, userRoles, ready, isAuthenticated]);
 }

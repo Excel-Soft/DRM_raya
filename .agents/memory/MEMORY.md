@@ -3,3 +3,4 @@
 - [HR feature module pattern](hr-feature-module-pattern.md) — proven shape for new DRM HR modules (increment/penalty): mount after permission, enforce auth in handlers, live-DB migrations not db:push.
 - [Link Report data source](link-report-data-source.md) — Team Report link list = UNION of link_reports + product/software evidence links; md5-derived display IDs; verification upsert per user+date range.
 - [Express route shadowing](express-route-shadowing.md) — exact /api/reports/* routes must mount before registerReportsRoutes or the /reports/:type param route shadows them.
+- [DRM auth mount order](drm-auth-mount-order.md) — global /api authMiddleware mounts AFTER some routers (e.g. /api/drm), leaving them public; secure locally or remount after auth.

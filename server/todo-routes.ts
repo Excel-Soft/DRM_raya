@@ -113,15 +113,9 @@ export function registerTodoRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
+      // Log full DB error details server-side only; do not leak PG message/detail/code to the client.
       console.error("[todo] Error creating todo tasks:", error);
-      // Log more details about the error
-      const pgError = error as any;
-      return res.status(500).json({
-        error: "Failed to create tasks",
-        message: pgError.message,
-        detail: pgError.detail,
-        code: pgError.code
-      });
+      return res.status(500).json({ error: "Failed to create tasks" });
     }
   });
 

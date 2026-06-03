@@ -468,18 +468,22 @@ export function AppSidebar() {
   const activeClass = "bg-emerald-50 dark:bg-emerald-900/40 text-emerald-900 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-800/40 font-medium transition-colors";
 
   // ── Fetch live permissions from DB ──────────────────────────────────────────
-  const { data: menuPermissions = [], isLoading: permsLoading } = useQuery<MenuPermission[]>({
+  const { data: menuPermissions = [], isLoading: permsLoading, isError: permsError } = useQuery<MenuPermission[]>({
     queryKey: ["/api/drm/permissions"],
     queryFn: async () => {
       const token = sessionStorage.getItem("token") || "";
       const res = await fetch("/api/drm/permissions", {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) return [];
+      // Throw on failure so the query reports an error state and the sidebar
+      // can fail CLOSED (minimal nav) instead of silently treating it as "no
+      // restrictions".
+      if (!res.ok) throw new Error("Failed to load permissions");
       return res.json();
     },
     staleTime: 0, // Always fresh - re-fetch on every page load
     refetchOnMount: true,
+    retry: 1,
   });
 
   // ── Get current user role info (reactive) ─────────────────────────────────
@@ -571,11 +575,17 @@ export function AppSidebar() {
       return true;
     }
     
-    // If permissions not loaded yet or empty, show all items (fail-open)
-    if (permsLoading || menuPermissions.length === 0) return true;
     // Items with no permKey — show to all logged-in users
     if (!item.permKey) return true;
-    // Check permission from DB
+    // Explicit admin/super_admin exception: real admins always get full nav.
+    if (isRealAdmin) return true;
+    // Fail-closed: while permissions are still loading, hide permissioned items
+    // (a skeleton is shown in their place).
+    if (permsLoading) return false;
+    // Fail-closed: if permissions failed to load, show only minimal nav.
+    if (permsError) return false;
+    // Check permission from DB (hasAccess also covers the hardcoded role map
+    // when no DB rows exist for a given menu).
     const rolesToUse = isImpersonating ? [] : userAllRoles;
     const isAllowed = hasAccess(menuPermissions, item.permKey, userRoleName, rolesToUse);
     if (item.title === "Reports" || item.title === "Customer") {
