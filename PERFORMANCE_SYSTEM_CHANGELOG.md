@@ -27,6 +27,22 @@ All source adapters are defensive: a missing/empty table contributes nothing
 instead of throwing. With the database currently empty, the system honestly
 returns `N/A` everywhere and a `No Data` rating rather than fake numbers.
 
+**Partial-failure transparency.** A swallowed query *error* (a missing table or
+column, a bad cast, etc.) is different from an empty table, and must not be
+disguised as "no data". Every adapter records such failures into a
+request-scoped collector; `buildSummary` returns them as `dataWarnings` (with the
+DB error code) and sets `partialDataFailure: true`. The UI shows an amber banner
+listing the sources that failed to load, so a score is never silently computed
+over a broken source as if it were zero.
+
+**Schema-grounded `gm_entries` approval.** The approval columns on
+`drm.gm_entries` differ between the Drizzle schema (`shared/schema.ts`) and the
+live database, so the service queries `information_schema.columns` once (cached)
+and builds the "approved" predicate and SELECT list **only** from the approval
+columns that actually exist (`status`, and any of `approval_status`,
+`final_status`, `hod_status`, `super_hod_status` present). This keeps every
+`gm_entries` query schema-grounded and never references a non-existent column.
+
 ## Components & data sources
 
 | Component | Weight | Source signals |
