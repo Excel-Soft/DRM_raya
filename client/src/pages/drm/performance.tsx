@@ -6,10 +6,15 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CalendarIcon } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
+import { CalendarIcon, Download, FileSpreadsheet, FileText } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
 } from "recharts";
+import { exportPerformancePDF, exportPerformanceExcel } from "@/lib/performance-export";
 
 type UserOpt = {
   id: string; name: string | null; fullName: string | null; email: string | null;
@@ -61,6 +66,7 @@ const fmtDate = (v: string | null | undefined) => {
 };
 
 export default function PerformancePage() {
+  const { toast } = useToast();
   const [selectedUser, setSelectedUser] = useState<string>("");
   const [department, setDepartment] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
@@ -136,6 +142,18 @@ export default function PerformancePage() {
   };
 
   const summary = summaryQuery.data ?? null;
+
+  const handleExport = (format: "pdf" | "excel") => {
+    if (!summary) return;
+    try {
+      if (format === "pdf") exportPerformancePDF(summary);
+      else exportPerformanceExcel(summary);
+      toast({ title: "Exported", description: `Performance report downloaded as ${format === "pdf" ? "PDF" : "Excel"}.` });
+    } catch (e: any) {
+      toast({ title: "Export failed", description: e?.message || "Could not generate the report.", variant: "destructive" });
+    }
+  };
+
   const components = summary?.components;
   const componentRows = components
     ? [
@@ -235,6 +253,26 @@ export default function PerformancePage() {
               <div><span className="text-[12px] text-slate-400">Role</span><div className="font-medium text-[#495057] dark:text-zinc-300">{summary.employee.role || "—"}</div></div>
               <div><span className="text-[12px] text-slate-400">Department</span><div className="font-medium text-[#495057] dark:text-zinc-300">{summary.employee.department || "—"}</div></div>
               <div><span className="text-[12px] text-slate-400">Records found</span><div className="font-medium text-[#495057] dark:text-zinc-300">{summary.totalRecords}</div></div>
+              <div className="ml-auto">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button className="h-10 px-5 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide" data-testid="button-export">
+                      <Download className="w-4 h-4 mr-2" />
+                      Export
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => handleExport("pdf")} data-testid="button-export-pdf">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Download PDF
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleExport("excel")} data-testid="button-export-excel">
+                      <FileSpreadsheet className="w-4 h-4 mr-2" />
+                      Download Excel
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </CardContent>
           </Card>
 
