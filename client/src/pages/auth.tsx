@@ -81,6 +81,15 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Surface an expired/invalid-session message set during a forced logout.
+  useEffect(() => {
+    const msg = sessionStorage.getItem("authMessage");
+    if (msg) {
+      setError(msg);
+      sessionStorage.removeItem("authMessage");
+    }
+  }, []);
+
   // Handle URL parameters for password reset link from console
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

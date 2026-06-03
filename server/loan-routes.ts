@@ -4,6 +4,12 @@ import { insertLoanRequestSchema, insertLoanRequestAdminSchema } from "@shared/s
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { isManagerialRole, isHodAllowed } from "./utils/role-utils";
+
+// Resolve the caller's effective (active) role from the auth payload.
+function callerRole(req: any): string {
+  return (req.user?.activeRoleId ?? req.user?.roleId ?? req.user?.role ?? "") as string;
+}
 
 export function registerLoanRoutes(app: Express) {
   // GET /api/loans - Get all loan requests for the current user
@@ -211,7 +217,10 @@ export function registerLoanRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      // TODO: Add role check for manager
+      // Only managerial roles may perform manager-level approval.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to approve loan requests." });
+      }
       const record = await loanRepository.managerApprove(req.params.id, userId);
 
       if (!record) {
@@ -235,7 +244,10 @@ export function registerLoanRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      // TODO: Add role check for HOD
+      // HOD-level approval is limited to HOD/super_hod/admin (and sales_manager per role model).
+      if (!isHodAllowed(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to perform HOD approval." });
+      }
       const record = await loanRepository.hodApprove(req.params.id, userId);
 
       if (!record) {
@@ -261,7 +273,10 @@ export function registerLoanRoutes(app: Express) {
       const userId = req.user.userId;
       const { reason } = req.body;
 
-      // TODO: Add role check for manager/HOD
+      // Only managerial roles may reject loan requests.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to reject loan requests." });
+      }
       const record = await loanRepository.reject(req.params.id, userId, reason);
 
       if (!record) {
@@ -284,7 +299,10 @@ export function registerLoanRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // TODO: Add role check for admin/accounts
+      // Marking a loan complete is a managerial/accounts action.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to complete loans." });
+      }
       const record = await loanRepository.markAsCompleted(req.params.id);
 
       if (!record) {
@@ -305,6 +323,11 @@ export function registerLoanRoutes(app: Express) {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      // Recording installment payments is a managerial/accounts action.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to record loan payments." });
       }
 
       const { amount } = req.body;

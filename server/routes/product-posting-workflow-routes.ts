@@ -110,8 +110,10 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
     let executiveDashboardUrl = "/product-posting/executive"; // default: PP executive
     if ((project as any).invoiceId) {
       try {
-        const invResult = await db.execute(
-          `SELECT project_name FROM drm.product_posting_invoices WHERE id = '${(project as any).invoiceId}' LIMIT 1`
+        // Parameterized to avoid SQL injection via invoiceId.
+        const invResult = await pool.query(
+          `SELECT project_name FROM drm.product_posting_invoices WHERE id = $1 LIMIT 1`,
+          [(project as any).invoiceId]
         );
         const invName: string = (invResult?.rows?.[0] as any)?.project_name || "";
         if (invName) {

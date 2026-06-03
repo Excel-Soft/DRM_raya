@@ -1,6 +1,12 @@
 import type { Express } from "express";
 import { overtimeRepository } from "./repositories/overtime.repository";
 import { insertOvertimeRecordSchema } from "@shared/schema";
+import { isManagerialRole } from "./utils/role-utils";
+
+// Resolve the caller's effective (active) role from the auth payload.
+function callerRole(req: any): string {
+  return (req.user?.activeRoleId ?? req.user?.roleId ?? req.user?.role ?? "") as string;
+}
 
 export function registerOvertimeRoutes(app: Express) {
   // GET /api/overtime - Get all overtime records for the current user
@@ -211,7 +217,10 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      // TODO: Add role check for manager/HOD
+      // Only managerial roles may approve overtime.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to approve overtime records." });
+      }
       const record = await overtimeRepository.approve(req.params.id, userId);
       
       if (!record) {
@@ -236,8 +245,11 @@ export function registerOvertimeRoutes(app: Express) {
 
       const userId = req.user.userId;
       const { reason } = req.body;
-      
-      // TODO: Add role check for manager/HOD
+
+      // Only managerial roles may reject overtime.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to reject overtime records." });
+      }
       const record = await overtimeRepository.reject(req.params.id, userId, reason);
       
       if (!record) {

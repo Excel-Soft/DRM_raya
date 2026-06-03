@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { pool } from "./db";
 import { projectsRepository } from "./repositories/projects.repository";
+import { authMiddleware } from "./auth.middleware";
+import { normalizeRole } from "./utils/role-utils";
 
 const router = Router();
 const TABLE = "drm.menu_permissions";
@@ -35,7 +37,20 @@ router.get("/permissions", async (req, res) => {
 });
 
 // GET /api/drm/permissions/debug
-router.get("/permissions/debug", async (req, res) => {
+// Diagnostic endpoint: exposes schema + sample row, so it is restricted to
+// super_admin/admin AND non-production only. (drmRoutes is mounted before the
+// global auth middleware, so authMiddleware is applied locally here.)
+router.get("/permissions/debug", authMiddleware, async (req, res) => {
+    // Never available in production.
+    if (process.env.NODE_ENV === "production") {
+        return res.status(404).json({ error: "Not found" });
+    }
+    const role = normalizeRole(
+        ((req.user as any)?.activeRoleId ?? (req.user as any)?.roleId ?? "") as string,
+    );
+    if (role !== "admin") {
+        return res.status(403).json({ error: "Forbidden" });
+    }
     try {
         const client = await pool.connect();
         const cols = await client.query(

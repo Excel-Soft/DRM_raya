@@ -59,8 +59,21 @@ async function issueAuthPayload(user: {
   };
 }
 
+// Safe, lowest-privilege role assigned to self-service signups. NEVER "admin".
+// The existing role model has no "pending_user"/"employee" role, so we use the
+// least-privileged real role; an administrator can elevate it afterwards.
+const SIGNUP_DEFAULT_ROLE = "sales_executive";
+
 router.post("/signup", async (req: Request, res: Response) => {
   try {
+    // Public self-service signup is disabled in production. Accounts must be
+    // created/approved by an administrator.
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({
+        error: "Public signup is disabled. Please contact an administrator to create an account.",
+      });
+    }
+
     const { fullName, email, password } = signupSchema.parse(req.body);
 
     const existing = await pool.query("select id from drm.users where email = $1 limit 1", [email]);
@@ -72,7 +85,7 @@ router.post("/signup", async (req: Request, res: Response) => {
 
     const created = await pool.query(
       "insert into drm.users (full_name, email, password_hash, role, is_active, created_at, updated_at) values ($1, $2, $3, $4, true, now(), now()) returning id, full_name, email, role",
-      [fullName, email, passwordHash, "admin"],
+      [fullName, email, passwordHash, SIGNUP_DEFAULT_ROLE],
     );
 
     const user = created.rows[0] as {
@@ -133,13 +146,9 @@ router.post("/login", async (req: Request, res: Response) => {
       return res.status(400).json({ error: "Invalid request data", details: error.errors });
     }
 
+    // Log full details server-side only; never leak stack/SQL/internals to the client.
     console.error("Login error DETAILS:", error);
-    return res.status(500).json({ 
-      error: "Internal server error", 
-      message: error.message,
-      stack: error.stack,
-      details: String(error)
-    });
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
