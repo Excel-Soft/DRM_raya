@@ -133,11 +133,13 @@ function registerLinkReportRoutes(app: Express, base: string) {
       const verification = await getVerification(userId, startDate, endDate);
 
       res.json({
+        filters: { userId, startDate, endDate },
         rows,
         summary: {
           total: rows.length,
           reward: verification ? Number(verification.reward) : 0,
           commissionVerified: !!verification,
+          verificationId: verification ? verification.id : null,
         },
         canVerify: canVerify(role),
       });
@@ -183,7 +185,7 @@ function registerLinkReportRoutes(app: Express, base: string) {
         endDate,
         linkReportIds,
       });
-      res.json({ ok: true, verification: result });
+      res.json({ success: true, verification: result });
     } catch (err: any) {
       if (err?.statusCode === 400) return badRequest(res, err.message);
       console.error("[link-report] verify-commission error", err);

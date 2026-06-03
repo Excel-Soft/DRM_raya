@@ -157,7 +157,17 @@ export async function verifyCommission(params: {
   startDate: string;
   endDate: string;
   linkReportIds: string[];
-}): Promise<{ id: string; totalLinks: number; reward: string; status: string }> {
+}): Promise<{
+  id: string;
+  userId: string;
+  verifiedByUserId: string;
+  startDate: string;
+  endDate: string;
+  totalLinks: number;
+  reward: string;
+  status: string;
+  createdAt: string;
+}> {
   const { userId, verifiedByUserId, startDate, endDate, linkReportIds } = params;
 
   const reportRows = await listLinkReport(userId, startDate, endDate);
@@ -184,7 +194,9 @@ export async function verifyCommission(params: {
             verified_by_user_id = excluded.verified_by_user_id,
             status = 'VERIFIED',
             updated_at = now()
-     returning id, total_links as "totalLinks", reward, status`,
+     returning id, user_id as "userId", verified_by_user_id as "verifiedByUserId",
+               start_date as "startDate", end_date as "endDate",
+               total_links as "totalLinks", reward, status, created_at as "createdAt"`,
     [userId, verifiedByUserId, startDate, endDate, JSON.stringify(effectiveIds), totalLinks],
   );
   return rows[0];
