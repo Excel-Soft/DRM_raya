@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { CalendarIcon, Download, FileSpreadsheet, FileText } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
+  BarChart, Bar, Cell,
 } from "recharts";
 import { exportPerformancePDF, exportPerformanceExcel } from "@/lib/performance-export";
 
@@ -81,6 +82,17 @@ const ratingColor = (rating: string) => {
     case "Needs Improvement": return "text-orange-600 dark:text-orange-400";
     case "Critical": return "text-red-600 dark:text-red-400";
     default: return "text-slate-500 dark:text-zinc-400";
+  }
+};
+
+const ratingFill = (rating: string) => {
+  switch (rating) {
+    case "Excellent": return "#059669";
+    case "Good": return "#16a34a";
+    case "Satisfactory": return "#d97706";
+    case "Needs Improvement": return "#ea580c";
+    case "Critical": return "#dc2626";
+    default: return "#94a3b8";
   }
 };
 
@@ -733,6 +745,14 @@ function TeamComparison({ data }: { data: TeamResponse }) {
     ? Math.round((scored.reduce((s, r) => s + (r.effectiveScore as number), 0) / scored.length) * 10) / 10
     : null;
 
+  const chartData = team.map((r) => ({
+    name: r.employee.name || r.employee.email || "—",
+    score: r.effectiveScore,
+    rating: r.rating,
+    hasScore: r.effectiveScore !== null,
+  }));
+  const chartHeight = Math.max(240, chartData.length * 32);
+
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -741,6 +761,37 @@ function TeamComparison({ data }: { data: TeamResponse }) {
         <ScoreCard label="Average Score" value={fmtScore(avgScore)} testid="card-team-avg" />
         <ScoreCard label="Lowest Score" value={fmtScore(bottomScore)} testid="card-team-bottom" />
       </div>
+
+      <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
+        <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-300 dark:border-zinc-800">
+          Score Comparison <span className="text-[12px] font-normal text-slate-400">(final score per employee, colored by rating)</span>
+        </div>
+        <CardContent className="p-4">
+          {chartData.length === 0 ? (
+            <div className="h-[240px] flex items-center justify-center text-slate-400 text-[13px]">
+              No employees found in your scope for this date range.
+            </div>
+          ) : (
+            <div className="overflow-y-auto" style={{ maxHeight: 440 }} data-testid="chart-team-comparison">
+              <div style={{ height: chartHeight }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 24, bottom: 5, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
+                    <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} interval={0} />
+                    <RTooltip formatter={(value: any, _name, item: any) => [item?.payload?.hasScore ? value : "No score", "Final Score"]} />
+                    <Bar dataKey="score" name="Final Score" radius={[0, 4, 4, 0]}>
+                      {chartData.map((d, i) => (
+                        <Cell key={i} fill={d.hasScore ? ratingFill(d.rating) : "#cbd5e1"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
         <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-300 dark:border-zinc-800">
