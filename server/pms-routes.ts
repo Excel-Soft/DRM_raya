@@ -4,6 +4,7 @@ import { projectsRepository } from "./repositories/projects.repository";
 import { tasksRepository } from "./repositories/tasks.repository";
 import { isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
+import { handleProjectReport } from "./project-report-routes";
 import { taskCommentsRepository } from "./repositories/task-comments.repository";
 import { usersRepository } from "./repositories/users.repository";
 import { projectFinancialsRepository } from "./repositories/project-financials.repository";
@@ -1059,30 +1060,10 @@ function getPeriodRange(periodRaw: string) {
     }
   });
 
-  // GET /api/pms/project-report - Specific report format for the frontend
-  app.get("/api/pms/project-report", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const list = await projectFinancialsRepository.findAllWithProjects();
-      const report = list.map(f => ({
-        id: f.project.id,
-        name: f.project.name,
-        companyName: (f.project as any).companyName || (f.project.workSpace ? f.project.workSpace + ' Project' : 'General'),
-        status: f.project.status,
-        totalAmount: f.totalAmount || "0",
-        paidAmount: f.paidAmount || "0",
-        dueDate: f.project.endDate,
-        ownerName: 'Admin' // Join with users if needed, or just default
-      }));
-      res.json(report);
-    } catch (error) {
-       console.error("Error fetching project report:", error);
-       res.status(500).json({ error: "Failed to fetch project report" });
-    }
-  });
+  // GET /api/pms/project-report - D&D Manager Project Report (real, DB-backed).
+  // Delegates to the shared handler so /api/pms, /api/dd-manager and
+  // /api/reports all return the identical report shape.
+  app.get("/api/pms/project-report", handleProjectReport);
 
   // GET /api/pms/running-projects/summary - Aggregated totals for running projects
   app.get("/api/pms/running-projects/summary", async (req, res) => {

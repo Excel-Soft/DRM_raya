@@ -66,6 +66,7 @@ import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
 import { registerPenaltyRoutes } from "./penalty-routes";
 import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
+import { registerProjectReportRoutes } from "./project-report-routes";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -261,6 +262,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Loan routes (protected)
   registerLoanRoutes(app);
+
+  // D&D Manager → Project Report routes (protected). Mounted BEFORE the reports
+  // router so the exact /api/reports/projects path wins over its /reports/:type
+  // parameterized route.
+  registerProjectReportRoutes(app);
+
   registerReportsRoutes(app);
   registerAccountRoutes(app);
   registerQuickEntriesRoutes(app);

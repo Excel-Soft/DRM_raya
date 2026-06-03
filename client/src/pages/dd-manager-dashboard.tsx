@@ -758,7 +758,7 @@ export default function DDManagerDashboard() {
                                             <ProjectOverviewItem icon={Settings} label="Pms Setting" onClick={() => setLocation("/drm/pms-setting")} />
                                             <ProjectOverviewItem icon={Play} label="Running Project" active onClick={() => setLocation("/pms/running-projects")} />
                                             <ProjectOverviewItem icon={ListTodo} label="Project Task" onClick={() => setLocation("/pms/tasks")} />
-                                            <ProjectOverviewItem icon={PieChart} label="Project Report" onClick={() => setLocation("/analytics/user-activity")} />
+                                            <ProjectOverviewItem icon={PieChart} label="Project Report" onClick={() => setLocation("/pms/project-report")} />
                                             <ProjectOverviewItem icon={Users} label="Customer" onClick={() => setLocation("/sales/customers")} />
                                             <ProjectOverviewItem icon={Clock} label="Attendance" onClick={() => setLocation("/hr/attendance")} />
                                         </div>
@@ -769,7 +769,7 @@ export default function DDManagerDashboard() {
                                         <CategoryHeader label="Project Management" />
                                         <div className="space-y-2">
                                             <ProjectOverviewItem icon={ClipboardList} label="Project Task" onClick={() => setLocation("/pms/tasks")} />
-                                            <ProjectOverviewItem icon={Clock} label="Project Report" onClick={() => setLocation("/analytics/user-activity")} />
+                                            <ProjectOverviewItem icon={Clock} label="Project Report" onClick={() => setLocation("/pms/project-report")} />
                                         </div>
                                     </div>
 
