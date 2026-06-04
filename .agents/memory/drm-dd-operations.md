@@ -35,4 +35,11 @@ never public.
 A create handler that only checks "can I view this target user" still lets any
 authenticated user create records for themselves. Financial/workflow creates
 (e.g. commission verifications) must gate on role (`canCreate` = full-access /
-HOD / managerial) before insert.
+HOD / managerial) before insert. The global `checkUrlPermission` middleware
+DEFAULT-ALLOWS unmatched `/api/*` paths (only fails closed on auth), so new
+route files are NOT protected by role just by being mounted after it — each
+mutation must add its own role check. Use `isManagerialRole` from
+`./utils/role-utils` (it already covers reception_manager, all *_manager, hod,
+super_hod, admin and excludes executives). Code review has flagged this exact
+gap twice (commission verifications, then events) — gate mutations from the
+start.
