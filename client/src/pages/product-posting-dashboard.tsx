@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { apiRequest, queryClient, throwIfResNotOk } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -81,8 +81,6 @@ type ActivityRow = {
         timeMinutes: number;
     };
 };
-
-// ── Static mock data matching the screenshots ─────────────────────────────────
 
 // ── Types ──
 type TabType = "waiting" | "delay" | "approved";
@@ -441,22 +439,7 @@ export default function ProductPostingDashboard() {
 
     const verifyDocMutation = useMutation({
         mutationFn: async ({ id, action, reason }: { id: string, action: string, reason?: string }) => {
-            if (action === 'APPROVE') {
-                try {
-                    const approvedQueue = JSON.parse(localStorage.getItem('mock_pp_approved_queue') || '[]');
-                    approvedQueue.unshift({
-                        id: selectedDoc?.id || `mock-${Date.now()}`,
-                        company: selectedDoc?.rawRow?.company || "Company",
-                        project: selectedDoc?.projectName || selectedDoc?.rawRow?.project || "Project",
-                        status: "VERIFICATION", 
-                        time: new Date().toLocaleDateString('en-GB')
-                    });
-                    localStorage.setItem('mock_pp_approved_queue', JSON.stringify(approvedQueue));
-                    window.dispatchEvent(new Event('storage'));
-                } catch(e) {}
-            }
-            const res = await apiRequest("PUT", `/api/projects/documents/${id}/verify`, { action, reason });
-            await throwIfResNotOk(res);
+            await apiRequestJson("PUT", `/api/projects/documents/${id}/verify`, { action, reason });
         },
         onSuccess: () => {
             refetchPendingDocs();

@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { WorkflowTimeline } from "@/components/workflow-timeline";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 function StatCard({ label, icon: Icon, value, colorClass = "bg-[#00a65a]" }: { label: string; icon: any; value: string | number; colorClass?: string }) {
@@ -942,6 +943,12 @@ export function VerificationManagerWidget() {
                                     }
                                 })()}
                             </div>
+
+                            {linksProject?.id && (
+                                <div className="mt-6">
+                                    <WorkflowTimeline taskId={linksProject.id} module="product-posting" />
+                                </div>
+                            )}
                         </div>
 
                         <div className="bg-gray-50 px-8 py-5 flex justify-end border-t dark:bg-zinc-900">

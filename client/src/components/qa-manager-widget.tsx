@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { WorkflowTimeline } from "@/components/workflow-timeline";
  
  interface ProjectRow {
      no: number;
@@ -975,6 +976,12 @@ export function QAManagerWidget() {
                                     }
                                 })()}
                             </div>
+
+                            {linksProject?.id && (
+                                <div className="mt-6">
+                                    <WorkflowTimeline taskId={linksProject.id} module="product-posting" />
+                                </div>
+                            )}
                         </div>
                     </DialogContent>
                 </Dialog>

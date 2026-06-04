@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { requireRole } from "../auth.middleware";
 import {
@@ -24,6 +24,15 @@ import {
 } from "../services/software-workflow.service";
 import { ActivityLogService } from "../services/activity-service";
 import { NotificationService } from "../services/notification-service";
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export const softwareWorkflowRouter = Router();
 
@@ -110,7 +119,7 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
     if ((project as any).invoiceId) {
       try {
         const invResult = await db.execute(
-          `SELECT project_name FROM drm.product_posting_invoices WHERE id = '${(project as any).invoiceId}' LIMIT 1`
+          sql`SELECT project_name FROM drm.product_posting_invoices WHERE id = ${(project as any).invoiceId} LIMIT 1`
         );
         const invName: string = (invResult?.rows?.[0] as any)?.project_name || "";
         if (invName) {
@@ -223,17 +232,27 @@ softwareWorkflowRouter.post("/tasks/:taskId/evidence-links", requireRole("softwa
     const { url, label, linkType = "output" } = req.body;
     const actorUserId = req.user!.userId;
 
+    const trimmedUrl = typeof url === "string" ? url.trim() : "";
+    if (!isValidHttpUrl(trimmedUrl)) {
+      return res.status(400).json({ success: false, error: "Enter a valid URL starting with http:// or https://" });
+    }
+
     const [workflow] = await db.select().from(softwareWorkflows).where(eq(softwareWorkflows.taskId, taskId));
     if (!workflow) return res.status(404).json({ success: false, error: "Workflow not found" });
     if (workflow.executiveUserId !== actorUserId && req.user!.roleId !== "admin") {
       return res.status(403).json({ success: false, error: "You can only upload links for your assigned task" });
     }
 
+    const existingLinks = await db.select().from(softwareEvidenceLinks).where(eq(softwareEvidenceLinks.taskId, taskId));
+    if (existingLinks.some((l) => (l.url || "").trim() === trimmedUrl)) {
+      return res.status(409).json({ success: false, error: "This link has already been added for this task" });
+    }
+
     const [link] = await db.insert(softwareEvidenceLinks).values({
       workflowId: workflow.id,
       projectId: workflow.projectId,
       taskId,
-      url,
+      url: trimmedUrl,
       label,
       linkType,
       createdByUserId: actorUserId,
@@ -467,6 +486,10 @@ softwareWorkflowRouter.post("/tasks/:taskId/verification-review", requireRole("v
 
     if (!["complete", "return"].includes(action)) {
       return res.status(400).json({ success: false, error: "Invalid verification action" });
+    }
+
+    if (action === "return" && !remarks?.trim()) {
+      return res.status(400).json({ success: false, error: "A reason is required when returning a task" });
     }
 
     const [workflow] = await db.select().from(softwareWorkflows).where(eq(softwareWorkflows.taskId, taskId));

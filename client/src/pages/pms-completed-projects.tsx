@@ -1,29 +1,81 @@
 import React, { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequestJson } from "@/lib/queryClient";
 
-const COMPLETED_MOCK = [
-    { id: 1, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "06 Feb 2023", link: "0" },
-    { id: 2, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "08 Feb 2023", link: "0" },
-    { id: 3, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "08 Feb 2023", link: "0" },
-    { id: 4, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "09 Feb 2023", link: "0" },
-    { id: 5, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "10 Feb 2023", link: "0" },
-    { id: 6, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Aqsa Umar", date: "11 Feb 2023", link: "0" },
-    { id: 7, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Aqsa Umar", date: "11 Feb 2023", link: "0" },
-    { id: 8, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "11 Feb 2023", link: "0" },
-    { id: 9, company: "univenture", project: "SEO", status: "End", time: "4:0", assign: "Laiba Waseem", date: "13 Feb 2023", link: "0" },
-];
+interface ProjectRow {
+    id: string;
+    name: string;
+    status: string;
+    ownerUserId: string;
+    companyName: string | null;
+    startDate: string | null;
+    endDate: string | null;
+}
+
+interface PmsUser {
+    id: string;
+    name: string;
+}
+
+interface CompletedRow {
+    id: string;
+    company: string;
+    project: string;
+    status: string;
+    time: string;
+    assign: string;
+    date: string;
+    link: string;
+}
+
+function formatDate(value: string | null): string {
+    if (!value) return "-";
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return "-";
+    return format(d, "dd MMM yyyy");
+}
 
 export default function PmsCompletedProjects() {
     const { toast } = useToast();
     const [searchQuery, setSearchQuery] = useState("");
 
+    const projectsQuery = useQuery<ProjectRow[]>({
+        queryKey: ["/api/pms/projects", "Completed"],
+        queryFn: () => apiRequestJson<ProjectRow[]>("GET", "/api/pms/projects?status=Completed"),
+    });
+
+    const usersQuery = useQuery<PmsUser[]>({
+        queryKey: ["/api/pms/users"],
+        queryFn: () => apiRequestJson<PmsUser[]>("GET", "/api/pms/users"),
+    });
+
+    const userMap = useMemo(() => {
+        const map = new Map<string, string>();
+        (usersQuery.data || []).forEach((u) => map.set(u.id, u.name));
+        return map;
+    }, [usersQuery.data]);
+
+    const rows = useMemo<CompletedRow[]>(() => {
+        return (projectsQuery.data || []).map((p) => ({
+            id: p.id,
+            company: p.companyName || "-",
+            project: p.name,
+            status: p.status,
+            time: "-",
+            assign: userMap.get(p.ownerUserId) || "-",
+            date: formatDate(p.startDate),
+            link: "-",
+        }));
+    }, [projectsQuery.data, userMap]);
+
     const filteredData = useMemo(() => {
-        if (!searchQuery.trim()) return COMPLETED_MOCK;
+        if (!searchQuery.trim()) return rows;
         const lowerSearch = searchQuery.toLowerCase();
-        return COMPLETED_MOCK.filter((row) => 
+        return rows.filter((row) =>
             row.company.toLowerCase().includes(lowerSearch) ||
             row.project.toLowerCase().includes(lowerSearch) ||
             row.assign.toLowerCase().includes(lowerSearch) ||
@@ -31,7 +83,7 @@ export default function PmsCompletedProjects() {
             row.date.toLowerCase().includes(lowerSearch) ||
             row.time.toLowerCase().includes(lowerSearch)
         );
-    }, [searchQuery]);
+    }, [searchQuery, rows]);
 
     const handleExport = (formatType: "copy" | "csv" | "excel" | "pdf") => {
         if (filteredData.length === 0) {
@@ -69,6 +121,9 @@ export default function PmsCompletedProjects() {
             window.print();
         }
     };
+
+    const isLoading = projectsQuery.isLoading || usersQuery.isLoading;
+    const isError = projectsQuery.isError;
 
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
@@ -139,7 +194,21 @@ export default function PmsCompletedProjects() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 text-[#495057] dark:text-zinc-400">
-                            {filteredData.length === 0 ? (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={7} className="px-4 py-8 text-center text-[13px] text-gray-500 dark:text-zinc-400">
+                                        <span className="inline-flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" /> Loading completed projects…
+                                        </span>
+                                    </td>
+                                </tr>
+                            ) : isError ? (
+                                <tr>
+                                    <td colSpan={7} className="px-4 py-8 text-center text-[13px] text-red-600 dark:text-red-400">
+                                        Failed to load completed projects. Please try again.
+                                    </td>
+                                </tr>
+                            ) : filteredData.length === 0 ? (
                                 <tr>
                                     <td colSpan={7} className="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-zinc-400">
                                         No data available in table

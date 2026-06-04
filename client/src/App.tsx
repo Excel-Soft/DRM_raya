@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -265,6 +265,8 @@ function Router() {
       <Route path="/drm/delay-project" component={DelayProjectPage} />
       <Route path="/drm/delay-projects-new" component={DelayProjectsNewPage} />
       <Route path="/drm/pms-setting" component={PmsSettingPage} />
+      {/* Deprecated alias: canonical PMS settings live at /drm/pms-setting */}
+      <Route path="/pms/settings">{() => <Redirect to="/drm/pms-setting" />}</Route>
       <Route path="/drm/monthly-complete-project" component={MonthlyCompleteProject} />
       <Route path="/drm/overall-report" component={OverallReportPage} />
       <Route path="/drm/today-post" component={TodayPostPage} />
