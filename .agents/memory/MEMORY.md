@@ -1,4 +1,3 @@
-- [Type-check baseline](typecheck-baseline.md) — `npm run check` has a fluctuating set of pre-existing server-side errors; judge "no new errors" by changed files being clean, not absolute count.
-- [Honest API/error patterns](honest-api-patterns.md) — reuse `apiRequestJson` (throws on non-2xx) for real error surfacing; no mock fallback rows, show loading/empty/error instead.
-- [Service Department](service-department.md) — Stage 5 service pages/APIs: list shape `{data,total,page,pageSize}`, scoping, grade keys, complaint enum, raw idempotent DDL (no drizzle push), Stage-5 limitations.
-- [DRM/DD operations](drm-dd-operations.md) — DRM module route files + pages; reuse penalty/increment/performance engines (don't duplicate); every mutating endpoint needs an explicit role gate, not just per-row scope.
+- [WebExcels DRM app layout](webexcels-drm-app.md) — which trees are the live app vs legacy, and the boot path.
+- [Error envelope convention](error-envelope-convention.md) — Stage 10 API error shape + the no-leak rule and FE backward-compat.
+- [tsc baseline](tsc-baseline.md) — known pre-existing type errors that are NOT to be "fixed".

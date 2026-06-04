@@ -10,21 +10,16 @@ import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import { AssistantProvider } from "@/contexts/assistant-context";
 import { ScreenContextProvider } from "@/contexts/screen-context";
 import { AIAssistantButton } from "@/components/ai-assistant-button";
-import Dashboard from "@/pages/dashboard";
-import SalesExecutiveDashboard from "@/pages/sales-executive-dashboard";
-import SalesManagerDashboard from "@/pages/sales-manager-dashboard";
-import SalesAssistantManagerDashboard from "@/pages/sales-assistant-manager-dashboard";
-import AccountManagerDashboard from "@/pages/account-manager-dashboard";
-import HodDashboard from "@/pages/hod-dashboard";
-import SuperHODDashboard from "@/pages/super-hod-dashboard";
-import DDManagerDashboard from "@/pages/dd-manager-dashboard";
-import DDExecutiveDashboard from "@/pages/dd-executive-dashboard";
-import ItManagerDashboard from "@/pages/it-manager-dashboard";
-import ServiceManagerDashboard from "@/pages/service-manager-dashboard";
-import ServiceAssistantManagerDashboard from "@/pages/service-assistant-manager-dashboard";
-import ServiceExecutiveDashboard from "@/pages/service-executive-dashboard";
-import ReceptionDashboard from "@/pages/reception-dashboard";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { useLocation } from "wouter";
 import { useRouteProtection } from "@/hooks/useRouteProtection";
+
+// ---------------------------------------------------------------------------
+// Eagerly loaded: auth, app-shell-adjacent, and lightweight/frequently-used
+// pages that are needed outside (or immediately within) the Suspense boundary.
+// ---------------------------------------------------------------------------
+import NotFound from "@/pages/not-found";
+import AuthPage from "@/pages/auth";
 import CustomerManagement from "@/pages/customer-management";
 import DuplicateChecker from "@/pages/duplicate-checker";
 import AddCustomer from "@/pages/add-customer";
@@ -32,51 +27,15 @@ import TempContact from "@/pages/temp-contact";
 import LeadPools from "@/pages/lead-pools";
 import InvoicePool from "@/pages/invoice-pool";
 import AttendanceManagement from "@/pages/attendance-management";
-import AttendanceReport from "@/pages/attendance-report";
 import LeaveRequest from "@/pages/leave-request";
 import OvertimeSubmission from "@/pages/overtime-submission";
 import LoanRequest from "@/pages/loan-request";
-import PmsTasks from "@/pages/pms-tasks";
-import PmsStatus from "@/pages/pms-status";
-import PmsRunningProjects from "@/pages/pms-running-projects";
-import PmsCompletedProjects from "@/pages/pms-completed-projects";
-import PmsPendingApprovals from "@/pages/pms-pending-approvals";
-import PmsTaskHistory from "@/pages/pms-task-history";
-import PmsTeamWorkspace from "@/pages/pms-team-workspace";
-import ServicePoolDashboard from "@/pages/service-pool-dashboard";
-import ServiceBvChecking from "@/pages/service-bv-checking";
-import ServicePublicPool from "@/pages/service-public-pool";
-import ServiceACustomer from "@/pages/service-a-customer";
-import ServiceBPlusCustomer from "@/pages/service-b-plus-customer";
-import ServiceBCustomer from "@/pages/service-b-customer";
-import ServiceBMinusCustomer from "@/pages/service-b-minus-customer";
-import ServiceMonthlyFollowup from "@/pages/service-monthly-followup";
-import ServiceWeeklyDropout from "@/pages/service-weekly-dropout";
-import ServiceDropoutCustomer from "@/pages/service-dropout-customer";
-import ServiceComplaintList from "@/pages/service-complaint-list";
-import ServiceNotFollowCustomer from "@/pages/service-not-follow-customer";
-import ServiceBvDocumentList from "@/pages/service-bv-document-list";
-import ServiceVasDocumentList from "@/pages/service-vas-document-list";
-import ServiceDueVasPayment from "@/pages/service-due-vas-payment";
-import ServiceTodoList from "@/pages/service-todo-list";
-import PmsTaskTemplates from "@/pages/pms-task-templates";
-import ReportsBvPendingRc from "@/pages/reports-bv-pending-rc";
-import ReportsBvPendingEcnc from "@/pages/reports-bv-pending-ecnc";
-import ReportsInService from "@/pages/reports-in-service";
-import ReportsDiagnose from "@/pages/reports-diagnose";
-import ReportsFollowUp from "@/pages/reports-follow-up";
-import ReportsProjects from "@/pages/reports-projects";
-import ReportsDayTarget from "@/pages/reports-day-target";
-import PostingDataLinkReport from "@/pages/posting-data-link-report";
 import SupportTickets from "@/pages/support-tickets";
 import SupportTicketDetail from "@/pages/support-ticket-detail";
 import ComplaintsPage from "@/pages/complaints";
 import AMinusCustomersPage from "@/pages/a-minus-customers";
 import VasDocumentsPage from "@/pages/vas-documents";
-import UserReports from "@/pages/user-reports";
 import TrainingCenter from "@/pages/training-center";
-import SuperAdminDashboard from "@/pages/super-admin-dashboard";
-import AdminDashboard from "@/pages/admin-dashboard";
 import Workspace from "@/pages/workspace";
 import PoliciesSettings from "@/pages/policies-settings";
 import NoticeBoard from "@/pages/notice-board";
@@ -85,7 +44,6 @@ import PortfolioList from "@/pages/portfolio-list";
 import ItServers from "@/pages/it-servers";
 import ItDomains from "@/pages/it-domains";
 import ItBackup from "@/pages/it-backup";
-import PmsProjectReport from "@/pages/pms-project-report";
 import ItSystemReport from "@/pages/it-system-report";
 import AccountGmEntries from "@/pages/account-gm-entries";
 import AccountTempGm from "@/pages/account-temp-gm";
@@ -102,44 +60,19 @@ import OfficeAccountHead from "@/pages/office-account-head";
 import OfficeVasPage from "@/pages/office-vas";
 import ChequeSystem from "@/pages/cheque-system";
 import BusinessCustomers from "@/pages/business-customers";
-import UserActivityReport from "@/pages/user-report";
-import LedgerReport from "@/pages/ledger-report";
-import GMReport from "@/pages/gm-report";
-import RefundReport from "@/pages/refund-report";
-import InvoiceReport from "@/pages/invoice-report";
 import GmPoolAddGm from "@/pages/gm-pool-add-gm";
 import QuotationPage from "@/pages/quotation";
-import NotFound from "@/pages/not-found";
-import AuthPage from "@/pages/auth";
-import ServicePool from "@/pages/service-pool";
-import ServicePrivatePool from "@/pages/service-private-pool";
-import ProductPostingDashboard from "@/pages/product-posting-dashboard";
-import QAManagerDashboard from "@/pages/qa-manager-dashboard";
-import VerificationManagerDashboard from "@/pages/verification-manager-dashboard";
 import CustomersVerification from "@/pages/customers-verification";
-import { useLocation } from "wouter";
-import { useEffect, useState } from "react";
 import TracingPage from "@/pages/tracing";
 import TracingViewPage from "@/pages/tracing-view";
-import BvReportNew from "@/pages/bv-report-new";
-import LoanReportNew from "@/pages/loan-report-new";
-import VasReportNew from "@/pages/vas-report-new";
-import GmReportNew from "@/pages/gm-report-new";
-import LoanReportEdit from "@/pages/loan-report-edit";
-import SalaryCreate from "@/pages/salary-create";
-import SalaryReport from "@/pages/salary-report";
 import AddUser from "@/pages/add-user";
 import CreateInvoice from "@/pages/sales/create-invoice";
-// import AttendanceDetail from "./pages/attendance-detail";
 import CreateTarget from "./pages/create-target";
 import SetTarget from "./pages/set-target";
 import ViewTarget from "./pages/view-target";
 import DailyTarget from "./pages/daily-target";
 import AddKwa from "./pages/add-kwa";
 import KwaHistory from "./pages/kwa-history";
-
-
-
 import UserList from "@/pages/user-list";
 import UserGroups from "@/pages/user-groups";
 import AttributesPage from "@/pages/drm/attributes";
@@ -161,31 +94,115 @@ import BotSystem from "@/pages/bot-system";
 import OnlineForm from "@/pages/online-form";
 import FbPost from "@/pages/fb-post";
 import DelayProjectsNewPage from "./pages/drm/delay-projects-new";
-import PostingData from "./pages/posting-data";
-import SeoSmmManagerDashboard from "@/pages/seo-smm-manager-dashboard";
-import AbReport from "@/pages/ab-report";
 import DollarSystem from "@/pages/dollar-system";
-import LeadManagerDashboard from "@/pages/lead-manager-dashboard";
-import LeadExecutiveDashboard from "@/pages/lead-executive-dashboard";
-import SoftwareManagerDashboard from "@/pages/software-manager-dashboard";
-import SoftwareExecutiveDashboard from "@/pages/software-executive-dashboard";
 import UpcomingProjectPage from "@/pages/drm/upcoming-project";
-import MarketingManagerDashboard from "@/pages/marketing-manager-dashboard";
-
-import EventsAdd from "@/pages/events-add";
-import EventsMenu from "@/pages/events-menu";
-import EventsDutyPlanner from "@/pages/events-duty-planner";
 import SocialMedia from "@/pages/social-media";
 import VasSystem from "@/pages/vas-system";
 import OfficeTrialBalance from "@/pages/office-trial-balance";
 import OfficeOldAccountHead from "@/pages/office-old-account-head";
-import ReportsRawAttendance from "@/pages/reports-raw-attendance";
-import EditAtt from "@/pages/reports-edit-att";
-import ReceptionReport from "@/pages/reports-reception";
-import EventReport from "@/pages/reports-event";
-import DepartmentReport from "@/pages/reports-department";
 import AllowedIpList from "@/pages/allowed-ip-list";
-import DailyAddedGmReport from "@/pages/daily-added-gm-report";
+
+// ---------------------------------------------------------------------------
+// Lazily loaded (code-split) heavy pages: dashboards, reports, service, PMS,
+// product-posting, and events. These only render inside the Suspense boundary
+// wrapping the router <Switch>.
+// ---------------------------------------------------------------------------
+// Dashboards
+const Dashboard = lazy(() => import("@/pages/dashboard"));
+const SalesExecutiveDashboard = lazy(() => import("@/pages/sales-executive-dashboard"));
+const SalesManagerDashboard = lazy(() => import("@/pages/sales-manager-dashboard"));
+const SalesAssistantManagerDashboard = lazy(() => import("@/pages/sales-assistant-manager-dashboard"));
+const AccountManagerDashboard = lazy(() => import("@/pages/account-manager-dashboard"));
+const HodDashboard = lazy(() => import("@/pages/hod-dashboard"));
+const SuperHODDashboard = lazy(() => import("@/pages/super-hod-dashboard"));
+const DDManagerDashboard = lazy(() => import("@/pages/dd-manager-dashboard"));
+const DDExecutiveDashboard = lazy(() => import("@/pages/dd-executive-dashboard"));
+const ItManagerDashboard = lazy(() => import("@/pages/it-manager-dashboard"));
+const ServiceManagerDashboard = lazy(() => import("@/pages/service-manager-dashboard"));
+const ServiceAssistantManagerDashboard = lazy(() => import("@/pages/service-assistant-manager-dashboard"));
+const ServiceExecutiveDashboard = lazy(() => import("@/pages/service-executive-dashboard"));
+const ReceptionDashboard = lazy(() => import("@/pages/reception-dashboard"));
+const SuperAdminDashboard = lazy(() => import("@/pages/super-admin-dashboard"));
+const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
+const ProductPostingDashboard = lazy(() => import("@/pages/product-posting-dashboard"));
+const QAManagerDashboard = lazy(() => import("@/pages/qa-manager-dashboard"));
+const VerificationManagerDashboard = lazy(() => import("@/pages/verification-manager-dashboard"));
+const SeoSmmManagerDashboard = lazy(() => import("@/pages/seo-smm-manager-dashboard"));
+const LeadManagerDashboard = lazy(() => import("@/pages/lead-manager-dashboard"));
+const LeadExecutiveDashboard = lazy(() => import("@/pages/lead-executive-dashboard"));
+const SoftwareManagerDashboard = lazy(() => import("@/pages/software-manager-dashboard"));
+const SoftwareExecutiveDashboard = lazy(() => import("@/pages/software-executive-dashboard"));
+const MarketingManagerDashboard = lazy(() => import("@/pages/marketing-manager-dashboard"));
+
+// Reports
+const AttendanceReport = lazy(() => import("@/pages/attendance-report"));
+const ReportsBvPendingRc = lazy(() => import("@/pages/reports-bv-pending-rc"));
+const ReportsBvPendingEcnc = lazy(() => import("@/pages/reports-bv-pending-ecnc"));
+const ReportsInService = lazy(() => import("@/pages/reports-in-service"));
+const ReportsDiagnose = lazy(() => import("@/pages/reports-diagnose"));
+const ReportsFollowUp = lazy(() => import("@/pages/reports-follow-up"));
+const ReportsProjects = lazy(() => import("@/pages/reports-projects"));
+const ReportsDayTarget = lazy(() => import("@/pages/reports-day-target"));
+const PostingDataLinkReport = lazy(() => import("@/pages/posting-data-link-report"));
+const UserReports = lazy(() => import("@/pages/user-reports"));
+const UserActivityReport = lazy(() => import("@/pages/user-report"));
+const LedgerReport = lazy(() => import("@/pages/ledger-report"));
+const GMReport = lazy(() => import("@/pages/gm-report"));
+const RefundReport = lazy(() => import("@/pages/refund-report"));
+const InvoiceReport = lazy(() => import("@/pages/invoice-report"));
+const BvReportNew = lazy(() => import("@/pages/bv-report-new"));
+const LoanReportNew = lazy(() => import("@/pages/loan-report-new"));
+const VasReportNew = lazy(() => import("@/pages/vas-report-new"));
+const GmReportNew = lazy(() => import("@/pages/gm-report-new"));
+const LoanReportEdit = lazy(() => import("@/pages/loan-report-edit"));
+const SalaryCreate = lazy(() => import("@/pages/salary-create"));
+const SalaryReport = lazy(() => import("@/pages/salary-report"));
+const AbReport = lazy(() => import("@/pages/ab-report"));
+const ReportsRawAttendance = lazy(() => import("@/pages/reports-raw-attendance"));
+const EditAtt = lazy(() => import("@/pages/reports-edit-att"));
+const ReceptionReport = lazy(() => import("@/pages/reports-reception"));
+const EventReport = lazy(() => import("@/pages/reports-event"));
+const DepartmentReport = lazy(() => import("@/pages/reports-department"));
+const DailyAddedGmReport = lazy(() => import("@/pages/daily-added-gm-report"));
+
+// Service
+const ServicePoolDashboard = lazy(() => import("@/pages/service-pool-dashboard"));
+const ServiceBvChecking = lazy(() => import("@/pages/service-bv-checking"));
+const ServicePublicPool = lazy(() => import("@/pages/service-public-pool"));
+const ServiceACustomer = lazy(() => import("@/pages/service-a-customer"));
+const ServiceBPlusCustomer = lazy(() => import("@/pages/service-b-plus-customer"));
+const ServiceBCustomer = lazy(() => import("@/pages/service-b-customer"));
+const ServiceBMinusCustomer = lazy(() => import("@/pages/service-b-minus-customer"));
+const ServiceMonthlyFollowup = lazy(() => import("@/pages/service-monthly-followup"));
+const ServiceWeeklyDropout = lazy(() => import("@/pages/service-weekly-dropout"));
+const ServiceDropoutCustomer = lazy(() => import("@/pages/service-dropout-customer"));
+const ServiceComplaintList = lazy(() => import("@/pages/service-complaint-list"));
+const ServiceNotFollowCustomer = lazy(() => import("@/pages/service-not-follow-customer"));
+const ServiceBvDocumentList = lazy(() => import("@/pages/service-bv-document-list"));
+const ServiceVasDocumentList = lazy(() => import("@/pages/service-vas-document-list"));
+const ServiceDueVasPayment = lazy(() => import("@/pages/service-due-vas-payment"));
+const ServiceTodoList = lazy(() => import("@/pages/service-todo-list"));
+const ServicePool = lazy(() => import("@/pages/service-pool"));
+const ServicePrivatePool = lazy(() => import("@/pages/service-private-pool"));
+
+// PMS
+const PmsTasks = lazy(() => import("@/pages/pms-tasks"));
+const PmsStatus = lazy(() => import("@/pages/pms-status"));
+const PmsRunningProjects = lazy(() => import("@/pages/pms-running-projects"));
+const PmsCompletedProjects = lazy(() => import("@/pages/pms-completed-projects"));
+const PmsPendingApprovals = lazy(() => import("@/pages/pms-pending-approvals"));
+const PmsTaskHistory = lazy(() => import("@/pages/pms-task-history"));
+const PmsTeamWorkspace = lazy(() => import("@/pages/pms-team-workspace"));
+const PmsTaskTemplates = lazy(() => import("@/pages/pms-task-templates"));
+const PmsProjectReport = lazy(() => import("@/pages/pms-project-report"));
+
+// Product posting
+const PostingData = lazy(() => import("@/pages/posting-data"));
+
+// Events
+const EventsAdd = lazy(() => import("@/pages/events-add"));
+const EventsMenu = lazy(() => import("@/pages/events-menu"));
+const EventsDutyPlanner = lazy(() => import("@/pages/events-duty-planner"));
 
 function DynamicPrivatePool() {
   const userRole = sessionStorage.getItem("userRole")?.toLowerCase().replace(/\s+/g, "_") || "";
@@ -199,8 +216,21 @@ function DynamicPublicPool() {
   return <LeadPools />;
 }
 
+function PageLoader() {
+  return (
+    <div className="flex h-full min-h-[40vh] w-full items-center justify-center">
+      <div
+        className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary"
+        role="status"
+        aria-label="Loading"
+      />
+    </div>
+  );
+}
+
 function Router() {
   return (
+    <Suspense fallback={<PageLoader />}>
     <Switch>
       <Route path="/auth" component={AuthPage} />
       <Route path="/" component={Dashboard} />
@@ -395,6 +425,7 @@ function Router() {
 
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

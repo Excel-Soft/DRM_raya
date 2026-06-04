@@ -4,6 +4,7 @@ import { authService } from "./auth.service";
 import { z } from "zod";
 import { normalizeRole } from "./utils/role-utils";
 import { pool } from "./db";
+import { sendError, errorEnvelope, badRequest, notFound, conflict } from "./utils/api-error";
 
 const router = Router();
 
@@ -114,7 +115,7 @@ router.get("/", async (req: Request, res: Response) => {
         res.json({ users: sanitized });
     } catch (error: any) {
         console.error("Error fetching users:", error);
-        res.status(500).json({ error: "Failed to fetch users" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch users"));
     }
 });
 
@@ -127,7 +128,7 @@ router.post("/", async (req: Request, res: Response) => {
         const existing = await pool.query("select id from drm.users where email = $1 limit 1", [data.email]);
         if (existing.rows.length > 0) {
             console.warn(`[USER_MGMT] Conflict: User ${data.email} already exists`);
-            return res.status(409).json({ error: "Email already in use. Please use a different email for a new user." });
+            return sendError(res, conflict("Email already in use. Please use a different email for a new user."));
         }
 
         const passwordHash = await authService.hashPassword(data.password);
@@ -202,10 +203,10 @@ router.post("/", async (req: Request, res: Response) => {
         res.status(201).json({ success: true, ...result.rows[0] });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: "Invalid data", details: error.errors });
+            return sendError(res, error);
         }
         console.error("Error creating user:", error);
-        res.status(500).json({ error: "Internal server error" });
+        return sendError(res, error);
     }
 });
 
@@ -214,11 +215,11 @@ router.get("/:id", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         // Skip non-UUID paths that match other routes
-        if (id === "groups") return res.status(404).json({ error: "Not found" });
+        if (id === "groups") return sendError(res, notFound("Not found"));
 
         const result = await pool.query("select * from drm.users where id = $1 limit 1", [id]);
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: "User not found" });
+            return sendError(res, notFound("User not found"));
         }
         const u = result.rows[0];
         res.json({
@@ -259,7 +260,7 @@ router.get("/:id", async (req: Request, res: Response) => {
         });
     } catch (error: any) {
         console.error("Error fetching user:", error);
-        res.status(500).json({ error: "Failed to fetch user" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch user"));
     }
 });
 
@@ -449,10 +450,10 @@ router.patch("/:id", async (req: Request, res: Response) => {
         res.json({ success: true, id });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: "Invalid data", details: error.errors });
+            return sendError(res, error);
         }
         console.error("Error updating user:", error);
-        res.status(500).json({ error: error.message || "Internal server error" });
+        return sendError(res, error);
     }
 });
 
@@ -466,7 +467,7 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
         await pool.query("update drm.users set is_active = $1, updated_at = now() where id = $2", [isActive, id]);
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: "Failed to update status" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update status"));
     }
 });
 
@@ -478,7 +479,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
         await pool.query("update drm.users set is_active = false, updated_at = now() where id = $1", [id]);
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: "Failed to delete user" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to delete user"));
     }
 });
 
@@ -545,7 +546,7 @@ router.post("/groups", async (req: Request, res: Response) => {
     } catch (error: any) {
         await client.query('ROLLBACK');
         console.error("Error creating group:", error);
-        res.status(500).json({ error: "Failed to create group" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to create group"));
     } finally {
         client.release();
     }
@@ -584,7 +585,7 @@ router.patch("/groups/:id", async (req: Request, res: Response) => {
         res.json({ success: true });
     } catch (error) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: "Failed to update group" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update group"));
     } finally {
         client.release();
     }
@@ -597,7 +598,7 @@ router.delete("/groups/:id", async (req: Request, res: Response) => {
         await pool.query("delete from drm.user_groups where id = $1", [id]);
         res.json({ success: true });
     } catch (error) {
-        res.status(500).json({ error: "Failed to delete group" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to delete group"));
     }
 });
 
@@ -622,7 +623,7 @@ router.get("/:id/team-members", async (req: Request, res: Response) => {
         res.json({ members: result.rows });
     } catch (error: any) {
         console.error("Error fetching team members:", error);
-        res.status(500).json({ error: "Failed to fetch team members" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch team members"));
     }
 });
 
@@ -631,8 +632,8 @@ router.post("/:id/team-members", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { memberId } = req.body;
-        if (!memberId) return res.status(400).json({ error: "memberId required" });
-        if (id === memberId) return res.status(400).json({ error: "Cannot add user to their own team" });
+        if (!memberId) return sendError(res, badRequest("memberId required"));
+        if (id === memberId) return sendError(res, badRequest("Cannot add user to their own team"));
 
         await pool.query(`
             INSERT INTO drm.user_team_members (manager_id, member_id)
@@ -642,7 +643,7 @@ router.post("/:id/team-members", async (req: Request, res: Response) => {
         res.json({ success: true });
     } catch (error: any) {
         console.error("Error adding team member:", error);
-        res.status(500).json({ error: "Failed to add team member" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to add team member"));
     }
 });
 
@@ -657,7 +658,7 @@ router.delete("/:id/team-members/:memberId", async (req: Request, res: Response)
         res.json({ success: true });
     } catch (error: any) {
         console.error("Error removing team member:", error);
-        res.status(500).json({ error: "Failed to remove team member" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to remove team member"));
     }
 });
 
@@ -666,7 +667,7 @@ router.post("/:id/impersonate", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const user = await usersRepository.findById(id);
-        if (!user) return res.status(404).json({ error: "User not found" });
+        if (!user) return sendError(res, notFound("User not found"));
 
         const token = authService.generateToken({
             userId: user.id,
@@ -679,7 +680,7 @@ router.post("/:id/impersonate", async (req: Request, res: Response) => {
 
         res.json({ token, user });
     } catch (error) {
-        res.status(500).json({ error: "Impersonation failed" });
+        res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Impersonation failed"));
     }
 });
 
