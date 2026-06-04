@@ -9,6 +9,9 @@ import { registerPmsRoutes } from "./pms-routes";
 import { registerSupportRoutes } from "./support-routes";
 import { registerSettingsRoutes } from "./settings-routes";
 import { registerAttendanceRoutes } from "./attendance-routes";
+import { registerAttendanceEditRoutes } from "./attendance-edit-routes";
+import { registerSalaryRoutes } from "./salary-routes";
+import { registerStage3ReportsRoutes } from "./stage3-reports-routes";
 import { registerLeaveRoutes } from "./leave-routes";
 import { registerOvertimeRoutes } from "./overtime-routes";
 import { registerLoanRoutes } from "./loan-routes";
@@ -262,7 +265,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Attendance routes (protected)
   registerAttendanceRoutes(app);
+  registerAttendanceEditRoutes(app);
   registerTodoRoutes(app);
+
+  // Salary / payroll routes (protected, role-guarded)
+  registerSalaryRoutes(app);
 
   // Leave routes (protected)
   registerLeaveRoutes(app);
@@ -277,6 +284,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // router so the exact /api/reports/projects path wins over its /reports/:type
   // parameterized route.
   registerProjectReportRoutes(app);
+
+  // Stage 3 report endpoints with exact /api/reports/* paths. Mounted BEFORE the
+  // reports router so they win over its /reports/:type parameterized route.
+  registerStage3ReportsRoutes(app);
 
   registerReportsRoutes(app);
   registerAccountRoutes(app);

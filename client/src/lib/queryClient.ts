@@ -76,6 +76,21 @@ export async function apiRequest(
   return res;
 }
 
+// Performs an apiRequest and parses JSON, throwing on a non-2xx response so that
+// React Query's isError / mutation onError fire correctly. Use this instead of
+// calling res.json() directly when you need errors surfaced honestly.
+export async function apiRequestJson<T = any>(
+  method: string,
+  url: string,
+  data?: unknown | undefined,
+): Promise<T> {
+  const res = await apiRequest(method, url, data);
+  if (!res.ok) {
+    await throwIfResNotOk(res);
+  }
+  return (await res.json()) as T;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

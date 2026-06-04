@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Breadcrumb } from "@/components/breadcrumb";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -76,10 +76,7 @@ function AttendanceTodoContent() {
 
   const { data: participants = [] } = useQuery<Participant[]>({
     queryKey: ["/api/attendance/todo/participants"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/attendance/todo/participants");
-      return res.json();
-    },
+    queryFn: async () => apiRequestJson("GET", "/api/attendance/todo/participants"),
   });
 
   useEffect(() => {
@@ -95,25 +92,17 @@ function AttendanceTodoContent() {
 
   const listQuery = useQuery<TodoTask[]>({
     queryKey: ["/api/attendance/todo/list"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/attendance/todo");
-      return res.json();
-    },
+    queryFn: async () => apiRequestJson("GET", "/api/attendance/todo"),
   });
 
   const summaryQuery = useQuery<TodoSummary>({
     queryKey: ["/api/attendance/todo/summary"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/attendance/todo/summary");
-      return res.json();
-    },
+    queryFn: async () => apiRequestJson("GET", "/api/attendance/todo/summary"),
   });
 
   const mutation = useMutation({
-    mutationFn: async (payload: { items: TodoItem[] }) => {
-      const res = await apiRequest("POST", "/api/attendance/todo", payload);
-      return res.json();
-    },
+    mutationFn: async (payload: { items: TodoItem[] }) =>
+      apiRequestJson("POST", "/api/attendance/todo", payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/todo/list"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/todo/summary"] });
@@ -121,19 +110,17 @@ function AttendanceTodoContent() {
     },
   });
 
-  const markDoneMutation = useMutation({
-    mutationFn: async (taskId: string) => {
-      const res = await apiRequest("PATCH", `/api/attendance/todo/${taskId}/status`, { status: "FINISHED" });
-      return res.json();
-    },
+  const statusMutation = useMutation({
+    mutationFn: async ({ taskId, status }: { taskId: string; status: string }) =>
+      apiRequestJson("PATCH", `/api/attendance/todo/${taskId}/status`, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/todo/list"] });
       queryClient.invalidateQueries({ queryKey: ["/api/attendance/todo/summary"] });
     },
-    onError: (err: any) => {
+    onError: () => {
       toast({
-        title: "Failed to update task",
-        description: err?.message ?? "Please try again",
+        title: "Couldn't update the task",
+        description: "You may not have permission, or something went wrong. Please try again.",
         variant: "destructive",
       });
     },
@@ -153,10 +140,43 @@ function AttendanceTodoContent() {
     setItems((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== idx)));
   };
 
+  const handleRemoveParticipant = (idx: number, pid: string) => {
+    setItems((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], participants: next[idx].participants.filter((p) => p !== pid) };
+      return next;
+    });
+  };
+
   const handleSubmit = async () => {
     const filtered = items.filter((i) => i.task.trim());
-    if (!filtered.length) return;
-    await mutation.mutateAsync({ items: filtered });
+    if (!filtered.length) {
+      toast({
+        title: "Add a task first",
+        description: "Enter a task title in at least one row before submitting.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const missingDate = filtered.some((i) => !i.date);
+    if (missingDate) {
+      toast({
+        title: "Date required",
+        description: "Each task needs a due date.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      await mutation.mutateAsync({ items: filtered });
+      toast({ title: "Tasks submitted", description: `${filtered.length} task(s) created.` });
+    } catch {
+      toast({
+        title: "Couldn't submit tasks",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -247,8 +267,16 @@ function AttendanceTodoContent() {
                       {row.participants.map((pid) => {
                         const p = participants.find((x) => x.id === pid);
                         return (
-                          <Badge key={pid} variant="outline">
+                          <Badge key={pid} variant="outline" className="flex items-center gap-1 pr-1">
                             {p?.name || pid}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveParticipant(idx, pid)}
+                              className="text-muted-foreground hover:text-destructive"
+                              aria-label={`Remove ${p?.name || pid}`}
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
                           </Badge>
                         );
                       })}
@@ -342,16 +370,18 @@ function AttendanceTodoContent() {
         <CardContent>
           {listQuery.isLoading ? (
             <div className="text-sm text-muted-foreground py-4">Loading...</div>
+          ) : listQuery.isError ? (
+            <div className="text-sm text-destructive py-4">Couldn't load tasks. Please try again.</div>
           ) : !Array.isArray(listQuery.data) || listQuery.data.length === 0 ? (
             <div className="text-sm text-muted-foreground py-4">
-              {!Array.isArray(listQuery.data) && listQuery.data ? (listQuery.data as any).error || "Failed to load tasks." : "No tasks yet."}
+              {!Array.isArray(listQuery.data) && listQuery.data ? "Couldn't load tasks. Please try again." : "No tasks yet."}
             </div>
           ) : (
             <div className="space-y-3">
               {listQuery.data.map((t: any) => {
                 if (!t) return null;
                 return (
-                  <div key={t.id} className="border rounded-lg p-3 flex items-start justify-between">
+                  <div key={t.id} className="border rounded-lg p-3 flex items-start justify-between gap-3">
                     <div className="space-y-1">
                       <div className="font-semibold">{t.title || "Untitled Task"}</div>
                       <div className="text-xs text-muted-foreground">
@@ -367,7 +397,32 @@ function AttendanceTodoContent() {
                         <div className="text-sm text-muted-foreground line-clamp-2">{t.description}</div>
                       )}
                     </div>
-                    <Badge variant="outline">{t.status || "PENDING"}</Badge>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <Badge variant="outline">{t.status || "PENDING"}</Badge>
+                      {String(t.status || "").toUpperCase() !== "FINISHED" && (
+                        <div className="flex items-center gap-2">
+                          {String(t.status || "").toUpperCase() !== "RECEIVED" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs"
+                              disabled={statusMutation.isPending}
+                              onClick={() => statusMutation.mutate({ taskId: t.id, status: "RECEIVED" })}
+                            >
+                              Mark Received
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            disabled={statusMutation.isPending}
+                            onClick={() => statusMutation.mutate({ taskId: t.id, status: "FINISHED" })}
+                          >
+                            Mark Done
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}

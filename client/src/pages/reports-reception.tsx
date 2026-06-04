@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,57 +22,51 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-// Initial mock data as fallback
-const mockData = [
-  { id: 1, company: "trusmile surgical", amount: "10000", method: "364", date: "2021-07-13 17:08:25" },
-  { id: 2, company: "trusmile surgical", amount: "10000", method: "364", date: "2021-07-13 17:08:25" },
-];
+type ReceptionRow = {
+  id: string;
+  company: string | null;
+  amount: string | null;
+  method: string | null;
+  date: string | null;
+};
+
+type ReceptionResponse = {
+  rows: ReceptionRow[];
+  total: number;
+  available?: boolean;
+  message?: string;
+};
 
 export default function ReceptionReport() {
   const [monthWise, setMonthWise] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [user, setUser] = useState("");
+  const [applied, setApplied] = useState(false);
 
   const { data: users = [] } = useQuery<any[]>({
     queryKey: ["/api/account/users-list"],
-    queryFn: async () => {
-      const res = await fetch("/api/account/users-list", {
-        headers: {
-          "Authorization": `Bearer ${sessionStorage.getItem("token") || ""}`
-        }
-      });
-      if (!res.ok) return [];
-      return res.json();
-    }
+    queryFn: async () => apiRequestJson("GET", "/api/account/users-list"),
   });
 
-  const selectedUserInfo = users.find((u) => u.id === user);
+  const report = useQuery<ReceptionResponse>({
+    queryKey: ["/api/reports/reception", user, startDate, endDate],
+    enabled: applied && !!user,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (user && user !== "all") params.set("userId", user);
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+      return apiRequestJson("GET", `/api/reports/reception?${params.toString()}`);
+    },
+  });
 
-  // Dynamically generate data for the selected user to demonstrate functionality
-  const tableData = user && user !== "all" && selectedUserInfo
-    ? [
-        { 
-          id: 1, 
-          company: `${selectedUserInfo.full_name}'s Client`, 
-          amount: "15000", 
-          method: "Bank Transfer", 
-          date: new Date().toISOString().replace('T', ' ').substring(0, 19) 
-        },
-        { 
-          id: 2, 
-          company: "trusmile surgical", 
-          amount: "10000", 
-          method: "364", 
-          date: "2021-07-13 17:08:25" 
-        }
-      ]
-    : mockData;
+  const rows = report.data?.rows ?? [];
 
   return (
     <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-6">
-        
+
         {/* Header */}
         <h1 className="text-[17px] font-bold text-[#555] uppercase tracking-wide">
           RECEPTION REPORT
@@ -81,14 +76,14 @@ export default function ReceptionReport() {
         <Card className="border-none shadow-sm bg-white rounded-sm">
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              
+
               {/* Select User */}
               <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-3">
                   <Label className="text-[13px] font-bold text-[#555]">Select User</Label>
                   <div className="flex items-center gap-1.5">
-                    <Checkbox 
-                      id="month-wise" 
+                    <Checkbox
+                      id="month-wise"
                       checked={monthWise}
                       onCheckedChange={(c) => setMonthWise(!!c)}
                       className="h-3.5 w-3.5 border-slate-300"
@@ -117,11 +112,11 @@ export default function ReceptionReport() {
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555]">Start Date</Label>
                 <div className="relative">
-                  <Input 
-                    type="date" 
+                  <Input
+                    type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0" 
+                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
                   />
                 </div>
               </div>
@@ -130,18 +125,22 @@ export default function ReceptionReport() {
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555]">End Date</Label>
                 <div className="relative">
-                  <Input 
-                    type="date" 
+                  <Input
+                    type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0" 
+                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
                   />
                 </div>
               </div>
             </div>
 
             <div className="mt-6">
-              <Button className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-semibold rounded-sm">
+              <Button
+                onClick={() => setApplied(true)}
+                disabled={!user}
+                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-semibold rounded-sm"
+              >
                 View
               </Button>
             </div>
@@ -167,25 +166,37 @@ export default function ReceptionReport() {
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white">
-                  {!user ? (
+                  {!applied || !user ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                        Please select a user to view their reception report.
+                        Please select a user and click View to load the reception report.
                       </TableCell>
                     </TableRow>
-                  ) : tableData.length === 0 ? (
+                  ) : report.isLoading ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                        No reception records found for the selected user.
+                        Loading...
+                      </TableCell>
+                    </TableRow>
+                  ) : report.isError ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-[#d9534f] py-8">
+                        Could not load the reception report. Please try again.
+                      </TableCell>
+                    </TableRow>
+                  ) : rows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                        {report.data?.message || "No reception records found."}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    tableData.map((item) => (
+                    rows.map((item) => (
                       <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
-                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.company}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.amount}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.method}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.date}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.company || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.amount ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.method ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] text-center">{item.date ?? "-"}</TableCell>
                       </TableRow>
                     ))
                   )}
