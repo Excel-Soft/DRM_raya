@@ -1,30 +1,64 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Plus, Trash2, X, Search, SlidersHorizontal, ChevronLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-// personOptions is now fetched dynamically from the API (see useDDExecutives hook below)
-// Keeping a fallback static list in case the API fails
-const FALLBACK_PERSON_OPTIONS: { label: string; isHeader?: boolean }[] = [
-  { label: "Tasker", isHeader: true },
-  { label: "To-Do List" },
-];
+interface AssignmentMember {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: string | null;
+}
+
+interface AssignmentItem {
+  projectId: string;
+  projectName: string | null;
+  status: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  owner: { id: string; name: string | null; email: string | null } | null;
+  members: AssignmentMember[];
+  myRole: string | null;
+  taskCounts: {
+    total: number;
+    todo: number;
+    inProgress: number;
+    blocked: number;
+    completed: number;
+    overdue: number;
+  };
+}
+
+interface AssignmentsResponse {
+  success: boolean;
+  data: {
+    items: AssignmentItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  };
+}
+
+interface ProjectTask {
+  id: string;
+  title: string | null;
+  description: string | null;
+  status: string | null;
+  priority: string | null;
+  projectId: string | null;
+  assigneeName: string | null;
+  projectName: string | null;
+  createdAt: string | null;
+}
 
 function useDDExecutives() {
   return useQuery({
     queryKey: ["dd-executives-only-v2"],
     queryFn: async () => {
-      const token = sessionStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
-      const res = await fetch("/api/users?role=dd_executive", {
-        headers,
-        credentials: "include",
-      });
-      const data = await res.json();
+      const data = await apiRequestJson<any>("GET", "/api/users?role=dd_executive");
       const users: any[] = data?.users || [];
 
       // Use rawRole (exact DB value) — NOT the normalized role which maps all *_executive to dd_executive
@@ -271,247 +305,154 @@ function RichTextEditor() {
   );
 }
 
-// Dummy data from the screenshot
-const initialWorkspaces = [
-  {
-    id: 1,
-    name: "test usa team",
-    subItems: [
-      { name: "test 1" }
-    ]
-  },
-  {
-    id: 2,
-    name: "Ayyaz Task",
-    subItems: [
-      { name: "Customer Support Task" }
-    ]
-  },
-  {
-    id: 3,
-    name: "SHAHRIYAR MASIH Tasks",
-    subItems: [
-      { name: "XLSERP Tasks" },
-      { name: "Webexcels Tasks", count: 3 }
-    ]
-  },
-  {
-    id: 4,
-    name: "FAHAD BIN KHALID Tasks",
-    subItems: [
-      { name: "Webexcels Tasks" },
-      { name: "Clients tasks", count: 1 }
-    ]
-  },
-  {
-    id: 5,
-    name: "MUHAMMAD HABIB AHMED Tasks",
-    subItems: [
-      { name: "DRM Upgradations", count: 2 },
-      { name: "DRM New Development", count: 3 },
-      { name: "DRM Reporting issues" }
-    ]
-  },
-  {
-    id: 6,
-    name: "MUHAMMAD UMER RAZZAQ Tasks",
-    subItems: [
-      { name: "Excelsoft website UAE", count: 2 },
-      { name: "Excel Tech USA website", count: 1 }
-    ]
-  },
-  {
-    id: 7,
-    name: "MUHAMMAD NOUMAN KHALID Tasks",
-    subItems: [
-      { name: "Server Related Tasks" },
-      { name: "Office Tasks" },
-      { name: "Webexcels Tasks", count: 1 }
-    ]
-  },
-  {
-    id: 8,
-    name: "RANA ALI ZEESHAN Tasks",
-    subItems: [
-      { name: "Odoo Tasks", count: 1 }
-    ]
-  },
-  {
-    id: 9,
-    name: "ARSLAN ASLAM Tasks",
-    subItems: [
-      { name: "Webexcels Tasks", count: 1 },
-      { name: "Client Tasks" }
-    ]
-  }
-];
+interface WorkspaceChannel {
+  name: string;
+  projectId: string;
+  count?: number;
+}
+
+interface WorkspaceGroup {
+  id: string;
+  name: string;
+  subItems: WorkspaceChannel[];
+}
 
 export default function PmsTeamWorkspace() {
-  const [workspaces, setWorkspaces] = useState(initialWorkspaces);
-  
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
   // Fetch D&D Executives dynamically from DB
   const { data: ddExecOptions } = useDDExecutives();
-  const personOptions = ddExecOptions || FALLBACK_PERSON_OPTIONS;
-  
-  const { data: userData } = useQuery({
-      queryKey: ["/api/auth/me"],
-      queryFn: async () => {
-          const res = await apiRequest("GET", "/api/auth/me");
-          return res.json();
-      }
+  const personOptions = ddExecOptions ?? [];
+
+  // Real team-workspace assignments (scoped to the current user on the server)
+  const {
+    data: assignmentsResp,
+    isLoading: workspacesLoading,
+    isError: workspacesError,
+  } = useQuery<AssignmentsResponse>({
+    queryKey: ["/api/pms/team-workspace/assignments"],
+    queryFn: () =>
+      apiRequestJson<AssignmentsResponse>(
+        "GET",
+        "/api/pms/team-workspace/assignments?page=1&pageSize=100",
+      ),
   });
 
-  const filteredWorkspaces = useMemo(() => {
-    if (!userData) return workspaces;
-    
-    const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-    const role = (userData.roleId || userData.role || userRoleName).toLowerCase();
-    const isExec = role.includes("executive");
-    
-    if (isExec) {
-      const uName = (userData.fullName || userData.username || "").toLowerCase();
-      const firstPart = uName.split(" ")[0];
-      const filtered = workspaces.filter(w => 
-        w.name.toLowerCase().includes(uName) || 
-        (firstPart.length > 2 && w.name.toLowerCase().includes(firstPart))
-      );
-      
-      if (filtered.length > 0) return filtered;
-      
-      // Fallback for executives without a matching mock workspace
-      return [{
-          id: 999,
-          name: `${userData.fullName || userData.username || "Executive"} Tasks`,
-          subItems: [{ name: "My Tasks" }]
-      }];
+  // Group the real project assignments by owner into workspaces with project "channels"
+  const workspaces = useMemo<WorkspaceGroup[]>(() => {
+    const items = assignmentsResp?.data?.items ?? [];
+    const map = new Map<string, WorkspaceGroup>();
+    for (const item of items) {
+      const ownerName = item.owner?.name?.trim() || "Unassigned";
+      if (!map.has(ownerName)) {
+        map.set(ownerName, { id: ownerName, name: `${ownerName} Tasks`, subItems: [] });
+      }
+      map.get(ownerName)!.subItems.push({
+        name: item.projectName || "Untitled Project",
+        projectId: item.projectId,
+        count: item.taskCounts?.total ? item.taskCounts.total : undefined,
+      });
     }
-
-    if (role.includes("software_manager")) {
-      // Show only software executives (Mock implementation: filter known software team or just "Nouman")
-      // Since this is mock data, we can filter for known software guys or a specific keyword
-      return workspaces.filter(w => 
-        w.name.toLowerCase().includes("nouman") || 
-        w.name.toLowerCase().includes("software")
-      );
-    }
-    
-    return workspaces;
-  }, [workspaces, userData]);
+    return Array.from(map.values());
+  }, [assignmentsResp]);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [newWorkspaceTitle, setNewWorkspaceTitle] = useState("");
-  
+
   // New state for adding channels (sub-items)
-  const [channelModalWorkspace, setChannelModalWorkspace] = useState<{id: number, name: string} | null>(null);
+  const [channelModalWorkspace, setChannelModalWorkspace] = useState<{ id: string; name: string } | null>(null);
   const [newChannelTitle, setNewChannelTitle] = useState("");
-  
+
   // New state for viewing a specific channel's details
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<WorkspaceChannel | null>(null);
   const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
-  
+
   // State for Create New Task filters
   const [taskPerson, setTaskPerson] = useState("To-Do List");
   const [taskTypeState, setTaskTypeState] = useState("Choose...");
   const [taskName, setTaskName] = useState("");
   const [taskPriority, setTaskPriority] = useState("Normal");
 
-  // Load channel tasks from localStorage
-  const [channelTasks, setChannelTasks] = useState<any[]>(() => {
-    try {
-      const all = JSON.parse(localStorage.getItem("software_tasks") || "[]");
-      return all;
-    } catch { return []; }
+  // Real tasks for the currently selected channel (project)
+  const {
+    data: channelTasksData,
+    isLoading: tasksLoading,
+    isError: tasksError,
+  } = useQuery<ProjectTask[]>({
+    queryKey: ["/api/pms/project-tasks", selectedChannel?.projectId],
+    queryFn: () =>
+      apiRequestJson<ProjectTask[]>(
+        "GET",
+        `/api/pms/project-tasks/${selectedChannel!.projectId}`,
+      ),
+    enabled: !!selectedChannel?.projectId,
+  });
+  const currentChannelTasks = channelTasksData ?? [];
+
+  const createTaskMutation = useMutation({
+    mutationFn: (payload: {
+      channelName: string;
+      taskName: string;
+      personName: string;
+      priority: string;
+      taskType: string;
+    }) => apiRequestJson("POST", "/api/pms/workspace-tasks", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pms/project-tasks", selectedChannel?.projectId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pms/team-workspace/assignments"] });
+      toast({ title: "Task created", description: "The task was added successfully." });
+      setShowCreateTaskModal(false);
+      setTaskName("");
+      setTaskPriority("Normal");
+      setTaskPerson("To-Do List");
+      setTaskTypeState("Choose...");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to create task",
+        description: error?.message || "Something went wrong.",
+        variant: "destructive",
+      });
+    },
   });
 
-  // Filter tasks for the currently selected channel
-  const currentChannelTasks = channelTasks.filter(
-    (t: any) => t.company === selectedChannel
-  );
-
-  const handleSaveNewTask = async () => {
+  const handleSaveNewTask = () => {
     if (!taskName.trim()) {
-      alert("Please enter a task name");
+      toast({
+        title: "Task name required",
+        description: "Please enter a task name.",
+        variant: "destructive",
+      });
       return;
     }
+    if (!selectedChannel) return;
 
-    const now = new Date();
-
-    // 1. Save to DB via API (so DD Executive dashboard can show it)
-    try {
-      const token = sessionStorage.getItem("token");
-      const hdrs: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) hdrs["Authorization"] = `Bearer ${token}`;
-      await fetch("/api/pms/workspace-tasks", {
-        method: "POST",
-        headers: hdrs,
-        credentials: "include",
-        body: JSON.stringify({
-          channelName: selectedChannel,
-          taskName: taskName,
-          personName: taskPerson,
-          priority: taskPriority,
-          taskType: taskTypeState,
-        }),
-      });
-    } catch (err) {
-      console.error("DB save error:", err);
-    }
-
-    // 2. Save to localStorage for immediate local display
-    const newTask = {
-      id: Math.floor(Math.random() * 10000).toString(),
-      company: selectedChannel || "N/A",
-      task: taskName,
-      person: taskPerson,
-      status: "ToDo",
+    createTaskMutation.mutate({
+      channelName: selectedChannel.name,
+      taskName: taskName.trim(),
+      personName: taskPerson,
       priority: taskPriority,
-      assignDate: now.toLocaleDateString(),
-      createdAt: now.toISOString(),
-      type: taskTypeState
-    };
-    const existingTasks = JSON.parse(localStorage.getItem("software_tasks") || "[]");
-    const updated = [...existingTasks, newTask];
-    localStorage.setItem("software_tasks", JSON.stringify(updated));
-    setChannelTasks(updated);
-    window.dispatchEvent(new Event("local-storage-update"));
-
-    setShowCreateTaskModal(false);
-    setTaskName("");
-    setTaskPriority("Normal");
-    setTaskPerson("To-Do List");
-    setTaskTypeState("Choose...");
+      taskType: taskTypeState,
+    });
   };
 
   const handleAddWorkspace = () => {
     if (newWorkspaceTitle.trim() === "") return;
-    
-    const newId = workspaces.length > 0 ? Math.max(...workspaces.map(w => w.id)) + 1 : 1;
-    setWorkspaces([
-      ...workspaces,
-      {
-        id: newId,
-        name: newWorkspaceTitle,
-        subItems: []
-      }
-    ]);
-    
+    toast({
+      title: "Workspaces are managed automatically",
+      description: "Workspaces are derived from your project assignments and cannot be created here.",
+    });
     setNewWorkspaceTitle("");
     setShowAddModal(false);
   };
 
   const handleAddChannel = () => {
     if (!channelModalWorkspace || newChannelTitle.trim() === "") return;
-
-    setWorkspaces(workspaces.map(workspace => {
-      if (workspace.id === channelModalWorkspace.id) {
-        return {
-          ...workspace,
-          subItems: [...(workspace.subItems || []), { name: newChannelTitle.trim() }]
-        };
-      }
-      return workspace;
-    }));
-
+    toast({
+      title: "Channels are managed automatically",
+      description: "Channels reflect the projects you are assigned to and cannot be created here.",
+    });
     setNewChannelTitle("");
     setChannelModalWorkspace(null);
   };
@@ -527,7 +468,7 @@ export default function PmsTeamWorkspace() {
             <ChevronLeft className="h-6 w-6" />
           </button>
           <h1 className="text-[18px] font-bold uppercase tracking-tight text-[#3d4a5d]">
-            {selectedChannel}
+            {selectedChannel.name}
           </h1>
         </div>
 
@@ -562,22 +503,34 @@ export default function PmsTeamWorkspace() {
                 </tr>
               </thead>
               <tbody>
-                {currentChannelTasks.length === 0 ? (
+                {tasksLoading ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[#9aabb8]">
+                      Loading tasks…
+                    </td>
+                  </tr>
+                ) : tasksError ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[#dc2626]">
+                      Failed to load tasks. Please try again.
+                    </td>
+                  </tr>
+                ) : currentChannelTasks.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-10 text-center text-[13px] text-[#9aabb8]">
                       No tasks yet — click + to add a task
                     </td>
                   </tr>
                 ) : (
-                  currentChannelTasks.map((t: any, idx: number) => (
+                  currentChannelTasks.map((t: ProjectTask, idx: number) => (
                     <tr key={t.id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="px-4 py-3 text-[#44556d]">{idx + 1}</td>
-                      <td className="px-4 py-3 font-semibold text-[#0e9a55]">{t.company}</td>
-                      <td className="px-4 py-3 font-semibold text-[#2f4058]">{t.task}</td>
+                      <td className="px-4 py-3 font-semibold text-[#0e9a55]">{t.projectName || "-"}</td>
+                      <td className="px-4 py-3 font-semibold text-[#2f4058]">{t.title}</td>
                       <td className="px-4 py-3 text-[#6b7a90]">
-                        {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : t.assignDate || "-"}
+                        {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "-"}
                       </td>
-                      <td className="px-4 py-3 text-[#44556d]">{t.person || "-"}</td>
+                      <td className="px-4 py-3 text-[#44556d]">{t.assigneeName || "-"}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
                           {t.status || "ToDo"}
@@ -590,7 +543,7 @@ export default function PmsTeamWorkspace() {
                           "bg-blue-100 text-blue-700"
                         }`}>{t.priority || "Normal"}</span>
                       </td>
-                      <td className="px-4 py-3 text-[#6b7a90]">{t.type || "-"}</td>
+                      <td className="px-4 py-3 text-[#6b7a90]">{t.description || "-"}</td>
                     </tr>
                   ))
                 )}
@@ -638,7 +591,7 @@ export default function PmsTeamWorkspace() {
                   <div>
                     <label className="mb-2 block text-[14px] font-medium text-[#44556d]">Company</label>
                     <div className="w-full rounded-[4px] border border-[#cfd7e3] bg-[#f4f6f8] px-3 py-2 text-[14px] text-[#44556d]">
-                      {selectedChannel}
+                      {selectedChannel.name}
                     </div>
                   </div>
                   <div>
@@ -731,9 +684,10 @@ export default function PmsTeamWorkspace() {
                 </button>
                 <button
                   onClick={handleSaveNewTask}
-                  className="rounded-[4px] bg-[#0e9a55] px-5 py-2.5 text-[15px] font-medium text-white transition-colors hover:bg-[#0b7a43]"
+                  disabled={createTaskMutation.isPending}
+                  className="rounded-[4px] bg-[#0e9a55] px-5 py-2.5 text-[15px] font-medium text-white transition-colors hover:bg-[#0b7a43] disabled:opacity-60"
                 >
-                  Save
+                  {createTaskMutation.isPending ? "Saving…" : "Save"}
                 </button>
               </div>
             </div>
@@ -767,7 +721,26 @@ export default function PmsTeamWorkspace() {
               </tr>
             </thead>
             <tbody>
-              {filteredWorkspaces.map((workspace, index) => (
+              {workspacesLoading ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-10 text-center text-[13px] text-[#9aabb8]">
+                    Loading workspaces…
+                  </td>
+                </tr>
+              ) : workspacesError ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-10 text-center text-[13px] text-[#dc2626]">
+                    Failed to load workspaces. Please try again.
+                  </td>
+                </tr>
+              ) : workspaces.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-10 text-center text-[13px] text-[#9aabb8]">
+                    No workspaces found.
+                  </td>
+                </tr>
+              ) : (
+                workspaces.map((workspace, index) => (
                 <tr key={workspace.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50/50">
                   <td className="px-4 py-4 align-top text-[#44556d]">
                     {index + 1}
@@ -779,7 +752,7 @@ export default function PmsTeamWorkspace() {
                         {workspace.subItems.map((sub, i) => (
                           <div 
                             key={i} 
-                            onClick={() => setSelectedChannel(sub.name)}
+                            onClick={() => setSelectedChannel(sub)}
                             className="flex cursor-pointer items-center text-[13px] text-[#35c78e] hover:underline"
                           >
                             {sub.name}
@@ -814,7 +787,8 @@ export default function PmsTeamWorkspace() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                ))
+              )}
             </tbody>
           </table>
         </div>

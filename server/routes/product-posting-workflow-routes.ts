@@ -25,6 +25,15 @@ import {
 import { ActivityLogService } from "../services/activity-service";
 import { NotificationService } from "../services/notification-service";
 
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export const productPostingWorkflowRouter = Router();
 
 productPostingWorkflowRouter.use(async (_req, _res, next) => {
@@ -228,17 +237,27 @@ productPostingWorkflowRouter.post("/tasks/:taskId/evidence-links", requireRole("
     const { url, label, linkType = "output" } = req.body;
     const actorUserId = req.user!.userId;
 
+    const trimmedUrl = typeof url === "string" ? url.trim() : "";
+    if (!isValidHttpUrl(trimmedUrl)) {
+      return res.status(400).json({ success: false, error: "Enter a valid URL starting with http:// or https://" });
+    }
+
     const [workflow] = await db.select().from(productPostingWorkflows).where(eq(productPostingWorkflows.taskId, taskId));
     if (!workflow) return res.status(404).json({ success: false, error: "Workflow not found" });
     if (workflow.executiveUserId !== actorUserId && req.user!.roleId !== "admin") {
       return res.status(403).json({ success: false, error: "You can only upload links for your assigned task" });
     }
 
+    const existingLinks = await db.select().from(productPostingEvidenceLinks).where(eq(productPostingEvidenceLinks.taskId, taskId));
+    if (existingLinks.some((l) => (l.url || "").trim() === trimmedUrl)) {
+      return res.status(409).json({ success: false, error: "This link has already been added for this task" });
+    }
+
     const [link] = await db.insert(productPostingEvidenceLinks).values({
       workflowId: workflow.id,
       projectId: workflow.projectId,
       taskId,
-      url,
+      url: trimmedUrl,
       label,
       linkType,
       createdByUserId: actorUserId,
@@ -483,6 +502,10 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
 
     if (!["complete", "return"].includes(action)) {
       return res.status(400).json({ success: false, error: "Invalid verification action" });
+    }
+
+    if (action === "return" && !remarks?.trim()) {
+      return res.status(400).json({ success: false, error: "A reason is required when returning a task" });
     }
 
     const [workflow] = await db.select().from(productPostingWorkflows).where(eq(productPostingWorkflows.taskId, taskId));

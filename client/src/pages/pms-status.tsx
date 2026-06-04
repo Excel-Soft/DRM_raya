@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/hooks/use-toast";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequestJson } from "@/lib/queryClient";
 
 interface ProjectStatus {
     id: string;
@@ -21,36 +22,6 @@ interface ProjectStatus {
     totalTasks?: number;
     totalTime?: string;
 }
-
-const MOCK_FALLBACK_TASKS = [
-    {
-        id: "task-mock-1",
-        title: "Keyword Research & Analysis",
-        description: "Comprehensive keyword research for Alibaba minisite ranking.",
-        status: "InProgress",
-        createdAt: new Date().toISOString(),
-        timerStartedAt: new Date(Date.now() - 3600000).toISOString(),
-        notes: JSON.stringify({ duration: "120", links: "http://example.com" })
-    },
-    {
-        id: "task-mock-2",
-        title: "Product Listing Setup",
-        description: "Setup 50 new products with attributes and optimized descriptions.",
-        status: "ToDo",
-        createdAt: new Date(Date.now() - 86400000).toISOString(),
-        timerStartedAt: null,
-        notes: JSON.stringify({ duration: "240", links: "" })
-    },
-    {
-        id: "task-mock-3",
-        title: "Competitor Market Analysis",
-        description: "Analyze top 5 competitors on Alibaba for pricing variations.",
-        status: "Completed",
-        createdAt: new Date(Date.now() - 172800000).toISOString(),
-        timerStartedAt: null,
-        notes: JSON.stringify({ duration: "60", links: "http://alibabacompetitor.com" })
-    }
-];
 
 export default function PmsStatus() {
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -70,45 +41,48 @@ export default function PmsStatus() {
 
     const [elapsedTimes, setElapsedTimes] = useState<Record<string, number>>({});
     const queryClient = useQueryClient();
+    const { toast } = useToast();
 
-    const { data: projects = [], isLoading } = useQuery<ProjectStatus[]>({
+    const { data: projects = [], isLoading, isError, error } = useQuery<ProjectStatus[]>({
         queryKey: ["/api/pms/department-status"],
     });
 
-    const { data: projectTasks = [], isLoading: isLoadingTasks } = useQuery<any[]>({
+    const { data: projectTasks = [], isLoading: isLoadingTasks, isError: isTasksError, error: tasksError } = useQuery<any[]>({
         queryKey: ["project-tasks-direct", selectedProjectId],
         enabled: !!selectedProjectId && isDetailsModalOpen,
         queryFn: async () => {
-            const res = await fetch(`/api/pms/project-tasks/${selectedProjectId}`, { credentials: "include" });
-            if (!res.ok) throw new Error("Failed to fetch tasks");
-            const data = await res.json();
+            const data = await apiRequestJson<any[]>("GET", `/api/pms/project-tasks/${selectedProjectId}`);
             return Array.isArray(data) ? data : [];
         }
     });
 
+    const { data: timeLogs = [], isLoading: isLoadingLogs } = useQuery<any[]>({
+        queryKey: ["project-time-logs", selectedProjectId, projectTasks.map((t: any) => t.id).join(",")],
+        enabled: !!selectedProjectId && isDetailsModalOpen && projectTasks.length > 0,
+        queryFn: async () => {
+            const all = await Promise.all(
+                projectTasks.map(async (t: any) => {
+                    const logs = await apiRequestJson<any[]>("GET", `/api/pms/tasks/${t.id}/time-logs`);
+                    return (Array.isArray(logs) ? logs : []).map((l: any) => ({ ...l, taskTitle: t.title || t.name }));
+                })
+            );
+            return all.flat().sort((a: any, b: any) => new Date(b.logDate).getTime() - new Date(a.logDate).getTime());
+        }
+    });
+
+    const invalidateTaskData = () => {
+        queryClient.invalidateQueries({ queryKey: ["project-tasks-direct", selectedProjectId] });
+        queryClient.invalidateQueries({ queryKey: ["project-time-logs", selectedProjectId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/pms/department-status"] });
+    };
+
     // Mutations for timer
     const startTimerMutation = useMutation({
         mutationFn: async (taskId: string) => {
-            if (taskId.startsWith("task-mock")) {
-                // Simulate backend behavior for mock tasks
-                return new Promise(resolve => setTimeout(() => resolve({ success: true }), 300));
-            }
-            const res = await fetch(`/api/tasks/${taskId}/timers/start`, { method: "POST" });
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || errorData.details || "Failed to start timer");
-            }
-            return res.json();
+            return apiRequestJson("POST", `/api/tasks/${taskId}/timers/start`);
         },
-        onSuccess: (_data, taskId) => {
-            if (taskId.startsWith("task-mock")) {
-                const updatedTasks = projectTasks.map((t: any) => 
-                    t.id === taskId ? { ...t, timerStartedAt: new Date().toISOString(), status: "InProgress" } : t
-                );
-                queryClient.setQueryData(["/api/pms/tasks", { projectId: selectedProjectId }], updatedTasks);
-            } else {
-                queryClient.invalidateQueries({ queryKey: ["/api/pms/tasks", { projectId: selectedProjectId }] });
-            }
+        onSuccess: () => {
+            invalidateTaskData();
             toast({ title: "Timer started" });
         },
         onError: (err: any) => toast({ title: "Timer Error", description: err.message, variant: "destructive" })
@@ -116,26 +90,10 @@ export default function PmsStatus() {
 
     const stopTimerMutation = useMutation({
         mutationFn: async (taskId: string) => {
-            if (taskId.startsWith("task-mock")) {
-                return new Promise(resolve => setTimeout(() => resolve({ success: true }), 300));
-            }
-            const res = await fetch(`/api/tasks/${taskId}/timers/stop`, { method: "POST" });
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || errorData.details || "Failed to stop timer");
-            }
-            return res.json();
+            return apiRequestJson("POST", `/api/tasks/${taskId}/timers/stop`);
         },
-        onSuccess: (_data, taskId) => {
-            if (taskId.startsWith("task-mock")) {
-                const currentTasks = projectTasks.length > 0 ? projectTasks : MOCK_FALLBACK_TASKS;
-                const updatedTasks = currentTasks.map((t: any) => 
-                    t.id === taskId ? { ...t, timerStartedAt: null } : t
-                );
-                queryClient.setQueryData(["/api/pms/tasks", { projectId: selectedProjectId }], updatedTasks);
-            } else {
-                queryClient.invalidateQueries({ queryKey: ["/api/pms/tasks", { projectId: selectedProjectId }] });
-            }
+        onSuccess: () => {
+            invalidateTaskData();
             toast({ title: "Timer stopped" });
         },
         onError: (err: any) => toast({ title: "Timer Error", description: err.message, variant: "destructive" })
@@ -143,59 +101,25 @@ export default function PmsStatus() {
 
     const completeTaskMutation = useMutation({
         mutationFn: async (taskId: string) => {
-            if (taskId.startsWith("task-mock")) {
-                return new Promise(resolve => setTimeout(() => resolve({ success: true }), 500));
-            }
-            
             const validLinks = endTaskForm.links.filter((l: string) => l.trim() !== "");
-            const res = await fetch(`/api/tasks/${taskId}/complete`, { 
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    linksPosted: validLinks.length, 
-                    outputNotes: JSON.stringify({ links: validLinks }) 
-                })
+            return apiRequestJson("POST", `/api/tasks/${taskId}/complete`, {
+                linksPosted: validLinks.length,
+                outputNotes: JSON.stringify({ links: validLinks }),
             });
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || errorData.details || "Failed to complete task");
-            }
-            return res.json();
         },
         onSuccess: (_data, taskId) => {
-            const currentTasks = projectTasks.length > 0 ? projectTasks : MOCK_FALLBACK_TASKS;
-            const updatedTasks = currentTasks.map((t: any) => 
+            const updatedTasks = projectTasks.map((t: any) => 
                 t.id === taskId ? { ...t, status: "Completed", timerStartedAt: null } : t
             );
 
-            if (taskId.startsWith("task-mock")) {
-                queryClient.setQueryData(["/api/pms/tasks", { projectId: selectedProjectId }], updatedTasks);
-            } else {
-                queryClient.invalidateQueries({ queryKey: ["/api/pms/tasks", { projectId: selectedProjectId }] });
-            }
+            invalidateTaskData();
 
-            // Automatically transfer to D&D Manager queue (Monthly Complete Project) if all tasks finished!
+            // When all tasks are finished, close the details modal. The transfer to the
+            // D&D Manager queue is handled server-side by the task-completion endpoint.
             if (updatedTasks.every((t: any) => t.status === "Completed" || t.status === "Done")) {
-                try {
-                    const saved = JSON.parse(localStorage.getItem('dd-projects') || '[]');
-                    const projectName = selectedProjectInfo?.project || "Project";
-                    if (!saved.some((p: any) => p.name === projectName)) {
-                        saved.unshift({
-                            id: selectedProjectInfo?.id ? selectedProjectInfo.id.slice(0, 4) : Math.floor(1000 + Math.random() * 9000).toString(),
-                            name: projectName,
-                            company: selectedProjectInfo?.company || "Company",
-                            date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-                            status: "Pending",
-                            taskTime: "4:0",
-                            spentTime: "0:0:0",
-                            links: endTaskForm.links.filter((l: string) => l.trim() !== "")
-                        });
-                        localStorage.setItem('dd-projects', JSON.stringify(saved));
-                        setTimeout(() => {
-                            setIsDetailsModalOpen(false);
-                        }, 500);
-                    }
-                } catch (e) {}
+                setTimeout(() => {
+                    setIsDetailsModalOpen(false);
+                }, 500);
             }
             
             toast({ title: "Task completed successfully" });
@@ -207,22 +131,16 @@ export default function PmsStatus() {
 
     const requestOvertimeMutation = useMutation({
         mutationFn: async (data: { taskId: string, requestedMinutes: number, reason: string }) => {
-            const res = await fetch(`/api/product-posting/tasks/${data.taskId}/request-overtime`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ requestedMinutes: data.requestedMinutes, reason: data.reason })
+            return apiRequestJson("POST", `/api/tasks/${data.taskId}/extensions`, {
+                requestedTimeMinutes: data.requestedMinutes,
+                reason: data.reason,
             });
-            if (!res.ok) {
-                const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || errorData.details || "Failed to request overtime");
-            }
-            return res.json();
         },
         onSuccess: () => {
             toast({ title: "Overtime requested successfully" });
             setIsOvertimeModalOpen(false);
             setOvertimeForm({ minutes: "60", reason: "" });
-            queryClient.invalidateQueries({ queryKey: ["/api/pms/tasks", { projectId: selectedProjectId }] });
+            invalidateTaskData();
         },
         onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" })
     });
@@ -252,6 +170,25 @@ export default function PmsStatus() {
     };
 
     const selectedProjectInfo = projects.find(p => p.id === selectedProjectId);
+
+    // Enforce one-active-timer-at-a-time on the client before hitting the backend
+    const handleToggleTimer = (task: any) => {
+        if (startTimerMutation.isPending || stopTimerMutation.isPending) return;
+        if (task.timerStartedAt) {
+            stopTimerMutation.mutate(task.id);
+            return;
+        }
+        const activeTask = displayTasks.find((t: any) => t.timerStartedAt && t.id !== task.id);
+        if (activeTask) {
+            toast({
+                title: "A timer is already running",
+                description: `Stop the timer on "${activeTask.title || activeTask.name || 'another task'}" before starting a new one.`,
+                variant: "destructive",
+            });
+            return;
+        }
+        startTimerMutation.mutate(task.id);
+    };
 
     // End task validation logic
     let endTaskExpectedLinks = 0;
@@ -396,6 +333,18 @@ export default function PmsStatus() {
                                         Loading project status...
                                     </TableCell>
                                 </TableRow>
+                            ) : isError ? (
+                                <TableRow>
+                                    <TableCell colSpan={8} className="text-center py-10 text-rose-500 dark:text-rose-400">
+                                        Failed to load projects{error instanceof Error ? `: ${error.message}` : ""}.
+                                        <button
+                                            onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/pms/department-status"] })}
+                                            className="ml-2 underline font-bold hover:text-rose-600"
+                                        >
+                                            Retry
+                                        </button>
+                                    </TableCell>
+                                </TableRow>
                             ) : projects.length === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-zinc-400">
@@ -480,6 +429,24 @@ export default function PmsStatus() {
                                     {isLoadingTasks ? (
                                         <TableRow>
                                             <TableCell colSpan={8} className="text-center py-20 text-gray-400 font-medium">Fetching project tasks...</TableCell>
+                                        </TableRow>
+                                    ) : isTasksError ? (
+                                        <TableRow>
+                                            <TableCell colSpan={8} className="text-center py-16">
+                                                <div className="flex flex-col items-center gap-2">
+                                                    <div className="w-12 h-12 rounded-full bg-rose-50 flex items-center justify-center">
+                                                        <span className="text-rose-400 text-2xl">!</span>
+                                                    </div>
+                                                    <p className="text-[14px] font-bold text-rose-500">Failed to load tasks</p>
+                                                    <p className="text-[12px] text-gray-400">{tasksError instanceof Error ? tasksError.message : "Please try again."}</p>
+                                                    <button
+                                                        onClick={() => queryClient.invalidateQueries({ queryKey: ["project-tasks-direct", selectedProjectId] })}
+                                                        className="mt-1 text-[12px] underline font-bold text-rose-500 hover:text-rose-600"
+                                                    >
+                                                        Retry
+                                                    </button>
+                                                </div>
+                                            </TableCell>
                                         </TableRow>
                                     ) : displayTasks.length === 0 ? (
                                         <TableRow>
@@ -614,10 +581,7 @@ export default function PmsStatus() {
                                                             </div>
                                                             <button 
                                                                 className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
-                                                                onClick={() => {
-                                                                    if (task.timerStartedAt) stopTimerMutation.mutate(task.id);
-                                                                    else startTimerMutation.mutate(task.id);
-                                                                }}
+                                                                onClick={() => handleToggleTimer(task)}
                                                                 disabled={startTimerMutation.isPending || stopTimerMutation.isPending}
                                                             >
                                                                 {task.timerStartedAt ? (
@@ -662,6 +626,45 @@ export default function PmsStatus() {
                                     }
                                 </TableBody>
                             </Table>
+                        </div>
+
+                        {/* Time Log History */}
+                        <div className="mt-6 bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
+                            <div className="px-6 py-4 border-b border-gray-100 font-bold text-[14px] text-[#495057] dark:text-zinc-400 dark:border-zinc-800 flex items-center gap-2">
+                                <Clock className="h-4 w-4" /> Time Log History
+                            </div>
+                            <div className="max-h-[240px] overflow-auto custom-scrollbar">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow className="bg-[#e9ebf7] hover:bg-[#e9ebf7] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                                            <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-3 text-center dark:text-zinc-100">Task</TableHead>
+                                            <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-3 text-center dark:text-zinc-100">User</TableHead>
+                                            <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-3 text-center dark:text-zinc-100">Time Spent</TableHead>
+                                            <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-3 text-center dark:text-zinc-100">Date</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {isLoadingLogs ? (
+                                            <TableRow><TableCell colSpan={4} className="text-center py-8 text-gray-400 font-medium">Loading time logs...</TableCell></TableRow>
+                                        ) : timeLogs.length === 0 ? (
+                                            <TableRow><TableCell colSpan={4} className="text-center py-8 text-gray-400 font-medium">No time logs recorded yet.</TableCell></TableRow>
+                                        ) : timeLogs.map((log: any) => (
+                                            <TableRow key={log.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
+                                                <TableCell className="px-6 py-3 text-center font-bold text-gray-700 dark:text-zinc-300 uppercase text-[12px]">{log.taskTitle || "—"}</TableCell>
+                                                <TableCell className="px-6 py-3 text-center text-gray-500 dark:text-zinc-400">{log.user?.name || "—"}</TableCell>
+                                                <TableCell className="px-6 py-3 text-center">
+                                                    <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-full font-bold text-[11px] dark:text-zinc-400 dark:bg-zinc-900">
+                                                        {Math.floor((log.timeSpentMinutes || 0) / 60)}h {(log.timeSpentMinutes || 0) % 60}m
+                                                    </span>
+                                                </TableCell>
+                                                <TableCell className="px-6 py-3 text-center text-gray-500 font-medium text-[12px] dark:text-zinc-400">
+                                                    {log.logDate ? new Date(log.logDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : "—"}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
                         </div>
                     </div>
                 </DialogContent>
@@ -896,42 +899,42 @@ export default function PmsStatus() {
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Package</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            {selectedProjectInfo?.project || 'Basic'}
+                                            {selectedProjectInfo?.project || 'N/A'}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[180px_auto] text-[14px]">
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Web_url</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            http://localhost:5000/pms/approvals
+                                            {(selectedProjectInfo as any)?.webUrl || 'N/A'}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[180px_auto] text-[14px]">
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Phone</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            031245698574
+                                            {(selectedProjectInfo as any)?.phone || 'N/A'}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[180px_auto] text-[14px]">
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Mobile</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            031245698574
+                                            {(selectedProjectInfo as any)?.mobile || 'N/A'}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[180px_auto] text-[14px]">
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Address</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            145
+                                            {(selectedProjectInfo as any)?.address || 'N/A'}
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-[180px_auto] text-[14px]">
                                         <div className="text-gray-500 font-medium dark:text-zinc-400">Categories</div>
                                         <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
                                             <span className="text-gray-300 mx-2">&gt;</span>
-                                            minisite
+                                            {(selectedProjectInfo as any)?.category || 'N/A'}
                                         </div>
                                     </div>
                                 </div>

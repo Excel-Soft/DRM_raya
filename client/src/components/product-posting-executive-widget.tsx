@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import {
     Users, RefreshCw, Tag, CheckCircle2, ChevronRight,
@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { WorkflowTimeline } from "@/components/workflow-timeline";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 function StatCard({ label, icon: Icon, value }: { label: string; icon: any; value: number }) {
@@ -146,13 +147,26 @@ export function ProductPostingExecutiveWidget() {
 
     const addLinkMutation = useMutation({
         mutationFn: async ({ taskId, url, label }: { taskId: string; url: string; label: string }) =>
-            apiRequest("POST", `/api/product-posting/tasks/${taskId}/evidence-links`, { url, label }),
+            apiRequestJson("POST", `/api/product-posting/tasks/${taskId}/evidence-links`, { url, label }),
         onSuccess: () => {
             refreshExecutions();
             // setLinkDialogOpen(false); // Keep open to add multiple links
             setLinkUrl("");
             setLinkLabel("");
-            alert("Link saved successfully!");
+            toast({
+                title: "Link saved",
+                description: "Evidence link saved successfully.",
+                variant: "default",
+            });
+        },
+        onError: (error: any) => {
+            const raw = error?.message || "Could not save evidence link.";
+            const description = raw.replace(/^\d+:\s*/, "");
+            toast({
+                title: "Could not save link",
+                description,
+                variant: "destructive",
+            });
         },
     });
 
@@ -642,6 +656,12 @@ export function ProductPostingExecutiveWidget() {
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+                        )}
+
+                        {selectedTask?.taskId && (
+                            <div className="mt-4 pt-4 border-t">
+                                <WorkflowTimeline taskId={selectedTask.taskId} module="product-posting" />
                             </div>
                         )}
                     </div>

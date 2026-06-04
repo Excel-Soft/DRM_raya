@@ -5,39 +5,44 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Trash2, X, AlertCircle } from "lucide-react";
+import { Trash2, X, AlertCircle, Loader2 } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
-interface TaskItem {
-    id: number;
+interface TaskTemplate {
+    id: string;
     name: string;
-    time: string;
-    detail: string;
-    repeatDaily: string;
+    time: number;
+    detail: string | null;
+    repeatDaily: number;
+    department: string | null;
 }
 
-const INITIAL_TASKS: TaskItem[] = [
-    { id: 1, name: "Excels Tech USA Website", time: "2:60", detail: "This task which i assigned to fahad to comeplete the functionality of the USA Website", repeatDaily: "No", department: "Software Department" },
-    { id: 2, name: "ERP Sale", time: "16:0", detail: "Test", repeatDaily: "No", department: "Software Department" },
-    { id: 3, name: "Website Backend Development", time: "10:0", detail: "", repeatDaily: "No", department: "Software Department" },
-    { id: 4, name: "Chatsystem Features", time: "8:0", detail: "Late messages replies of relivent team members Dashboard updates on both-ends Late replies record by each team members", repeatDaily: "No", department: "Software Department" },
-    { id: 5, name: "Development", time: "8:0", detail: "", repeatDaily: "No", department: "Software Department" },
-];
+const TASK_TEMPLATES_KEY = "/api/pms/task-templates";
+
+function formatTime(minutes: number): string {
+    const safe = Number(minutes) || 0;
+    return `${Math.floor(safe / 60)}:${safe % 60}`;
+}
 
 export default function PmsTasks() {
-    const [tasks, setTasks] = useState<TaskItem[]>(() => {
-        const saved = localStorage.getItem("pms_created_tasks");
-        if (saved) {
-            try {
-                return JSON.parse(saved);
-            } catch {
-                return INITIAL_TASKS;
-            }
-        }
-        return INITIAL_TASKS;
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+
+    const {
+        data: tasks = [],
+        isLoading,
+        isError,
+        error,
+    } = useQuery<TaskTemplate[]>({
+        queryKey: [TASK_TEMPLATES_KEY],
+        queryFn: () => apiRequestJson<TaskTemplate[]>("GET", TASK_TEMPLATES_KEY),
     });
+
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [isDeleteOpen, setIsDeleteOpen] = useState(false);
-    const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
+    const [taskToDelete, setTaskToDelete] = useState<string | null>(null);
 
     // Form state
     const [newTaskName, setNewTaskName] = useState("");
@@ -48,46 +53,73 @@ export default function PmsTasks() {
     const [newDetail, setNewDetail] = useState("");
     const [newRepeatDaily, setNewRepeatDaily] = useState(false);
 
-    const handleDeleteClick = (id: number) => {
+    const createMutation = useMutation({
+        mutationFn: (payload: {
+            name: string;
+            time: number;
+            detail: string;
+            repeatDaily: number;
+            department: string | null;
+        }) => apiRequestJson("POST", TASK_TEMPLATES_KEY, payload),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_TEMPLATES_KEY] });
+            toast({ title: "Task created", description: "The task was created successfully." });
+            setIsAddOpen(false);
+            // reset fields
+            setNewTaskName("");
+            setNewGroup("main");
+            setNewDepartment("");
+            setNewHours("00");
+            setNewMin("00");
+            setNewDetail("");
+            setNewRepeatDaily(false);
+        },
+        onError: (err: any) => {
+            toast({
+                title: "Failed to create task",
+                description: err?.message || "An unexpected error occurred.",
+                variant: "destructive",
+            });
+        },
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => apiRequestJson("DELETE", `${TASK_TEMPLATES_KEY}/${id}`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_TEMPLATES_KEY] });
+            toast({ title: "Task deleted", description: "The task was deleted successfully." });
+            setIsDeleteOpen(false);
+            setTaskToDelete(null);
+        },
+        onError: (err: any) => {
+            toast({
+                title: "Failed to delete task",
+                description: err?.message || "An unexpected error occurred.",
+                variant: "destructive",
+            });
+        },
+    });
+
+    const handleDeleteClick = (id: string) => {
         setTaskToDelete(id);
         setIsDeleteOpen(true);
     };
 
     const confirmDelete = () => {
         if (taskToDelete !== null) {
-            const updatedTasks = tasks.filter(t => t.id !== taskToDelete);
-            setTasks(updatedTasks);
-            localStorage.setItem("pms_created_tasks", JSON.stringify(updatedTasks));
-            window.dispatchEvent(new Event("storage"));
+            deleteMutation.mutate(taskToDelete);
         }
-        setIsDeleteOpen(false);
-        setTaskToDelete(null);
     };
 
     const handleSaveTask = () => {
-        const timeStr = `${newHours}:${newMin}`;
-        const t: TaskItem = {
-            id: tasks.length ? Math.max(...tasks.map(t => t.id)) + 1 : 1,
+        const timeMinutes = (parseInt(newHours, 10) || 0) * 60 + (parseInt(newMin, 10) || 0);
+        createMutation.mutate({
             name: newTaskName || "Untitled Task",
-            time: timeStr,
+            time: timeMinutes,
             detail: newDetail,
-            repeatDaily: newRepeatDaily ? "Yes" : "No",
-            department: newDepartment,
-            group: newGroup
-        };
-        const updatedTasks = [...tasks, t];
-        setTasks(updatedTasks);
-        localStorage.setItem("pms_created_tasks", JSON.stringify(updatedTasks));
-        window.dispatchEvent(new Event("storage"));
-        setIsAddOpen(false);
-        // reset fields
-        setNewTaskName("");
-        setNewGroup("main");
-        setNewDepartment("");
-        setNewHours("00");
-        setNewMin("00");
-        setNewDetail("");
-        setNewRepeatDaily(false);
+            repeatDaily: newRepeatDaily ? 1 : 0,
+            department: newDepartment || null,
+        });
     };
 
     return (
@@ -125,27 +157,50 @@ export default function PmsTasks() {
                             </tr>
                         </thead>
                         <tbody>
-                            {tasks.map((task, index) => (
-                                <tr key={task.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                    <td className="px-4 py-4 text-[12px] font-bold text-[#495057] dark:text-zinc-400">{index + 1}</td>
-                                    <td className="px-4 py-4 text-[13px] text-gray-500 text-center dark:text-zinc-400">{task.name}</td>
-                                    <td className="px-4 py-4 text-center">
-                                        <span className="inline-block bg-[#f1f3f5] text-gray-600 rounded-[3px] px-3 py-1 text-[11px] font-medium border border-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
-                                            {task.time}
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                        <span className="inline-flex items-center gap-2">
+                                            <Loader2 size={16} className="animate-spin" />
+                                            Loading tasks...
                                         </span>
                                     </td>
-                                    <td className="px-4 py-4 text-[13px] text-gray-500 text-center dark:text-zinc-400">{task.detail}</td>
-                                    <td className="px-4 py-4 text-[13px] text-[#3b82f6] text-center hover:underline cursor-pointer dark:text-zinc-100">{task.repeatDaily}</td>
-                                    <td className="px-4 py-4 text-center">
-                                        <button 
-                                            onClick={() => handleDeleteClick(task.id)}
-                                            className="text-[#fca5a5] hover:text-red-600 hover:scale-110 transition-transform flex items-center justify-center mx-auto"
-                                        >
-                                            <Trash2 size={16} fill="currentColor" strokeWidth={0} className="text-[#ff6b6b]" />
-                                        </button>
+                                </tr>
+                            ) : isError ? (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-red-500">
+                                        Failed to load tasks{error instanceof Error ? `: ${error.message}` : ""}.
                                     </td>
                                 </tr>
-                            ))}
+                            ) : tasks.length === 0 ? (
+                                <tr>
+                                    <td colSpan={6} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                        No tasks found.
+                                    </td>
+                                </tr>
+                            ) : (
+                                tasks.map((task, index) => (
+                                    <tr key={task.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                        <td className="px-4 py-4 text-[12px] font-bold text-[#495057] dark:text-zinc-400">{index + 1}</td>
+                                        <td className="px-4 py-4 text-[13px] text-gray-500 text-center dark:text-zinc-400">{task.name}</td>
+                                        <td className="px-4 py-4 text-center">
+                                            <span className="inline-block bg-[#f1f3f5] text-gray-600 rounded-[3px] px-3 py-1 text-[11px] font-medium border border-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
+                                                {formatTime(task.time)}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-4 text-[13px] text-gray-500 text-center dark:text-zinc-400">{task.detail}</td>
+                                        <td className="px-4 py-4 text-[13px] text-[#3b82f6] text-center hover:underline cursor-pointer dark:text-zinc-100">{task.repeatDaily ? "Yes" : "No"}</td>
+                                        <td className="px-4 py-4 text-center">
+                                            <button 
+                                                onClick={() => handleDeleteClick(task.id)}
+                                                className="text-[#fca5a5] hover:text-red-600 hover:scale-110 transition-transform flex items-center justify-center mx-auto"
+                                            >
+                                                <Trash2 size={16} fill="currentColor" strokeWidth={0} className="text-[#ff6b6b]" />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
                         </tbody>
                     </table>
                 </div>
@@ -309,9 +364,10 @@ export default function PmsTasks() {
                         </Button>
                         <Button 
                             onClick={handleSaveTask}
+                            disabled={createMutation.isPending}
                             className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-medium h-[38px] px-6 text-[14px] shadow-none rounded-[4px]"
                         >
-                            Save
+                            {createMutation.isPending ? "Saving..." : "Save"}
                         </Button>
                     </div>
                 </DialogContent>
@@ -336,9 +392,10 @@ export default function PmsTasks() {
                         </Button>
                         <Button 
                             onClick={confirmDelete}
+                            disabled={deleteMutation.isPending}
                             className="bg-[#ef4444] hover:bg-[#dc2626] text-white font-bold h-[42px] px-6 text-[15px] shadow-none rounded w-[110px] dark:bg-zinc-900 dark:hover:bg-zinc-800"
                         >
-                            OK
+                            {deleteMutation.isPending ? "..." : "OK"}
                         </Button>
                     </div>
                 </DialogContent>

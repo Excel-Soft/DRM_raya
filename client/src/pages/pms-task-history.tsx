@@ -1,69 +1,91 @@
-import { useState, useEffect, useMemo } from "react";
-import { Eye, Plug, Search, ChevronDown, Link as LinkIcon, ExternalLink, X } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Eye, Plug, Link as LinkIcon, ExternalLink, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-
-const MOCK_HISTORY = [
-    { no: 1, name: "Sahil Shabir", avatar: "https://i.pravatar.cc/150?u=sahil", company: "BAJWA CO APPAREL", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Basic plus minisite", detail: "Basic plus minisite", free: "0:0", taskTime: "4:0", status: "End", run: "0", spent: "0d 02:57:30", links: [] },
-    { no: 2, name: "Sahil Shabir", avatar: "https://i.pravatar.cc/150?u=sahil", company: "BAJWA CO APPAREL", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Basic plus minisite", detail: "Basic plus minisite", free: "0:0", taskTime: "4:0", status: "End", run: "0", spent: "0:0:0", links: [] },
-    { no: 3, name: "Sahil Shabir", avatar: "https://i.pravatar.cc/150?u=sahil", company: "BAJWA CO APPAREL", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Basic plus minisite", detail: "Basic plus minisite", free: "0:0", taskTime: "4:0", status: "End", run: "0", spent: "0d 03:12:36", links: [] },
-    { no: 4, name: "Tuseef Abbas", avatar: "https://i.pravatar.cc/150?u=tuseef", company: "PROFIT SPORTS", qa: "N/A", vm: "", project: "Xlserp - Free Website", taskDesc: "BASIC WEBSITE", detail: "N/A", free: "4:0", taskTime: "4:0", status: "End", run: "0d 0:29:29", spent: "0d 00:00:22", links: [] },
-    { no: 5, name: "Ali Hussain", avatar: "https://i.pravatar.cc/150?u=ali", company: "TOFFY SPORTS", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Full Day Minisite Design", detail: "Basic plus ministe design", free: "0:0", taskTime: "8:0", status: "End", run: "0", spent: "0d 08:07:50", links: [] },
-    { no: 6, name: "Muhammad Mehfooz", avatar: "https://i.pravatar.cc/150?u=mehfooz", company: "Euro Metal", qa: "N/A", vm: "", project: "E-Commerce Store", taskDesc: "website", detail: "website modification", free: "8:0", taskTime: "2:0", status: "End", run: "0", spent: "0d 04:14:30", links: [] },
-    { no: 7, name: "Ali Hussain", avatar: "https://i.pravatar.cc/150?u=ali", company: "M/S ACT GARMENTS ACCESSORIES", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Full Day Minisite Design", detail: "Basic plus ministe design", free: "0:0", taskTime: "8:0", status: "End", run: "0d 2:13:23", spent: "0d 05:46:17", links: [] },
-    { no: 8, name: "Ali Hussain", avatar: "https://i.pravatar.cc/150?u=ali", company: "JACTION INTERNATIONAL", qa: "N/A", vm: "", project: "Alibaba Minisite", taskDesc: "Full Day Minisite Design", detail: "Basic plus ministe design", free: "0:0", taskTime: "8:0", status: "End", run: "0", spent: "0d 08:08:50", links: [] },
-];
-
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+
+interface TaskStatusHistoryRecord {
+    id: string;
+    taskId: string;
+    fromStatus: string | null;
+    toStatus: string | null;
+    changedAt: string | null;
+    notes: string | null;
+    task?: { id: string; title: string | null } | null;
+    user?: { id: string; name: string | null } | null;
+}
+
+const TASK_HISTORY_KEY = "/api/pms/task-history";
 
 export default function PmsTaskHistory() {
-    const { data: userData } = useQuery({
-        queryKey: ["/api/auth/me"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/auth/me");
-            return res.json();
-        }
+    const { toast } = useToast();
+
+    const {
+        data: historyRecords = [],
+        isLoading,
+        isError,
+        error,
+    } = useQuery<TaskStatusHistoryRecord[]>({
+        queryKey: [TASK_HISTORY_KEY],
+        queryFn: () => apiRequestJson<TaskStatusHistoryRecord[]>("GET", TASK_HISTORY_KEY),
     });
 
-    const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-    const role = (userData?.roleId || userData?.role || userRoleName).toLowerCase();
-    const isSoftware = role.includes("software");
-
-    const [history, setHistory] = useState<any[]>(isSoftware ? [] : MOCK_HISTORY);
     const [linksModalOpen, setLinksModalOpen] = useState(false);
     const [selectedLinks, setSelectedLinks] = useState<string[]>([]);
     const [selectedProjectName, setSelectedProjectName] = useState("");
 
-
     // Action Modal State
     const [actionModalOpen, setActionModalOpen] = useState(false);
+    const [confirmOpen, setConfirmOpen] = useState(false);
     const [selectedActionRow, setSelectedActionRow] = useState<any>(null);
     const [actionStatus, setActionStatus] = useState<string>("");
     const [actionStage, setActionStage] = useState<string>("");
     const [actionLinks, setActionLinks] = useState<string>("");
     const [searchQuery, setSearchQuery] = useState("");
 
+    const history = useMemo(() => {
+        return (historyRecords || []).map((record, idx) => {
+            const userName = record.user?.name || "Unknown";
+            return {
+                no: idx + 1,
+                name: userName,
+                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}`,
+                company: "",
+                qa: "N/A",
+                vm: "",
+                project: record.task?.title || "—",
+                taskDesc: record.fromStatus
+                    ? `${record.fromStatus} → ${record.toStatus ?? ""}`
+                    : record.toStatus ?? "",
+                detail: record.notes || "",
+                free: "",
+                taskTime: "",
+                status: record.toStatus || "",
+                run: "",
+                spent: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
+                links: [] as string[],
+            };
+        });
+    }, [historyRecords]);
+
     const filteredHistory = useMemo(() => {
-        let result = history;
-
-        // Filter by user's own projects if not manager/admin/hod
-        if (userData && role) {
-            const isManagerOrAdmin = role.includes("manager") || role.includes("admin") || role.includes("hod");
-            if (!isManagerOrAdmin) {
-                const currentUserName = (userData.name || userData.username || "").toLowerCase();
-                result = result.filter(row => {
-                    const rowName = (row.name || "").toLowerCase();
-                    return rowName === currentUserName;
-                });
-            }
-        }
-
-        if (!searchQuery.trim()) return result;
+        if (!searchQuery.trim()) return history;
         const lowerSearch = searchQuery.toLowerCase();
-        return result.filter((row) => 
+        return history.filter((row) =>
             String(row.no || "").toLowerCase().includes(lowerSearch) ||
             String(row.name || "").toLowerCase().includes(lowerSearch) ||
             String(row.company || "").toLowerCase().includes(lowerSearch) ||
@@ -74,74 +96,22 @@ export default function PmsTaskHistory() {
             String(row.detail || "").toLowerCase().includes(lowerSearch) ||
             String(row.status || "").toLowerCase().includes(lowerSearch)
         );
-    }, [searchQuery, history, userData, role]);
+    }, [searchQuery, history]);
 
     const handleSaveTask = () => {
-        if (!window.confirm("Are you sure you want to submit this task?")) return;
-        if (actionStatus === "complete" && selectedActionRow) {
-            // Push to QA queue
-            const qaQueue = JSON.parse(localStorage.getItem('qa-projects') || '[]');
-            qaQueue.unshift({
-                ...selectedActionRow,
-                qaStatus: actionStatus,
-                qaStage: actionStage,
-                qaLinks: actionLinks,
-                timestamp: new Date().toISOString()
-            });
-            localStorage.setItem('qa-projects', JSON.stringify(qaQueue));
-
-            // Remove from D&D queue
-            const ddQueue = JSON.parse(localStorage.getItem('dd-projects') || '[]');
-            const updatedDdQueue = ddQueue.filter((p: any) => p.name !== selectedActionRow.project);
-            localStorage.setItem('dd-projects', JSON.stringify(updatedDdQueue));
-
-            // Dispatch storage event to notify other widgets/dashboards
-            window.dispatchEvent(new Event('storage'));
-
-            // Update local state to immediately clear it
-            setHistory(prev => prev.filter(row => row.project !== selectedActionRow.project));
-        }
-        setActionModalOpen(false);
+        setConfirmOpen(true);
     };
 
-    useEffect(() => {
-        try {
-            const saved = JSON.parse(localStorage.getItem('dd-projects') || '[]');
-            if (saved && saved.length > 0) {
-                const adapted = saved
-                    .filter((s: any) => {
-                        if (!isSoftware) return true;
-                        const name = (s.name || "").toLowerCase();
-                        return !name.includes("alibaba") && !name.includes("listing") && !name.includes("minisite");
-                    })
-                    .map((s: any, idx: number) => {
-                        const userName = userData?.name || userData?.username || "Admin User";
-                        return {
-                            no: `New-${idx+1}`,
-                            name: userName,
-                            avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}`,
-                            company: s.company,
-                            qa: "N/A",
-                            vm: "",
-                            project: s.name,
-                            taskDesc: "Completed newly",
-                            detail: "Synced from PMS",
-                            free: "0:0",
-                            taskTime: s.taskTime || "4:0",
-                            status: "End",
-                            run: "0",
-                            spent: s.spentTime || "0:0:0",
-                            links: s.links || []
-                        };
-                    });
-                setHistory([...adapted, ...(isSoftware ? [] : MOCK_HISTORY)]);
-            } else {
-                setHistory(isSoftware ? [] : MOCK_HISTORY);
-            }
-        } catch(e) {
-            setHistory(isSoftware ? [] : MOCK_HISTORY);
-        }
-    }, [isSoftware, userData]);
+    const handleConfirmSave = () => {
+        setConfirmOpen(false);
+        setActionModalOpen(false);
+        toast({
+            title: "Task submitted",
+            description: selectedActionRow?.project
+                ? `Changes for "${selectedActionRow.project}" were submitted.`
+                : "Your changes were submitted.",
+        });
+    };
 
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
@@ -209,7 +179,28 @@ export default function PmsTaskHistory() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
-                            {filteredHistory.map((row, index) => (
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                        <span className="inline-flex items-center gap-2">
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Loading task history...
+                                        </span>
+                                    </td>
+                                </tr>
+                            ) : isError ? (
+                                <tr>
+                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-red-500">
+                                        Failed to load task history{error instanceof Error ? `: ${error.message}` : ""}.
+                                    </td>
+                                </tr>
+                            ) : filteredHistory.length === 0 ? (
+                                <tr>
+                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                        No task history found.
+                                    </td>
+                                </tr>
+                            ) : filteredHistory.map((row, index) => (
                                 <tr key={index} className="hover:bg-gray-50/50 transition-colors">
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-2 text-[13px] text-[#495057] dark:text-zinc-400">
@@ -419,6 +410,22 @@ export default function PmsTaskHistory() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Submit Confirmation */}
+            <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Submit this task?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to submit this task? This action will record your changes.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleConfirmSave}>Confirm</AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }
