@@ -16,7 +16,13 @@ const api = {
       let msg = text;
       try {
         const json = JSON.parse(text);
-        if (json.error) msg = json.error;
+        // Support both the Stage 10 error envelope ({error:{message}, message})
+        // and the legacy shape ({error:"string"}).
+        msg =
+          json?.error?.message ||
+          json?.message ||
+          (typeof json?.error === "string" ? json.error : "") ||
+          msg;
       } catch (e) {
         // ignore
       }
@@ -52,8 +58,13 @@ const api = {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      const json = await response.json();
-      throw new Error(json.error || "Password reset failed");
+      const json = await response.json().catch(() => ({} as any));
+      const msg =
+        json?.error?.message ||
+        json?.message ||
+        (typeof json?.error === "string" ? json.error : "") ||
+        "Password reset failed";
+      throw new Error(msg);
     }
     return response.json();
   },

@@ -6,6 +6,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { loggerMiddleware } from "./logger.middleware";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
+import { errorEnvelope } from "./utils/api-error";
 
 // Prevent pg-pool / network errors from crashing the server
 process.on("unhandledRejection", (reason: any) => {
@@ -77,13 +78,21 @@ app.use(loggerMiddleware);
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    const code = err.code || err.name || "";
-    console.error(`[ERROR] ${req.method} ${req.originalUrl} -> ${status} code=${code} msg="${message}"`);
-    if (process.env.DEBUG_ERRORS === "true" && err?.stack) {
+    const rawMessage = err.message || "Internal Server Error";
+    const code = err.code || err.name || "INTERNAL_ERROR";
+    // Always log full detail server-side (incl. stack) for debugging.
+    console.error(`[ERROR] ${req.method} ${req.originalUrl} -> ${status} code=${code} msg="${rawMessage}"`);
+    if (err?.stack) {
       console.error(err.stack);
     }
-    res.status(status).json({ success: false, message });
+    // Standard error envelope: { success:false, error:{code,message}, message }.
+    // Top-level `message` is mirrored for frontend backward-compat.
+    // SECURITY: never leak stack traces or raw internal error text to clients.
+    // For 5xx, return a fixed generic message; client-error (4xx) messages are
+    // intentional and safe to surface.
+    const clientMessage = status >= 500 ? "Internal server error" : rawMessage;
+    const clientCode = status >= 500 ? "INTERNAL_ERROR" : code;
+    res.status(status).json(errorEnvelope(clientCode, clientMessage));
   });
 
   // importantly only setup vite in development and after

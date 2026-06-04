@@ -3,7 +3,6 @@ import { db } from "./db";
 import { productPostingData, insertProductPostingDataSchema, restrictedKeywords, insertRestrictedKeywordSchema } from "@shared/schema";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import { authMiddleware } from "./auth.middleware";
-import multer from "multer";
 import { normalizeRole } from "./utils/role-utils";
 
 export function registerPostingDataRoutes(app: Express) {

@@ -34,6 +34,7 @@ import {
   gmReportsRepository,
 } from "./repositories/generic-report.repository";
 import { isManagerialRole } from "./utils/role-utils";
+import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound } from "./utils/api-error";
 
 const router = Router();
 
@@ -125,7 +126,7 @@ const gmPayloadSchema = insertGmReportSchema.extend({
 router.post("/bv-reports", async (req, res) => {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const parsed = bvPayloadSchema.parse(req.body);
     console.debug(`[${requestId}] create bv-report`, {
       userId: req.user.userId,
@@ -141,10 +142,10 @@ router.post("/bv-reports", async (req, res) => {
     return res.status(201).json({ success: true, data: report });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+      return sendError(res, error);
     }
     if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER" || error?.code === "23503") {
-      return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+      return res.status(400).json(errorEnvelope("INVALID_CUSTOMER", "Customer not found"));
     }
     console.error(`Failed to create BV report [${requestId}]`, {
       requestId,
@@ -154,13 +155,13 @@ router.post("/bv-reports", async (req, res) => {
       stack: error?.stack,
     });
     const status = error?.code === "ECONNREFUSED" ? 503 : 500;
-    return res.status(status).json({ error: "Failed to create BV report", code: error?.code });
+    return res.status(status).json(errorEnvelope("INTERNAL_ERROR", "Failed to create BV report"));
   }
 });
 
 router.get("/bv-reports", async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const from = req.query.from as string | undefined;
     const to = req.query.to as string | undefined;
     const { fromDate, toDate } = parseDateRange(from, to);
@@ -169,38 +170,38 @@ router.get("/bv-reports", async (req, res) => {
     return res.json({ success: true, items });
   } catch (error) {
     console.error("Failed to list BV reports", error);
-    return res.status(500).json({ error: "Failed to list BV reports" });
+    return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to list BV reports"));
   }
 });
 
 router.get("/bv-reports/:id", async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const report = await bvReportsRepository.getById(req.user.userId, req.params.id);
-    if (!report) return res.status(404).json({ error: "Not found" });
+    if (!report) return sendError(res, notFound("Not found"));
     return res.json({ success: true, data: report });
   } catch (error) {
     console.error("Failed to fetch BV report", error);
-    return res.status(500).json({ error: "Failed to fetch BV report" });
+    return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch BV report"));
   }
 });
 
 router.put("/bv-reports/:id", async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const parsed = bvUpdateSchema.parse(req.body);
     const updated = await bvReportsRepository.update(req.user.userId, req.params.id, parsed);
-    if (!updated) return res.status(404).json({ error: "Not found" });
+    if (!updated) return sendError(res, notFound("Not found"));
     return res.json({ success: true, data: updated });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+      return sendError(res, error);
     }
     if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER" || error?.code === "23503") {
-      return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+      return res.status(400).json(errorEnvelope("INVALID_CUSTOMER", "Customer not found"));
     }
     console.error("Failed to update BV report", error);
-    return res.status(500).json({ error: "Failed to update BV report" });
+    return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update BV report"));
   }
 });
 
@@ -227,7 +228,7 @@ function buildReportCrud(path: string, repo: any, schema: z.AnyZodObject) {
   router.post(`/${path}`, async (req, res) => {
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const parsed = payload.parse(req.body);
       console.log(`[${requestId}] create ${path}`, {
         userId: req.user.userId,
@@ -240,10 +241,10 @@ function buildReportCrud(path: string, repo: any, schema: z.AnyZodObject) {
       return res.status(201).json({ success: true, data });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+        return sendError(res, error);
       }
       if (error?.code === "INVALID_CUSTOMER" || error?.message === "INVALID_CUSTOMER") {
-        return res.status(400).json({ error: "INVALID_CUSTOMER", message: "Customer not found" });
+        return res.status(400).json(errorEnvelope("INVALID_CUSTOMER", "Customer not found"));
       }
       console.error(`Failed to create ${path}`, {
         requestId,
@@ -253,13 +254,14 @@ function buildReportCrud(path: string, repo: any, schema: z.AnyZodObject) {
         stack: error?.stack,
       });
       const status = error?.code === "23505" ? 409 : 500;
-      return res.status(status).json({ error: `Failed to create ${path}`, code: error?.code, detail: error?.detail });
+      const code = error?.code === "23505" ? "CONFLICT" : "INTERNAL_ERROR";
+      return res.status(status).json(errorEnvelope(code, `Failed to create ${path}`));
     }
   });
 
   router.get(`/${path}`, async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const from = req.query.from as string | undefined;
       const to = req.query.to as string | undefined;
       const { fromDate, toDate } = parseDateRange(from, to);
@@ -267,35 +269,35 @@ function buildReportCrud(path: string, repo: any, schema: z.AnyZodObject) {
       return res.json({ success: true, items });
     } catch (error) {
       console.error(`Failed to list ${path}`, error);
-      return res.status(500).json({ error: `Failed to list ${path}` });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", `Failed to list ${path}`));
     }
   });
 
   router.get(`/${path}/:id`, async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const data = await repo.getById(req.user.userId, req.params.id);
-      if (!data) return res.status(404).json({ error: "Not found" });
+      if (!data) return sendError(res, notFound("Not found"));
       return res.json({ success: true, data });
     } catch (error) {
       console.error(`Failed to fetch ${path}`, error);
-      return res.status(500).json({ error: `Failed to fetch ${path}` });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", `Failed to fetch ${path}`));
     }
   });
 
   router.put(`/${path}/:id`, async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const parsed = payload.partial().parse(req.body);
       const data = await repo.update(req.user.userId, req.params.id, parsed);
-      if (!data) return res.status(404).json({ error: "Not found" });
+      if (!data) return sendError(res, notFound("Not found"));
       return res.json({ success: true, data });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+        return sendError(res, error);
       }
       console.error(`Failed to update ${path}`, error);
-      return res.status(500).json({ error: `Failed to update ${path}` });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", `Failed to update ${path}`));
     }
   });
 }

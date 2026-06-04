@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { pool } from "./db";
+import { sendError, errorEnvelope, unauthorized, forbidden, notFound } from "./utils/api-error";
 
 const repeatOptions = ["HOUR", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "NONE"] as const;
 const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
@@ -41,7 +42,7 @@ const todoItemSchema = z.object({
 export function registerTodoRoutes(app: Express) {
   // Categories (static list)
   app.get("/api/attendance/todo/categories", (req, res) => {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     return res.json([
       "General",
       "HR",
@@ -55,21 +56,21 @@ export function registerTodoRoutes(app: Express) {
   // Participants list (users)
   app.get("/api/attendance/todo/participants", async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const { rows } = await pool.query(
         "select id, full_name from drm.users order by full_name asc limit 200",
       );
       return res.json(rows.map((r: any) => ({ id: r.id, name: r.full_name })));
     } catch (error) {
       console.error("Error fetching participants", error);
-      return res.status(500).json({ error: "Failed to fetch participants" });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch participants"));
     }
   });
 
   // Create tasks (bulk)
   app.post("/api/attendance/todo", async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const parsed = z.object({ items: z.array(todoItemSchema).min(1) }).parse(req.body);
       const userId = req.user.userId;
 
@@ -111,18 +112,18 @@ export function registerTodoRoutes(app: Express) {
       return res.json({ success: true, created: result.rowCount });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
+        return sendError(res, error);
       }
       // Log full DB error details server-side only; do not leak PG message/detail/code to the client.
       console.error("[todo] Error creating todo tasks:", error);
-      return res.status(500).json({ error: "Failed to create tasks" });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to create tasks"));
     }
   });
 
   // List tasks for current user
   app.get("/api/attendance/todo", async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const userId = req.user.userId;
       const role = req.user.roleId ?? "";
       const isAdmin = role === "admin";
@@ -144,14 +145,14 @@ export function registerTodoRoutes(app: Express) {
       return res.json(rows);
     } catch (error) {
       console.error("[todo] Error fetching todo tasks:", error);
-      return res.status(500).json({ error: "Failed to fetch tasks" });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch tasks"));
     }
   });
 
   // Update task status
   app.patch("/api/attendance/todo/:id/status", async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const taskId = req.params.id;
       const parsed = z
         .object({
@@ -169,7 +170,7 @@ export function registerTodoRoutes(app: Express) {
         [taskId],
       );
       if (rows.length === 0) {
-        return res.status(404).json({ error: "Task not found" });
+        return sendError(res, notFound("Task not found"));
       }
       const row = rows[0];
       const isOwner = row.created_by_user_id === req.user.userId;
@@ -177,7 +178,7 @@ export function registerTodoRoutes(app: Express) {
       const isParticipant = participants.includes(req.user.userId);
 
       if (!isAdmin && !isOwner && !isParticipant) {
-        return res.status(403).json({ error: "Not allowed to update this task" });
+        return sendError(res, forbidden("Not allowed to update this task"));
       }
 
       const updateRes = await pool.query(
@@ -191,17 +192,17 @@ export function registerTodoRoutes(app: Express) {
       return res.json({ success: true, task: updateRes.rows[0] });
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid status", details: error.errors });
+        return sendError(res, error);
       }
       console.error("Error updating todo status", error);
-      return res.status(500).json({ error: "Failed to update status" });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update status"));
     }
   });
 
   // Summary counts by status
   app.get("/api/attendance/todo/summary", async (req, res) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const role = req.user.roleId ?? "";
       const isAdmin = role === "admin";
       const userIdParam = (req.query.userId as string | undefined) ?? undefined;
@@ -257,7 +258,7 @@ export function registerTodoRoutes(app: Express) {
       return res.json(summary);
     } catch (error) {
       console.error("Error fetching todo summary", error);
-      return res.status(500).json({ error: "Failed to fetch todo summary" });
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch todo summary"));
     }
   });
 }

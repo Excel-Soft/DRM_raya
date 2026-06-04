@@ -5,6 +5,7 @@ import { authMiddleware, setAuthCookie, clearAuthCookie } from "./auth.middlewar
 import { pool } from "./db";
 import { normalizeRole } from "./utils/role-utils";
 import { emailService } from "./email.service";
+import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "./utils/api-error";
 
 
 const router = Router();
@@ -69,16 +70,14 @@ router.post("/signup", async (req: Request, res: Response) => {
     // Public self-service signup is disabled in production. Accounts must be
     // created/approved by an administrator.
     if (process.env.NODE_ENV === "production") {
-      return res.status(403).json({
-        error: "Public signup is disabled. Please contact an administrator to create an account.",
-      });
+      return sendError(res, forbidden("Public signup is disabled. Please contact an administrator to create an account."));
     }
 
     const { fullName, email, password } = signupSchema.parse(req.body);
 
     const existing = await pool.query("select id from drm.users where email = $1 limit 1", [email]);
     if (existing.rows.length > 0) {
-      return res.status(409).json({ error: "Email already in use" });
+      return sendError(res, conflict("Email already in use"));
     }
 
     const passwordHash = await authService.hashPassword(password);
@@ -98,12 +97,10 @@ router.post("/signup", async (req: Request, res: Response) => {
     const payload = await issueAuthPayload(user);
     return res.status(201).json({ user: payload.user });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request data", details: error.errors });
+    if (!(error instanceof z.ZodError)) {
+      console.error("Signup error:", error);
     }
-
-    console.error("Signup error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -116,7 +113,7 @@ router.post("/login", async (req: Request, res: Response) => {
       [email],
     );
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return sendError(res, unauthorized("Invalid credentials"));
     }
 
     const user = result.rows[0] as {
@@ -130,25 +127,23 @@ router.post("/login", async (req: Request, res: Response) => {
     };
 
     if (!user.is_active) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return sendError(res, unauthorized("Invalid credentials"));
     }
 
     const ok = await authService.comparePassword(password, user.password_hash);
     if (!ok) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return sendError(res, unauthorized("Invalid credentials"));
     }
 
     const payload = await issueAuthPayload(user);
     setAuthCookie(res, payload.token);
     return res.json(payload);
   } catch (error: any) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request data", details: error.errors });
+    if (!(error instanceof z.ZodError)) {
+      // Log full details server-side only; never leak stack/SQL/internals to the client.
+      console.error("Login error DETAILS:", error);
     }
-
-    // Log full details server-side only; never leak stack/SQL/internals to the client.
-    console.error("Login error DETAILS:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -156,7 +151,7 @@ router.post("/login", async (req: Request, res: Response) => {
 router.get("/me", authMiddleware, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ error: "Not authenticated" });
+      return sendError(res, unauthorized("Not authenticated"));
     }
 
     // If impersonating, fetch the identity of the impersonator (the admin) so their name shows in the UI
@@ -167,7 +162,7 @@ router.get("/me", authMiddleware, async (req: Request, res: Response) => {
       [fetchId],
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
+      return sendError(res, notFound("User not found"));
     }
 
     const user = result.rows[0] as {
@@ -194,7 +189,7 @@ router.get("/me", authMiddleware, async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Get user error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -207,13 +202,13 @@ router.post("/logout", authMiddleware, async (_req: Request, res: Response) => {
 // Refresh: re-read user from DB, normalize role, and issue fresh token
 router.post("/refresh", authMiddleware, async (req: Request, res: Response) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const result = await pool.query(
       "select id, full_name, email, role, is_active from drm.users where id = $1 limit 1",
       [req.user.userId],
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
+      return sendError(res, notFound("User not found"));
     }
     const user = result.rows[0] as {
       id: string;
@@ -223,14 +218,14 @@ router.post("/refresh", authMiddleware, async (req: Request, res: Response) => {
       is_active: boolean;
     };
     if (!user.is_active) {
-      return res.status(401).json({ error: "User inactive" });
+      return sendError(res, unauthorized("User inactive"));
     }
     const payload = await issueAuthPayload(user);
     setAuthCookie(res, payload.token);
     return res.json(payload);
   } catch (error) {
     console.error("Refresh token error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -238,17 +233,17 @@ router.post("/refresh", authMiddleware, async (req: Request, res: Response) => {
 // This endpoint allows ANY user (not just admins) to switch between their assigned roles
 router.post("/set-active-role", authMiddleware, async (req: Request, res: Response) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const roleId = normalizeRole((req.body?.roleId as string) || "");
-    if (!roleId) return res.status(400).json({ error: "roleId is required" });
+    if (!roleId) return sendError(res, badRequest("roleId is required"));
 
     const result = await pool.query(
       "select id, full_name, email, role, roles, is_active from drm.users where id = $1 limit 1",
       [req.user.userId],
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: "User not found" });
+    if (result.rows.length === 0) return sendError(res, notFound("User not found"));
     const user = result.rows[0] as { id: string; full_name: string; email: string; role: string; roles: string[]; is_active: boolean };
-    if (!user.is_active) return res.status(401).json({ error: "User inactive" });
+    if (!user.is_active) return sendError(res, unauthorized("User inactive"));
 
     // Build list of allowed roles from the user's roles array
     const normalizedRole = normalizeRole(user.role);
@@ -261,7 +256,7 @@ router.post("/set-active-role", authMiddleware, async (req: Request, res: Respon
     console.log(`[SET-ACTIVE-ROLE] User: ${user.email}, requested: "${roleId}", allowed roles: [${userRoles.join(', ')}], allowed: ${allowed}`);
 
     if (!allowed) {
-      return res.status(403).json({ error: "Forbidden", message: `Role "${roleId}" is not assigned to this user` });
+      return sendError(res, forbidden(`Role "${roleId}" is not assigned to this user`));
     }
 
     const token = authService.generateToken({
@@ -289,7 +284,7 @@ router.post("/set-active-role", authMiddleware, async (req: Request, res: Respon
     });
   } catch (error) {
     console.error("Set active role error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -303,11 +298,11 @@ router.post("/reset-password", async (req: Request, res: Response) => {
       [email],
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: "User not found" });
+      return sendError(res, notFound("User not found"));
     }
     const user = result.rows[0] as { id: string; is_active: boolean };
     if (!user.is_active) {
-      return res.status(400).json({ error: "User is inactive" });
+      return sendError(res, badRequest("User is inactive"));
     }
 
     const passwordHash = await authService.hashPassword(newPassword);
@@ -318,11 +313,10 @@ router.post("/reset-password", async (req: Request, res: Response) => {
 
     return res.json({ success: true, message: "Password reset successful" });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request data", details: error.errors });
+    if (!(error instanceof z.ZodError)) {
+      console.error("Reset password error:", error);
     }
-    console.error("Reset password error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -368,12 +362,10 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
     return res.json({ success: true, message: "Check the server console for the password reset link." });
 
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid data", details: error.errors });
+    if (!(error instanceof z.ZodError)) {
+      console.error("Forgot password error:", error);
     }
-
-    console.error("Forgot password error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return sendError(res, error);
   }
 });
 
@@ -394,7 +386,7 @@ router.post("/reset-password-with-token", async (req: Request, res: Response) =>
     );
 
     if (tokenRes.rows.length === 0) {
-      return res.status(400).json({ error: "Invalid or expired reset token" });
+      return sendError(res, badRequest("Invalid or expired reset token"));
     }
 
     const record = tokenRes.rows[0];
@@ -416,9 +408,10 @@ router.post("/reset-password-with-token", async (req: Request, res: Response) =>
     return res.json({ success: true, message: "Password reset successful" });
 
   } catch (error) {
-    if (error instanceof z.ZodError) return res.status(400).json({ error: "Invalid data", details: error.errors });
-    console.error("Reset password token error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    if (!(error instanceof z.ZodError)) {
+      console.error("Reset password token error:", error);
+    }
+    return sendError(res, error);
   }
 });
 
