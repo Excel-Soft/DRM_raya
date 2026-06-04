@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Check, Loader2, Trash2, X } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import {
     Select,
@@ -9,11 +9,11 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-interface PromotionRow {
+interface PromotionFormRow {
     id: string;
     title: string;
     package: string;
@@ -24,9 +24,64 @@ interface PromotionRow {
     message: string;
 }
 
+interface Promotion {
+    id: string;
+    packageId: string | null;
+    packageName: string | null;
+    title: string;
+    subTitle: string | null;
+    discount: string | null;
+    bannerUrl: string | null;
+    mediaType: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    isActive: boolean;
+    status: string;
+    reason: string | null;
+    createdByName: string | null;
+    createdAt: string | null;
+}
+
+interface PromotionListResponse {
+    data: Promotion[];
+    total: number;
+    page: number;
+    pageSize: number;
+}
+
+const STATIC_PACKAGE_LABELS: Record<string, string> = {
+    "verified-supplier": "Verified Supplier",
+    "rc-up": "Rc-Up",
+    "kap": "KAP",
+    "ggs-pro": "GGS Pro",
+    "kwa-kap": "KWA-KAP",
+    "china-trip": "China Trip",
+    "kwa-pro": "Kwa-Pro",
+};
+
+function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function statusBadgeClass(status: string): string {
+    switch (status) {
+        case "approved":
+            return "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300";
+        case "rejected":
+            return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
+        default:
+            return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+    }
+}
+
 export default function PromotionPage() {
     const { toast } = useToast();
-    const [rows, setRows] = useState<PromotionRow[]>([
+    const [rows, setRows] = useState<PromotionFormRow[]>([
         {
             id: '1',
             title: '',
@@ -39,71 +94,13 @@ export default function PromotionPage() {
         }
     ]);
 
-    // Query for old promotions
-    const { data: promotionsData, isLoading: promotionsLoading } = useQuery<{ success: boolean; data: any[] }>({
+    // Query for old promotions (real-or-empty — no mock fallback)
+    const { data: promotionsData, isLoading: promotionsLoading } = useQuery<PromotionListResponse>({
         queryKey: ["/api/drm/promotions"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/drm/promotions");
-            return res.json();
-        },
-        retry: false,
-        // Use initialData to always show sample data
-        initialData: {
-            success: true,
-            data: [
-                {
-                    id: '1',
-                    banner_url: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=400&h=300&fit=crop',
-                    banner_type: 'image',
-                    title: 'Test Banner',
-                    sub_title: 'China Trip',
-                    package: 'Basic',
-                    discount: '$ 900',
-                    start_date: '2025-12-01',
-                    end_date: '2025-12-31',
-                    is_active: true
-                },
-                {
-                    id: '2',
-                    banner_url: 'https://images.unsplash.com/photo-1551033406-611cf9a28f67?w=400&h=300&fit=crop',
-                    banner_type: 'image',
-                    title: 'Test Banner',
-                    sub_title: 'Basic',
-                    package: 'Basic',
-                    discount: '$ 900',
-                    start_date: '2025-12-01',
-                    end_date: '2025-12-31',
-                    is_active: true
-                },
-                {
-                    id: '3',
-                    banner_url: 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=400&h=300&fit=crop',
-                    banner_type: 'image',
-                    title: 'Test Banner 1',
-                    sub_title: 'Basic',
-                    package: 'Basic',
-                    discount: '$ 900',
-                    start_date: '2025-12-01',
-                    end_date: '2025-12-31',
-                    is_active: true
-                },
-                {
-                    id: '4',
-                    banner_url: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop',
-                    banner_type: 'image',
-                    title: 'Beautiful Day with Friends',
-                    sub_title: 'Basic',
-                    package: 'Basic',
-                    discount: '$ 0',
-                    start_date: '2024-05-01',
-                    end_date: '2024-05-31',
-                    is_active: false
-                },
-            ]
-        }
+        queryFn: () => apiRequestJson<PromotionListResponse>("GET", "/api/drm/promotions"),
     });
 
-    const oldPromotions = promotionsData?.data || [];
+    const oldPromotions = promotionsData?.data ?? [];
 
     // Query for GM packages
     const { data: packagesData } = useQuery<{ packages: any[] }>({
@@ -115,6 +112,96 @@ export default function PromotionPage() {
         staleTime: 5 * 60 * 1000,
     });
     const packages = packagesData?.packages || [];
+
+    function invalidate() {
+        queryClient.invalidateQueries({ queryKey: ["/api/drm/promotions"] });
+    }
+
+    function resolvePackageName(value: string): string | null {
+        if (!value || value === 'choose') return null;
+        const pkg = packages.find((p) => String(p.id) === value);
+        if (pkg) return pkg.name ?? null;
+        return STATIC_PACKAGE_LABELS[value] ?? value;
+    }
+
+    const createMutation = useMutation({
+        mutationFn: async (formRows: PromotionFormRow[]) => {
+            for (const row of formRows) {
+                let bannerUrl: string | null = null;
+                let mediaType: string | null = null;
+                if (row.banner) {
+                    bannerUrl = await fileToDataUrl(row.banner);
+                    mediaType = row.banner.type.startsWith("video") ? "video" : "image";
+                }
+                await apiRequestJson("POST", "/api/drm/promotions", {
+                    title: row.title.trim(),
+                    packageId: row.package && row.package !== 'choose' ? row.package : null,
+                    packageName: resolvePackageName(row.package),
+                    subTitle: row.message.trim() || null,
+                    discount: row.discount ? String(row.discount) : null,
+                    startDate: row.startDate || null,
+                    endDate: row.endDate || null,
+                    bannerUrl,
+                    mediaType,
+                });
+            }
+        },
+        onSuccess: () => {
+            toast({ title: "Success", description: "Promotion banners submitted successfully!" });
+            setRows([{
+                id: Date.now().toString(),
+                title: '',
+                package: 'choose',
+                discount: '0.00',
+                startDate: '',
+                endDate: '',
+                banner: null,
+                message: ''
+            }]);
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to submit", variant: "destructive" }),
+    });
+
+    const toggleMutation = useMutation({
+        mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}`, { isActive }),
+        onSuccess: () => invalidate(),
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to update", variant: "destructive" }),
+    });
+
+    const approveMutation = useMutation({
+        mutationFn: (id: string) => apiRequestJson("PATCH", `/api/drm/promotions/${id}/approve`),
+        onSuccess: () => {
+            toast({ title: "Promotion approved" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to approve", variant: "destructive" }),
+    });
+
+    const rejectMutation = useMutation({
+        mutationFn: ({ id, reason }: { id: string; reason: string | null }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}/reject`, { reason }),
+        onSuccess: () => {
+            toast({ title: "Promotion rejected" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to reject", variant: "destructive" }),
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => apiRequestJson("DELETE", `/api/drm/promotions/${id}`),
+        onSuccess: () => {
+            toast({ title: "Promotion deleted" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to delete", variant: "destructive" }),
+    });
 
     const addRow = () => {
         setRows([...rows, {
@@ -133,22 +220,26 @@ export default function PromotionPage() {
         setRows(rows.filter(row => row.id !== id));
     };
 
-    const updateRow = (id: string, field: keyof PromotionRow, value: any) => {
+    const updateRow = (id: string, field: keyof PromotionFormRow, value: any) => {
         setRows(rows.map(row =>
             row.id === id ? { ...row, [field]: value } : row
         ));
     };
 
     const handleSubmit = () => {
-        toast({
-            title: "Success",
-            description: "Promotion banners submitted successfully!",
-        });
+        const validRows = rows.filter((r) => r.title.trim());
+        if (validRows.length === 0) {
+            toast({ title: "Title is required", description: "Enter a banner title before submitting.", variant: "destructive" });
+            return;
+        }
+        createMutation.mutate(validRows);
     };
 
     // Format date helper
-    const formatDate = (dateStr: string) => {
+    const formatDate = (dateStr: string | null) => {
+        if (!dateStr) return "—";
         const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return "—";
         return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     };
 
@@ -247,7 +338,7 @@ export default function PromotionPage() {
                                             <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Banner</label>
                                             <input
                                                 type="file"
-                                                accept="image/*"
+                                                accept="image/*,video/*"
                                                 onChange={(e) => updateRow(row.id, 'banner', e.target.files?.[0] || null)}
                                                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-[#00a65a] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100 dark:file:bg-zinc-800 dark:file:text-zinc-200"
                                             />
@@ -288,9 +379,16 @@ export default function PromotionPage() {
                             {/* Submit Button */}
                             <Button
                                 onClick={handleSubmit}
+                                disabled={createMutation.isPending}
                                 className="w-full bg-[#00a65a] hover:bg-[#008d4c] text-white py-6 rounded text-base font-medium mt-4"
                             >
-                                Submit
+                                {createMutation.isPending ? (
+                                    <span className="flex items-center justify-center gap-2">
+                                        <Loader2 className="w-4 h-4 animate-spin" /> Submitting...
+                                    </span>
+                                ) : (
+                                    "Submit"
+                                )}
                             </Button>
                         </div>
                     </div>
@@ -308,15 +406,15 @@ export default function PromotionPage() {
                                     <Loader2 className="w-8 h-8 animate-spin text-[#00a65a] dark:text-zinc-400" />
                                 </div>
                             ) : oldPromotions.length > 0 ? (
-                                oldPromotions.map((promo: any) => (
+                                oldPromotions.map((promo) => (
                                     <div key={promo.id} className="border border-gray-200 rounded-lg p-4 space-y-3 dark:border-zinc-800">
                                         <div className="flex items-start gap-3">
                                             {/* Banner Thumbnail */}
                                             <div className="w-16 h-16 bg-gray-200 rounded flex-shrink-0 overflow-hidden">
-                                                {promo.banner_url ? (
-                                                    promo.banner_type === 'video' ? (
+                                                {promo.bannerUrl ? (
+                                                    promo.mediaType === 'video' ? (
                                                         <video
-                                                            src={promo.banner_url}
+                                                            src={promo.bannerUrl}
                                                             className="w-full h-full object-cover"
                                                             muted
                                                             loop
@@ -324,7 +422,7 @@ export default function PromotionPage() {
                                                         />
                                                     ) : (
                                                         <img
-                                                            src={promo.banner_url}
+                                                            src={promo.bannerUrl}
                                                             alt={promo.title}
                                                             className="w-full h-full object-cover"
                                                             onError={(e) => {
@@ -344,18 +442,61 @@ export default function PromotionPage() {
                                             {/* Details */}
                                             <div className="flex-1 space-y-1">
                                                 <h3 className="text-sm font-semibold text-gray-800 dark:text-zinc-100">{promo.title}</h3>
-                                                <p className="text-xs text-gray-600 dark:text-zinc-300">{promo.sub_title}</p>
-                                                <p className="text-xs text-gray-500 dark:text-zinc-400">{promo.package}</p>
-                                                <p className="text-sm font-semibold text-[#00a65a] dark:text-zinc-400">{promo.discount}</p>
+                                                {promo.subTitle && <p className="text-xs text-gray-600 dark:text-zinc-300">{promo.subTitle}</p>}
+                                                {promo.packageName && <p className="text-xs text-gray-500 dark:text-zinc-400">{promo.packageName}</p>}
+                                                {promo.discount && <p className="text-sm font-semibold text-[#00a65a] dark:text-zinc-400">{promo.discount}</p>}
+                                                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium uppercase ${statusBadgeClass(promo.status)}`}>
+                                                    {promo.status}
+                                                </span>
                                             </div>
 
                                             {/* Toggle */}
-                                            <Switch defaultChecked={promo.is_active} />
+                                            <Switch
+                                                checked={promo.isActive}
+                                                disabled={toggleMutation.isPending}
+                                                onCheckedChange={(checked) => toggleMutation.mutate({ id: promo.id, isActive: checked })}
+                                            />
                                         </div>
 
                                         {/* Date Range */}
                                         <div className="text-xs text-gray-500 dark:text-zinc-400">
-                                            {formatDate(promo.start_date)} <span className="font-semibold">To</span> {formatDate(promo.end_date)}
+                                            {formatDate(promo.startDate)} <span className="font-semibold">To</span> {formatDate(promo.endDate)}
+                                        </div>
+
+                                        {/* Actions */}
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            {promo.status === 'pending' && (
+                                                <>
+                                                    <button
+                                                        onClick={() => approveMutation.mutate(promo.id)}
+                                                        disabled={approveMutation.isPending}
+                                                        className="flex items-center gap-1 text-xs text-green-700 hover:underline disabled:opacity-50"
+                                                    >
+                                                        <Check className="w-3.5 h-3.5" /> Approve
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const reason = window.prompt("Reason for rejection (optional):") ?? "";
+                                                            rejectMutation.mutate({ id: promo.id, reason: reason.trim() || null });
+                                                        }}
+                                                        disabled={rejectMutation.isPending}
+                                                        className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50"
+                                                    >
+                                                        <X className="w-3.5 h-3.5" /> Reject
+                                                    </button>
+                                                </>
+                                            )}
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm("Delete this promotion?")) {
+                                                        deleteMutation.mutate(promo.id);
+                                                    }
+                                                }}
+                                                disabled={deleteMutation.isPending}
+                                                className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50 ml-auto"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" /> Delete
+                                            </button>
                                         </div>
                                     </div>
                                 ))

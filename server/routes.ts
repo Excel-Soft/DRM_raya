@@ -69,6 +69,11 @@ import targetSystemRoutes from "./target-system-routes";
 import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
 import { registerPenaltyRoutes } from "./penalty-routes";
+import { registerPromotionRoutes } from "./promotion-routes";
+import { registerTodayPostRoutes } from "./today-post-routes";
+import { registerCommissionVerificationRoutes } from "./commission-verification-routes";
+import { registerSocialAccountsRoutes } from "./social-accounts-routes";
+import { registerLateComingRoutes } from "./late-coming-routes";
 import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
 import { registerProjectReportRoutes } from "./project-report-routes";
 
@@ -355,6 +360,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Penalty Management routes (protected) — mounted after auth + permission middleware
   registerPenaltyRoutes(app);
+
+  // Stage 7 DRM/DD operations (protected) — mounted after auth + permission middleware.
+  // Awaited because each registrar runs idempotent table DDL before serving requests.
+  await registerPromotionRoutes(app);
+  await registerTodayPostRoutes(app);
+  await registerCommissionVerificationRoutes(app);
+  await registerSocialAccountsRoutes(app);
+  await registerLateComingRoutes(app);
 
   // Team Report → Link Report routes (protected) — mounted after auth + permission middleware
   registerTeamReportLinkReportRoutes(app);

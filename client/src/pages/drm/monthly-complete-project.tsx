@@ -13,62 +13,54 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Info, Play } from "lucide-react";
 
-// Mock Data
-const MOCK_COMPLETED_PROJECTS = [
-    { id: "1", name: "Zohaib Nisar Ahmad", company: "NAVEED ELECTRONICS", qaComment: "Perfect", project: "SEO", free: "Yes", task: "9907", status: "Completed", run: "3 Days", spent: "$100", link: "#" },
-    { id: "2", name: "Rohina Munir", company: "Players Apparel", qaComment: "Needs tweak", project: "SMM", free: "No", task: "8805", status: "Completed", run: "1 Week", spent: "$250", link: "#" },
-    { id: "3", name: "Jibran Razzaq", company: "univenture", qaComment: "Approved", project: "SEO", free: "No", task: "1069", status: "Completed", run: "2 Weeks", spent: "$50", link: "#" },
-];
+interface CompletedProject {
+    name: string;
+    company: string;
+    project: string;
+    status: string;
+    spent: string;
+}
 
 export default function MonthlyCompleteProject() {
     const [searchTerm, setSearchTerm] = useState("");
     const [filterPeriod, setFilterPeriod] = useState("all");
     const [limit, setLimit] = useState("50");
 
-    const { data: userData } = useQuery({
-        queryKey: ["/api/auth/me"],
+    // Map the period dropdown to the values the backend understands.
+    // Backend supports: TD (today), WK (week), MH (month), QU (quarter).
+    // "all" and "qa-changing" have no dedicated backend period → default to month.
+    const periodParam =
+        filterPeriod === "week" ? "WK" :
+        filterPeriod === "month" ? "MH" :
+        "MH";
+
+    const { data: projects = [], isLoading } = useQuery<CompletedProject[]>({
+        queryKey: ["/api/dd-executive/monthly-complete", periodParam],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/auth/me");
+            const res = await apiRequest(
+                "GET",
+                `/api/dd-executive/monthly-complete?period=${periodParam}`
+            );
+            if (!res.ok) throw new Error("Failed to fetch completed projects");
             return res.json();
         }
     });
 
-    const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-    const role = (userData?.roleId || userData?.role || userRoleName).toLowerCase();
-
     const filteredProjects = useMemo(() => {
-        let projects = [...MOCK_COMPLETED_PROJECTS];
-        
-        // Filter by user's own projects if not manager/admin/hod
-        if (userData && role) {
-            const isManagerOrAdmin = role.includes("manager") || role.includes("admin") || role.includes("hod");
-            if (!isManagerOrAdmin) {
-                const currentUserName = (userData.name || userData.username || "").toLowerCase();
-                projects = projects.filter(p => p.name.toLowerCase() === currentUserName);
-            }
-        }
-        
+        let rows = [...projects];
+
         if (searchTerm) {
             const query = searchTerm.toLowerCase();
-            projects = projects.filter(p => 
-                p.company.toLowerCase().includes(query) || 
-                p.name.toLowerCase().includes(query) ||
-                p.project.toLowerCase().includes(query)
+            rows = rows.filter(p =>
+                (p.company || "").toLowerCase().includes(query) ||
+                (p.name || "").toLowerCase().includes(query) ||
+                (p.project || "").toLowerCase().includes(query)
             );
         }
 
-        // Dummy filter logic based on period since we used mock basic data
-        if (filterPeriod === "week") {
-            projects = projects.slice(0, 1);
-        } else if (filterPeriod === "month") {
-            projects = projects.slice(0, 2);
-        } else if (filterPeriod === "qa-changing") {
-            projects = projects.filter(p => p.qaComment === "Needs tweak");
-        }
-
-        // Apply limit
-        return projects.slice(0, parseInt(limit));
-    }, [searchTerm, filterPeriod, limit, userData, role]);
+        // Apply display limit
+        return rows.slice(0, parseInt(limit));
+    }, [projects, searchTerm, limit]);
 
     return (
         <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] dark:bg-zinc-950">
@@ -132,7 +124,15 @@ export default function MonthlyCompleteProject() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredProjects.length === 0 ? (
+                                {isLoading ? (
+                                    <tr>
+                                        <td colSpan={12} className="py-16 text-center border-b border-gray-300 bg-white dark:bg-zinc-900 dark:border-zinc-800">
+                                            <div className="flex flex-col items-center justify-center text-[#6c757d]">
+                                                <span className="text-[14px]">Loading...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ) : filteredProjects.length === 0 ? (
                                     <tr>
                                         <td colSpan={12} className="py-16 text-center border-b border-gray-300 bg-white dark:bg-zinc-900 dark:border-zinc-800">
                                             <div className="flex flex-col items-center justify-center text-[#6c757d]">
@@ -147,20 +147,20 @@ export default function MonthlyCompleteProject() {
                                             <td className="p-3 pl-4 flex items-center gap-2 text-gray-500 dark:text-zinc-400">
                                                 <Checkbox className="mr-1 border-gray-300 w-3.5 h-3.5 rounded-sm dark:border-zinc-800" /> {(idx + 1).toString().padStart(2, '0')}
                                             </td>
-                                            <td className="p-3 font-semibold text-[#495057] dark:text-zinc-400">{p.name}</td>
-                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.company}</td>
-                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.qaComment}</td>
-                                            <td className="p-3 font-medium text-[#495057] uppercase dark:text-zinc-400">{p.project}</td>
-                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.free}</td>
-                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.task}</td>
+                                            <td className="p-3 font-semibold text-[#495057] dark:text-zinc-400">{p.name || "—"}</td>
+                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.company || "—"}</td>
+                                            <td className="p-3 text-gray-500 dark:text-zinc-400">—</td>
+                                            <td className="p-3 font-medium text-[#495057] uppercase dark:text-zinc-400">{p.project || "—"}</td>
+                                            <td className="p-3 text-gray-500 dark:text-zinc-400">—</td>
+                                            <td className="p-3 text-gray-500 dark:text-zinc-400">—</td>
                                             <td className="p-3">
                                                 <span className="bg-gray-100 text-gray-500 text-[11px] px-3 py-1.5 rounded-full font-medium shadow-sm dark:text-zinc-400 dark:bg-zinc-900">
-                                                    {p.status}
+                                                    {p.status || "—"}
                                                 </span>
                                             </td>
-                                            <td className="p-3 text-gray-500 dark:text-zinc-400">{p.run}</td>
-                                            <td className="p-3 text-[#00a65a] font-semibold dark:text-zinc-400">{p.spent}</td>
-                                            <td className="p-3 text-blue-500 underline cursor-pointer">Link</td>
+                                            <td className="p-3 text-gray-500 dark:text-zinc-400">—</td>
+                                            <td className="p-3 text-[#00a65a] font-semibold dark:text-zinc-400">{p.spent || "—"}</td>
+                                            <td className="p-3 text-gray-400 dark:text-zinc-500">—</td>
                                             <td className="p-3 text-center pr-4">
                                                 <button className="text-red-500 hover:text-red-700 transition-colors p-1" aria-label="Action">
                                                     <Play size={16} className="fill-current" />
