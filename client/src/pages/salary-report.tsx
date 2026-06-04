@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -19,50 +20,76 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trash2 } from "lucide-react";
 
-const mockData = [
-  { id: "7906", attId: "0", name: "Home Guard(h)", grossSalary: "30000", totalSalary: "30000" },
-  { id: "7907", attId: "0", name: "Shahid Cook(H)", grossSalary: "55000", totalSalary: "55000" },
-  { id: "7909", attId: "116", name: "Zubair (H)", grossSalary: "49000", totalSalary: "49000" },
+type SalaryRun = {
+  id: string;
+  period_month: number;
+  period_year: number;
+  branch: string | null;
+  department: string | null;
+  status: string;
+  employee_count: number;
+  total_gross: string | null;
+  total_deductions: string | null;
+  total_net: string | null;
+};
+
+type SalaryRunItem = {
+  id: string;
+  employee_name: string | null;
+  department: string | null;
+  branch: string | null;
+  gross_salary: string | null;
+  per_day_salary: string | null;
+  days_present: number | null;
+  days_absent: number | null;
+  absence_deduction: string | null;
+  overtime_amount: string | null;
+  net_salary: string | null;
+};
+
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
 ];
 
-export default function SalaryReport() {
-  const [activeTab, setActiveTab] = useState("Male");
-  const [search, setSearch] = useState("");
-  const [showViewReport, setShowViewReport] = useState(false);
-  const [showViewMonthWise, setShowViewMonthWise] = useState(false);
+function monthLabel(m: number, y: number) {
+  return `${MONTHS[m - 1] || m} ${y}`;
+}
 
-  const tabs = [
-    "Male", "Female", "Both Male & Female", "Only Salary", 
-    "Only Salary Lahore", "Donations", "Penalty", "Monthly Head"
-  ];
+export default function SalaryReport() {
+  const [search, setSearch] = useState("");
+  const [selectedRunId, setSelectedRunId] = useState<string>("");
+
+  const runsQuery = useQuery<{ runs: SalaryRun[] }>({
+    queryKey: ["/api/salary/runs"],
+    queryFn: async () => apiRequestJson("GET", "/api/salary/runs"),
+  });
+
+  const runDetail = useQuery<{ run: SalaryRun; items: SalaryRunItem[] }>({
+    queryKey: ["/api/salary/runs", selectedRunId],
+    enabled: !!selectedRunId,
+    queryFn: async () => apiRequestJson("GET", `/api/salary/runs/${selectedRunId}`),
+  });
+
+  const runs = runsQuery.data?.runs ?? [];
+  const items = runDetail.data?.items ?? [];
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? items.filter((it) => (it.employee_name || "").toLowerCase().includes(term))
+    : items;
 
   return (
     <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-6">
-        
+
         {/* Header */}
         <div className="flex flex-col gap-4">
-          <h1 className="text-[17px] font-bold text-[#555] uppercase flex items-center gap-2">
-            SALARY REPORT <span className="text-[#00a65a]">/</span>
-            <button 
-              onClick={() => setShowViewReport(!showViewReport)}
-              className="bg-transparent border-none p-0 cursor-pointer text-[#00a65a] hover:text-[#008d4c]"
-            >
-              VIEW REPORT
-            </button> 
-            <span className="text-[#00a65a]">/</span>
-            <button 
-              onClick={() => setShowViewMonthWise(!showViewMonthWise)}
-              className="bg-transparent border-none p-0 cursor-pointer text-[#00a65a] hover:text-[#008d4c]"
-            >
-              VIEW MONTH WISE
-            </button>
-          </h1>
+          <h1 className="text-[17px] font-bold text-[#555] uppercase">SALARY REPORT</h1>
           <div>
-            <Button 
+            <Button
               onClick={() => window.print()}
+              disabled={!selectedRunId || items.length === 0}
               className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-semibold rounded-sm h-9"
             >
               Print Slip
@@ -70,117 +97,45 @@ export default function SalaryReport() {
           </div>
         </div>
 
-        {/* Filter Card 1 (View Report) */}
-        {showViewReport && (
-          <Card className="border-none shadow-sm bg-white rounded-sm">
-            <CardContent className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <Label className="text-xs text-[#555] font-semibold">Select</Label>
-                    <div className="flex items-center gap-1.5">
-                      <Checkbox id="commission" className="h-3.5 w-3.5" />
-                      <label htmlFor="commission" className="text-xs text-[#555] cursor-pointer">
-                        Add Commission
-                      </label>
-                    </div>
-                  </div>
-                  <Select>
-                    <SelectTrigger className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus:ring-0">
-                      <SelectValue placeholder="Choose .." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="opt1">Option 1</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label className="text-xs text-[#555] font-semibold">start:</Label>
-                  <Select>
-                    <SelectTrigger className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus:ring-0">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="opt1">Option 1</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label className="text-xs text-[#555] font-semibold">End:</Label>
-                  <Select>
-                    <SelectTrigger className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus:ring-0">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="opt1">Option 1</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Button className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 rounded-sm">
-                View
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Filter Card 2 (View Month Wise) */}
-        {showViewMonthWise && (
-          <Card className="border-none shadow-sm bg-white rounded-sm">
-            <CardContent className="p-6 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="flex flex-col gap-2">
-                  <Label className="text-xs text-[#555] font-semibold">Start</Label>
-                  <Input type="date" className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus-visible:ring-0" />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <Label className="text-xs text-[#555] font-semibold">End:</Label>
-                  <Input type="date" className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus-visible:ring-0" />
-                </div>
-              </div>
-              <Button className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 rounded-sm">
-                View
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+        {/* Run selector */}
+        <Card className="border-none shadow-sm bg-white rounded-sm">
+          <CardContent className="p-6 space-y-4">
+            <div className="flex flex-col gap-2 max-w-md">
+              <Label className="text-xs text-[#555] font-semibold">Select Salary Run</Label>
+              {runsQuery.isLoading ? (
+                <p className="text-sm text-slate-500">Loading runs...</p>
+              ) : runsQuery.isError ? (
+                <p className="text-sm text-[#d9534f]">Could not load salary runs. You may not have permission to view payroll.</p>
+              ) : runs.length === 0 ? (
+                <p className="text-sm text-slate-500">No salary runs have been created yet. Create one from the Salary Create screen.</p>
+              ) : (
+                <Select value={selectedRunId} onValueChange={setSelectedRunId}>
+                  <SelectTrigger className="h-9 bg-white border-slate-200 text-xs text-[#555] rounded-sm focus:ring-0">
+                    <SelectValue placeholder="Choose a run..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {runs.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {monthLabel(r.period_month, r.period_year)}
+                        {r.department ? ` · ${r.department}` : ""}
+                        {r.branch ? ` · ${r.branch}` : ""} — {r.status} ({r.employee_count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Data Card */}
         <Card className="border-none shadow-sm bg-white rounded-sm">
           <CardContent className="p-6 space-y-6">
-            
-            {/* Tabs */}
-            <div className="flex flex-wrap gap-2">
-              {tabs.map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`px-4 py-2 text-[13px] font-semibold transition-colors rounded-sm ${
-                    activeTab === tab
-                      ? "bg-[#00a65a] text-white"
-                      : "bg-transparent text-[#555] hover:bg-slate-50"
-                  }`}
-                >
-                  {tab}
-                </button>
-              ))}
-            </div>
 
-            {/* Table Toolbars */}
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div className="flex items-center rounded-sm overflow-hidden border border-slate-500">
-                {["Copy", "Excel", "PDF", "Column visibility"].map((btn, i) => (
-                  <button key={i} className="bg-[#798096] hover:bg-[#6c7285] text-white px-4 py-2 text-xs font-semibold border-r border-[#6c7285] last:border-0 transition-colors">
-                    {btn}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-end justify-end gap-4">
               <div className="flex flex-col gap-1 items-end">
                 <Label className="text-xs text-[#555] font-semibold">Search:</Label>
-                <Input 
+                <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-[200px] h-8 bg-white border-slate-300 rounded-sm text-xs focus-visible:ring-0 focus-visible:border-slate-400"
@@ -188,58 +143,61 @@ export default function SalaryReport() {
               </div>
             </div>
 
-            {/* Table */}
             <div className="overflow-x-auto border border-slate-100">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
                   <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#e0f3e8]">
                     <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">#</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Att ID</TableHead>
                     <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Name</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Department</TableHead>
                     <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Gross Salary</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">VAS</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">3 % Bonus</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">AB Bonus</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Project Bonus</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">PPP Bonus</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">PP<br/>Bonus</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">OT<br/>RS</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Reward</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Leaves Rupees</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Cp<br/>Leave</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Cup Leave</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Total Cutting</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Total Salary</TableHead>
-                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-center text-xs">Action</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Per Day</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Present</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Absent</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Absence RS</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Overtime</TableHead>
+                    <TableHead className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">Net Salary</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white">
-                  {mockData.filter(item => item.name.toLowerCase().includes(search.toLowerCase()) || item.id.includes(search)).map((item, idx) => (
-                    <TableRow key={idx} className="border-b border-slate-100 hover:bg-[#f1f3f5] transition-colors">
-                      <TableCell className="py-3 px-2 text-[#555] font-semibold">{item.id}</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">{item.attId}</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">{item.name}</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">{item.grossSalary}</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">0</TableCell>
-                      <TableCell className="py-3 px-2 text-[#555]">{item.totalSalary}</TableCell>
-                      <TableCell className="py-3 px-2 text-center">
-                        <button className="text-red-500 hover:text-red-600 transition-colors bg-transparent border-none cursor-pointer">
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                  {!selectedRunId ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                        Select a salary run to view its line items.
                       </TableCell>
                     </TableRow>
-                  ))}
+                  ) : runDetail.isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading...</TableCell>
+                    </TableRow>
+                  ) : runDetail.isError ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-[#d9534f] py-8">
+                        Could not load this salary run.
+                      </TableCell>
+                    </TableRow>
+                  ) : filtered.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                        No salary lines in this run.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filtered.map((item, idx) => (
+                      <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f1f3f5] transition-colors">
+                        <TableCell className="py-3 px-2 text-[#555] font-semibold">{idx + 1}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.employee_name || "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.department || "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.gross_salary ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.per_day_salary ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.days_present ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.days_absent ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.absence_deduction ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555]">{item.overtime_amount ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-2 text-[#555] font-semibold">{item.net_salary ?? "-"}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>

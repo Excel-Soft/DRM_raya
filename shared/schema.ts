@@ -768,6 +768,82 @@ export const loanRequests = drmSchema.table("loan_requests", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ===== Stage 3: Salary & Attendance-Edit Tables =====
+
+// Salary Runs — one row per generated payroll run (period + scope).
+export const salaryRuns = drmSchema.table("salary_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  periodMonth: integer("period_month").notNull(), // 1-12
+  periodYear: integer("period_year").notNull(),
+  branch: text("branch"),
+  department: text("department"),
+  status: text("status").notNull().default("DRAFT"), // DRAFT | FINALIZED | APPROVED | LOCKED
+  notes: text("notes"),
+  employeeCount: integer("employee_count").notNull().default(0),
+  totalGross: decimal("total_gross", { precision: 14, scale: 2 }).notNull().default("0"),
+  totalDeductions: decimal("total_deductions", { precision: 14, scale: 2 }).notNull().default("0"),
+  totalNet: decimal("total_net", { precision: 14, scale: 2 }).notNull().default("0"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_salary_runs_period").on(t.periodYear, t.periodMonth),
+  index("idx_salary_runs_status").on(t.status),
+]);
+
+// Salary Run Items — per-employee line items within a run.
+export const salaryRunItems = drmSchema.table("salary_run_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => salaryRuns.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  employeeName: text("employee_name"),
+  department: text("department"),
+  branch: text("branch"),
+  grossSalary: decimal("gross_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  perDaySalary: decimal("per_day_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  daysPresent: integer("days_present").notNull().default(0),
+  daysAbsent: integer("days_absent").notNull().default(0),
+  absenceDeduction: decimal("absence_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  otherDeductions: decimal("other_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
+  overtimeAmount: decimal("overtime_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  netSalary: decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_salary_run_items_run").on(t.runId),
+  index("idx_salary_run_items_user").on(t.userId),
+]);
+
+// Attendance Edit Requests — audited before/after edits to attendance records.
+export const attendanceEditRequests = drmSchema.table("attendance_edit_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  attendanceId: varchar("attendance_id").references(() => attendance.id),
+  userId: uuid("user_id").notNull().references(() => users.id), // employee whose attendance
+  attendanceDate: timestamp("attendance_date").notNull(),
+  field: text("field").notNull(), // e.g. "status" | "check_in" | "check_out"
+  beforeValue: text("before_value"),
+  afterValue: text("after_value"),
+  reason: text("reason").notNull(),
+  status: text("status").notNull().default("Pending"), // Pending | Approved | Rejected
+  requestedByUserId: uuid("requested_by_user_id").notNull().references(() => users.id),
+  reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id),
+  reviewedAt: timestamp("reviewed_at"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_att_edit_user").on(t.userId),
+  index("idx_att_edit_status").on(t.status),
+]);
+
+export type SalaryRun = typeof salaryRuns.$inferSelect;
+export type InsertSalaryRun = typeof salaryRuns.$inferInsert;
+export type SalaryRunItem = typeof salaryRunItems.$inferSelect;
+export type InsertSalaryRunItem = typeof salaryRunItems.$inferInsert;
+export type AttendanceEditRequest = typeof attendanceEditRequests.$inferSelect;
+export type InsertAttendanceEditRequest = typeof attendanceEditRequests.$inferInsert;
+
 // ===== Training Center Tables =====
 
 // Training Modules
