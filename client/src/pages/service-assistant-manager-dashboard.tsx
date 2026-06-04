@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Users, Tag, Target, ArrowRightLeft, ChevronRight, ChevronLeft, Plus, Play } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -12,8 +13,22 @@ import { useLocation } from "wouter";
 import { ServiceQuickEntriesCard } from "@/components/service-quick-entries-card";
 import { InServiceModal } from "@/components/in-service-modal";
 
+type ServiceDashboardCounts = {
+    grades?: { A?: number; B_PLUS?: number; B?: number; B_MINUS?: number };
+    complaints?: { open?: number; in_progress?: number; resolved?: number; closed?: number };
+    dueFollowups?: number;
+    dropouts?: number;
+    duePayments?: number;
+};
+
 export default function ServiceAssistantManagerDashboard() {
     const [, setLocation] = useLocation();
+
+    const { data: countsRes } = useQuery<ServiceDashboardCounts>({
+        queryKey: ["/api/service/dashboard/counts"],
+        queryFn: () => apiRequestJson<ServiceDashboardCounts>("GET", "/api/service/dashboard/counts"),
+    });
+    const counts = countsRes || {};
     const [inServiceModalOpen, setInServiceModalOpen] = useState(false);
     const [targetView, setTargetView] = useState<'overall' | 't-ab' | 't-vas'>('overall');
     const [customerMonthlyFilter, setCustomerMonthlyFilter] = useState<'gm' | 'bv'>('gm');
@@ -108,20 +123,25 @@ export default function ServiceAssistantManagerDashboard() {
         "Duplication Check", "Private Pool", "Service Pool", "BV Checking", "Over Time", "Public Pool", "New In Service"
     ];
 
+    const grades = counts.grades || {};
+    const complaints = counts.complaints || {};
+    const openComplaints =
+        (complaints.open || 0) + (complaints.in_progress || 0);
+
     const importantStats = [
-        { label: "In Service", value: "0" },
-        { label: "A- Followup", value: "0" },
-        { label: "B+ Followup", value: "0" },
-        { label: "B Followup", value: "0" },
-        { label: "B- Followup", value: "0" },
-        { label: "30-Days Followup", value: "0" },
-        { label: "7-Day Dropout", value: "0" },
-        { label: "Dropout Leads", value: "0" },
-        { label: "Complaints", value: "0" },
-        { label: "Not Follow Yet", value: "0" },
-        { label: "BV Document", value: "1" },
-        { label: "VAS Document", value: "3" },
-        { label: "Due Payment", value: "0" },
+        { label: "In Service", value: String(grades.A != null || grades.B_PLUS != null || grades.B != null || grades.B_MINUS != null ? (grades.A || 0) + (grades.B_PLUS || 0) + (grades.B || 0) + (grades.B_MINUS || 0) : 0) },
+        { label: "A- Followup", value: String(grades.A || 0) },
+        { label: "B+ Followup", value: String(grades.B_PLUS || 0) },
+        { label: "B Followup", value: String(grades.B || 0) },
+        { label: "B- Followup", value: String(grades.B_MINUS || 0) },
+        { label: "30-Days Followup", value: String(counts.dueFollowups || 0) },
+        { label: "7-Day Dropout", value: String(counts.dropouts || 0) },
+        { label: "Dropout Leads", value: String(counts.dropouts || 0) },
+        { label: "Complaints", value: String(openComplaints) },
+        { label: "Not Follow Yet", value: String(counts.dueFollowups || 0) },
+        { label: "BV Document", value: "0" },
+        { label: "VAS Document", value: "0" },
+        { label: "Due Payment", value: String(counts.duePayments || 0) },
         { label: "To Do List", value: "►", isIcon: true },
     ];
 
@@ -798,24 +818,9 @@ export default function ServiceAssistantManagerDashboard() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {customerMonthlyFilter === 'gm' ? (
-                                <TableRow className="border-b-0 hover:bg-slate-50/50">
-                                    <TableCell>
-                                        <input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" />
-                                    </TableCell>
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">PKZAFA216133</TableCell>
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">ZAFAR</TableCell>
-                                    {visibleColumns.Account && <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">bilal</TableCell>}
-                                    {visibleColumns.Email && <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">zafar@excelstech.com</TableCell>}
-                                    {visibleColumns.Phone && <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400"></TableCell>}
-                                    {visibleColumns.NTN && <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">555</TableCell>}
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">3630345698741</TableCell>
-                                    {visibleColumns.Grade && <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">C+</TableCell>}
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400"></TableCell>
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">2026-04-17 20:47:05</TableCell>
-                                    <TableCell className="text-[12px] text-slate-500 font-medium dark:text-zinc-400">2026-04-17 20:45:44</TableCell>
-                                </TableRow>
-                            ) : null}
+                            <TableRow className="border-b-0 hover:bg-slate-50/50">
+                                <TableCell colSpan={6 + Object.values(visibleColumns).filter(Boolean).length} className="text-center py-4 text-[13px] text-slate-500 font-medium dark:text-zinc-400">No data available in table</TableCell>
+                            </TableRow>
                         </TableBody>
                     </Table>
                 </div>

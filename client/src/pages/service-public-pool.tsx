@@ -1,187 +1,211 @@
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowRightCircle } from "lucide-react";
+import { ArrowRightCircle, ChevronLeft, ChevronRight, Loader2, Search } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
-function EditCompanyDetailModal({
+type PoolEntry = {
+    id: string;
+    drmId: string | null;
+    companyName: string;
+    salesPersonName: string | null;
+    servicePersonName: string | null;
+    taPersonName: string | null;
+    accountHolder: string | null;
+    contactNo: string | null;
+    status: string;
+    dropoutCategory: string | null;
+    startedAt: string | null;
+    updatedAt: string | null;
+};
+
+type UserOption = { id: string; name?: string | null; full_name?: string | null };
+
+const PAGE_SIZE = 25;
+
+function formatDate(value: string | null | undefined): string {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString();
+}
+
+function userLabel(u: UserOption): string {
+    return u.name || u.full_name || u.id;
+}
+
+function ManagePoolDialog({
     isOpen,
     onClose,
-    companyData
+    entry,
 }: {
     isOpen: boolean;
     onClose: () => void;
-    companyData: any;
+    entry: PoolEntry | null;
 }) {
-    const serviceTypes = [
-        "Mobile Responsive Website", "E-Commerce Store", "Alibaba Services", "Domain Registration / Hosting",
-        "Photo Shooting & Video Documen", "SEO & SEM Services", "Facebook Fan Page Design", "EBay Store / Posting",
-        "Web Design & Development", "Graphic Designing & Logo Desig", "Daraz Store & Product Posting", "Digital Marketing",
-        "Product mockups design service", "Designing Services", "CONSULTANCY & CERTIFICATION", "Amazon Store / Posting",
-        "Alibaba listing page", "Videography Service", "Amazon Product Hunting", "Amazon Product Listing",
-        "Amazon Account Creation", "Instagram Page Design Manage", "Instagram ADs", "Facebook ADs",
-        "Social Media followers", "Minisite professional", "Android App", "VM",
-        "Etsy Store Creation or Posting", "Social Media Account Handling", "Alibaba VA"
-    ];
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [assignTo, setAssignTo] = useState("");
+    const [transferTo, setTransferTo] = useState("");
+    const [channel, setChannel] = useState("whatsapp");
+    const [message, setMessage] = useState("");
+
+    const { data: users } = useQuery<UserOption[]>({
+        queryKey: ["/api/users", { assigned: true }],
+        queryFn: () => apiRequestJson<UserOption[]>("GET", "/api/users?assigned=true"),
+        enabled: isOpen,
+    });
+
+    const userOptions = Array.isArray(users) ? users : [];
+
+    const invalidateList = () =>
+        queryClient.invalidateQueries({ queryKey: ["/api/sales/service-pool/list"] });
+
+    const assignMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("PATCH", `/api/sales/service-pool/${entry!.id}/assign`, {
+                servicePersonId: assignTo,
+            }),
+        onSuccess: () => {
+            toast({ title: "Assigned", description: "Service person assigned to this entry." });
+            setAssignTo("");
+            invalidateList();
+            onClose();
+        },
+        onError: (err: any) => {
+            toast({ title: "Assign failed", description: err?.message || "Could not assign.", variant: "destructive" });
+        },
+    });
+
+    const transferMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("PATCH", `/api/sales/service-pool/${entry!.id}/transfer`, {
+                servicePersonId: transferTo,
+            }),
+        onSuccess: () => {
+            toast({ title: "Transferred", description: "Entry transferred to the selected service person." });
+            setTransferTo("");
+            invalidateList();
+            onClose();
+        },
+        onError: (err: any) => {
+            toast({ title: "Transfer failed", description: err?.message || "Could not transfer.", variant: "destructive" });
+        },
+    });
+
+    const draftMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("POST", `/api/sales/service-pool/${entry!.id}/message-draft`, {
+                channel,
+                message: message.trim(),
+            }),
+        onSuccess: () => {
+            toast({ title: "Draft saved", description: "Message draft recorded (not sent externally)." });
+            setMessage("");
+        },
+        onError: (err: any) => {
+            toast({ title: "Draft failed", description: err?.message || "Could not save draft.", variant: "destructive" });
+        },
+    });
 
     return (
-        <Dialog open={isOpen} onOpenChange={onClose}>
-            <DialogContent className="max-w-6xl p-6 bg-white gap-6 dark:bg-zinc-900">
+        <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
+            <DialogContent className="max-w-lg p-6 bg-white gap-6 dark:bg-zinc-900">
                 <DialogHeader>
                     <DialogTitle className="text-[16px] font-bold text-[#475569] uppercase border-b pb-4 dark:text-zinc-400">
-                        EDIT COMPANY DETAIL
+                        Manage Pool Entry
                     </DialogTitle>
                 </DialogHeader>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 overflow-y-auto max-h-[75vh] pr-2 custom-scrollbar">
-                    {/* Column 1: Company Detail */}
-                    <div className="space-y-4">
-                        <h3 className="text-[14px] font-bold text-slate-700 dark:text-zinc-400">Company Detail</h3>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Company name *</label>
-                            <Input defaultValue={companyData?.company} className="bg-[#f8fafc] border-slate-200 h-9 text-[13px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Ab</label>
-                            <Select>
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                                <SelectContent><SelectItem value="a">A</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Country /Region *</label>
-                            <Select defaultValue="pk">
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Pakistan" /></SelectTrigger>
-                                <SelectContent><SelectItem value="pk">Pakistan</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Contact No(0521234567) *</label>
-                            <Input defaultValue={companyData?.contactNo} className="border-slate-200 h-9 text-[13px] dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">City *</label>
-                            <Select defaultValue="sk">
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Sialkot" /></SelectTrigger>
-                                <SelectContent><SelectItem value="sk">Sialkot</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Address</label>
-                            <Textarea defaultValue="rey" className="bg-[#f8fafc] border-slate-200 text-[13px] min-h-[40px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Company type</label>
-                            <Select>
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                                <SelectContent><SelectItem value="type1">Type 1</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Crm Id</label>
-                            <Input placeholder="Enter Crm Id" className="border-slate-200 h-9 text-[13px] dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Crm Date</label>
-                            <Input type="date" className="border-slate-200 h-9 text-[13px] dark:border-zinc-800" />
-                        </div>
+                <div className="space-y-6">
+                    <div className="text-[13px] text-slate-600 dark:text-zinc-300">
+                        <span className="font-bold">{entry?.companyName || "—"}</span>
+                        <span className="text-slate-400 dark:text-zinc-500"> · {entry?.drmId || "—"}</span>
                     </div>
 
-                    {/* Column 2: Primary Detail */}
-                    <div className="space-y-4">
-                        <h3 className="text-[14px] font-bold text-slate-700 dark:text-zinc-400">Primary Detail</h3>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Title</label>
-                            <Select defaultValue="mr">
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Mr." /></SelectTrigger>
-                                <SelectContent><SelectItem value="mr">Mr.</SelectItem></SelectContent>
+                    {/* Assign */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Assign Service Person</label>
+                        <div className="flex gap-2">
+                            <Select value={assignTo} onValueChange={setAssignTo}>
+                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                    <SelectValue placeholder="Choose person..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {userOptions.map((u) => (
+                                        <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
+                                    ))}
+                                </SelectContent>
                             </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Person Full Name</label>
-                            <Input defaultValue={companyData?.accHolder} className="bg-[#f8fafc] border-slate-200 h-9 text-[13px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">CNIC</label>
-                            <Input defaultValue="323" className="bg-[#f8fafc] border-slate-200 h-9 text-[13px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">NTN</label>
-                            <Input defaultValue={companyData?.ntn !== "none" ? companyData?.ntn : "123"} className="bg-[#f8fafc] border-slate-200 h-9 text-[13px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Website</label>
-                            <Input placeholder="www.name.com" className="border-slate-200 h-9 text-[13px] dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Email *</label>
-                            <Input defaultValue={companyData?.email} className="bg-[#f8fafc] border-slate-200 h-9 text-[13px] dark:bg-zinc-900 dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Mobile No (03001234567)*</label>
-                            <Input defaultValue="null" className="border-slate-200 h-9 text-[13px] dark:border-zinc-800" />
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Designation</label>
-                            <Select>
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                                <SelectContent><SelectItem value="d1">Desig 1</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Your Comment</label>
-                            <Textarea className="border-slate-200 text-[13px] min-h-[80px] dark:border-zinc-800" />
-                        </div>
-                    </div>
-
-                    {/* Column 3: Lead Detail & Submit */}
-                    <div className="space-y-4 flex flex-col h-full">
-                        <h3 className="text-[14px] font-bold text-slate-700 dark:text-zinc-400">Lead Detail</h3>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">RC Link</label>
-                            <Select defaultValue="webxl">
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Webxl" /></SelectTrigger>
-                                <SelectContent><SelectItem value="webxl">Webxl</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Source</label>
-                            <Select defaultValue="fb">
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="FaceBook" /></SelectTrigger>
-                                <SelectContent><SelectItem value="fb">FaceBook</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-                        <div>
-                            <label className="text-[12px] font-medium text-slate-700 mb-1 block dark:text-zinc-400">Grade</label>
-                            <Select>
-                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                                <SelectContent><SelectItem value="a">A</SelectItem></SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="pt-2 flex-grow flex flex-col min-h-0">
-                            <h3 className="text-[13px] font-bold text-slate-700 mb-3 dark:text-zinc-400">Service Type</h3>
-                            <div className="space-y-2 flex-grow overflow-y-auto custom-scrollbar pr-2 mb-4">
-                                {serviceTypes.map(service => (
-                                    <div key={service} className="flex items-start space-x-2">
-                                        <Checkbox id={service} className="mt-0.5 border-slate-300 w-3.5 h-3.5 rounded-[3px] data-[state=checked]:bg-[#059669] data-[state=checked]:border-[#059669] dark:border-zinc-800" />
-                                        <label htmlFor={service} className="text-[12px] text-slate-600 font-medium leading-[1.3] cursor-pointer dark:text-zinc-300">
-                                            {service}
-                                        </label>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="pt-2 mt-auto">
-                            <Button className="bg-[#059669] hover:bg-emerald-700 text-white shadow-sm h-9 px-6 font-medium text-[13px] w-auto">
-                                Submit form
+                            <Button
+                                className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px] shrink-0"
+                                disabled={!assignTo || assignMutation.isPending}
+                                onClick={() => assignMutation.mutate()}
+                            >
+                                {assignMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Assign"}
                             </Button>
                         </div>
+                    </div>
+
+                    {/* Transfer */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Transfer To</label>
+                        <div className="flex gap-2">
+                            <Select value={transferTo} onValueChange={setTransferTo}>
+                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                    <SelectValue placeholder="Choose person..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {userOptions.map((u) => (
+                                        <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px] shrink-0"
+                                disabled={!transferTo || transferMutation.isPending}
+                                onClick={() => transferMutation.mutate()}
+                            >
+                                {transferMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Transfer"}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Message Draft */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Message Draft</label>
+                        <Select value={channel} onValueChange={setChannel}>
+                            <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                                <SelectItem value="email">Email</SelectItem>
+                                <SelectItem value="sms">SMS</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Textarea
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                            placeholder="Compose a follow-up message draft..."
+                            className="border-slate-200 text-[13px] min-h-[80px] dark:border-zinc-800"
+                        />
+                        <p className="text-[11px] text-slate-400 dark:text-zinc-500">
+                            Drafts are saved internally only — no external message is sent.
+                        </p>
+                        <Button
+                            className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px]"
+                            disabled={!message.trim() || draftMutation.isPending}
+                            onClick={() => draftMutation.mutate()}
+                        >
+                            {draftMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Draft"}
+                        </Button>
                     </div>
                 </div>
             </DialogContent>
@@ -190,35 +214,33 @@ function EditCompanyDetailModal({
 }
 
 export default function ServicePublicPool() {
-    const [selectedCompany, setSelectedCompany] = useState<any>(null);
+    const [selectedEntry, setSelectedEntry] = useState<PoolEntry | null>(null);
+    const [searchInput, setSearchInput] = useState("");
+    const [search, setSearch] = useState("");
+    const [page, setPage] = useState(1);
 
-    const mockData = [
-        {
-            id: "wl_cxcz_41", company: "cxczc", city: "sialkot", salePerson: "Fatima ilyas", accHolder: "ali",
-            email: "zunair.b.ahmad@gmail.com", contactNo: "030000000", ntn: "123",
-            lastFollowName: "Samman Khalid", lastFollowService: "Mobile Responsive Website", lastFollowNext: "2024-06-15 11:21:00", accountCreate: "2023-05-27"
+    const { data, isLoading } = useQuery<{ items: PoolEntry[]; total: number }>({
+        queryKey: ["/api/sales/service-pool/list", page, search],
+        queryFn: () => {
+            const params = new URLSearchParams();
+            params.set("page", String(page));
+            params.set("pageSize", String(PAGE_SIZE));
+            if (search) params.set("search", search);
+            return apiRequestJson<{ items: PoolEntry[]; total: number }>(
+                "GET",
+                `/api/sales/service-pool/list?${params.toString()}`,
+            );
         },
-        {
-            id: "PKArvi195", company: "Arvisions smc-pvt Ltd", city: "sialkot", salePerson: "Anita", accHolder: "Ur Rahman ALTAF",
-            email: "altaf257@gmail.com", contactNo: "03189285874", ntn: "none",
-            lastFollowName: "Samman Khalid", lastFollowService: "Mobile Responsive Website", lastFollowNext: "2024-06-15 12:13:00", accountCreate: "2022-11-15"
-        },
-        {
-            id: "PKARIO210", company: "ARIOX BM SPORTS", city: "sialkot", salePerson: "Shazia Arshad", accHolder: "AMIR PERVAIZ",
-            email: "arixkbmsports@gmail.com", contactNo: "03089112981", ntn: "none",
-            lastFollowName: "Izhaq Ravis", lastFollowService: "Alibaba Services", lastFollowNext: "0000-00-00 00:00:00", accountCreate: "2023-04-06"
-        },
-        {
-            id: "PKASTI213", company: "ASTIR SPORTS", city: "sialkot", salePerson: "Umay kalsoom", accHolder: "NASIR ALI",
-            email: "astirsports1@gmail.com", contactNo: "03417274002", ntn: "none",
-            lastFollowName: "Umay kalsoom", lastFollowService: "Alibaba Services", lastFollowNext: "0000-00-00 00:00:00", accountCreate: "2023-03-10"
-        },
-        {
-            id: "PKBABA388", company: "BABA AZIZ INTERNATIONAL", city: "sialkot", salePerson: "Anita", accHolder: "IMRAN AZIZ",
-            email: "babaaziz638@gmail.com", contactNo: "03304192216", ntn: "none",
-            lastFollowName: "Samman Khalid", lastFollowService: "Mobile Responsive Website", lastFollowNext: "0000-00-00 00:00:00", accountCreate: "2023-05-17"
-        }
-    ];
+    });
+
+    const rows = data?.items ?? [];
+    const total = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    const applySearch = () => {
+        setSearch(searchInput.trim());
+        setPage(1);
+    };
 
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen dark:bg-zinc-950">
@@ -226,8 +248,19 @@ export default function ServicePublicPool() {
 
             <div className="bg-white rounded-[4px] shadow-sm border border-slate-50 h-10 mb-6 dark:bg-zinc-900 dark:border-zinc-800"></div>
 
-            <div className="mb-4">
+            <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <h2 className="text-[16px] font-bold text-[#475569] uppercase tracking-tight dark:text-zinc-400">TRACING</h2>
+                <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") applySearch(); }}
+                        onBlur={applySearch}
+                        placeholder="Search company, account, ID..."
+                        className="pl-9 h-9 text-[13px] border-slate-200 dark:border-zinc-800"
+                    />
+                </div>
             </div>
 
             <div className="bg-white shadow-sm border border-slate-100 rounded-[4px] p-2 dark:bg-zinc-900 dark:border-zinc-800">
@@ -238,58 +271,92 @@ export default function ServicePublicPool() {
                                 <TableHead className="w-10 pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Company ID</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Company Name</TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">City</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Sale Person</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Acc Holder</TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Email</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Contact No</TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">NTN/CINC</TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap w-[200px] dark:text-zinc-300">Last Follow</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Service Person</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">TA Person</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Status</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Account Create</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 whitespace-nowrap dark:text-zinc-300">Action</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {mockData.map((row, idx) => (
-                                <TableRow key={idx} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
-                                    <TableCell className="pl-4 py-4"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 uppercase dark:text-zinc-300">{row.id}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.company}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 lowercase dark:text-zinc-300">{row.city}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 capitalize dark:text-zinc-300">{row.salePerson}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.accHolder}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 lowercase dark:text-zinc-300">{row.email}</TableCell>
-                                    <TableCell className="py-4">
-                                        <span className="bg-[#d1fae5] text-[#059669] text-[12px] font-bold px-2 py-0.5 rounded-[4px] dark:bg-zinc-900 dark:text-zinc-400">{row.contactNo}</span>
-                                    </TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.ntn}</TableCell>
-                                    <TableCell className="py-4">
-                                        <div className="bg-[#f8fafc] border border-slate-100 rounded-[4px] p-2 flex flex-col gap-1 w-full max-w-[200px] dark:bg-zinc-900 dark:border-zinc-800">
-                                            <span className="text-[12px] font-bold text-[#059669] dark:text-zinc-400">{row.lastFollowName}</span>
-                                            <span className="text-[11px] font-medium text-slate-500 line-clamp-1 dark:text-zinc-400">{row.lastFollowService}</span>
-                                            <span className="text-[11px] font-medium text-slate-500 dark:text-zinc-400">Next: {row.lastFollowNext}</span>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.accountCreate}</TableCell>
-                                    <TableCell className="py-4">
-                                        <div
-                                            className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 shadow-sm transition-colors"
-                                            onClick={() => setSelectedCompany(row)}
-                                        >
-                                            <ArrowRightCircle className="w-3.5 h-3.5" />
-                                        </div>
+                            {isLoading ? (
+                                <TableRow className="border-b-0 hover:bg-slate-50/50">
+                                    <TableCell colSpan={11} className="text-center py-6 text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+                                        <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</span>
                                     </TableCell>
                                 </TableRow>
-                            ))}
+                            ) : rows.length === 0 ? (
+                                <TableRow className="border-b-0 hover:bg-slate-50/50">
+                                    <TableCell colSpan={11} className="text-center py-6 text-[13px] text-slate-500 font-medium dark:text-zinc-400">No data available in table</TableCell>
+                                </TableRow>
+                            ) : (
+                                rows.map((row) => (
+                                    <TableRow key={row.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                                        <TableCell className="pl-4 py-4"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 uppercase dark:text-zinc-300">{row.drmId || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.companyName || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 capitalize dark:text-zinc-300">{row.salesPersonName || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.accountHolder || "—"}</TableCell>
+                                        <TableCell className="py-4">
+                                            {row.contactNo ? (
+                                                <span className="bg-[#d1fae5] text-[#059669] text-[12px] font-bold px-2 py-0.5 rounded-[4px] dark:bg-zinc-900 dark:text-zinc-400">{row.contactNo}</span>
+                                            ) : (
+                                                <span className="text-[12px] font-medium text-slate-600 dark:text-zinc-300">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.servicePersonName || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{row.taPersonName || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 capitalize dark:text-zinc-300">{row.status || "—"}</TableCell>
+                                        <TableCell className="text-[12px] font-medium text-slate-600 py-4 dark:text-zinc-300">{formatDate(row.startedAt)}</TableCell>
+                                        <TableCell className="py-4">
+                                            <div
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 shadow-sm transition-colors"
+                                                onClick={() => setSelectedEntry(row)}
+                                            >
+                                                <ArrowRightCircle className="w-3.5 h-3.5" />
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            )}
                         </TableBody>
                     </Table>
                 </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-2 py-3">
+                    <span className="text-[13px] text-slate-500 dark:text-zinc-400">
+                        {total === 0 ? "Showing 0 entries" : `Page ${page} of ${totalPages} (${total} total)`}
+                    </span>
+                    <div className="flex gap-1">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-[12px] px-3"
+                            disabled={page <= 1}
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        >
+                            <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-[12px] px-3"
+                            disabled={page >= totalPages}
+                            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        >
+                            Next <ChevronRight className="h-4 w-4 ml-1" />
+                        </Button>
+                    </div>
+                </div>
             </div>
 
-            <EditCompanyDetailModal
-                isOpen={!!selectedCompany}
-                onClose={() => setSelectedCompany(null)}
-                companyData={selectedCompany}
+            <ManagePoolDialog
+                isOpen={!!selectedEntry}
+                onClose={() => setSelectedEntry(null)}
+                entry={selectedEntry}
             />
         </div>
     );

@@ -55,6 +55,58 @@ export function registerServicePoolRoutes(app: Express) {
         }
     });
 
+    // Assign a service person to a pool entry
+    router.patch("/service-pool/:id/assign", async (req, res) => {
+        try {
+            if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+            const { servicePersonId } = req.body || {};
+            if (!servicePersonId) return res.status(400).json({ error: "servicePersonId is required." });
+            const result = await servicePoolRepository.assign(req.params.id, servicePersonId, req.user.userId);
+            if (!result) return res.status(404).json({ error: "Pool entry not found" });
+            res.json({ success: true });
+        } catch (err) {
+            console.error("Error assigning service pool entry:", err);
+            res.status(500).json({ error: "Failed to assign pool entry" });
+        }
+    });
+
+    // Transfer a pool entry to another service person
+    router.patch("/service-pool/:id/transfer", async (req, res) => {
+        try {
+            if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+            const { servicePersonId } = req.body || {};
+            if (!servicePersonId) return res.status(400).json({ error: "servicePersonId is required." });
+            const result = await servicePoolRepository.transfer(req.params.id, servicePersonId, req.user.userId);
+            if (!result) return res.status(404).json({ error: "Pool entry not found" });
+            res.json({ success: true });
+        } catch (err) {
+            console.error("Error transferring service pool entry:", err);
+            res.status(500).json({ error: "Failed to transfer pool entry" });
+        }
+    });
+
+    // Record a follow-up message draft (no external WhatsApp integration; draft only)
+    router.post("/service-pool/:id/message-draft", async (req, res) => {
+        try {
+            if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+            const { channel, message } = req.body || {};
+            if (!message || !String(message).trim()) {
+                return res.status(400).json({ error: "Message text is required." });
+            }
+            const draft = await servicePoolRepository.recordMessageDraft(
+                req.params.id,
+                channel || "whatsapp",
+                String(message).trim(),
+                req.user.userId,
+            );
+            if (!draft) return res.status(404).json({ error: "Pool entry not found" });
+            res.json(draft);
+        } catch (err) {
+            console.error("Error recording message draft:", err);
+            res.status(500).json({ error: "Failed to record message draft" });
+        }
+    });
+
     app.use("/api/sales", router);
 }
 
