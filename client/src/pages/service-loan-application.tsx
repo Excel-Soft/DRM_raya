@@ -1,21 +1,41 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import type { LoanRequest } from "@shared/schema";
 
 export default function ServiceLoanApplication() {
     const { toast } = useToast();
     const tableRef = useRef<HTMLTableElement>(null);
+    const [searchQuery, setSearchQuery] = useState("");
 
-    const mockData = [
-        { id: "1", employee: "Ali Hassan", advance: "50,000", detail: "Medical Emergency", instalment: "5,000", remaining: "45,000", manager: "Pending", hod: "Pending", date: "2026-03-25", action: "Review" },
-        { id: "2", employee: "Sarah Khan", advance: "20,000", detail: "House Maintenance", instalment: "2,000", remaining: "18,000", manager: "Approved", hod: "Pending", date: "2026-03-28", action: "Review" }
-    ];
+    const { data: loanRequests, isLoading } = useQuery<LoanRequest[]>({
+        queryKey: ["/api/loans"],
+    });
+
+    const safeDate = (value: string | Date | null | undefined) => {
+        if (!value) return "—";
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? "—" : format(d, "yyyy-MM-dd");
+    };
+
+    const rows = (loanRequests || []).filter((loan) => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        const employee = ((loan as any).userName || "Employee").toLowerCase();
+        return (
+            employee.includes(q) ||
+            (loan.detail || "").toLowerCase().includes(q) ||
+            (loan.status || "").toLowerCase().includes(q)
+        );
+    });
 
     const handleCopy = () => {
         if (!tableRef.current) return;
-        const rows = Array.from(tableRef.current.querySelectorAll("tr"));
-        const text = rows.map(row => Array.from(row.querySelectorAll("th, td"))
+        const tableRows = Array.from(tableRef.current.querySelectorAll("tr"));
+        const text = tableRows.map(row => Array.from(row.querySelectorAll("th, td"))
             .map(cell => cell.textContent?.trim() || "")
             .join("\t")).join("\n");
         navigator.clipboard.writeText(text).then(() => {
@@ -49,9 +69,9 @@ export default function ServiceLoanApplication() {
 
     const handleCSV = () => {
         if (!tableRef.current) return;
-        const rows = Array.from(tableRef.current.querySelectorAll("tr"));
+        const tableRows = Array.from(tableRef.current.querySelectorAll("tr"));
         const csvContent = "data:text/csv;charset=utf-8," +
-            rows.map(row => Array.from(row.querySelectorAll("th, td"))
+            tableRows.map(row => Array.from(row.querySelectorAll("th, td"))
                 .map(cell => `"${(cell.textContent?.trim() || "").replace(/"/g, '""')}"`)
                 .join(",")
             ).join("\n");
@@ -110,7 +130,11 @@ export default function ServiceLoanApplication() {
                 <div className="flex justify-end mb-4">
                     <div className="flex flex-col items-end">
                         <label className="text-[12px] font-semibold text-slate-600 mb-1 dark:text-zinc-300">Search:</label>
-                        <Input className="w-[180px] h-8 text-[13px] border-slate-200 dark:border-zinc-800" />
+                        <Input
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-[180px] h-8 text-[13px] border-slate-200 dark:border-zinc-800"
+                        />
                     </div>
                 </div>
 
@@ -132,27 +156,35 @@ export default function ServiceLoanApplication() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {mockData.map((row) => (
-                                <TableRow key={row.id} className="hover:bg-slate-50 border-b border-slate-100 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.id}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.employee}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.advance}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.detail}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.instalment}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.remaining}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-amber-500 py-3">{row.manager}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.hod}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.date}</TableCell>
-                                    <TableCell className="text-[13px] font-medium text-blue-500 hover:text-blue-600 cursor-pointer py-3">{row.action}</TableCell>
+                            {rows.length === 0 ? (
+                                <TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
+                                    <TableCell colSpan={10} className="text-center py-4 text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+                                        {isLoading ? "Loading..." : "No data available in table"}
+                                    </TableCell>
                                 </TableRow>
-                            ))}
+                            ) : (
+                                rows.map((row, idx) => (
+                                    <TableRow key={row.id} className="hover:bg-slate-50 border-b border-slate-100 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{idx + 1}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-600 py-3 dark:text-zinc-300">{(row as any).userName || "Employee"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.amount ?? "—"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.detail ?? "—"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.installmentAmount ?? "—"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.remainingAmount ?? "—"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-amber-500 py-3">{row.managerApprovedByUserId ? "Approved" : "Pending"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.hodApprovedByUserId ? "Approved" : "Pending"}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{safeDate(row.createdAt)}</TableCell>
+                                        <TableCell className="text-[13px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.status || "—"}</TableCell>
+                                    </TableRow>
+                                ))
+                            )}
                         </TableBody>
                     </Table>
                 </div>
 
                 {/* Bottom Controls */}
                 <div className="mt-4 text-[13px] text-slate-500 dark:text-zinc-400">
-                    Showing 1 to {mockData.length} of {mockData.length} entries
+                    Showing {rows.length > 0 ? 1 : 0} to {rows.length} of {rows.length} entries
                 </div>
 
             </div>

@@ -1,14 +1,48 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
-type RowData = { company: string; person: string; grade: string; purpose: string; note: string; date: string; };
+type RowData = {
+    id: string;
+    companyName: string | null;
+    personName: string | null;
+    grade: string | null;
+    purpose: string | null;
+    note: string | null;
+    nextFollowupDate: string | null;
+};
+
+type ApiResponse = { data: RowData[]; total: number; page: number; pageSize: number };
+
+const PAGE_SIZE = 25;
+
+function fmtDate(v: string | null | undefined): string {
+    if (!v) return "—";
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString();
+}
+
+function txt(v: string | null | undefined): string {
+    return v == null || v === "" ? "—" : v;
+}
 
 export default function ServiceMonthlyFollowup() {
     const [searchTerm, setSearchTerm] = useState("");
-    const [mockData] = useState<RowData[]>([]);
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [page, setPage] = useState(1);
+
+    useEffect(() => {
+        const t = setTimeout(() => {
+            setDebouncedSearch(searchTerm);
+            setPage(1);
+        }, 300);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
 
     const [columns, setColumns] = useState({
         company: true,
@@ -19,40 +53,52 @@ export default function ServiceMonthlyFollowup() {
         date: true
     });
 
-    const filteredData = mockData.filter(row =>
-        row.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        row.person.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const { data, isLoading } = useQuery<ApiResponse>({
+        queryKey: ["/api/service/followups/monthly", page, debouncedSearch],
+        queryFn: async () => {
+            const params = new URLSearchParams();
+            params.set("page", String(page));
+            params.set("pageSize", String(PAGE_SIZE));
+            if (debouncedSearch) params.set("search", debouncedSearch);
+            return apiRequestJson("GET", `/api/service/followups/monthly?${params.toString()}`);
+        },
+    });
+
+    const rows = data?.data ?? [];
+    const total = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+    const to = Math.min(page * PAGE_SIZE, total);
 
     const handleCopy = () => {
         const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].join("\t");
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.company) rowData.push(row.company);
-            if (columns.person) rowData.push(row.person);
-            if (columns.grade) rowData.push(row.grade);
-            if (columns.purpose) rowData.push(row.purpose);
-            if (columns.note) rowData.push(row.note);
-            if (columns.date) rowData.push(row.date);
+        const body = rows.map((row, idx) => {
+            const rowData: string[] = [(from + idx).toString()];
+            if (columns.company) rowData.push(txt(row.companyName));
+            if (columns.person) rowData.push(txt(row.personName));
+            if (columns.grade) rowData.push(txt(row.grade));
+            if (columns.purpose) rowData.push(txt(row.purpose));
+            if (columns.note) rowData.push(txt(row.note));
+            if (columns.date) rowData.push(fmtDate(row.nextFollowupDate));
             return rowData.join("\t");
         }).join("\n");
-        navigator.clipboard.writeText(`${headers}\n${rows}`);
+        navigator.clipboard.writeText(`${headers}\n${body}`);
         alert("Table data copied to clipboard!");
     };
 
     const handleExcel = () => {
         const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].join(",");
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.company) rowData.push(`"${row.company}"`);
-            if (columns.person) rowData.push(`"${row.person}"`);
-            if (columns.grade) rowData.push(`"${row.grade}"`);
-            if (columns.purpose) rowData.push(`"${row.purpose}"`);
-            if (columns.note) rowData.push(`"${row.note}"`);
-            if (columns.date) rowData.push(`"${row.date}"`);
+        const body = rows.map((row, idx) => {
+            const rowData: string[] = [(from + idx).toString()];
+            if (columns.company) rowData.push(`"${txt(row.companyName)}"`);
+            if (columns.person) rowData.push(`"${txt(row.personName)}"`);
+            if (columns.grade) rowData.push(`"${txt(row.grade)}"`);
+            if (columns.purpose) rowData.push(`"${txt(row.purpose)}"`);
+            if (columns.note) rowData.push(`"${txt(row.note)}"`);
+            if (columns.date) rowData.push(`"${fmtDate(row.nextFollowupDate)}"`);
             return rowData.join(",");
         }).join("\n");
-        const blob = new Blob([`${headers}\n${rows}`], { type: "text/csv" });
+        const blob = new Blob([`${headers}\n${body}`], { type: "text/csv" });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -135,22 +181,28 @@ export default function ServiceMonthlyFollowup() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {filteredData.length === 0 ? (
+                            {isLoading ? (
+                                <TableRow>
+                                    <TableCell colSpan={7} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
+                                        Loading...
+                                    </TableCell>
+                                </TableRow>
+                            ) : rows.length === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={7} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
                                         No data available in table
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                filteredData.map((row, idx) => (
-                                    <TableRow key={idx} className="border-b border-slate-200 dark:border-zinc-800">
-                                        <TableCell className="py-2 text-[13px]">{idx + 1}</TableCell>
-                                        {columns.company && <TableCell className="py-2 text-[13px]">{row.company}</TableCell>}
-                                        {columns.person && <TableCell className="py-2 text-[13px]">{row.person}</TableCell>}
-                                        {columns.grade && <TableCell className="py-2 text-[13px]">{row.grade}</TableCell>}
-                                        {columns.purpose && <TableCell className="py-2 text-[13px]">{row.purpose}</TableCell>}
-                                        {columns.note && <TableCell className="py-2 text-[13px]">{row.note}</TableCell>}
-                                        {columns.date && <TableCell className="py-2 text-[13px]">{row.date}</TableCell>}
+                                rows.map((row, idx) => (
+                                    <TableRow key={row.id} className="border-b border-slate-200 dark:border-zinc-800">
+                                        <TableCell className="py-2 text-[13px]">{from + idx}</TableCell>
+                                        {columns.company && <TableCell className="py-2 text-[13px]">{txt(row.companyName)}</TableCell>}
+                                        {columns.person && <TableCell className="py-2 text-[13px]">{txt(row.personName)}</TableCell>}
+                                        {columns.grade && <TableCell className="py-2 text-[13px]">{txt(row.grade)}</TableCell>}
+                                        {columns.purpose && <TableCell className="py-2 text-[13px]">{txt(row.purpose)}</TableCell>}
+                                        {columns.note && <TableCell className="py-2 text-[13px]">{txt(row.note)}</TableCell>}
+                                        {columns.date && <TableCell className="py-2 text-[13px]">{fmtDate(row.nextFollowupDate)}</TableCell>}
                                     </TableRow>
                                 ))
                             )}
@@ -161,13 +213,21 @@ export default function ServiceMonthlyFollowup() {
                 {/* Footer Pagination */}
                 <div className="flex flex-col md:flex-row justify-between items-center mt-4 text-[13px] text-slate-500 print:hidden dark:text-zinc-400">
                     <div>
-                        Showing {filteredData.length === 0 ? "0 to 0 of 0" : `1 to ${filteredData.length} of ${filteredData.length}`} entries
+                        Showing {from} to {to} of {total} entries
                     </div>
                     <div className="flex mt-2 md:mt-0">
-                        <button className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                            className={`px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] bg-white dark:bg-zinc-900 dark:border-zinc-800 ${page <= 1 ? "text-slate-400 cursor-not-allowed" : "text-slate-700 hover:bg-slate-50 dark:text-zinc-200 dark:hover:bg-zinc-800"}`}
+                        >
                             Previous
                         </button>
-                        <button className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className={`px-3 py-1.5 border border-slate-200 rounded-r-[4px] bg-white dark:bg-zinc-900 dark:border-zinc-800 ${page >= totalPages ? "text-slate-400 cursor-not-allowed" : "text-slate-700 hover:bg-slate-50 dark:text-zinc-200 dark:hover:bg-zinc-800"}`}
+                        >
                             Next
                         </button>
                     </div>

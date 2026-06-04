@@ -1,14 +1,35 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
-type RowData = { company: string; person: string; grade: string; date: string; };
+type ServiceCustomer = {
+    id: number | string;
+    companyName: string | null;
+    accountName: string | null;
+    grade: string | null;
+    status?: string | null;
+    executiveName?: string | null;
+    createdAt: string | null;
+};
+
+type CustomerListResponse = {
+    data: ServiceCustomer[];
+    total: number;
+    page: number;
+    pageSize: number;
+};
+
+const PAGE_SIZE = 25;
+const GRADE = "B";
 
 export default function ServiceBCustomer() {
     const [searchTerm, setSearchTerm] = useState("");
-    const [mockData] = useState<RowData[]>([]);
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [page, setPage] = useState(1);
 
     const [columns, setColumns] = useState({
         company: true,
@@ -17,36 +38,71 @@ export default function ServiceBCustomer() {
         date: true
     });
 
-    const filteredData = mockData.filter(row =>
-        row.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        row.person.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    useEffect(() => {
+        const t = setTimeout(() => {
+            setDebouncedSearch(searchTerm);
+            setPage(1);
+        }, 350);
+        return () => clearTimeout(t);
+    }, [searchTerm]);
+
+    const { data, isLoading } = useQuery<CustomerListResponse>({
+        queryKey: ["/api/service/customers", GRADE, page, debouncedSearch],
+        queryFn: async () => {
+            const params = new URLSearchParams();
+            params.set("grade", GRADE);
+            params.set("page", String(page));
+            params.set("pageSize", String(PAGE_SIZE));
+            if (debouncedSearch) params.set("search", debouncedSearch);
+            return apiRequestJson("GET", `/api/service/customers?${params.toString()}`);
+        },
+    });
+
+    const rows = data?.data ?? [];
+    const total = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const startEntry = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+    const endEntry = Math.min(page * PAGE_SIZE, total);
+
+    const formatDate = (d: string | null | undefined) => {
+        if (!d) return "—";
+        const dt = new Date(d);
+        return isNaN(dt.getTime()) ? "—" : dt.toLocaleDateString();
+    };
 
     const handleCopy = () => {
-        const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].join("\t");
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.company) rowData.push(row.company);
-            if (columns.person) rowData.push(row.person);
-            if (columns.grade) rowData.push(row.grade);
-            if (columns.date) rowData.push(row.date);
-            return rowData.join("\t");
-        }).join("\n");
-        navigator.clipboard.writeText(`${headers}\n${rows}`);
+        const header = ["#"];
+        if (columns.company) header.push("Company");
+        if (columns.person) header.push("Person");
+        if (columns.grade) header.push("Grade");
+        if (columns.date) header.push("Date");
+        const lines = rows.map((row, idx) => {
+            const r: string[] = [String(startEntry + idx)];
+            if (columns.company) r.push(row.companyName ?? "");
+            if (columns.person) r.push(row.accountName ?? "");
+            if (columns.grade) r.push(row.grade ?? "");
+            if (columns.date) r.push(formatDate(row.createdAt));
+            return r.join("\t");
+        });
+        navigator.clipboard.writeText([header.join("\t"), ...lines].join("\n"));
         alert("Table data copied to clipboard!");
     };
 
     const handleExcel = () => {
-        const headers = ["#", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].join(",");
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.company) rowData.push(`"${row.company}"`);
-            if (columns.person) rowData.push(`"${row.person}"`);
-            if (columns.grade) rowData.push(`"${row.grade}"`);
-            if (columns.date) rowData.push(`"${row.date}"`);
-            return rowData.join(",");
-        }).join("\n");
-        const blob = new Blob([`${headers}\n${rows}`], { type: "text/csv" });
+        const header = ["#"];
+        if (columns.company) header.push("Company");
+        if (columns.person) header.push("Person");
+        if (columns.grade) header.push("Grade");
+        if (columns.date) header.push("Date");
+        const lines = rows.map((row, idx) => {
+            const r: string[] = [String(startEntry + idx)];
+            if (columns.company) r.push(`"${row.companyName ?? ""}"`);
+            if (columns.person) r.push(`"${row.accountName ?? ""}"`);
+            if (columns.grade) r.push(`"${row.grade ?? ""}"`);
+            if (columns.date) r.push(`"${formatDate(row.createdAt)}"`);
+            return r.join(",");
+        });
+        const blob = new Blob([[header.join(","), ...lines].join("\n")], { type: "text/csv" });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -125,20 +181,20 @@ export default function ServiceBCustomer() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {filteredData.length === 0 ? (
+                            {rows.length === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={5} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
-                                        No data available in table
+                                        {isLoading ? "Loading..." : "No data available in table"}
                                     </TableCell>
                                 </TableRow>
                             ) : (
-                                filteredData.map((row, idx) => (
-                                    <TableRow key={idx} className="border-b border-slate-200 dark:border-zinc-800">
-                                        <TableCell className="py-2 text-[13px]">{idx + 1}</TableCell>
-                                        {columns.company && <TableCell className="py-2 text-[13px]">{row.company}</TableCell>}
-                                        {columns.person && <TableCell className="py-2 text-[13px]">{row.person}</TableCell>}
-                                        {columns.grade && <TableCell className="py-2 text-[13px]">{row.grade}</TableCell>}
-                                        {columns.date && <TableCell className="py-2 text-[13px]">{row.date}</TableCell>}
+                                rows.map((row, idx) => (
+                                    <TableRow key={row.id} className="border-b border-slate-200 dark:border-zinc-800">
+                                        <TableCell className="py-2 text-[13px]">{startEntry + idx}</TableCell>
+                                        {columns.company && <TableCell className="py-2 text-[13px]">{row.companyName ?? "—"}</TableCell>}
+                                        {columns.person && <TableCell className="py-2 text-[13px]">{row.accountName ?? "—"}</TableCell>}
+                                        {columns.grade && <TableCell className="py-2 text-[13px]">{row.grade ?? "—"}</TableCell>}
+                                        {columns.date && <TableCell className="py-2 text-[13px]">{formatDate(row.createdAt)}</TableCell>}
                                     </TableRow>
                                 ))
                             )}
@@ -149,13 +205,21 @@ export default function ServiceBCustomer() {
                 {/* Footer Pagination */}
                 <div className="flex flex-col md:flex-row justify-between items-center mt-4 text-[13px] text-slate-500 print:hidden dark:text-zinc-400">
                     <div>
-                        Showing {filteredData.length === 0 ? "0 to 0 of 0" : `1 to ${filteredData.length} of ${filteredData.length}`} entries
+                        Showing {startEntry} to {endEntry} of {total} entries
                     </div>
                     <div className="flex mt-2 md:mt-0">
-                        <button className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                            className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] bg-white text-slate-600 hover:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
+                        >
                             Previous
                         </button>
-                        <button className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] bg-white text-slate-600 hover:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
+                        >
                             Next
                         </button>
                     </div>

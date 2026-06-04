@@ -56,6 +56,7 @@ import receptionRoutes from "./reception-routes";
 import { registerServiceExecutiveRoutes } from "./service-executive-routes";
 import { registerServiceManagerRoutes } from "./service-manager-routes";
 import { registerServiceCoreRoutes } from "./service-core-routes";
+import { registerServiceReportsRoutes } from "./service-reports-routes";
 // Product Posting Workflow Routes
 import { invoiceRouter } from "./routes/invoice-routes";
 import { projectDocRouter } from "./routes/project-doc-routes";
@@ -259,6 +260,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerServiceExecutiveRoutes(app);
   registerServiceManagerRoutes(app);
   registerServiceCoreRoutes(app);
+  await registerServiceReportsRoutes(app);
 
   // Settings routes (protected)
   registerSettingsRoutes(app);

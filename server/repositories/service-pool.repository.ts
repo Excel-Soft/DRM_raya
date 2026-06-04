@@ -198,6 +198,60 @@ export class ServicePoolRepository {
     `;
     await pool.query(query, [customerId, salesPersonId, serviceCode, subserviceCode]);
   }
+
+  private async appendAudit(id: string, event: Record<string, any>) {
+    await pool.query(
+      `UPDATE drm.service_pool_entries
+         SET metadata = jsonb_set(
+           COALESCE(metadata, '{}'::jsonb),
+           '{audit}',
+           COALESCE(metadata->'audit', '[]'::jsonb) || $2::jsonb
+         ),
+         updated_at = now()
+       WHERE id = $1`,
+      [id, JSON.stringify([{ ...event, at: new Date().toISOString() }])],
+    );
+  }
+
+  async assign(id: string, servicePersonId: string, byUserId: string) {
+    const res = await pool.query(
+      `UPDATE drm.service_pool_entries
+         SET service_person_id = $2, updated_at = now()
+       WHERE id = $1 RETURNING id`,
+      [id, servicePersonId],
+    );
+    if (res.rowCount === 0) return null;
+    await this.appendAudit(id, { type: "assign", servicePersonId, by: byUserId });
+    return res.rows[0];
+  }
+
+  async transfer(id: string, servicePersonId: string, byUserId: string) {
+    const prev = await pool.query(
+      `SELECT service_person_id AS "from" FROM drm.service_pool_entries WHERE id = $1`,
+      [id],
+    );
+    if (prev.rowCount === 0) return null;
+    await pool.query(
+      `UPDATE drm.service_pool_entries
+         SET service_person_id = $2, updated_at = now()
+       WHERE id = $1`,
+      [id, servicePersonId],
+    );
+    await this.appendAudit(id, {
+      type: "transfer",
+      from: prev.rows[0]?.from || null,
+      to: servicePersonId,
+      by: byUserId,
+    });
+    return { id };
+  }
+
+  async recordMessageDraft(id: string, channel: string, message: string, byUserId: string) {
+    const exists = await pool.query(`SELECT id FROM drm.service_pool_entries WHERE id = $1`, [id]);
+    if (exists.rowCount === 0) return null;
+    await this.appendAudit(id, { type: "message_draft", channel, message, by: byUserId });
+    return { id, channel, message, draftedBy: byUserId, draftedAt: new Date().toISOString() };
+  }
 }
 
 export const servicePoolRepository = new ServicePoolRepository();

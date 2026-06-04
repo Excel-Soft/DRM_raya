@@ -1,84 +1,93 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { apiRequestJson } from "@/lib/queryClient";
 
-type RowData = { companyName: string; salePerson: string; total: number; pay: number; due: number; date: string; };
+type RowData = {
+    id: string;
+    customerId: string | null;
+    companyName: string | null;
+    executiveName: string | null;
+    packageName: string | null;
+    total: number | string | null;
+    dueDate: string | null;
+    paymentStatus: string | null;
+    agingBucket: string | null;
+};
+
+type ListResponse = { data: RowData[]; total: number; page: number; pageSize: number };
+
+const PAGE_SIZE = 25;
+
+function formatDate(value: string | null): string {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString();
+}
+
+function formatAmount(value: number | string | null): string {
+    if (value === null || value === undefined || value === "") return "—";
+    const n = Number(value);
+    if (Number.isNaN(n)) return "—";
+    return n.toString();
+}
 
 export default function ServiceDueVasPayment() {
     const [searchTerm, setSearchTerm] = useState("");
-    const [mockData] = useState<RowData[]>([]);
+    const [page, setPage] = useState(1);
 
     const [columns, setColumns] = useState({
         companyName: true,
         salePerson: true,
+        packageName: true,
         total: true,
-        pay: true,
-        due: true,
-        date: true
+        status: true,
+        date: true,
     });
 
-    const filteredData = mockData.filter(row =>
-        row.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        row.salePerson.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const queryString = new URLSearchParams({
+        page: String(page),
+        pageSize: String(PAGE_SIZE),
+        ...(searchTerm ? { search: searchTerm } : {}),
+    }).toString();
 
-    const sumPay = filteredData.reduce((acc, row) => acc + row.pay, 0);
-    const sumDue = filteredData.reduce((acc, row) => acc + row.due, 0);
+    const { data, isLoading } = useQuery<ListResponse>({
+        queryKey: ["/api/service/payments/due", page, searchTerm],
+        queryFn: () => apiRequestJson<ListResponse>("GET", `/api/service/payments/due?${queryString}`),
+    });
+
+    const rows = data?.data ?? [];
+    const total = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const startEntry = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+    const endEntry = Math.min(page * PAGE_SIZE, total);
+
+    const sumTotal = rows.reduce((acc, row) => {
+        const n = Number(row.total);
+        return acc + (Number.isNaN(n) ? 0 : n);
+    }, 0);
 
     const handleCopy = () => {
-        const headers = ["No.", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())).join("\t");
-
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.companyName) rowData.push(row.companyName);
-            if (columns.salePerson) rowData.push(row.salePerson);
-            if (columns.total) rowData.push(row.total.toString());
-            if (columns.pay) rowData.push(row.pay.toString());
-            if (columns.due) rowData.push(row.due.toString());
-            if (columns.date) rowData.push(row.date);
-            return rowData.join("\t");
-        });
-
-        // Add total row
-        const totalRowData: string[] = ["Total"];
-        if (columns.companyName) totalRowData.push("");
-        if (columns.salePerson) totalRowData.push("");
-        if (columns.total) totalRowData.push("");
-        if (columns.pay) totalRowData.push(sumPay.toString());
-        if (columns.due) totalRowData.push(sumDue.toString());
-        if (columns.date) totalRowData.push("0");
-        rows.push(totalRowData.join("\t"));
-
-        navigator.clipboard.writeText(`${headers}\n${rows.join("\n")}`);
+        const headers = ["No.", "Company Name", "Sale Person", "Package", "Total", "Status", "Date"].join("\t");
+        const body = rows.map((row, idx) =>
+            [startEntry + idx, row.companyName || "", row.executiveName || "", row.packageName || "", formatAmount(row.total), row.paymentStatus || "", formatDate(row.dueDate)].join("\t")
+        );
+        body.push(["Total", "", "", "", sumTotal.toString(), "", ""].join("\t"));
+        navigator.clipboard.writeText(`${headers}\n${body.join("\n")}`);
         alert("Table data copied to clipboard!");
     };
 
     const handleExcel = () => {
-        const headers = ["No.", ...Object.keys(columns).filter(k => columns[k as keyof typeof columns])].map(k => k.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())).join(",");
-
-        const rows = filteredData.map((row, idx) => {
-            const rowData: string[] = [(idx + 1).toString()];
-            if (columns.companyName) rowData.push(`"${row.companyName}"`);
-            if (columns.salePerson) rowData.push(`"${row.salePerson}"`);
-            if (columns.total) rowData.push(`"${row.total}"`);
-            if (columns.pay) rowData.push(`"${row.pay}"`);
-            if (columns.due) rowData.push(`"${row.due}"`);
-            if (columns.date) rowData.push(`"${row.date}"`);
-            return rowData.join(",");
-        });
-
-        const totalRowData: string[] = ["Total"];
-        if (columns.companyName) totalRowData.push('""');
-        if (columns.salePerson) totalRowData.push('""');
-        if (columns.total) totalRowData.push('""');
-        if (columns.pay) totalRowData.push(`"${sumPay}"`);
-        if (columns.due) totalRowData.push(`"${sumDue}"`);
-        if (columns.date) totalRowData.push('"0"');
-        rows.push(totalRowData.join(","));
-
-        const blob = new Blob([`${headers}\n${rows.join("\n")}`], { type: "text/csv" });
+        const headers = ["No.", "Company Name", "Sale Person", "Package", "Total", "Status", "Date"].join(",");
+        const body = rows.map((row, idx) =>
+            [startEntry + idx, `"${row.companyName || ""}"`, `"${row.executiveName || ""}"`, `"${row.packageName || ""}"`, `"${formatAmount(row.total)}"`, `"${row.paymentStatus || ""}"`, `"${formatDate(row.dueDate)}"`].join(",")
+        );
+        body.push(["Total", '""', '""', '""', `"${sumTotal}"`, '""', '""'].join(","));
+        const blob = new Blob([`${headers}\n${body.join("\n")}`], { type: "text/csv" });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -89,6 +98,8 @@ export default function ServiceDueVasPayment() {
     const handlePDF = () => {
         window.print();
     };
+
+    const visibleColCount = 1 + Object.values(columns).filter(Boolean).length;
 
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen printable-area dark:bg-zinc-950">
@@ -127,9 +138,9 @@ export default function ServiceDueVasPayment() {
                             <DropdownMenuContent align="end">
                                 <DropdownMenuCheckboxItem checked={columns.companyName} onCheckedChange={(v) => setColumns(p => ({ ...p, companyName: v }))}>Company Name</DropdownMenuCheckboxItem>
                                 <DropdownMenuCheckboxItem checked={columns.salePerson} onCheckedChange={(v) => setColumns(p => ({ ...p, salePerson: v }))}>Sale Person</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.packageName} onCheckedChange={(v) => setColumns(p => ({ ...p, packageName: v }))}>Package</DropdownMenuCheckboxItem>
                                 <DropdownMenuCheckboxItem checked={columns.total} onCheckedChange={(v) => setColumns(p => ({ ...p, total: v }))}>Total</DropdownMenuCheckboxItem>
-                                <DropdownMenuCheckboxItem checked={columns.pay} onCheckedChange={(v) => setColumns(p => ({ ...p, pay: v }))}>Pay</DropdownMenuCheckboxItem>
-                                <DropdownMenuCheckboxItem checked={columns.due} onCheckedChange={(v) => setColumns(p => ({ ...p, due: v }))}>Due</DropdownMenuCheckboxItem>
+                                <DropdownMenuCheckboxItem checked={columns.status} onCheckedChange={(v) => setColumns(p => ({ ...p, status: v }))}>Status</DropdownMenuCheckboxItem>
                                 <DropdownMenuCheckboxItem checked={columns.date} onCheckedChange={(v) => setColumns(p => ({ ...p, date: v }))}>Date</DropdownMenuCheckboxItem>
                             </DropdownMenuContent>
                         </DropdownMenu>
@@ -140,7 +151,7 @@ export default function ServiceDueVasPayment() {
                         <span className="text-[13px] text-slate-600 font-medium dark:text-zinc-300">Search:</span>
                         <Input
                             value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
+                            onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
                             className="h-8 w-48 text-[13px] border-slate-300 rounded-[4px] dark:border-zinc-800"
                         />
                     </div>
@@ -154,34 +165,50 @@ export default function ServiceDueVasPayment() {
                                 <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 w-16 dark:text-zinc-100">No.</TableHead>
                                 {columns.companyName && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Company Name</TableHead>}
                                 {columns.salePerson && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Sale Person</TableHead>}
+                                {columns.packageName && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Package</TableHead>}
                                 {columns.total && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Total</TableHead>}
-                                {columns.pay && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Pay</TableHead>}
-                                {columns.due && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Due</TableHead>}
+                                {columns.status && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Status</TableHead>}
                                 {columns.date && <TableHead className="text-[13px] font-bold text-slate-800 py-2.5 dark:text-zinc-100">Date</TableHead>}
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {filteredData.map((row, idx) => (
-                                <TableRow key={idx} className="border-b border-slate-200 dark:border-zinc-800">
-                                    <TableCell className="py-2 text-[13px]">{idx + 1}</TableCell>
-                                    {columns.companyName && <TableCell className="py-2 text-[13px]">{row.companyName}</TableCell>}
-                                    {columns.salePerson && <TableCell className="py-2 text-[13px]">{row.salePerson}</TableCell>}
-                                    {columns.total && <TableCell className="py-2 text-[13px]">{row.total}</TableCell>}
-                                    {columns.pay && <TableCell className="py-2 text-[13px]">{row.pay}</TableCell>}
-                                    {columns.due && <TableCell className="py-2 text-[13px]">{row.due}</TableCell>}
-                                    {columns.date && <TableCell className="py-2 text-[13px]">{row.date}</TableCell>}
+                            {isLoading ? (
+                                <TableRow>
+                                    <TableCell colSpan={visibleColCount} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
+                                        Loading...
+                                    </TableCell>
                                 </TableRow>
-                            ))}
-                            {/* Total Row matching the screenshot */}
-                            <TableRow className="border-b border-slate-200 bg-white font-bold text-slate-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                                <TableCell className="py-2 text-[13px]">Total</TableCell>
-                                {columns.companyName && <TableCell className="py-2 text-[13px]"></TableCell>}
-                                {columns.salePerson && <TableCell className="py-2 text-[13px]"></TableCell>}
-                                {columns.total && <TableCell className="py-2 text-[13px]"></TableCell>}
-                                {columns.pay && <TableCell className="py-2 text-[13px] text-slate-600 font-normal dark:text-zinc-300">{sumPay}</TableCell>}
-                                {columns.due && <TableCell className="py-2 text-[13px] text-slate-600 font-normal dark:text-zinc-300">{sumDue}</TableCell>}
-                                {columns.date && <TableCell className="py-2 text-[13px] text-slate-600 font-normal dark:text-zinc-300">0</TableCell>}
-                            </TableRow>
+                            ) : rows.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={visibleColCount} className="py-4 text-center text-slate-500 text-[13px] border-b border-slate-200 dark:text-zinc-400 dark:border-zinc-800">
+                                        No data available in table
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                <>
+                                    {rows.map((row, idx) => (
+                                        <TableRow key={row.id} className="border-b border-slate-200 dark:border-zinc-800">
+                                            <TableCell className="py-2 text-[13px]">{startEntry + idx}</TableCell>
+                                            {columns.companyName && <TableCell className="py-2 text-[13px]">{row.companyName || "—"}</TableCell>}
+                                            {columns.salePerson && <TableCell className="py-2 text-[13px]">{row.executiveName || "—"}</TableCell>}
+                                            {columns.packageName && <TableCell className="py-2 text-[13px]">{row.packageName || "—"}</TableCell>}
+                                            {columns.total && <TableCell className="py-2 text-[13px]">{formatAmount(row.total)}</TableCell>}
+                                            {columns.status && <TableCell className="py-2 text-[13px] capitalize">{row.paymentStatus ? row.paymentStatus.replace(/_/g, " ") : "—"}</TableCell>}
+                                            {columns.date && <TableCell className="py-2 text-[13px]">{formatDate(row.dueDate)}</TableCell>}
+                                        </TableRow>
+                                    ))}
+                                    {/* Total Row */}
+                                    <TableRow className="border-b border-slate-200 bg-white font-bold text-slate-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
+                                        <TableCell className="py-2 text-[13px]">Total</TableCell>
+                                        {columns.companyName && <TableCell className="py-2 text-[13px]"></TableCell>}
+                                        {columns.salePerson && <TableCell className="py-2 text-[13px]"></TableCell>}
+                                        {columns.packageName && <TableCell className="py-2 text-[13px]"></TableCell>}
+                                        {columns.total && <TableCell className="py-2 text-[13px] text-slate-600 font-normal dark:text-zinc-300">{sumTotal}</TableCell>}
+                                        {columns.status && <TableCell className="py-2 text-[13px]"></TableCell>}
+                                        {columns.date && <TableCell className="py-2 text-[13px]"></TableCell>}
+                                    </TableRow>
+                                </>
+                            )}
                         </TableBody>
                     </Table>
                 </div>
@@ -189,16 +216,21 @@ export default function ServiceDueVasPayment() {
                 {/* Footer Pagination */}
                 <div className="flex flex-col md:flex-row justify-between items-center mt-4 text-[13px] text-slate-500 print:hidden dark:text-zinc-400">
                     <div>
-                        Showing 1 to 1 of 1 entries
+                        Showing {total === 0 ? "0 to 0 of 0" : `${startEntry} to ${endEntry} of ${total}`} entries
                     </div>
                     <div className="flex mt-2 md:mt-0">
-                        <button className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                            className="px-3 py-1.5 border border-slate-200 border-r-0 rounded-l-[4px] bg-white disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 hover:bg-slate-50 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
+                        >
                             Previous
                         </button>
-                        <button className="px-3 py-1.5 border bg-[#059669] border-[#059669] rounded-r-[4px] text-white dark:border-zinc-800">
-                            1
-                        </button>
-                        <button className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] text-slate-400 bg-white cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800">
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="px-3 py-1.5 border border-slate-200 rounded-r-[4px] bg-white disabled:text-slate-400 disabled:cursor-not-allowed text-slate-700 hover:bg-slate-50 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
+                        >
                             Next
                         </button>
                     </div>
