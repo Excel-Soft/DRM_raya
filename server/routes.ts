@@ -74,6 +74,7 @@ import { registerTodayPostRoutes } from "./today-post-routes";
 import { registerCommissionVerificationRoutes } from "./commission-verification-routes";
 import { registerSocialAccountsRoutes } from "./social-accounts-routes";
 import { registerLateComingRoutes } from "./late-coming-routes";
+import { registerEventsRoutes } from "./events-routes";
 import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
 import { registerProjectReportRoutes } from "./project-report-routes";
 
@@ -368,6 +369,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   await registerCommissionVerificationRoutes(app);
   await registerSocialAccountsRoutes(app);
   await registerLateComingRoutes(app);
+
+  // Stage 8 Events (persistence/workflow) routes (protected) — mounted after auth +
+  // permission middleware. Awaited because the registrar runs idempotent table DDL
+  // before serving requests.
+  await registerEventsRoutes(app);
 
   // Team Report → Link Report routes (protected) — mounted after auth + permission middleware
   registerTeamReportLinkReportRoutes(app);

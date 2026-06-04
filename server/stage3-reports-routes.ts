@@ -11,8 +11,9 @@ function parsePaging(req: Request) {
 }
 
 function parseDateRange(req: Request) {
-  const startStr = req.query.startDate as string | undefined;
-  const endStr = req.query.endDate as string | undefined;
+  // Accept both startDate/endDate and dateFrom/dateTo for flexibility.
+  const startStr = (req.query.startDate ?? req.query.dateFrom) as string | undefined;
+  const endStr = (req.query.endDate ?? req.query.dateTo) as string | undefined;
   let start: Date | null = null;
   let end: Date | null = null;
   if (startStr) {
@@ -140,21 +141,45 @@ export function registerStage3ReportsRoutes(app: Express) {
     }
   });
 
-  // GET /api/reports/reception - reception payment log.
-  // There is no reception-payments source table in the system, so this returns
-  // an honest empty set with a message rather than fabricated rows.
+  // GET /api/reports/reception - reception meetings log.
+  // Reception meetings live in drm.meetings (see server/reception-routes.ts which
+  // queries the same table). Returns real rows or an empty set — never fabricated.
+  // Filters: dateFrom/dateTo (or startDate/endDate), status, userId. Paginated.
   app.get("/api/reports/reception", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      res.json({
-        rows: [],
-        total: 0,
-        page: 1,
-        pageSize: 0,
-        available: false,
-        message:
-          "No reception payment source is connected. Once reception collections are recorded, they will appear here.",
-      });
+      const { start, end } = parseDateRange(req);
+      const { page, pageSize, offset } = parsePaging(req);
+
+      const where: string[] = [];
+      const params: any[] = [];
+      if (start) { params.push(start); where.push(`m.meeting_date >= $${params.length}`); }
+      if (end) { params.push(end); where.push(`m.meeting_date <= $${params.length}`); }
+      if (req.query.status) { params.push(String(req.query.status)); where.push(`m.status = $${params.length}`); }
+      // A reception "user" can be the staff member who logged the meeting (created_by)
+      // or the user the meeting was with (user_id).
+      if (req.query.userId) {
+        params.push(String(req.query.userId));
+        where.push(`(m.created_by = $${params.length} OR m.user_id = $${params.length})`);
+      }
+      const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+      const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM drm.meetings m ${clause}`, params);
+      const total = countRes.rows[0]?.total ?? 0;
+
+      const rowsRes = await pool.query(
+        `SELECT m.id, m.meeting_type, m.person_name, m.status,
+                m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
+                m.total_duration_seconds, m.created_at,
+                c.company_name AS company_name
+         FROM drm.meetings m
+         LEFT JOIN drm.customers c ON c.id = m.company_id
+         ${clause}
+         ORDER BY m.meeting_date DESC
+         LIMIT ${pageSize} OFFSET ${offset}`,
+        params,
+      );
+      res.json({ data: rowsRes.rows, total, page, pageSize });
     } catch (err) {
       console.error("Error in reception report:", err);
       res.status(500).json({ error: "Failed to load reception report" });

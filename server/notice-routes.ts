@@ -3,8 +3,18 @@ import { db } from "./db";
 import { notices, insertNoticeSchema, users, noticeAssignments } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { authMiddleware } from "./auth.middleware";
+import { isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const router = Router();
+
+function getUserRole(req: any): string | undefined {
+  return req.user?.roleId ?? req.user?.activeRoleId ?? req.user?.role;
+}
+
+function canManage(req: any): boolean {
+  return isManagerialRole(getUserRole(req));
+}
 
 // Get all notices
 router.get("/", authMiddleware, async (req, res) => {
@@ -38,6 +48,8 @@ router.get("/", authMiddleware, async (req, res) => {
 // Create a new notice
 router.post("/", authMiddleware, async (req, res) => {
   try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
     const userId = (req.user as any).userId;
     const validatedData = insertNoticeSchema.parse({
       ...req.body,
@@ -45,6 +57,13 @@ router.post("/", authMiddleware, async (req, res) => {
     });
 
     const [newNotice] = await db.insert(notices).values(validatedData).returning();
+    await ActivityLogService.log({
+      userId,
+      action: "create",
+      resourceType: "notice",
+      resourceId: newNotice.id,
+      details: newNotice.title,
+    });
     res.status(201).json(newNotice);
   } catch (error: any) {
     console.error("Error creating notice:", error);
@@ -55,6 +74,8 @@ router.post("/", authMiddleware, async (req, res) => {
 // Update a notice
 router.patch("/:id", authMiddleware, async (req, res) => {
   try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
     const { id } = req.params;
     const [updatedNotice] = await db
       .update(notices)
@@ -65,6 +86,13 @@ router.patch("/:id", authMiddleware, async (req, res) => {
     if (!updatedNotice) {
       return res.status(404).json({ error: "Notice not found" });
     }
+    await ActivityLogService.log({
+      userId: (req.user as any).userId,
+      action: "update",
+      resourceType: "notice",
+      resourceId: updatedNotice.id,
+      details: updatedNotice.title,
+    });
     res.json(updatedNotice);
   } catch (error: any) {
     console.error("Error updating notice:", error);
@@ -75,8 +103,16 @@ router.patch("/:id", authMiddleware, async (req, res) => {
 // Delete a notice
 router.delete("/:id", authMiddleware, async (req, res) => {
   try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
     const { id } = req.params;
     await db.delete(notices).where(eq(notices.id, id));
+    await ActivityLogService.log({
+      userId: (req.user as any).userId,
+      action: "delete",
+      resourceType: "notice",
+      resourceId: id,
+    });
     res.status(204).end();
   } catch (error: any) {
     console.error("Error deleting notice:", error);
@@ -87,6 +123,8 @@ router.delete("/:id", authMiddleware, async (req, res) => {
 // Assign a notice to a user
 router.post("/assign", authMiddleware, async (req, res) => {
   try {
+    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+    if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
     const { noticeId, userId } = req.body;
     const assignedByUserId = (req.user as any).userId;
     
@@ -94,6 +132,13 @@ router.post("/assign", authMiddleware, async (req, res) => {
       noticeId,
       userId,
       assignedByUserId,
+    });
+    await ActivityLogService.log({
+      userId: assignedByUserId,
+      action: "assign",
+      resourceType: "notice",
+      resourceId: noticeId,
+      details: `assigned to ${userId}`,
     });
     res.json({ success: true });
   } catch (error: any) {

@@ -47,7 +47,7 @@ export default function TrainingCenter() {
   });
 
   const { data: videosData, isLoading: videosLoading } = useQuery<{ videos: TrainingVideo[] }>({
-    queryKey: ["/api/training/subcategories", selectedSub?.id],
+    queryKey: ["/api/training/subcategories", selectedSub?.id, "videos"],
     enabled: Boolean(selectedSub?.id),
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/training/subcategories/${selectedSub?.id}/videos`);
