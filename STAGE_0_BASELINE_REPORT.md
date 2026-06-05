@@ -1,190 +1,157 @@
-# STAGE 0 — Baseline Audit, Run Stability & Implementation Control
+# Stage 0 — Baseline Report
 
-WebExcels DRM / CRM / ERP (imported). Read-only audit. No business features
-implemented, no refactors, no deletions, no workflow/DB-structure changes. The
-only file written by this stage is this report (plus generated `dist/` build
-artifacts from `npm run build`).
+Baseline inspection of the imported WebExcels CRM/ERP/DRM codebase. No business
+logic, workflows, permissions, or schema were changed in this stage. Only
+read-only inspection + the existing running app were used.
 
----
+## Project root
+- `/home/runner/workspace` — the single `package.json` lives here and contains all
+  `dev` / `build` / `start` / `check` / `db:push` scripts.
 
-## 1. Correct project root
-- **Root:** `/home/runner/workspace`
-- **Active `package.json`:** name `rest-express` (single root package; no nested
-  workspace `package.json` files).
-- **Scripts confirmed present:** `dev`, `build`, `start`, `check`, plus
-  `db:push` / `db:generate` / `db:migrate` (drizzle-kit), `db:seed`, `db:setup`,
-  `test` (vitest).
-  - `dev`: `cross-env NODE_ENV=development tsx watch server/index.ts`
-  - `build`: `vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist`
-  - `start`: `cross-env NODE_ENV=production node dist/index.js` (with a `prestart`
-    guard that rebuilds if `dist` is missing)
-  - `check`: `tsc`
-- **Legacy / not the active app:** `auth:dev` (`tsx src/server/index.ts`) and
-  `api:dev` (`tsx src/server.ts`) point at the smaller `src/` scaffold — confirmed
-  legacy, not used by the active runtime.
+## Active runtime (confirmed)
+- Backend entry: `server/index.ts` → `server/routes.ts` (Express + TypeScript).
+- Frontend: `client/src/App.tsx` (React + Vite + TypeScript, wouter routing).
+- Shared: `shared/schema.ts` (Drizzle ORM, PostgreSQL schema `drm`).
+- The smaller `src/` scaffold is **legacy and NOT mounted** by the running server.
+  Do not treat it as the primary app.
 
-## 2. Node / npm version
-- `node -v` → **v20.20.0**
-- `npm -v` → **10.8.2**
+## Node / npm version
+- Node: **v20.20.0** (satisfies Node 20 requirement).
+- npm: **10.8.2**.
 
-## 3. Install command used
-- Dependencies already installed (`node_modules` present, ~465 MB). No reinstall
-  was required to run. The appropriate command for a clean machine is
-  **`npm install`** (a single root lockfile drives the whole app).
+## Install command
+- Dependencies were already installed (`node_modules` present) and the app boots
+  and serves successfully, so **no reinstall was performed** in this stage. If a
+  clean install is needed: `npm ci` (fallback `npm install`).
 
-## 4. Run command
-- **`npm run dev`** — bound to the `Start application` workflow, serving on
-  **port 5000** (Express serves both the API and the Vite client via middleware).
-  App run status: **running / serving**.
+## Run command
+- `npm run dev` → `cross-env NODE_ENV=development tsx watch server/index.ts`.
+- Build: `npm run build` (vite build + esbuild bundle of server).
+- Prod start: `npm run start` (`NODE_ENV=production node dist/index.js`).
 
-## 5. Build / check result
-- **`npm run build`: SUCCESS** (exit 0, ~30s). Artifacts produced:
-  - `dist/index.js` (server bundle, ~1.5 MB)
-  - `dist/public/index.html` + `dist/public/assets/*` (client bundle)
-  - Non-blocking warning: main client chunk > 500 kB (code-splitting opportunity,
-    not an error).
-- **`npm run check` (`tsc`): pre-existing errors present, NOT fixed (per Stage 0
-  scope).** ~19 distinct error sites / 64 total `error TS` lines, all in files
-  unrelated to the active boot path:
-  | File | Error sites |
-  | :--- | :--- |
-  | `server/reports-routes.ts` | 6 |
-  | `server/debug-routes.ts` | 4 |
-  | `server/repositories/project-assignments.repository.ts` | 2 |
-  | `server/repositories/call-sessions.repository.ts` | 2 |
-  | `server/repositories/project-approvals.repository.ts` | 1 |
-  | `server/repositories/permissions.repository.ts` | 1 |
-  | `server/repositories/customers.repository.ts` | 1 |
-  | `server/migrations/update-related-customers.ts` | 1 |
-  | `server/migrations/create-related-customers.ts` | 1 |
-  - These are mostly Drizzle row-type / nullability mismatches and an
-    `insert()` shape mismatch. They do **not** block `dev`, `build`, or `start`
-    (build uses esbuild/vite, which transpile without type-checking). Left
-    untouched — no unrelated refactor.
+## App run status
+- **Running.** Workflow `Start application` is up, serving on fixed **port 5000**.
+- Startup log shows: DB connected, HOD routes mounted, accounts schema
+  maintenance completed, `serving on fixed port 5000`.
+- Unauthenticated `GET /api/auth/me` correctly returns 401.
 
-## 6. Database status
-- **Engine:** PostgreSQL (Replit-provided). `DATABASE_URL` is set in the
-  environment.
-- **Schema:** `drm` (plus default `public`). **118 tables** in `drm`.
-- **Seed state:** `drm.users` has **1 row** (dev admin). Most business tables are
-  effectively empty in this dev DB.
-- **ORM:** Drizzle; schema defined in `shared/schema.ts` (2,787 lines). Migrations
-  via drizzle-kit. No DB-structure changes were made.
+## Database status
+- **Connected** to the Replit-provided PostgreSQL (`host=helium db=heliumdb
+  user=postgres`).
+- Schema: `drm`. Startup "accounts schema maintenance completed successfully"
+  indicates schema is present.
+- `npm run db:push` was **not** run — schema is already pushed and the app boots
+  with DB-backed routes working. (Run `db:push` only when `shared/schema.ts`
+  changes.)
 
-## 7. Existing environment variables referenced (names only — no values)
-- **Core:** `DATABASE_URL`, `NODE_ENV`, `PORT`, `JWT_SECRET`
-- **DB (alt/legacy):** `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`,
-  `DB_SSL`, `DATABASE_SSL`, `DB_LOGGED`, `PGHOST`
-- **Auth / cookies:** `AUTH_COOKIE_NAME`, `AUTH_COOKIE_DOMAIN`,
-  `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE`, `AUTH_COOKIE_MAX_AGE_MS`,
-  `MOCK_AUTH`, `MOCK_AUTH_EMAIL`, `IP_RESTRICTION_ENABLED`
-- **CORS / origins:** `CLIENT_ORIGIN`, `CORS_ORIGINS`, `FRONTEND_URL`,
-  `VITE_APP_URL`, `VITE_ORIGIN`
-- **Email:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
-- **AI:** `OPENAI_API_KEY`, `OPENAI_BASE_URL`
-- **Debug/logging:** `LOG_LEVEL`, `DEBUG_AUTH`, `DEBUG_ERRORS`, `DEBUG_PG_POOL`,
-  `DEBUG_ATTENDANCE`, `DEBUG_SALES_DASH`
-- Only `DATABASE_URL`, `JWT_SECRET`, and (for prod) cookie/origin settings are
-  required to boot; others are optional/feature-gated.
+## Environment variables required
+- `DATABASE_URL` — **SET** (Replit PostgreSQL).
+- `JWT_SECRET` — **SET** (JWT signing/verification).
+- `NODE_ENV` — provided per-script via `cross-env` (`development` in dev,
+  `production` in start); not required to be set in the shell.
+- Replit PG also exposes `PGHOST`, `PGDATABASE`, etc. (SET).
+- Optional/risky: `MOCK_AUTH` (see P0 risks) — **currently NOT set** (safe).
 
-## 8. Main frontend routes count
-- **~168 route entries** in `client/src/App.tsx` (includes duplicates and
-  dynamic `:param` routes).
+## Major server route groups
+Mounted in `server/routes.ts` (≈72 route files under `server/` and
+`server/routes/`). Representative groups:
+- Auth: `/api/auth` (`auth.routes.ts`) — public.
+- DRM: `/api/drm` (`drm-routes.ts`).
+- Attributes: `/api` (`attributes-routes.ts`).
+- AI: `/api/ai` (`ai-routes.ts`).
+- CRM / Sales / Customers: `/api/crm` + `/api` (`crm-routes.ts`, `sales-routes.ts`).
+- Pools / Leads: `/api/pools` (`pools-routes.ts`), GM/BV (`gm-pool-routes.ts`,
+  `gm-bv-pool-routes.ts`).
+- Temp contacts: `/api/customer/temporary-contact` + `/api/temp-contact`.
+- Users / RBAC: `/api/users` (`users-routes.ts`), `/api` (`rbac-routes.ts`).
+- HR: leave / overtime / loan / attendance routes.
+- PMS / Projects: `/api/pms`, `/api/projects`, `/api/tasks`.
+- Product posting / Software workflow: `/api/product-posting`, `/api/software`.
+- Service: `service-*-routes.ts`.
+- Office / Accounts: `/api/office`, `account-routes.ts`, `/api/invoices`.
+- Reports: `/api/reports` (`reports-routes.ts`, `stage3-reports-routes.ts`).
+- Support: `support-routes.ts`. Training: `/api/training`. Events: events routes.
+- Notice / Policies / Portfolio / IT assets / Reception / Notifications /
+  Target system, etc.
 
-## 9. Main sidebar items count
-- **~105 clickable nav links** in `client/src/components/app-sidebar.tsx`.
+## Major frontend route groups
+`client/src/App.tsx` declares **~190 `<Route>` entries** (wouter). Groups:
+- Dashboards (`/dashboard/*` — ~25 role dashboards).
+- Sales / Customers (`/sales/*`, `/customers/*`, `/customer/*`).
+- HR (`/hr/attendance`, `/hr/leave-request`, `/hr/overtime`, `/hr/loan`).
+- PMS / Projects (`/pms/*`, `/projects/*`).
+- Product posting (`/product-posting/*`), QA/verification.
+- Service (`/service/*` — ~18 pages).
+- Office / Accounts (`/office/*`, `/account/*`).
+- DRM (`/drm/*`). Reports (`/reports/*`). Support (`/support/*`). Events
+  (`/events/*`). Training (`/training`).
 
-## 10. Main backend route groups (`server/routes.ts`)
-Mounted (in order): `app.use("/api", mockAuth?)` → `/api/drm` → `/api/auth` →
-`/api` attributes → **`authMiddleware` (line 179)** → `checkAllowedIp` →
-`checkUrlPermission` → `/api/ai`, then the protected groups:
-`registerSalesRoutes`, `registerPmsRoutes`, `registerSupportRoutes`,
-`registerGmPoolRoutes`, `registerGmBvPoolRoutes`, `registerProjectActivityRoutes`,
-`registerQuotationRoutes`, `registerServicePoolRoutes`,
-`registerServiceExecutiveRoutes`, `registerServiceManagerRoutes`,
-`registerServiceCoreRoutes`, `registerSettingsRoutes`, `registerAttendanceRoutes`,
-`registerTodoRoutes`, `registerLeaveRoutes`, `registerOvertimeRoutes`,
-`registerLoanRoutes`, `registerProjectReportRoutes`, `registerReportsRoutes`,
-`registerAccountRoutes`, `registerQuickEntriesRoutes`, `registerDashboardRoutes`,
-`registerHodRoutes`, `registerBotRoutes`, `registerFormRoutes`, `registerFbRoutes`,
-`registerDdManagerRoutes`, `registerDdExecutiveRoutes`, plus `app.use` routers:
-`/api/customer/temporary-contact`, `/api/temp-contact`, `/api/pools`,
-`/api/training`, `/api/crm` (+ root `/api`), `/api/office`, `/api/users`,
-`/api/admin/activities`, RBAC `/api`, `/api/notice-board`, `/api/policies`,
-`/api/portfolio`, `/api/it`, `/api/reception`, `/api/invoices`, `/api/projects`,
-`/api/tasks`, `/api/notifications`, `/api/product-posting`, `/api/software`,
-`registerPostingDataRoutes`, `/api/target-system`, `registerPerformanceRoutes`,
-`registerIncrementRoutes`, `registerPenaltyRoutes`,
-`registerTeamReportLinkReportRoutes`.
+## Direct /api fetch usage summary
+- API access is centralized through `client/src/lib/queryClient.ts`
+  (`apiRequest` / `apiRequestJson` + TanStack Query). It **globally attaches**
+  `Authorization: Bearer <token>` and `x-acting-role` headers.
+- Pages issue calls via `useQuery`/`useMutation` with `/api/...` keys routed
+  through that helper, so auth headers are consistently applied. A few pages also
+  use `fetch` directly (e.g. `auth.tsx` login/reset) — these set headers
+  explicitly.
 
-## 11. Mock / static pages found (listed in routes/sidebar)
-- `DailyAddedGmReport` (`/daily-reports/added-gm`) — hardcoded `mockData`.
-- `AllSocialAccountsPage` (`/drm/all-social-accounts`) — hardcoded `mockData`.
-- `ItManagerDashboard` (`/dashboard/it-manager`) — hardcoded domain data ("mocked
-  from image").
-- `PmsStatus` (`/pms/status`) — simulated task IDs (`task-mock…`).
+## Duplicate route groups found
+- `crmRoutes` mounted at **both** `/api/crm` and `/api` (the second mount exists
+  to expose `/api/customers/search` at the root).
+- `tempContactsRoutes` mounted at **both** `/api/customer/temporary-contact` and
+  `/api/temp-contact`.
+- `rbacRoutes` mounted at `/api` (broad root mount).
+These are intentional aliases but increase surface area / ambiguity; documented,
+not changed.
 
-## 12. Security risks confirmed
-- **Backend routes mounted BEFORE authentication (high):** `/api/drm`
-  (`drmRoutes`, line 112) and `/api` attributes (`attributesRoutes`, line 118) are
-  registered **before** `app.use("/api", authMiddleware)` (line 179). Their
-  handlers do **not** internally check `req.user`, so permission/menu and
-  attribute data (incl. write endpoints) are reachable unauthenticated.
-- **Client-only route protection:** `client/src/hooks/useRouteProtection.ts`
-  guards purely on `sessionStorage` — cosmetic; real enforcement must be
-  server-side.
-- **`MOCK_AUTH` bypass:** when `MOCK_AUTH=true`, a header-driven mock user is
-  injected and the real `authMiddleware` is skipped. Must remain disabled in
-  production.
-- Genuinely public endpoints (expected): `/api/auth/login|signup|forgot-password`,
-  `/health/db`, `/health/auth`.
+## Mock / static pages found
+Confirmed literal mock/static data (see `MOCK_STATIC_SCREEN_INVENTORY.md`):
+- `client/src/pages/drm/pms-setting.tsx` — `MOCK_ACTIVITIES` rendered as table.
+- `client/src/pages/reports-bv-pending-rc.tsx` — `MOCK_DATA` rendered + counted.
+- `client/src/pages/service-pool-dashboard.tsx` — `mockData` rows rendered.
+- `client/src/components/performance-graph.tsx` — `mockData` chart series.
+- `client/src/pages/create-target.tsx` — `dummyData`.
+- Export-only sample data (not display fallback): `service-private-pool.tsx`,
+  `service-commission-verifications.tsx`.
 
-## 13. API / frontend mismatches found
-- **Sidebar links resolving only via the `/reports/:type` wildcard** (no
-  dedicated route component): `/reports/loan`, `/reports/vas`, `/reports/gm`,
-  `/reports/bv`. They render the generic `UserReports` page via the catch-all
-  rather than a purpose-built page; `/reports/gm` in one place points at
-  `/analytics/gm`.
-- **Duplicate frontend route paths** (later definition wins in Wouter):
-  `/product-posting/manager`, `/product-posting/executive`, `/drm/delay-project`,
-  `/drm/pms-setting`, `/office/chart-of-accounts`, `/account/gm-entries`,
-  `/pms/project-report`, `/customer/temporary-contact` vs `/sales/temp-contact`.
-- **Route shadowing (backend, already noted in code review):** exact
-  `/api/reports/*` paths are shadowed by the reports router's `/reports/:type`
-  param route unless mounted earlier — relevant for any future report endpoint.
+## Routes mounted before authentication
+In `server/routes.ts`, the global `app.use("/api", authMiddleware)` is applied
+**after** these mounts:
+1. `/api` request-logging middleware (harmless).
+2. Optional `MOCK_AUTH` middleware — **only if `MOCK_AUTH=true`** (a hard auth
+   bypass; see P0).
+3. `/api/drm` (`drm-routes.ts`) — applies `authMiddleware` **locally** per route,
+   so individual handlers are still protected.
+4. `/api/auth` (`auth.routes.ts`) — intentionally public (login/refresh/etc.).
+5. `/api` (`attributes-routes.ts`) — **NO auth** on its handlers (P0).
+6. Public DB health check.
 
-## 14. Files that SHOULD be touched in Stage 1 (candidates — pending your scope)
-- `server/routes.ts` — move `drmRoutes` / `attributesRoutes` to **after**
-  `authMiddleware` (or add per-handler auth) to close the pre-auth exposure.
-- The four mock pages in §11 — convert to real API-backed pages if they are in
-  the Stage 1 requirements.
-- Sidebar/route reconciliation for the `/reports/loan|vas|gm|bv` links and the
-  duplicate route paths in §13.
-- (Optional, low-risk) the pre-existing `tsc` errors in §5 if type-clean CI is a
-  Stage 1 goal.
-> Exact Stage 1 file set depends on the feature scope you approve next.
+## Immediate P0 risks confirmed
+1. **Unauthenticated attributes endpoints.** `attributes-routes.ts` exposes
+   `GET /api/attributes/:category`, `POST /api/attributes`, and
+   `DELETE /api/attributes/:id` with **zero auth checks**, mounted before the
+   global `authMiddleware`. Create/delete of attribute data is reachable without a
+   token. (Not fixed in Stage 0 — flagged for the security stage.)
+2. **`MOCK_AUTH` bypass.** When `MOCK_AUTH=true`, a middleware fabricates a user
+   (defaulting to `admin@webexcels.com`) from a header/env, bypassing real auth.
+   Currently **not set**, but it must never be enabled in any shared/production
+   environment.
+3. **Mock/static screens presented as real data** (pms-setting, bv-pending-rc,
+   service-pool-dashboard, performance-graph) — risk of users trusting fake data.
+4. **Pre-existing type errors** (58, see Stage 0 testing section) — not a runtime
+   blocker today but a correctness/maintenance risk.
 
-## 15. Files that should NOT be touched yet
-- `shared/schema.ts` and any migration files — no DB-structure changes.
-- Approval-workflow logic (PMS approvals, product-posting/software workflow phase
-  logic in `server/routes/product-posting-workflow-routes.ts` and related).
-- Roles / permissions / RBAC enforcement semantics.
-- The legacy `src/` scaffold and `auth:dev` / `api:dev` scripts.
-- Existing backup / scratch files.
-- Unrelated modules carrying the pre-existing `tsc` errors, unless explicitly in
-  Stage 1 scope (no broad refactor).
-
----
-
-## Files inspected
-- `package.json`, `server/index.ts`, `server/routes.ts`, `server/auth.routes.ts`,
-  `server/leave-routes.ts`, `server/loan-routes.ts`, `server/overtime-routes.ts`,
-  `server/routes/product-posting-workflow-routes.ts`, `server/todo-routes.ts`,
-  `server/drm-routes.ts`, `shared/schema.ts`, `client/src/App.tsx`,
-  `client/src/components/app-sidebar.tsx`, `client/src/hooks/useRouteProtection.ts`.
+## Stage 0 testing (`npm run check`)
+- `tsc` reports **58 errors**, all **pre-existing baseline** in
+  `server/repositories/*.ts` (call-sessions, customers, permissions,
+  project-approvals, project-assignments) and `server/reports-routes.ts` —
+  Drizzle row-shape / nullability mismatches. Documented, **not refactored**
+  (out of scope for Stage 0). The app runs and the test suite passes regardless.
+- `npm test` (vitest): **14 tests pass**.
 
 ## Recommended next stage
-Proceed to **Stage 1** only after approval. Highest-value first step:
-**close the pre-auth route exposure** (`/api/drm`, `/api/attributes`) in
-`server/routes.ts`, then address mock-page conversion and route/sidebar
-reconciliation per the approved feature scope.
+**Stage 1 — Security hardening of pre-auth surface:** add auth (and role checks)
+to `attributes-routes.ts`, audit every router mounted before the global
+`authMiddleware`, and gate/forbid `MOCK_AUTH` outside local dev. Then schedule a
+later stage to replace the confirmed mock/static screens with real API-backed
+data.
