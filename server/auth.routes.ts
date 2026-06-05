@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import crypto from "crypto";
 import { authService } from "./auth.service";
 import { authMiddleware, setAuthCookie, clearAuthCookie } from "./auth.middleware";
 import { pool } from "./db";
@@ -9,6 +10,23 @@ import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } fr
 
 
 const router = Router();
+
+// Hash a reset token before it touches the database. Raw tokens are never stored.
+const hashToken = (token: string) => crypto.createHash("sha256").update(token).digest("hex");
+
+// Lightweight in-memory rate limiter for the forgot-password endpoint (no extra
+// dependency). Keyed by IP + email; sliding window. Process-local only, which is
+// sufficient to blunt brute-force/enumeration on a single-instance deployment.
+const forgotPasswordHits = new Map<string, number[]>();
+const FORGOT_WINDOW_MS = 15 * 60 * 1000;
+const FORGOT_MAX_PER_WINDOW = 5;
+function forgotPasswordRateLimited(key: string): boolean {
+  const now = Date.now();
+  const recent = (forgotPasswordHits.get(key) || []).filter((t) => now - t < FORGOT_WINDOW_MS);
+  recent.push(now);
+  forgotPasswordHits.set(key, recent);
+  return recent.length > FORGOT_MAX_PER_WINDOW;
+}
 
 // Login endpoint
 const loginSchema = z.object({
@@ -20,11 +38,6 @@ const signupSchema = z.object({
   fullName: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
-});
-
-const resetPasswordSchema = z.object({
-  email: z.string().email(),
-  newPassword: z.string().min(6),
 });
 
 // Utility to issue token + normalized user payload
@@ -253,7 +266,9 @@ router.post("/set-active-role", authMiddleware, async (req: Request, res: Respon
 
     // Allow switching to any role in the user's assigned roles array
     const allowed = userRoles.includes(roleId);
-    console.log(`[SET-ACTIVE-ROLE] User: ${user.email}, requested: "${roleId}", allowed roles: [${userRoles.join(', ')}], allowed: ${allowed}`);
+    if (process.env.DEBUG_AUTH === "true") {
+      console.log(`[SET-ACTIVE-ROLE] User: ${user.email}, requested: "${roleId}", allowed roles: [${userRoles.join(', ')}], allowed: ${allowed}`);
+    }
 
     if (!allowed) {
       return sendError(res, forbidden(`Role "${roleId}" is not assigned to this user`));
@@ -288,79 +303,55 @@ router.post("/set-active-role", authMiddleware, async (req: Request, res: Respon
   }
 });
 
-// Reset password by email (no email delivery; direct reset)
-router.post("/reset-password", async (req: Request, res: Response) => {
-  try {
-    const { email, newPassword } = resetPasswordSchema.parse(req.body);
-
-    const result = await pool.query(
-      "select id, is_active from drm.users where email = $1 limit 1",
-      [email],
-    );
-    if (result.rows.length === 0) {
-      return sendError(res, notFound("User not found"));
-    }
-    const user = result.rows[0] as { id: string; is_active: boolean };
-    if (!user.is_active) {
-      return sendError(res, badRequest("User is inactive"));
-    }
-
-    const passwordHash = await authService.hashPassword(newPassword);
-    await pool.query(
-      "update drm.users set password_hash = $1, updated_at = now() where id = $2",
-      [passwordHash, user.id],
-    );
-
-    return res.json({ success: true, message: "Password reset successful" });
-  } catch (error) {
-    if (!(error instanceof z.ZodError)) {
-      console.error("Reset password error:", error);
-    }
-    return sendError(res, error);
-  }
-});
-
-
-// Forgot Password: Generate reset link (displayed in console, no email delivery)
+// Forgot Password: issue a single-use, expiring reset token.
+// Security: cryptographically-random token; only its SHA-256 HASH is stored;
+// generic response (no account enumeration); rate-limited; the raw token/link is
+// surfaced only in non-production (no email delivery is wired) and never logged
+// in production.
 router.post("/forgot-password", async (req: Request, res: Response) => {
+  const GENERIC_MESSAGE = "If the email exists, a password reset link has been generated.";
   try {
     const { email } = z.object({ email: z.string().email() }).parse(req.body);
 
-    // Check if user exists
+    const rlKey = `${req.ip || "unknown"}:${email.toLowerCase()}`;
+    if (forgotPasswordRateLimited(rlKey)) {
+      // Same generic response so callers cannot distinguish rate-limit from success.
+      return res.json({ success: true, message: GENERIC_MESSAGE });
+    }
+
     const userRes = await pool.query("select id, is_active from drm.users where email = $1 limit 1", [email]);
 
     if (userRes.rows.length === 0 || !userRes.rows[0].is_active) {
-      // Don't reveal if user exists or not for security
-      return res.json({ success: true, message: "If the email exists, check the server console for the reset link." });
+      // Do not reveal whether the account exists.
+      return res.json({ success: true, message: GENERIC_MESSAGE });
     }
 
-    // Generate random reset token
-    const resetToken = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2) + Date.now().toString(36);
+    // Cryptographically-strong, single-use token. Persist only the hash.
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = hashToken(rawToken);
 
-    // Invalidate old tokens
+    // Invalidate any outstanding tokens for this email, then store the new hash.
     await pool.query("update drm.password_reset_tokens set used = true where email = $1", [email]);
-
-    // Store new token (valid for 15 minutes)
     await pool.query(
       "insert into drm.password_reset_tokens (email, token, expires_at) values ($1, $2, now() + interval '15 minutes')",
-      [email, resetToken]
+      [email, tokenHash]
     );
 
-    // Generate reset link - points to auth page
-    const resetLink = `http://localhost:5000/auth?mode=reset&email=${encodeURIComponent(email)}&token=${resetToken}`;
+    // Dev convenience only: print the raw link/token to the console. Never in prod.
+    if (process.env.NODE_ENV !== "production") {
+      const baseUrl = process.env.FRONTEND_URL?.trim() || `${req.protocol}://${req.get("host")}`;
+      const resetLink = `${baseUrl}/auth?mode=reset&email=${encodeURIComponent(email)}&token=${rawToken}`;
+      console.log("\n" + "=".repeat(80));
+      console.log("PASSWORD RESET LINK (development only)");
+      console.log("=".repeat(80));
+      console.log(`Email: ${email}`);
+      console.log(`Reset Link: ${resetLink}`);
+      console.log(`Token: ${rawToken}`);
+      console.log(`Valid for: 15 minutes`);
+      console.log("=".repeat(80) + "\n");
+    }
 
-    // Display in console for user to access
-    console.log("\n" + "=".repeat(80));
-    console.log("PASSWORD RESET LINK GENERATED");
-    console.log("=".repeat(80));
-    console.log(`Email: ${email}`);
-    console.log(`Reset Link: ${resetLink}`);
-    console.log(`Token (copy this): ${resetToken}`);
-    console.log(`Valid for: 15 minutes`);
-    console.log("=".repeat(80) + "\n");
-
-    return res.json({ success: true, message: "Check the server console for the password reset link." });
-
+    return res.json({ success: true, message: GENERIC_MESSAGE });
   } catch (error) {
     if (!(error instanceof z.ZodError)) {
       console.error("Forgot password error:", error);
@@ -370,7 +361,8 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
 });
 
 
-// Reset Password with Token
+// Reset Password with Token: validates the hashed, unexpired, unused token,
+// consumes it (one-time use) and writes ONLY the bcrypt password hash.
 router.post("/reset-password-with-token", async (req: Request, res: Response) => {
   try {
     const { email, token, newPassword } = z.object({
@@ -379,10 +371,11 @@ router.post("/reset-password-with-token", async (req: Request, res: Response) =>
       newPassword: z.string().min(6)
     }).parse(req.body);
 
-    // Verify token
+    // Compare against the stored hash; raw tokens are never persisted.
+    const tokenHash = hashToken(token);
     const tokenRes = await pool.query(
-      "select * from drm.password_reset_tokens where email = $1 and token = $2 and used = false and expires_at > now() order by created_at desc limit 1",
-      [email, token]
+      "select id from drm.password_reset_tokens where email = $1 and token = $2 and used = false and expires_at > now() order by created_at desc limit 1",
+      [email, tokenHash]
     );
 
     if (tokenRes.rows.length === 0) {
@@ -391,19 +384,19 @@ router.post("/reset-password-with-token", async (req: Request, res: Response) =>
 
     const record = tokenRes.rows[0];
 
-    // Mark token used
+    // One-time use: consume the token immediately.
     await pool.query("update drm.password_reset_tokens set used = true where id = $1", [record.id]);
 
-    // Update User Password
+    // Store ONLY the bcrypt hash. The legacy plaintext column is no longer written.
     const passwordHash = await authService.hashPassword(newPassword);
-
-    // Update both password_hash (for security) and password (plaintext, as per existing deprecated pattern maintained for compatibility)
     await pool.query(
-      "update drm.users set password_hash = $1, password = $2, updated_at = now() where email = $3",
-      [passwordHash, newPassword, email]
+      "update drm.users set password_hash = $1, updated_at = now() where email = $2",
+      [passwordHash, email]
     );
 
-    console.log(`[AUTH] Password reset successful for: ${email}`);
+    if (process.env.DEBUG_AUTH === "true") {
+      console.log(`[AUTH] Password reset successful for: ${email}`);
+    }
 
     return res.json({ success: true, message: "Password reset successful" });
 

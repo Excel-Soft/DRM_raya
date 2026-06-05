@@ -108,8 +108,7 @@ router.get("/", async (req: Request, res: Response) => {
             isActive: u.is_active !== false,
             status: u.is_active === false ? "inactive" : "active",
             createdAt: u.created_at || u.createdAt,
-            // Expose plain password if available (legacy support)
-            password: u.password || "",
+            // SECURITY: never expose password / password_hash in API responses.
         }));
 
         res.json({ users: sanitized });
@@ -149,12 +148,12 @@ router.post("/", async (req: Request, res: Response) => {
         relaxation_minutes, increment, gender, address, 
         created_at, updated_at) 
        values ($1, $1, $2, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, now(), now()) 
-       returning id, full_name, email, role, roles, password`,
+       returning id, full_name, email, role, roles`,
             [
                 displayName,                          // $1 - full_name, name
                 data.email,                           // $2 - email, username
                 passwordHash,                         // $3 - password_hash
-                data.password,                        // $4 - password
+                null,                                 // $4 - password (deprecated: no plaintext stored)
                 userRole,                             // $5 - role, role_id
                 data.roles || [userRole],             // $6 - roles
                 data.branch,                          // $7 - branch
@@ -436,11 +435,11 @@ router.patch("/:id", async (req: Request, res: Response) => {
             counter++;
         }
         if (data.password) {
+            // SECURITY: write only the bcrypt hash; never persist plaintext.
             const hash = await authService.hashPassword(data.password);
-            query += `, password_hash = $${counter}, password = $${counter + 1}`;
+            query += `, password_hash = $${counter}`;
             values.push(hash);
-            values.push(data.password);
-            counter += 2;
+            counter++;
         }
 
         query += ` where id = $${counter} returning id`;

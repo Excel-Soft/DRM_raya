@@ -34,7 +34,7 @@ export class MemStorage implements IStorage {
       id,
       username: insertUser.username,
       email: insertUser.email,
-      password: insertUser.password,
+      password: insertUser.password ?? null,
       name: insertUser.name ?? null,
       fullName: insertUser.name ?? null,
       passwordHash: null,

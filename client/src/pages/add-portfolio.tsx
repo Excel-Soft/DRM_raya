@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
     Card,
@@ -37,8 +37,12 @@ export default function AddPortfolio() {
         mutationFn: async (formData: FormData) => {
             // Since this is a demo, I'll mock the actual multipart upload if needed,
             // but the system already has some file upload patterns.
+            // Multipart upload: keep fetch so the browser sets the multipart
+            // boundary. Attach auth manually (do NOT set Content-Type).
             const res = await fetch("/api/portfolio", {
                 method: "POST",
+                headers: { ...getAuthHeader() },
+                credentials: "include",
                 body: formData,
             });
             if (!res.ok) throw new Error("Failed to save portfolio");

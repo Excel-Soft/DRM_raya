@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -73,11 +74,7 @@ export default function LeadExecutiveDashboard() {
 
   const addCustomerMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/customers/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, accountName: data.personName, region: data.country || "Other" }),
-      });
+      const res = await apiRequest("POST", "/api/customers/add", { ...data, accountName: data.personName, region: data.country || "Other" });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || result.message || "Failed to add customer");
       return result;
@@ -99,20 +96,12 @@ export default function LeadExecutiveDashboard() {
 
   const addFollowupMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/sales/followups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
+      const res = await apiRequest("POST", "/api/sales/followups", data);
       const result = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(result.error || result.message || "Failed to save follow-up");
 
       if (data.customerId) {
-        const patchRes = await fetch(`/api/sales/leads/${data.customerId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "To Distribute" }),
-        });
+        const patchRes = await apiRequest("PATCH", `/api/sales/leads/${data.customerId}`, { status: "To Distribute" });
         if (!patchRes.ok) {
            const patchErr = await patchRes.json().catch(() => ({}));
            console.error("PATCH failed:", patchErr);
@@ -139,11 +128,7 @@ export default function LeadExecutiveDashboard() {
 
   const assignToSelfMutation = useMutation({
     mutationFn: async (leadId: string) => {
-      const res = await fetch(`/api/sales/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerUserId: null, status: "Manager Distribute" }),
-      });
+      const res = await apiRequest("PATCH", `/api/sales/leads/${leadId}`, { ownerUserId: null, status: "Manager Distribute" });
       if (!res.ok) throw new Error("Failed to forward lead to manager");
       return res.json();
     },
@@ -236,7 +221,7 @@ export default function LeadExecutiveDashboard() {
       if (duplicationCompanySearch) params.append("company", duplicationCompanySearch);
       if (duplicationEmailSearch) params.append("email", duplicationEmailSearch);
       if (!duplicationCompanySearch && !duplicationEmailSearch) return { duplicates: [] };
-      const res = await fetch(`/api/check-duplicate?${params}`);
+      const res = await apiRequest("GET", `/api/check-duplicate?${params}`);
       return res.json();
     },
     enabled: false
