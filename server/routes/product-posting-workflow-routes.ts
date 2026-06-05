@@ -542,6 +542,32 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
           verificationRemarks: remarks || null,
         },
       });
+
+      // Stage 3: final-completion visibility. Notify the executive who did the
+      // work and the owning manager that the task cleared verification (the final
+      // workflow phase). Best-effort — notification failures never block the
+      // transition response.
+      try {
+        const [completedTask] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+        const completionMessage = `Product Posting task "${completedTask?.title || taskId}" has cleared verification and is now complete.`;
+        if (completedTask?.assignedToUserId) {
+          await NotificationService.notify({
+            userId: completedTask.assignedToUserId,
+            message: completionMessage,
+            type: "SUCCESS",
+            targetUrl: "/product-posting/executive",
+          });
+        }
+        await NotificationService.notify({
+          userId: workflow.managerUserId || "product_posting_manager",
+          message: completionMessage,
+          type: "SUCCESS",
+          targetUrl: "/product-posting/manager",
+        });
+      } catch (notifyErr) {
+        console.error("[PRODUCT_POSTING_VERIFICATION_COMPLETE] notification failed (non-fatal):", notifyErr);
+      }
+
       return res.json({ success: true, data: updated });
     }
 

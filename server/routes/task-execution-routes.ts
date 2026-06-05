@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db";
 import { tasks, taskTimeLogs, taskTimeExtensions, taskResults, projects } from "../../shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, ne, isNotNull } from "drizzle-orm";
 import { requireRole } from "../auth.middleware";
 import { ActivityLogService } from "../services/activity-service";
 import { NotificationService } from "../services/notification-service";
@@ -38,6 +38,48 @@ taskExecutionRouter.post("/:id/timers/start", requireRole("product_posting_execu
         const isManager = ["admin", "product_posting_manager", "dd_manager"].includes(userRole);
         if (task.assignedToUserId !== userId && !isManager) {
             return res.status(403).json({ success: false, error: `Insufficient permissions. Task assigned to: ${task.assignedToUserId}` });
+        }
+
+        // Stage 3: enforce a single active timer per WORKER. The invariant is
+        // scoped to whoever the task is assigned to (not the caller), so a
+        // manager starting a worker's task still stops that worker's other
+        // running timers. Before starting (or restarting) this task's timer,
+        // stop any OTHER task the assignee already has running, logging elapsed
+        // time so no tracked work is lost.
+        const timerOwnerId = task.assignedToUserId ?? userId;
+        const otherRunning = await db.select().from(tasks).where(
+            and(
+                eq(tasks.assignedToUserId, timerOwnerId),
+                isNotNull(tasks.timerStartedAt),
+                ne(tasks.id, id),
+            )
+        );
+        for (const running of otherRunning) {
+            const startedAt = running.timerStartedAt!;
+            // Atomic compare-and-set: only the request that observes this exact
+            // start timestamp wins the stop, so concurrent starts can't both
+            // log elapsed time for the same running interval.
+            const claimed = await db.update(tasks)
+                .set({ timerStartedAt: null })
+                .where(and(eq(tasks.id, running.id), eq(tasks.timerStartedAt, startedAt)))
+                .returning({ id: tasks.id });
+            if (claimed.length === 0) continue; // another concurrent start already stopped it
+            const elapsedMinutes = Math.floor((Date.now() - startedAt.getTime()) / (1000 * 60));
+            if (elapsedMinutes > 0) {
+                await db.insert(taskTimeLogs).values({
+                    taskId: running.id,
+                    userId: timerOwnerId,
+                    timeSpentMinutes: elapsedMinutes,
+                    logDate: new Date(),
+                });
+            }
+            await ActivityLogService.log({
+                userId: timerOwnerId,
+                action: "TIMER_AUTO_STOPPED",
+                resourceType: "Task",
+                resourceId: running.id,
+                details: `Auto-stopped (single active timer); logged ${elapsedMinutes} minutes`,
+            });
         }
 
         if (task.timerStartedAt) {

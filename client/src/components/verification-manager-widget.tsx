@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -144,25 +144,10 @@ export function VerificationManagerWidget() {
         setIsLinksDialogOpen(true);
     };
 
-    // Add mock state sync for QA -> Verification
-    const [mockQaApproved, setMockQaApproved] = useState<any[]>([]);
-    useEffect(() => {
-        const fetchMockData = () => {
-            try {
-                const stored = JSON.parse(localStorage.getItem('mock_verification_queue') || '[]');
-                if (stored.length !== mockQaApproved.length) {
-                    setMockQaApproved(stored);
-                }
-            } catch(e) {}
-        };
-        fetchMockData();
-        window.addEventListener('storage', fetchMockData);
-        const interval = setInterval(fetchMockData, 1000);
-        return () => {
-            window.removeEventListener('storage', fetchMockData);
-            clearInterval(interval);
-        };
-    }, [mockQaApproved.length]);
+    // Stage 3: removed the localStorage 'mock_verification_queue' poller. The
+    // verification queue is sourced exclusively from the backend
+    // (/api/product-posting/verification/queue), which the QA review transition
+    // populates server-side.
 
     // Queries (Reusing existing endpoints where possible for dynamic feel)
     const { data: pmsStats } = useQuery({
@@ -224,17 +209,9 @@ export function VerificationManagerWidget() {
         )
         .slice(0, parseInt(entriesCount));
 
-    const defaultPendingCompanies = [
-        { company: "ATTRACTIVE FASHION", tasker: "Roshan Aslam", project: "Alibaba Minisite", status: "Verification Pending", time: "26 Jan" },
-        { company: "Khilan industries", tasker: "Ayesha Saleem", project: "Alibaba Product Posting", status: "Verification Pending", time: "26 Jan" },
-        { company: "Test Leads New", tasker: "Muhammad Habib Ahmed", project: "Listing Page", status: "Verification Pending", time: "16 Apr" },
-    ];
-
-    const allProjectsMapped = [
-        ...mockQaApproved,
-        ...projectListData,
-        ...defaultPendingCompanies
-    ].map((row: any) => ({
+    // Stage 3: removed hardcoded defaultPendingCompanies and mock queue; the list
+    // shows only real backend verification-queue rows.
+    const allProjectsMapped = projectListData.map((row: any) => ({
         ...row,
         time: row.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }));
@@ -273,16 +250,16 @@ export function VerificationManagerWidget() {
                         </div>
                         <div className="flex gap-4 flex-wrap">
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("today")}>
-                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total || "6030"} />
+                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("pending")}>
                                 <StatCard label="Pending Verification" icon={RefreshCw} value={verificationRows.length || "0"} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Complete" icon={Tag} value={pmsStats?.projects?.completedProjects || "5102"} />
+                                <StatCard label="Complete" icon={Tag} value={pmsStats?.projects?.completedProjects ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Changing" icon={Target} value="925" />
+                                <StatCard label="Changing" icon={Target} value={changingProjectsData.length} />
                             </div>
                         </div>
                     </div>
@@ -726,6 +703,11 @@ export function VerificationManagerWidget() {
                             </Button>
                             <Button
                                 onClick={() => {
+                                    // Stage 3: verification review is backend-driven only.
+                                    // The verification-review endpoint transitions the phase
+                                    // (complete -> VERIFICATION_COMPLETE, return -> QA_REVIEW)
+                                    // and notifies downstream roles; no localStorage handoff
+                                    // queues are written.
                                     if (selectedProject?.id) {
                                         verificationMutation.mutate({
                                             taskId: selectedProject?.id,
@@ -733,37 +715,6 @@ export function VerificationManagerWidget() {
                                             remarks: remarksValue,
                                         });
                                     } else {
-                                        // Simulate mock saving
-                                        try {
-                                            const queue = JSON.parse(localStorage.getItem('mock_verification_queue') || '[]');
-                                            // Mock projects don't have IDs but they have 'no' or 'company' we can match against
-                                            const newQueue = queue.filter((p: any) => p.no !== selectedProject?.no && p.company !== selectedProject?.company);
-                                            localStorage.setItem('mock_verification_queue', JSON.stringify(newQueue));
-                                            
-                                            // Handle "Changing" push to D&D and P&P mock queues
-                                            if (statusValue === "Changing") {
-                                                const newItem = {
-                                                    id: selectedProject?.id || `mock-vm-${Date.now()}`,
-                                                    docId: `doc-${Date.now()}`,
-                                                    company: selectedProject?.company || selectedProject?.companyName || "N/A",
-                                                    project: selectedProject?.project || selectedProject?.name || selectedProject?.moduleName || "N/A",
-                                                    status: "VM-Changes", 
-                                                    time: new Date().toLocaleDateString('en-GB'),
-                                                    isVerifiable: true
-                                                };
-                                                
-                                                const waitingQueue = JSON.parse(localStorage.getItem('mock_dd_waiting_queue') || '[]');
-                                                waitingQueue.unshift(newItem);
-                                                localStorage.setItem('mock_dd_waiting_queue', JSON.stringify(waitingQueue));
-                                                
-                                                const ppWaitingQueue = JSON.parse(localStorage.getItem('mock_pp_waiting_queue') || '[]');
-                                                ppWaitingQueue.unshift(newItem);
-                                                localStorage.setItem('mock_pp_waiting_queue', JSON.stringify(ppWaitingQueue));
-                                            }
-                                            
-                                            window.dispatchEvent(new Event('storage'));
-                                        } catch (e) {}
-
                                         setIsStatusDialogOpen(false);
                                         setStatusValue("");
                                         setLevelValue("");

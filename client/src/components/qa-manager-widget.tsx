@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -127,13 +127,10 @@ export function QAManagerWidget() {
     const [sellingPeriod, setSellingPeriod] = useState("LD");
     const [entriesCount, setEntriesCount] = useState("10");
     const [searchQuery, setSearchQuery] = useState("");
-    const [hiddenProjectKeys, setHiddenProjectKeys] = useState<string[]>(() => {
-        try {
-            return JSON.parse(localStorage.getItem('mock_qa_hidden_keys') || '[]');
-        } catch {
-            return [];
-        }
-    });
+    // In-session only: rows hidden right after a QA action so the table stays
+    // responsive until the backend queue query refetches. NOT persisted — the
+    // backend queue (post-transition) is the source of truth. (Stage 3)
+    const [hiddenProjectKeys, setHiddenProjectKeys] = useState<string[]>([]);
     const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
     const [detailProject, setDetailProject] = useState<any>(null);
     const [isLinksDialogOpen, setIsLinksDialogOpen] = useState(false);
@@ -175,9 +172,7 @@ export function QAManagerWidget() {
         const key = getProjectKey(project);
         setHiddenProjectKeys((current) => {
             if (current.includes(key)) return current;
-            const newKeys = [...current, key];
-            localStorage.setItem('mock_qa_hidden_keys', JSON.stringify(newKeys));
-            return newKeys;
+            return [...current, key];
         });
     };
 
@@ -260,57 +255,10 @@ export function QAManagerWidget() {
         )
         .slice(0, parseInt(entriesCount));
 
-    const [qaStorageProjects, setQaStorageProjects] = useState<any[]>([]);
-
-    useEffect(() => {
-        const fetchQaData = () => {
-            try {
-                const saved = JSON.parse(localStorage.getItem('qa-projects') || '[]');
-                if (Array.isArray(saved) && saved.length > 0) {
-                    setQaStorageProjects(saved.map((s: any, idx: number) => {
-                        const rawLinks = s.links || (s.qaLinks ? s.qaLinks.split('\n').map((l: string) => l.trim()).filter(Boolean) : []);
-                        return {
-                            no: `New-${idx+1}`,
-                            company: s.company,
-                            tasker: s.name || "Admin User", 
-                            project: s.project,
-                            status: "Complete",
-                            time: new Date().toISOString().split('T')[0],
-                            links: rawLinks,
-                            qaLinks: s.qaLinks,
-                            raw: {
-                                evidenceLinks: rawLinks.map((url: string) => ({ url, label: "Submitted Link" }))
-                            }
-                        };
-                    }));
-                } else {
-                    setQaStorageProjects([]);
-                }
-            } catch(e) {
-                setQaStorageProjects([]);
-            }
-        };
-        fetchQaData();
-        window.addEventListener('storage', fetchQaData);
-        const interval = setInterval(fetchQaData, 1000);
-        return () => {
-            window.removeEventListener('storage', fetchQaData);
-            clearInterval(interval);
-        };
-    }, []);
-
-    const defaultPendingData = [
-        { no: 1, company: "ATTRACTIVE FASHION", tasker: "Roshan Aslam", project: "Alibaba Minisite", status: "Complete", time: "2026-04-21" },
-        { no: 2, company: "Test Leads New", tasker: "Muhammad Habib Ahmed", project: "Listing Page", status: "Complete", time: "2026-04-16" },
-        { no: 3, company: "Khilan industries", tasker: "Ayesha Saleem", project: "Alibaba Product Posting", status: "Complete", time: "2026-04-21" },
-        { no: 4, company: "BETA APPARELS", tasker: "Nirmal Ashknaz", project: "Alibaba Product Posting", status: "Complete", time: "2026-04-21" },
-        { no: 5, company: "ERIT SPORTS", tasker: "Amina Tahir", project: "Alibaba Product Posting", status: "Complete", time: "2026-04-21" },
-        { no: 6, company: "BHUTTA ENTERPRISES", tasker: "ESHA ARSHAD", project: "Alibaba Product Posting", status: "Complete", time: "2026-04-21" }
-    ];
-
-    const visibleDefaultPendingData = defaultPendingData.filter((row: any) => !hiddenProjectKeys.includes(getProjectKey(row)));
-
-    const allProjectsMapped = [...qaStorageProjects, ...projectListData, ...visibleDefaultPendingData]
+    // Stage 3: removed localStorage 'qa-projects' poller and hardcoded
+    // defaultPendingData. The QA queue is sourced exclusively from the backend
+    // (/api/product-posting/qa/queue) so no mock/demo rows are shown.
+    const allProjectsMapped = projectListData
         .filter((row: any) => !hiddenProjectKeys.includes(getProjectKey(row)))
         .map((row: any) => ({
             ...row,
@@ -351,16 +299,16 @@ export function QAManagerWidget() {
                         </div>
                         <div className="flex gap-4 flex-wrap">
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("today")}>
-                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total || "6030"} />
+                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("pending")}>
                                 <StatCard label="Pending Reviews" icon={RefreshCw} value={queueRows.length || "0"} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Complete" icon={Tag} value={pmsStats?.projects?.completedProjects || "5102"} />
+                                <StatCard label="Complete" icon={Tag} value={pmsStats?.projects?.completedProjects ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Changing" icon={Target} value="925" />
+                                <StatCard label="Changing" icon={Target} value={changingProjectsData.length} />
                             </div>
                         </div>
                     </div>
@@ -759,6 +707,11 @@ export function QAManagerWidget() {
                             </Button>
                             <Button
                                 onClick={() => {
+                                    // Stage 3: QA review is backend-driven only. The
+                                    // qa-review endpoint transitions the workflow phase
+                                    // (complete -> VERIFICATION_PENDING, return ->
+                                    // RETURNED_FOR_CHANGE) and notifies downstream roles;
+                                    // no localStorage handoff queues are written.
                                     if (selectedProject?.id) {
                                         qaReviewMutation.mutate({
                                             taskId: selectedProject?.id,
@@ -766,45 +719,6 @@ export function QAManagerWidget() {
                                             remarks: remarksValue,
                                         });
                                     } else {
-                                        // Simulate a successful save for mock fallback data
-                                        if (selectedProject) {
-                                            hideProject(selectedProject);
-                                            // Make it appear in Verification Manager for mock testing
-                                            if (statusValue !== "Changing") {
-                                                try {
-                                                    const queue = JSON.parse(localStorage.getItem('mock_verification_queue') || '[]');
-                                                    queue.push({
-                                                        ...selectedProject,
-                                                        status: "Verification Pending"
-                                                    });
-                                                    localStorage.setItem('mock_verification_queue', JSON.stringify(queue));
-                                                    window.dispatchEvent(new Event('storage'));
-                                                } catch(e) {}
-                                            } else {
-                                                // Send to D&D Manager & P&P Project Queue (Waiting tab)
-                                                try {
-                                                    const newItem = {
-                                                        id: selectedProject.id || `mock-${Date.now()}`,
-                                                        docId: `doc-${Date.now()}`,
-                                                        company: selectedProject.company || selectedProject.companyName || "N/A",
-                                                        project: selectedProject.project || selectedProject.name || "N/A",
-                                                        status: "QA-CHANGES", 
-                                                        time: new Date().toLocaleDateString('en-GB'),
-                                                        isVerifiable: true
-                                                    };
-                                                
-                                                    const waitingQueue = JSON.parse(localStorage.getItem('mock_dd_waiting_queue') || '[]');
-                                                    waitingQueue.unshift(newItem);
-                                                    localStorage.setItem('mock_dd_waiting_queue', JSON.stringify(waitingQueue));
-                                                    
-                                                    const ppWaitingQueue = JSON.parse(localStorage.getItem('mock_pp_waiting_queue') || '[]');
-                                                    ppWaitingQueue.unshift(newItem);
-                                                    localStorage.setItem('mock_pp_waiting_queue', JSON.stringify(ppWaitingQueue));
-                                                    
-                                                    window.dispatchEvent(new Event('storage'));
-                                                } catch(e) {}
-                                            }
-                                        }
                                         setIsStatusDialogOpen(false);
                                         setStatusValue("");
                                         setLevelValue("");
