@@ -135,7 +135,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       console.warn("[AUTH] Failed to ensure per‑executive sales tables:", e);
       (req as any).salesTable = "sales_executives"; // fallback
     }
-    if (process.env.DEBUG_AUTH === "true" || true) { // Force logging for debugging
+    if (process.env.DEBUG_AUTH === "true") {
       console.log(
         `[AUTH_MW] URL=${req.originalUrl} userId=${userId} normalizedRole="${req.user.roleId}" source=${tokenInfo.bearerToken ? "header" : "cookie"}`
       );

@@ -124,3 +124,18 @@ export function sendError(res: Response, err: unknown): Response {
   // Never leak stack/SQL/driver internals to the client.
   return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Internal server error"));
 }
+
+/**
+ * Send a safe, client-facing error with an explicit status/code/message.
+ * Use when you want full control over the response without throwing. The body
+ * is always the standard envelope — it can never carry a stack, SQL or secret
+ * because only the provided `message` string is emitted.
+ */
+export function sendSafeError(
+  res: Response,
+  status: number,
+  code: ErrorCode,
+  message: string,
+): Response {
+  return res.status(status).json(errorEnvelope(code, message));
+}

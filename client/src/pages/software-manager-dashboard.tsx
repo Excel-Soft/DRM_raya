@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { useLocation, useSearch } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -407,11 +408,7 @@ export default function SoftwareManagerDashboard() {
 
   const { mutate: mutateOvertime } = useMutation({
     mutationFn: async ({ id, action, reason }: { id: string, action: string, reason?: string }) => {
-      const res = await fetch(`/api/overtime/${id}/${action}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason })
-      });
+      const res = await apiRequest("PATCH", `/api/overtime/${id}/${action}`, { reason });
       if (!res.ok) throw new Error("Failed to update overtime");
       return res.json();
     },
@@ -861,11 +858,7 @@ export default function SoftwareManagerDashboard() {
 
   const { mutate: submitLeaveMutation } = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/leave", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-      });
+      const res = await apiRequest("POST", "/api/leave", data);
       if (!res.ok) throw new Error("Failed to submit leave");
       return res.json();
     },
@@ -879,10 +872,7 @@ export default function SoftwareManagerDashboard() {
   const processLeaveMutation = useMutation({
     mutationFn: async ({ id, decision }: { id: string | number; decision: string }) => {
       const endpoint = decision === "Approved" ? `/api/leaves/${id}/approve` : `/api/leaves/${id}/reject`;
-      const res = await fetch(endpoint, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" }
-      });
+      const res = await apiRequest("PATCH", endpoint);
       if (!res.ok) throw new Error("Failed to process leave");
       return res.json();
     },

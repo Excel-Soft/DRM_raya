@@ -1,3 +1,1 @@
-- [WebExcels DRM app layout](webexcels-drm-app.md) — which trees are the live app vs legacy, and the boot path.
-- [Error envelope convention](error-envelope-convention.md) — Stage 10 API error shape + the no-leak rule and FE backward-compat.
-- [tsc baseline](tsc-baseline.md) — known pre-existing type errors that are NOT to be "fixed".
+- [WebExcels DRM auth model](webexcels-auth.md) — role authority is the verified JWT, not client headers; SPA fallback + mixed line endings gotchas.

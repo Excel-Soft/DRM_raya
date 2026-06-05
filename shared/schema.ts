@@ -110,7 +110,8 @@ export const users = drmSchema.table("users", {
   fullName: text("full_name"),
   username: text("username").notNull().unique(),
   email: text("email").notNull().unique(),
-  password: text("password").notNull(),
+  // Legacy plaintext column — deprecated and nullable. New writes use password_hash only.
+  password: text("password"),
   passwordHash: text("password_hash"),
   roleId: text("role_id"),
   role: text("role"),

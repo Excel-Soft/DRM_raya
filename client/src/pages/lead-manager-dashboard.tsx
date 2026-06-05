@@ -25,6 +25,7 @@ import {
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 
@@ -47,11 +48,7 @@ export default function LeadManagerDashboard() {
 
   const assignLeadMutation = useMutation({
     mutationFn: async ({ leadId, userId }: { leadId: string, userId: string }) => {
-      const res = await fetch(`/api/sales/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerUserId: userId }),
-      });
+      const res = await apiRequest("PATCH", `/api/sales/leads/${leadId}`, { ownerUserId: userId });
       if (!res.ok) throw new Error("Failed to assign lead");
       return res.json();
     },
@@ -75,11 +72,7 @@ export default function LeadManagerDashboard() {
       if (type === "city") Object.assign(payload, { city: target, ownerUserId: null }); 
       if (type === "country") Object.assign(payload, { country: target, ownerUserId: null });
 
-      const res = await fetch(`/api/sales/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await apiRequest("PATCH", `/api/sales/leads/${leadId}`, payload);
       if (!res.ok) throw new Error("Failed to transfer lead");
       return res.json();
     },
@@ -138,7 +131,7 @@ export default function LeadManagerDashboard() {
       if (dupCompany) params.append("company", dupCompany);
       if (dupEmail) params.append("email", dupEmail);
       if (!dupCompany && !dupEmail) return { duplicates: [] };
-      const res = await fetch(`/api/check-duplicate?${params}`);
+      const res = await apiRequest("GET", `/api/check-duplicate?${params}`);
       return res.json();
     },
     enabled: false
@@ -157,11 +150,7 @@ export default function LeadManagerDashboard() {
 
   const addCustomerMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/customers/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, accountName: data.personName, region: data.country || "Other" }),
-      });
+      const res = await apiRequest("POST", "/api/customers/add", { ...data, accountName: data.personName, region: data.country || "Other" });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || result.message || "Failed to add customer");
       return result;

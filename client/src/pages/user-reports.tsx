@@ -167,7 +167,7 @@ function GmReportTable({
 
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
   useEffect(() => {
@@ -464,7 +464,7 @@ function BvReportTable({
 
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
   useEffect(() => {
@@ -698,7 +698,7 @@ function VasReportTable({
   });
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
   const [isMonthWise, setIsMonthWise] = useState(false);
@@ -853,7 +853,7 @@ function LoanReportTable({
 
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
   const isManager = currentUser?.role && ['admin', 'manager', 'hod', 'assistant_manager', 'super_hod', 'super_admin'].some(r => currentUser.role.toLowerCase().includes(r));
@@ -1583,7 +1583,7 @@ function ReportTab({
 
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
 
   const [selectedUser, setSelectedUser] = useState<string>("all");
@@ -1817,7 +1817,7 @@ export default function UserReports() {
   useModuleData("/reports");
   const { data: currentUser } = useQuery({
     queryKey: ["/api/auth/me"],
-    queryFn: () => fetch("/api/auth/me").then(r => r.json()),
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
   const [location, setLocation] = useLocation();
   const [match, params] = useRoute<{ type?: string }>("/reports/:type") || [false, null];
