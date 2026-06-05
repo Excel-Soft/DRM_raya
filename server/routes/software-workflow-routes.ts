@@ -318,7 +318,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/request-overtime", requireRole("soft
 
     await NotificationService.notify({
       userId: workflow.managerUserId || "software_manager",
-      message: `Overtime requested for a Product Posting task. Reason: ${reason}`,
+      message: `Overtime requested for a Software task. Reason: ${reason}`,
       type: "WARNING",
       targetUrl: "/dashboard/software-manager",
     });
@@ -376,7 +376,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/submit-to-manager", requireRole("sof
 
     await NotificationService.notify({
       userId: workflow.managerUserId || "software_manager",
-      message: "A Product Posting task has been submitted for manager completion review.",
+      message: "A Software task has been submitted for manager completion review.",
       type: "INFO",
       targetUrl: "/dashboard/software-manager",
     });
@@ -408,7 +408,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/manager-complete", requireRole("soft
 
     await NotificationService.notify({
       userId: "qa_manager",
-      message: "A Product Posting task is ready for QA review.",
+      message: "A Software task is ready for QA review.",
       type: "INFO",
       targetUrl: "/qa/manager",
     });
@@ -452,7 +452,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_manager"
       });
       await NotificationService.notify({
         userId: "verification_manager",
-        message: "A Product Posting task is ready for verification review.",
+        message: "A Software task is ready for verification review.",
         type: "INFO",
         targetUrl: "/verification/manager",
       });
@@ -484,7 +484,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_manager"
 
     await NotificationService.notify({
       userId: workflow.managerUserId || "software_manager",
-      message: `QA returned a Product Posting task for changes. ${remarks}`,
+      message: `QA returned a Software task for changes. ${remarks}`,
       type: "WARNING",
       targetUrl: targetDashboard,
     });
@@ -526,6 +526,32 @@ softwareWorkflowRouter.post("/tasks/:taskId/verification-review", requireRole("v
           verificationRemarks: remarks || null,
         },
       });
+
+      // Stage 3: final-completion visibility. Notify the executive who did the
+      // work and the owning manager that the task cleared verification (the final
+      // workflow phase). Best-effort — notification failures never block the
+      // transition response.
+      try {
+        const [completedTask] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+        const completionMessage = `Software task "${completedTask?.title || taskId}" has cleared verification and is now complete.`;
+        if (completedTask?.assignedToUserId) {
+          await NotificationService.notify({
+            userId: completedTask.assignedToUserId,
+            message: completionMessage,
+            type: "SUCCESS",
+            targetUrl: "/dashboard/l-executive",
+          });
+        }
+        await NotificationService.notify({
+          userId: (workflow as any).managerUserId || "software_manager",
+          message: completionMessage,
+          type: "SUCCESS",
+          targetUrl: "/dashboard/l-manager",
+        });
+      } catch (notifyErr) {
+        console.error("[SOFTWARE_VERIFICATION_COMPLETE] notification failed (non-fatal):", notifyErr);
+      }
+
       return res.json({ success: true, data: updated });
     }
 
@@ -547,7 +573,7 @@ softwareWorkflowRouter.post("/tasks/:taskId/verification-review", requireRole("v
 
     await NotificationService.notify({
       userId: "qa_manager",
-      message: `Verification returned a Product Posting task to QA. ${remarks || ""}`.trim(),
+      message: `Verification returned a Software task to QA. ${remarks || ""}`.trim(),
       type: "WARNING",
       targetUrl: "/qa/manager",
     });

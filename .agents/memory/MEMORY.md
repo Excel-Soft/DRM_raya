@@ -1,2 +1,3 @@
 - [WebExcels DRM auth model](webexcels-auth.md) — role authority is the verified JWT, not client headers; SPA fallback + mixed line endings gotchas.
 - [URL authorization model](url-authorization-model.md) — URL-permission middleware is default-allow; every sensitive route must carry its own in-handler role/ownership guard.
+- [Single active timer](single-active-timer.md) — scope one-running-timer to the task assignee (not caller), and auto-stop via compare-and-set on the start timestamp to avoid double-logging.

@@ -119,39 +119,13 @@ export default function DDExecutiveDashboard() {
     const { data: dailyReportData } = useQuery({ queryKey: ["/api/dd-executive/daily-report", dailyReportFilter], queryFn: async () => { const res = await fetch(`/api/dd-executive/daily-report?period=${dailyReportFilter}`, { credentials: "include" }); if (!res.ok) throw new Error("Failed"); return res.json(); } });
     const { data: monthlyCompleteData } = useQuery({ queryKey: ["/api/dd-executive/monthly-complete", monthlyCompleteFilter], queryFn: async () => { const res = await fetch(`/api/dd-executive/monthly-complete?period=${monthlyCompleteFilter}`, { credentials: "include" }); if (!res.ok) throw new Error("Failed"); return res.json(); } });
 
-    // Also read workspace tasks from localStorage (assigned to current user by name)
-    const localStorageTasks: any[] = useMemo(() => {
-        try {
-            const all = JSON.parse(localStorage.getItem("software_tasks") || "[]");
-            const name = storedName.toLowerCase().trim();
-            return all
-                .filter((t: any) => {
-                    const person = (t.person || "").toLowerCase().trim();
-                    return person === name || person === "" || person === "to-do list";
-                })
-                .map((t: any) => ({
-                    id: `local-${t.id}`,
-                    company: (t.company || "").split("\u2022")[0].trim(), // extract company from "honda â€¢ talha"
-                    project: t.company || "-",
-                    task: t.task,
-                    status: t.status || "ToDo",
-                    time: t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-",
-                    projectId: null,
-                    description: t.type || "",
-                    dueDate: "-",
-                    _fromLocalStorage: true,
-                }));
-        } catch { return []; }
-    }, [storedName]);
-
-    // Merge DB tasks + localStorage workspace tasks
+    // Stage 3: removed the localStorage 'software_tasks' merge. That key's only
+    // writer (the team-workspace screen) was migrated to the backend, leaving this
+    // an orphaned read. The executive task list is now sourced purely from
+    // /api/dd-executive/tasks/:tab.
     const taskListData = useMemo(() => {
-        const db: any[] = Array.isArray(dbTaskListData) ? dbTaskListData : [];
-        // Avoid duplicates: skip localStorage tasks that are already in DB by task title+company
-        const dbKeys = new Set(db.map((t: any) => `${t.task}|${t.company}`));
-        const newLocal = localStorageTasks.filter(t => !dbKeys.has(`${t.task}|${t.company}`));
-        return [...db, ...newLocal];
-    }, [dbTaskListData, localStorageTasks]);
+        return Array.isArray(dbTaskListData) ? dbTaskListData : [];
+    }, [dbTaskListData]);
 
     const { data: usersData, error: usersError, isLoading: isLoadingUsers } = useQuery({ 
         queryKey: ["/api/users"],

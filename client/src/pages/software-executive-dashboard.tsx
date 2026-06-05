@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowRightCircle, ArrowRightLeft, ChevronDown, ChevronLeft, ChevronRight,
   Link2, Loader2, MapPin, Settings, Users,
@@ -68,7 +68,6 @@ const activityLabels: Record<string, string> = {
 
 export default function SoftwareExecutiveDashboard() {
   const [assignedTab, setAssignedTab] = useState<AssignedTab>("today");
-  const [softwareTasks, setSoftwareTasks] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [showAddOvertime, setShowAddOvertime] = useState(false);
 
@@ -168,32 +167,10 @@ export default function SoftwareExecutiveDashboard() {
     return tagItems.filter((tag) => tag.toLowerCase().includes(query));
   }, [customerForm.tagSearch, tagItems]);
 
-  useEffect(() => {
-    const loadTasks = () => {
-      const loadedTasks = JSON.parse(localStorage.getItem("software_tasks") || "[]");
-      setSoftwareTasks(loadedTasks);
-    };
-
-    loadTasks();
-    
-    // Listen for storage events (cross-tab)
-    window.addEventListener("storage", loadTasks);
-    // Listen for custom events (same-tab)
-    window.addEventListener("local-storage-update", loadTasks);
-
-    return () => {
-      window.removeEventListener("storage", loadTasks);
-      window.removeEventListener("local-storage-update", loadTasks);
-    };
-  }, []);
-
-  const handleMoveToWaiting = (taskId: string) => {
-    const updatedTasks = softwareTasks.map((t) =>
-      t.id === taskId ? { ...t, status: "waiting" } : t
-    );
-    setSoftwareTasks(updatedTasks);
-    localStorage.setItem("software_tasks", JSON.stringify(updatedTasks));
-    window.dispatchEvent(new Event("local-storage-update"));
+  // Stage 3: removed the localStorage 'software_tasks' loader/writer. That key was
+  // never rendered here (the displayed list comes from /api/dd-executive/tasks/:tab)
+  // and its only producer (the team-workspace screen) was migrated to the backend.
+  const handleMoveToWaiting = (_taskId: string) => {
     setAssignedTab("waiting");
   };
 

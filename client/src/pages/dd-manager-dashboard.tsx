@@ -274,23 +274,10 @@ export default function DDManagerDashboard() {
     ], [summaryStats]);
 
     const verifyDocMutation = useMutation({
+        // Stage 3: backend-driven only. Removed the localStorage 'mock_dd_approved_queue'
+        // write and the onError handler that faked success — document verification now
+        // reflects the real API result.
         mutationFn: async ({ id, action, reason }: { id: string, action: string, reason?: string }) => {
-            if (action === 'APPROVE') {
-                try {
-                    const approvedQueue = JSON.parse(localStorage.getItem('mock_dd_approved_queue') || '[]');
-                    
-                    approvedQueue.unshift({
-                        id: selectedDoc?.id || `mock-${Date.now()}`,
-                        company: selectedDoc?.rawRow?.company || "Company",
-                        project: selectedDoc?.projectName || "Project",
-                        status: "VERIFICATION", 
-                        time: new Date().toLocaleDateString('en-GB')
-                    });
-                    
-                    localStorage.setItem('mock_dd_approved_queue', JSON.stringify(approvedQueue));
-                    window.dispatchEvent(new Event('storage'));
-                } catch(e) {}
-            }
             const res = await apiRequest("PUT", `/api/projects/documents/${id}/verify`, { action, reason });
             await throwIfResNotOk(res);
         },
@@ -302,9 +289,7 @@ export default function DDManagerDashboard() {
             toast({ title: "Document verified successfully" });
         },
         onError: (error: any) => {
-            // It might error due to missing API, but we already handled the mock state
-            setVerifyDocModalOpen(false);
-            toast({ title: "Document verified successfully (Mock Mode)" });
+            toast({ title: "Failed to verify document", description: error?.message, variant: "destructive" });
         }
     });
 
