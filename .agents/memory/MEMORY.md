@@ -1,1 +1,2 @@
 - [WebExcels DRM auth model](webexcels-auth.md) — role authority is the verified JWT, not client headers; SPA fallback + mixed line endings gotchas.
+- [URL authorization model](url-authorization-model.md) — URL-permission middleware is default-allow; every sensitive route must carry its own in-handler role/ownership guard.

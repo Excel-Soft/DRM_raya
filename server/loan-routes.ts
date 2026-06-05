@@ -4,7 +4,8 @@ import { insertLoanRequestSchema, insertLoanRequestAdminSchema } from "@shared/s
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { isManagerialRole, isHodAllowed } from "./utils/role-utils";
+import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -221,6 +222,15 @@ export function registerLoanRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to approve loan requests." });
       }
+      // Segregation of duties: a non-admin may not approve their own request.
+      const existingLoan = await loanRepository.findById(req.params.id);
+      if (
+        existingLoan &&
+        existingLoan.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot approve your own loan request." });
+      }
       const record = await loanRepository.managerApprove(req.params.id, userId);
 
       if (!record) {
@@ -228,6 +238,14 @@ export function registerLoanRoutes(app: Express) {
           error: "Cannot approve this request. It may not exist or is not in pending state."
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LOAN_MANAGER_APPROVED",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `Manager-approved by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(record);
     } catch (error) {
@@ -248,6 +266,15 @@ export function registerLoanRoutes(app: Express) {
       if (!isHodAllowed(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to perform HOD approval." });
       }
+      // Segregation of duties: a non-admin may not approve their own request.
+      const existingLoanHod = await loanRepository.findById(req.params.id);
+      if (
+        existingLoanHod &&
+        existingLoanHod.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot approve your own loan request." });
+      }
       const record = await loanRepository.hodApprove(req.params.id, userId);
 
       if (!record) {
@@ -255,6 +282,14 @@ export function registerLoanRoutes(app: Express) {
           error: "Cannot approve this request. It may not exist or is not in manager-approved state."
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LOAN_HOD_APPROVED",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `HOD-approved by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(record);
     } catch (error) {
@@ -277,6 +312,15 @@ export function registerLoanRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to reject loan requests." });
       }
+      // Segregation of duties: a non-admin may not reject their own request.
+      const existingLoanR = await loanRepository.findById(req.params.id);
+      if (
+        existingLoanR &&
+        existingLoanR.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot reject your own loan request." });
+      }
       const record = await loanRepository.reject(req.params.id, userId, reason);
 
       if (!record) {
@@ -284,6 +328,14 @@ export function registerLoanRoutes(app: Express) {
           error: "Cannot reject this request. It may not exist or is already processed."
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LOAN_REJECTED",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `Rejected by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(record);
     } catch (error) {

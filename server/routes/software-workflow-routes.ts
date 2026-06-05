@@ -34,6 +34,15 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+// Defense-in-depth ID validation. All DB access below already uses parameterized
+// queries (Drizzle `eq()` / `sql` template tags), so this is not the injection
+// boundary; it simply rejects obviously malformed identifiers early.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID_RE.test(value);
+}
+
 export const softwareWorkflowRouter = Router();
 
 softwareWorkflowRouter.use(async (_req, _res, next) => {
@@ -80,6 +89,10 @@ softwareWorkflowRouter.post("/workflows/:projectId/transition", requireRole("sof
     const { status, notes } = req.body;
     const actorUserId = req.user!.userId;
 
+    if (!isUuid(projectId)) {
+      return res.status(400).json({ success: false, error: "Invalid project id" });
+    }
+
     if (status === "APPROVED") {
       await transitionWorkflowByProject({
         projectId,
@@ -105,6 +118,10 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
     const { projectId } = req.params;
     const { assigneeId, title, description, assignedDurationMinutes, links } = req.body;
     const managerUserId = req.user!.userId;
+
+    if (!isUuid(projectId)) {
+      return res.status(400).json({ success: false, error: "Invalid project id" });
+    }
 
     console.log(`[ASSIGN_TASK] Project: ${projectId}, Assignee: ${assigneeId}, Manager: ${managerUserId}`);
 

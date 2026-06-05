@@ -2,6 +2,7 @@ import { type Request, type Response, type NextFunction } from "express";
 import type { PoolClient } from "pg";
 import { allowedIpsRepository } from "./repositories/allowed-ips.repository";
 import { pool, isDbAvailable, ensureDbAvailable } from "./db";
+import { normalizeRole, ROLES } from "./utils/role-utils";
 
 // Configuration flag for IP restriction enforcement
 export const IP_RESTRICTION_ENABLED = process.env.IP_RESTRICTION_ENABLED === "true";
@@ -56,28 +57,17 @@ export async function checkUrlPermission(
       });
     }
 
-    // ADMIN BYPASS: Always allow these roles full access without URL permission DB checks
-    const userRoleId = String(user.roleId).toLowerCase();
-    if (
-        userRoleId === "admin" || 
-        userRoleId === "service_manager" || 
-        userRoleId === "software_manager" || 
-        userRoleId === "software_executive" ||
-        userRoleId === "lead_manager" ||
-        userRoleId === "product_posting_manager" ||
-        userRoleId === "dd_manager" ||
-        userRoleId === "dd_executive" ||
-        userRoleId === "sales_assistant_manager" ||
-        userRoleId === "sales_manager" ||
-        userRoleId === "sales_executive" ||
-        userRoleId === "service_assistant_manager" ||
-        userRoleId === "reception_manager" ||
-        userRoleId === "hod" ||
-        userRoleId === "account_manager" ||
-        userRoleId === "super_hod" ||
-        userRoleId === "product_posting_executive" ||
-        userRoleId === "posting_executive"
-    ) {
+    // Normalized active role for this request (collapses aliases like
+    // "Super HOD" / "super-hod" -> "super_hod" and "admin" / "super_admin"
+    // -> ROLES.ADMIN) so comparisons are consistent.
+    const userRoleId = normalizeRole(String(user.roleId));
+
+    // ADMIN BYPASS: ONLY true platform admins (admin / super_admin, both of
+    // which normalize to ROLES.ADMIN) skip the URL-permission DB checks. The
+    // former broad bypass list (managers, executives, posting roles, etc.) has
+    // been removed so that ordinary roles are subject to the same permission
+    // rules as everyone else, instead of silently bypassing them.
+    if (userRoleId === ROLES.ADMIN) {
       return next();
     }
 
@@ -110,19 +100,29 @@ export async function checkUrlPermission(
     });
 
     if (matchingEntries.length === 0) {
-      // Default allow if no rule found
+      // No matching rule for this path -> ALLOW (intentional, see below).
+      // The drm.url_permissions table only models menu segments and is
+      // currently unpopulated; the authoritative access control for API routes
+      // is the per-route role guards. Flipping this to a hard default-deny here
+      // would lock every non-admin role out of the entire API. Converting this
+      // to a true default-deny requires first populating url_permissions for
+      // every API route/role (tracked as a follow-up; see STAGE_1B changelog).
       return next();
     }
 
-    // Check if ANY of the matching entries allow the user's role
-    // An entry allows if its allowed_role_ids is empty OR if user's role is in the list
+    // Check if ANY of the matching entries allow the user's role.
+    // An entry allows if its allowed_role_ids is empty OR if the user's
+    // (normalized) role matches an entry in the (normalized) allow list.
     const hasAnyPermission = matchingEntries.some((entry) => {
       if (!entry.allowed_role_ids || entry.allowed_role_ids.length === 0) {
         return true;
       }
       return entry.allowed_role_ids.some((role: any) => {
         const roleName = typeof role === 'string' ? role : (role.name || role.id);
-        return String(roleName).toLowerCase() === userRoleId;
+        const candidate = String(roleName).toLowerCase();
+        // Match the raw stored value (e.g. numeric role-id strings like "14")
+        // or its normalized role alias against the caller's normalized role.
+        return candidate === userRoleId || normalizeRole(candidate) === userRoleId;
       });
     });
 
