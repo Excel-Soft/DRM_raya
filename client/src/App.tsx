@@ -269,7 +269,8 @@ function Router() {
       <Route path="/sales/duplicate-checker" component={DuplicateChecker} />
       <Route path="/sales/add-customer" component={AddCustomer} />
       <Route path="/customer/temporary-contact" component={TempContact} />
-      <Route path="/sales/temp-contact" component={TempContact} />
+      {/* Alias → canonical /customer/temporary-contact (Stage 2) */}
+      <Route path="/sales/temp-contact">{() => <Redirect to="/customer/temporary-contact" />}</Route>
       <Route path="/sales/tracing" component={TracingPage} />
       <Route path="/sales/tracing/view/:id" component={TracingViewPage} />
       <Route path="/customers/private-pool" component={DynamicPrivatePool} />
@@ -289,7 +290,8 @@ function Router() {
       <Route path="/hr/loan" component={LoanRequest} />
       <Route path="/projects/upcoming" component={UpcomingProjectPage} />
       <Route path="/pms/tasks" component={PmsTasks} />
-      <Route path="/projects" component={DelayProjectPage} />
+      {/* Alias → canonical /drm/delay-project (Stage 2) */}
+      <Route path="/projects">{() => <Redirect to="/drm/delay-project" />}</Route>
       <Route path="/pms/task-templates" component={PmsTaskTemplates} />
       <Route path="/pms/status" component={PmsStatus} />
       <Route path="/drm/delay-project" component={DelayProjectPage} />
@@ -311,7 +313,8 @@ function Router() {
       <Route path="/pms/approvals" component={PmsPendingApprovals} />
       <Route path="/pms/task-history" component={PmsTaskHistory} />
       <Route path="/pms/project-report" component={PmsProjectReport} />
-      <Route path="/dd-manager/project-report" component={PmsProjectReport} />
+      {/* Alias → canonical /pms/project-report (Stage 2) */}
+      <Route path="/dd-manager/project-report">{() => <Redirect to="/pms/project-report" />}</Route>
       <Route path="/pms/team-workspace" component={PmsTeamWorkspace} />
       <Route path="/service/pool" component={ServicePoolDashboard} />
       <Route path="/service/bv-checking" component={ServiceBvChecking} />
@@ -404,7 +407,8 @@ function Router() {
       <Route path="/posting-data/view-keywords" component={PostingData} />
       <Route path="/posting-data/view-products" component={PostingData} />
       <Route path="/posting-data/link-report" component={PostingDataLinkReport} />
-      <Route path="/team-report/link-report" component={PostingDataLinkReport} />
+      {/* Alias → canonical /posting-data/link-report (Stage 2) */}
+      <Route path="/team-report/link-report">{() => <Redirect to="/posting-data/link-report" />}</Route>
       <Route path="/posting-data/data-verify" component={PostingData} />
       <Route path="/posting-data/restricted-keywords" component={PostingData} />
       <Route path="/portfolio-add" component={AddPortfolio} />
