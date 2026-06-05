@@ -2,7 +2,8 @@ import type { Express } from "express";
 import { leaveRequestRepository } from "./repositories/leave-request.repository";
 import { z } from "zod";
 import { pool } from "./db";
-import { isManagerialRole } from "./utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -60,6 +61,11 @@ export function registerLeaveRoutes(app: Express) {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
+      }
+      // This returns every employee's leave records, so restrict to
+      // managerial roles (manager/HOD/super_hod/admin).
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to view all leave requests." });
       }
       const requests = await leaveRequestRepository.findAll();
       res.json(requests);
@@ -240,6 +246,15 @@ export function registerLeaveRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to approve leave requests." });
       }
+      // Segregation of duties: a non-admin may not approve their own request.
+      const existingLeave = await leaveRequestRepository.findById(req.params.id);
+      if (
+        existingLeave &&
+        existingLeave.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot approve your own leave request." });
+      }
       const request = await leaveRequestRepository.approve(req.params.id, userId);
       
       if (!request) {
@@ -247,6 +262,14 @@ export function registerLeaveRoutes(app: Express) {
           error: "Cannot approve this request. It may not exist or is no longer pending." 
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LEAVE_APPROVED",
+        resourceType: "leave_request",
+        resourceId: req.params.id,
+        details: `Approved by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(request);
     } catch (error) {
@@ -269,6 +292,15 @@ export function registerLeaveRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to reject leave requests." });
       }
+      // Segregation of duties: a non-admin may not reject their own request.
+      const existingLeaveR = await leaveRequestRepository.findById(req.params.id);
+      if (
+        existingLeaveR &&
+        existingLeaveR.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot reject your own leave request." });
+      }
       const request = await leaveRequestRepository.reject(req.params.id, userId, reason);
       
       if (!request) {
@@ -276,6 +308,14 @@ export function registerLeaveRoutes(app: Express) {
           error: "Cannot reject this request. It may not exist or is no longer pending." 
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LEAVE_REJECTED",
+        resourceType: "leave_request",
+        resourceId: req.params.id,
+        details: `Rejected by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(request);
     } catch (error) {

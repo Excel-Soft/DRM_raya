@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { overtimeRepository } from "./repositories/overtime.repository";
 import { insertOvertimeRecordSchema } from "@shared/schema";
-import { isManagerialRole } from "./utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -56,6 +57,11 @@ export function registerOvertimeRoutes(app: Express) {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
+      // This returns every employee's overtime records, so restrict to
+      // managerial roles (manager/HOD/super_hod/admin).
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to view all overtime records." });
+      }
       const records = await overtimeRepository.findAll();
       res.json(records);
     } catch (error) {
@@ -68,6 +74,10 @@ export function registerOvertimeRoutes(app: Express) {
   app.get("/api/overtime/all", async (req, res) => {
     try {
       if (!req.user) { return res.status(401).json({ error: "Not authenticated" }); }
+      // Manager-only view of all records; restrict to managerial roles.
+      if (!isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You are not authorized to view all overtime records." });
+      }
       const { pool } = await import("./db.js");
       const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ORDER BY o.created_at DESC`);
       res.json(rows);
@@ -146,7 +156,12 @@ export function registerOvertimeRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      // Prevent IDOR: ordinary users may only create overtime for themselves.
+      // Submitting on behalf of another user is restricted to managerial roles.
       const targetUserId = req.body.userId || req.user.userId;
+      if (targetUserId !== req.user.userId && !isManagerialRole(callerRole(req))) {
+        return res.status(403).json({ error: "You can only submit overtime for yourself." });
+      }
       const parseResult = insertOvertimeRecordSchema.safeParse({
         ...req.body,
         userId: targetUserId,
@@ -221,6 +236,15 @@ export function registerOvertimeRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to approve overtime records." });
       }
+      // Segregation of duties: a non-admin may not approve their own record.
+      const existingOt = await overtimeRepository.findById(req.params.id);
+      if (
+        existingOt &&
+        existingOt.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot approve your own overtime record." });
+      }
       const record = await overtimeRepository.approve(req.params.id, userId);
       
       if (!record) {
@@ -228,6 +252,14 @@ export function registerOvertimeRoutes(app: Express) {
           error: "Cannot approve this record. It may not exist or is no longer pending." 
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "OVERTIME_APPROVED",
+        resourceType: "overtime_record",
+        resourceId: req.params.id,
+        details: `Approved by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(record);
     } catch (error) {
@@ -250,6 +282,15 @@ export function registerOvertimeRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to reject overtime records." });
       }
+      // Segregation of duties: a non-admin may not reject their own record.
+      const existingOtR = await overtimeRepository.findById(req.params.id);
+      if (
+        existingOtR &&
+        existingOtR.userId === userId &&
+        normalizeRole(callerRole(req)) !== ROLES.ADMIN
+      ) {
+        return res.status(403).json({ error: "You cannot reject your own overtime record." });
+      }
       const record = await overtimeRepository.reject(req.params.id, userId, reason);
       
       if (!record) {
@@ -257,6 +298,14 @@ export function registerOvertimeRoutes(app: Express) {
           error: "Cannot reject this record. It may not exist or is no longer pending." 
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "OVERTIME_REJECTED",
+        resourceType: "overtime_record",
+        resourceId: req.params.id,
+        details: `Rejected by role ${normalizeRole(callerRole(req))}`,
+      });
 
       res.json(record);
     } catch (error) {
