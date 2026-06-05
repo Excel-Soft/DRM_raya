@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { RouteInvalidId, RouteNotFound } from "@/components/route-states";
+import { PageBreadcrumb } from "@/components/page-breadcrumb";
 
 type LoanReport = {
   id: string;
@@ -112,28 +114,43 @@ export default function LoanReportEdit() {
     updateMutation.mutate();
   };
 
-  if (!id) return <div className="p-6">Invalid report id</div>;
+  if (!id) {
+    return (
+      <div className="p-6">
+        <RouteInvalidId
+          message="This loan report link is missing a valid id. Open it from the Loan Reports list."
+          actionLabel="Back to Loan Reports"
+          actionHref="/reports/loan"
+        />
+      </div>
+    );
+  }
 
   if (isError) {
     return (
       <div className="p-6">
-        <Card className="max-w-3xl mx-auto">
-          <CardHeader>
-            <CardTitle>Edit Loan Report</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="py-10 text-center space-y-4">
-              <p className="text-muted-foreground">This loan report could not be found or you don't have access to it.</p>
-              <Button variant="outline" onClick={() => navigate("/reports/loan")}>Back to Loan Reports</Button>
-            </div>
-          </CardContent>
-        </Card>
+        <RouteNotFound
+          message="This loan report could not be found or you don't have access to it."
+          actionLabel="Back to Loan Reports"
+          actionHref="/reports/loan"
+        />
       </div>
     );
   }
 
   return (
     <div className="p-6">
+      <div className="max-w-3xl mx-auto">
+        <PageBreadcrumb
+          items={[
+            { label: "Dashboard", href: "/" },
+            { label: "Reports" },
+            { label: "Loan Reports", href: "/reports/loan" },
+            { label: "Edit" },
+          ]}
+          title="Edit Loan Report"
+        />
+      </div>
       <Card className="max-w-3xl mx-auto">
         <CardHeader>
           <CardTitle>Edit Loan Report</CardTitle>

@@ -13,6 +13,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useParams } from "wouter";
+import { RouteLoading, RouteInvalidId, RouteNotFound } from "@/components/route-states";
+import { PageBreadcrumb } from "@/components/page-breadcrumb";
 
 type SupportMessage = {
   id: string;
@@ -160,12 +162,22 @@ export default function SupportTicketDetail() {
     }
   };
 
+  if (!ticketId) {
+    return (
+      <div className="flex-1 overflow-auto p-6">
+        <RouteInvalidId
+          message="This ticket link is missing a valid id. Open it from the Tickets list."
+          actionLabel="Back to Tickets"
+          actionHref="/support/tickets"
+        />
+      </div>
+    );
+  }
+
   if (isLoadingTicket || isLoadingMessages) {
     return (
       <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-muted-foreground" data-testid="text-loading">Loading ticket details...</div>
-        </div>
+        <RouteLoading label="Loading ticket details…" />
       </div>
     );
   }
@@ -173,9 +185,11 @@ export default function SupportTicketDetail() {
   if (!ticket) {
     return (
       <div className="flex-1 overflow-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-muted-foreground" data-testid="text-not-found">Ticket not found</div>
-        </div>
+        <RouteNotFound
+          message="This ticket could not be found. It may have been removed."
+          actionLabel="Back to Tickets"
+          actionHref="/support/tickets"
+        />
       </div>
     );
   }
@@ -183,6 +197,15 @@ export default function SupportTicketDetail() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="max-w-4xl mx-auto space-y-6">
+        <PageBreadcrumb
+          items={[
+            { label: "Dashboard", href: "/" },
+            { label: "Support" },
+            { label: "Tickets", href: "/support/tickets" },
+            { label: ticket.subject },
+          ]}
+          title={ticket.subject}
+        />
         <div className="flex items-center gap-4">
           <Link href="/support/tickets">
             <Button variant="outline" size="sm" data-testid="button-back">
