@@ -106,7 +106,7 @@ const SELECT_COLS = `
   sa.account_name    as "accountName",
   sa.url,
   sa.customer_id     as "customerId",
-  c.name             as "customerName",
+  c.company_name     as "customerName",
   sa.project_id      as "projectId",
   sa.status,
   sa.is_verified     as "isVerified",
@@ -199,7 +199,7 @@ export async function registerSocialAccountsRoutes(app: Express) {
         params.push(`%${search}%`);
         const p = `$${params.length}`;
         where.push(
-          `(sa.owner_name ILIKE ${p} OR sa.account_name ILIKE ${p} OR sa.platform ILIKE ${p} OR sa.url ILIKE ${p} OR c.name ILIKE ${p})`,
+          `(sa.owner_name ILIKE ${p} OR sa.account_name ILIKE ${p} OR sa.platform ILIKE ${p} OR sa.url ILIKE ${p} OR c.company_name ILIKE ${p})`,
         );
       }
       if (platform) {
