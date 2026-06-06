@@ -20,6 +20,19 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { ActivityLogService } from "./services/activity-service";
 import { isManagerialRole } from "./utils/role-utils";
+import { NotificationService } from "./services/notification-service";
+
+// Fire-and-forget duty-assignment notification (uses the shared notification
+// abstraction). Never throws into the request path.
+function notifyDutyAssignment(userId: string | null | undefined, duty: string | null | undefined): void {
+  if (!userId) return;
+  void NotificationService.notify({
+    userId: String(userId),
+    message: `You have been assigned an event duty${duty ? `: ${duty}` : ""}.`,
+    type: "INFO",
+    targetUrl: "/events-duty-planner",
+  }).catch(() => {});
+}
 
 const EVENT_STATUSES = ["Draft", "Completed", "Cancelled"] as const;
 type EventStatus = (typeof EVENT_STATUSES)[number];
@@ -976,6 +989,7 @@ export async function registerEventsRoutes(app: Express) {
           getUserId(req) ?? null,
         ],
       );
+      notifyDutyAssignment(rows[0]?.assigned_user_id, rows[0]?.duty);
       res.status(201).json({ success: true, duty: mapDuty(rows[0]) });
     } catch (err) {
       console.error("[events] duty create error", err);
@@ -1016,6 +1030,17 @@ export async function registerEventsRoutes(app: Express) {
       if (b.notes !== undefined) addSet("notes", b.notes ? String(b.notes) : null);
 
       if (sets.length === 0) return badRequest(res, "No fields to update");
+
+      const assigneeProvided = b.assignedUserId !== undefined || b.assigned_user_id !== undefined;
+      let prevAssignee: string | null = null;
+      if (assigneeProvided) {
+        const prev = await pool.query(
+          `SELECT assigned_user_id FROM drm.event_duties WHERE id::text = $1::text AND event_id::text = $2::text`,
+          [dutyId, eventId],
+        );
+        prevAssignee = prev.rows[0]?.assigned_user_id ?? null;
+      }
+
       sets.push("updated_at = now()");
       params.push(dutyId);
       params.push(eventId);
@@ -1027,6 +1052,10 @@ export async function registerEventsRoutes(app: Express) {
         params,
       );
       if (!rows[0]) return res.status(404).json({ error: "NotFound", message: "Duty not found" });
+      const newAssignee = rows[0]?.assigned_user_id ?? null;
+      if (assigneeProvided && newAssignee && newAssignee !== prevAssignee) {
+        notifyDutyAssignment(newAssignee, rows[0]?.duty);
+      }
       res.json({ success: true, duty: mapDuty(rows[0]) });
     } catch (err) {
       console.error("[events] duty update error", err);
