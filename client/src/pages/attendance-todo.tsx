@@ -14,7 +14,7 @@ import { Plus, Trash2, X } from "lucide-react";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { ErrorBoundary } from "react-error-boundary";
+import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 
 type Participant = { id: string; name: string };
 type TodoItem = {
@@ -51,11 +51,11 @@ type TodoTask = {
   participants?: string[] | null;
   status: string;
 };
-function ErrorFallback({ error }: { error: Error }) {
+function ErrorFallback({ error }: FallbackProps) {
   return (
     <div className="p-6 text-center space-y-4">
       <h2 className="text-xl font-bold text-destructive">Something went wrong</h2>
-      <p className="text-muted-foreground">{error.message}</p>
+      <p className="text-muted-foreground">{error instanceof Error ? error.message : String(error)}</p>
       <Button onClick={() => window.location.reload()}>Reload Page</Button>
     </div>
   );
@@ -90,9 +90,30 @@ function AttendanceTodoContent() {
     })();
   }, []);
 
+  const [filters, setFilters] = useState({
+    status: "ALL",
+    category: "ALL",
+    priority: "ALL",
+    participant: "ALL",
+    from: "",
+    to: "",
+  });
+
+  const buildListUrl = () => {
+    const q = new URLSearchParams();
+    if (filters.status !== "ALL") q.set("status", filters.status);
+    if (filters.category !== "ALL") q.set("category", filters.category);
+    if (filters.priority !== "ALL") q.set("priority", filters.priority);
+    if (filters.participant !== "ALL") q.set("participant", filters.participant);
+    if (filters.from) q.set("from", filters.from);
+    if (filters.to) q.set("to", filters.to);
+    const qs = q.toString();
+    return qs ? `/api/attendance/todo?${qs}` : "/api/attendance/todo";
+  };
+
   const listQuery = useQuery<TodoTask[]>({
-    queryKey: ["/api/attendance/todo/list"],
-    queryFn: async () => apiRequestJson("GET", "/api/attendance/todo"),
+    queryKey: ["/api/attendance/todo/list", filters],
+    queryFn: async () => apiRequestJson("GET", buildListUrl()),
   });
 
   const summaryQuery = useQuery<TodoSummary>({
@@ -366,6 +387,63 @@ function AttendanceTodoContent() {
       <Card>
         <CardHeader>
           <CardTitle>Recent Tasks</CardTitle>
+          <CardDescription>Filter and review submitted tasks.</CardDescription>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Status</Label>
+              <Select value={filters.status} onValueChange={(v) => setFilters((f) => ({ ...f, status: v }))}>
+                <SelectTrigger data-testid="filter-status"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["ALL", "ASSIGNED", "RECEIVED", "PENDING", "REOPENED", "FINISHED"].map((s) => (
+                    <SelectItem key={s} value={s}>{s === "ALL" ? "All statuses" : s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Category</Label>
+              <Select value={filters.category} onValueChange={(v) => setFilters((f) => ({ ...f, category: v }))}>
+                <SelectTrigger data-testid="filter-category"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All categories</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Priority</Label>
+              <Select value={filters.priority} onValueChange={(v) => setFilters((f) => ({ ...f, priority: v }))}>
+                <SelectTrigger data-testid="filter-priority"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["ALL", "HIGH", "MEDIUM", "LOW"].map((p) => (
+                    <SelectItem key={p} value={p}>{p === "ALL" ? "All priorities" : p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Participant</Label>
+              <Select value={filters.participant} onValueChange={(v) => setFilters((f) => ({ ...f, participant: v }))}>
+                <SelectTrigger data-testid="filter-participant"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All participants</SelectItem>
+                  {participants.map((pp) => (
+                    <SelectItem key={pp.id} value={pp.id}>{pp.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">From</Label>
+              <Input type="date" value={filters.from} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} data-testid="filter-from" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">To</Label>
+              <Input type="date" value={filters.to} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} data-testid="filter-to" />
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {listQuery.isLoading ? (
@@ -399,29 +477,61 @@ function AttendanceTodoContent() {
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
                       <Badge variant="outline">{t.status || "PENDING"}</Badge>
-                      {String(t.status || "").toUpperCase() !== "FINISHED" && (
-                        <div className="flex items-center gap-2">
-                          {String(t.status || "").toUpperCase() !== "RECEIVED" && (
+                      {(() => {
+                        const s = String(t.status || "").toUpperCase();
+                        const isFinished = s === "FINISHED" || s === "DONE" || s === "COMPLETED";
+                        if (isFinished) {
+                          return (
                             <Button
                               size="sm"
                               variant="outline"
                               className="h-7 px-2 text-xs"
                               disabled={statusMutation.isPending}
-                              onClick={() => statusMutation.mutate({ taskId: t.id, status: "RECEIVED" })}
+                              onClick={() => statusMutation.mutate({ taskId: t.id, status: "REOPENED" })}
+                              data-testid={`button-reopen-${t.id}`}
                             >
-                              Mark Received
+                              Reopen
                             </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            disabled={statusMutation.isPending}
-                            onClick={() => statusMutation.mutate({ taskId: t.id, status: "FINISHED" })}
-                          >
-                            Mark Done
-                          </Button>
-                        </div>
-                      )}
+                          );
+                        }
+                        return (
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {s !== "RECEIVED" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                disabled={statusMutation.isPending}
+                                onClick={() => statusMutation.mutate({ taskId: t.id, status: "RECEIVED" })}
+                                data-testid={`button-received-${t.id}`}
+                              >
+                                Mark Received
+                              </Button>
+                            )}
+                            {s !== "PENDING" && s !== "REOPENED" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs"
+                                disabled={statusMutation.isPending}
+                                onClick={() => statusMutation.mutate({ taskId: t.id, status: "PENDING" })}
+                                data-testid={`button-pending-${t.id}`}
+                              >
+                                Mark Pending
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              disabled={statusMutation.isPending}
+                              onClick={() => statusMutation.mutate({ taskId: t.id, status: "FINISHED" })}
+                              data-testid={`button-done-${t.id}`}
+                            >
+                              Mark Done
+                            </Button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );

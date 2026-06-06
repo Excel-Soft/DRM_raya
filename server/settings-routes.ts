@@ -13,6 +13,37 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
+import { ActivityLogService } from "./services/activity-service";
+
+// Accepts a bare IPv4/IPv6 address or a CIDR block (e.g. 192.168.1.0/24,
+// 2001:db8::/32). Kept intentionally conservative — it rejects obviously
+// malformed input rather than guaranteeing canonical form.
+function isValidIpOrCidr(value: string): boolean {
+  const input = (value || "").trim();
+  if (!input) return false;
+  const [addr, prefix, ...rest] = input.split("/");
+  if (rest.length > 0) return false;
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+  const ipv4Match = addr.match(ipv4);
+  if (ipv4Match) {
+    const octetsOk = ipv4Match.slice(1).every((o) => Number(o) >= 0 && Number(o) <= 255);
+    if (!octetsOk) return false;
+    if (prefix === undefined) return true;
+    const p = Number(prefix);
+    return Number.isInteger(p) && p >= 0 && p <= 32;
+  }
+
+  // Loose IPv6 check: hex groups separated by ':' (allowing :: compression).
+  const ipv6 = /^[0-9a-fA-F:]+$/;
+  if (addr.includes(":") && ipv6.test(addr) && addr.length >= 2) {
+    if (prefix === undefined) return true;
+    const p = Number(prefix);
+    return Number.isInteger(p) && p >= 0 && p <= 128;
+  }
+
+  return false;
+}
 
 export function registerSettingsRoutes(app: Express) {
   // Auth is enforced globally in `server/routes.ts` (or via MOCK_AUTH when enabled).
@@ -276,7 +307,22 @@ export function registerSettingsRoutes(app: Express) {
   settingsRouter.post("/allowed-ips", async (req: Request, res: Response) => {
     try {
       const data = insertAllowedIpSchema.parse(req.body);
-      const allowedIp = await allowedIpsRepository.create(data);
+      const ipCidr = data.ip_cidr?.trim();
+      if (!ipCidr || !isValidIpOrCidr(ipCidr)) {
+        return res.status(400).json({ error: "Enter a valid IP address or CIDR block (e.g. 203.0.113.5 or 192.168.1.0/24)." });
+      }
+      const existing = await allowedIpsRepository.findByIp(ipCidr);
+      if (existing) {
+        return res.status(409).json({ error: "This IP/CIDR is already in the allowed list." });
+      }
+      const allowedIp = await allowedIpsRepository.create({ ...data, ip_cidr: ipCidr });
+      await ActivityLogService.log({
+        userId: req.user?.userId,
+        action: "allowed_ip.create",
+        resourceType: "allowed_ip",
+        resourceId: allowedIp.id,
+        details: `Added allowed IP ${allowedIp.ip_cidr}`,
+      });
       res.status(201).json(allowedIp);
     } catch (error: any) {
       console.error("Error creating allowed IP:", error);
@@ -287,10 +333,31 @@ export function registerSettingsRoutes(app: Express) {
   settingsRouter.patch("/allowed-ips/:id", async (req: Request, res: Response) => {
     try {
       const data = insertAllowedIpSchema.partial().parse(req.body);
-      const allowedIp = await allowedIpsRepository.update(req.params.id, data);
+      if (data.ip_cidr !== undefined) {
+        const ipCidr = data.ip_cidr?.trim();
+        if (!ipCidr || !isValidIpOrCidr(ipCidr)) {
+          return res.status(400).json({ error: "Enter a valid IP address or CIDR block (e.g. 203.0.113.5 or 192.168.1.0/24)." });
+        }
+        const existing = await allowedIpsRepository.findByIp(ipCidr);
+        if (existing && existing.id !== req.params.id) {
+          return res.status(409).json({ error: "This IP/CIDR is already in the allowed list." });
+        }
+        data.ip_cidr = ipCidr;
+      }
+      const allowedIp = await allowedIpsRepository.update(req.params.id, {
+        ...data,
+        updatedAt: new Date(),
+      } as any);
       if (!allowedIp) {
         return res.status(404).json({ error: "Allowed IP not found" });
       }
+      await ActivityLogService.log({
+        userId: req.user?.userId,
+        action: "allowed_ip.update",
+        resourceType: "allowed_ip",
+        resourceId: allowedIp.id,
+        details: `Updated allowed IP ${allowedIp.ip_cidr} (active=${allowedIp.is_active})`,
+      });
       res.json(allowedIp);
     } catch (error: any) {
       console.error("Error updating allowed IP:", error);
@@ -300,10 +367,18 @@ export function registerSettingsRoutes(app: Express) {
 
   settingsRouter.delete("/allowed-ips/:id", async (req: Request, res: Response) => {
     try {
+      const target = await allowedIpsRepository.findById(req.params.id);
       const deleted = await allowedIpsRepository.delete(req.params.id);
       if (!deleted) {
         return res.status(404).json({ error: "Allowed IP not found" });
       }
+      await ActivityLogService.log({
+        userId: req.user?.userId,
+        action: "allowed_ip.delete",
+        resourceType: "allowed_ip",
+        resourceId: req.params.id,
+        details: `Removed allowed IP ${target?.ip_cidr ?? req.params.id}`,
+      });
       res.status(204).send();
     } catch (error: any) {
       console.error("Error deleting allowed IP:", error);

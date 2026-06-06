@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -17,203 +20,304 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Plus, Trash2, Save, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-// Mock data based on the screenshot
-const initialData = [
-  { id: 1, ip: "154.192.169.111", location: ",", browser: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36", ipUser: "", createdAt: "2026-05-09 10:23:31", createdBy: "Muhammad Junaid Aazar" },
-  { id: 2, ip: "59.103.99.67", location: ",", browser: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36", ipUser: "Izhaq KPK", createdAt: "2026-05-05 16:17:33", createdBy: "Muhammad Junaid Aazar" },
-  { id: 3, ip: "39.35.70.13", location: ",", browser: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36", ipUser: "", createdAt: "2026-01-20 15:21:45", createdBy: "Muhammad Junaid Aazar" },
-  { id: 4, ip: "39.53.48.12", location: ",", browser: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36", ipUser: "Habib", createdAt: "2025-10-03 10:21:08", createdBy: "Faheem Ullah" },
-  { id: 5, ip: "35.50.12.219", location: ",", browser: "", ipUser: "Gulburg Office", createdAt: "2025-10-01 16:27:20", createdBy: "Muhammad Habib Ahmed" },
-  { id: 6, ip: "223.123.6.156", location: ",", browser: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36", ipUser: "Habib home", createdAt: "2025-08-25 15:55:50", createdBy: "Muhammad Junaid Aazar" },
-  { id: 7, ip: "72.255.14.26", location: ",", browser: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36", ipUser: "Mr. Shehbaz Home Sialkot", createdAt: "2025-07-30 18:54:48", createdBy: "Muhammad Junaid Aazar" },
-  { id: 8, ip: "58.65.214.96", location: ",", browser: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36", ipUser: "", createdAt: "2025-07-19 12:20:13", createdBy: "Muhammad Habib Ahmed" },
-];
+type AllowedIp = {
+  id: string;
+  ip_cidr: string;
+  description: string | null;
+  is_active: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type FormState = {
+  ip_cidr: string;
+  description: string;
+  is_active: boolean;
+};
+
+const emptyForm: FormState = { ip_cidr: "", description: "", is_active: true };
+
+async function readError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    return body?.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export default function AllowedIpList() {
   const { toast } = useToast();
-  const [data, setData] = useState(initialData);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  
-  // Form state
-  const [formData, setFormData] = useState({
-    ip: "",
-    location: "",
-    browser: "",
-    ipUser: ""
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<FormState>(emptyForm);
+
+  const listQuery = useQuery<AllowedIp[]>({
+    queryKey: ["/api/settings/allowed-ips"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/settings/allowed-ips");
+      return res.json();
+    },
   });
 
-  const handleOpenDialog = () => {
-    setFormData({ ip: "", location: "", browser: "", ipUser: "" });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["/api/settings/allowed-ips"] });
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: { id: string | null; data: FormState }) => {
+      const { id, data } = payload;
+      const res = id
+        ? await apiRequest("PATCH", `/api/settings/allowed-ips/${id}`, data)
+        : await apiRequest("POST", "/api/settings/allowed-ips", data);
+      if (!res.ok) {
+        throw new Error(await readError(res, "Failed to save allowed IP."));
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      invalidate();
+      setIsDialogOpen(false);
+      toast({ title: "Saved", description: "Allowed IP saved successfully." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not save", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async (item: AllowedIp) => {
+      const res = await apiRequest("PATCH", `/api/settings/allowed-ips/${item.id}`, {
+        is_active: !item.is_active,
+      });
+      if (!res.ok) {
+        throw new Error(await readError(res, "Failed to update status."));
+      }
+      return res.json();
+    },
+    onSuccess: () => invalidate(),
+    onError: (err: Error) => {
+      toast({ title: "Could not update", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/settings/allowed-ips/${id}`);
+      if (!res.ok && res.status !== 204) {
+        throw new Error(await readError(res, "Failed to delete allowed IP."));
+      }
+      return true;
+    },
+    onSuccess: () => {
+      invalidate();
+      toast({ title: "Deleted", description: "Allowed IP removed." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Could not delete", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleOpenAdd = () => {
+    setEditingId(null);
+    setFormData(emptyForm);
+    setIsDialogOpen(true);
+  };
+
+  const handleOpenEdit = (item: AllowedIp) => {
+    setEditingId(item.id);
+    setFormData({
+      ip_cidr: item.ip_cidr,
+      description: item.description ?? "",
+      is_active: item.is_active,
+    });
     setIsDialogOpen(true);
   };
 
   const handleSave = () => {
-    if (!formData.ip) {
+    if (!formData.ip_cidr.trim()) {
       toast({ title: "Validation Error", description: "Allowed IP is required.", variant: "destructive" });
       return;
     }
-
-    const newRecord = {
-      id: data.length > 0 ? Math.max(...data.map(d => d.id)) + 1 : 1,
-      ip: formData.ip,
-      location: formData.location || ",",
-      browser: formData.browser,
-      ipUser: formData.ipUser,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-      createdBy: sessionStorage.getItem("userName") || "Unknown User"
-    };
-
-    setData([...data, newRecord]);
-    setIsDialogOpen(false);
-    toast({ title: "Success", description: "DRM IP added successfully." });
+    saveMutation.mutate({
+      id: editingId,
+      data: {
+        ip_cidr: formData.ip_cidr.trim(),
+        description: formData.description.trim(),
+        is_active: formData.is_active,
+      },
+    });
   };
 
-  const handleDelete = (id: number) => {
-    setData(data.filter(item => item.id !== id));
-    toast({ title: "Deleted", description: "DRM IP record has been removed." });
-  };
+  const items = listQuery.data ?? [];
 
   return (
     <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen p-6">
       <div className="max-w-[1600px] mx-auto bg-white rounded-md shadow-sm border border-slate-200">
-        
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-100">
           <h1 className="text-lg font-normal text-[#333]">DRM Allowed IPs</h1>
-          <Button 
-            onClick={handleOpenDialog}
+          <Button
+            onClick={handleOpenAdd}
             className="bg-[#00a65a] hover:bg-[#008d4c] text-white h-9 px-4 rounded-[4px] font-medium"
+            data-testid="button-add-allowed-ip"
           >
             <Plus className="w-4 h-4 mr-2" />
             Add New
           </Button>
         </div>
 
-        {/* Data Table */}
         <div className="overflow-x-auto">
           <Table className="w-full text-[13px] whitespace-nowrap">
             <TableHeader>
               <TableRow className="border-b-0 bg-[#f8f9fa] hover:bg-[#f8f9fa]">
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">ID</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Allowed IP</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Location</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Browser</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">IP User</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Allowed IP / CIDR</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Description</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Active</TableHead>
                 <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Created At</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Created By</TableHead>
                 <TableHead className="py-3 px-4 font-bold text-[#333] text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody className="bg-white">
-              {data.map((item) => (
-                <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
-                  <TableCell className="py-3 px-4 text-[#555]">{item.id}</TableCell>
-                  <TableCell className="py-3 px-4">
-                    <span className="bg-[#00a65a] text-white px-2 py-0.5 rounded-[4px] text-xs font-medium">
-                      {item.ip}
-                    </span>
-                  </TableCell>
-                  <TableCell className="py-3 px-4 text-[#555]">{item.location}</TableCell>
-                  <TableCell className="py-3 px-4 text-[#555] max-w-[300px] truncate" title={item.browser}>
-                    {item.browser}
-                  </TableCell>
-                  <TableCell className="py-3 px-4 text-[#555]">{item.ipUser}</TableCell>
-                  <TableCell className="py-3 px-4 text-[#555]">{item.createdAt}</TableCell>
-                  <TableCell className="py-3 px-4 text-[#555]">{item.createdBy}</TableCell>
-                  <TableCell className="py-3 px-4 text-center">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      onClick={() => handleDelete(item.id)}
-                      className="h-7 w-7 bg-[#f56954] hover:bg-[#d73925] text-white rounded-[4px]"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+              {listQuery.isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">Loading...</TableCell>
+                </TableRow>
+              ) : listQuery.isError ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-[#d9534f]">
+                    Could not load allowed IPs. Please try again.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : items.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-slate-500">
+                    No allowed IPs configured yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                items.map((item) => (
+                  <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors" data-testid={`row-allowed-ip-${item.id}`}>
+                    <TableCell className="py-3 px-4">
+                      <span className="bg-[#00a65a] text-white px-2 py-0.5 rounded-[4px] text-xs font-medium">
+                        {item.ip_cidr}
+                      </span>
+                    </TableCell>
+                    <TableCell className="py-3 px-4 text-[#555] max-w-[400px] truncate" title={item.description ?? ""}>
+                      {item.description || "—"}
+                    </TableCell>
+                    <TableCell className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={item.is_active}
+                          onCheckedChange={() => toggleMutation.mutate(item)}
+                          disabled={toggleMutation.isPending}
+                          data-testid={`switch-active-${item.id}`}
+                        />
+                        <span className={item.is_active ? "text-[#00a65a]" : "text-slate-400"}>
+                          {item.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-3 px-4 text-[#555]">
+                      {item.createdAt ? new Date(item.createdAt).toLocaleString() : "—"}
+                    </TableCell>
+                    <TableCell className="py-3 px-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleOpenEdit(item)}
+                          className="h-7 w-7 bg-[#3c8dbc] hover:bg-[#367fa9] text-white rounded-[4px]"
+                          data-testid={`button-edit-${item.id}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteMutation.mutate(item.id)}
+                          disabled={deleteMutation.isPending}
+                          className="h-7 w-7 bg-[#f56954] hover:bg-[#d73925] text-white rounded-[4px]"
+                          data-testid={`button-delete-${item.id}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>
       </div>
 
-      {/* Add DRM IP Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[500px] p-0 overflow-hidden bg-white rounded-md border-0">
           <DialogHeader className="p-4 border-b border-slate-100 bg-[#f8f9fa]">
             <DialogTitle className="text-lg font-medium text-[#333] flex justify-between items-center">
-              Add DRM IP
+              {editingId ? "Edit DRM IP" : "Add DRM IP"}
             </DialogTitle>
           </DialogHeader>
-          
+
           <div className="p-6 space-y-5">
-            {/* Allowed IP */}
             <div className="space-y-1">
               <Label className="text-[13px] font-bold text-[#555]">
-                Allowed IP <span className="text-red-500">*</span>
+                Allowed IP / CIDR <span className="text-red-500">*</span>
               </Label>
-              <Input 
-                placeholder="e.g., 192.168.1.1" 
-                value={formData.ip}
-                onChange={(e) => setFormData({...formData, ip: e.target.value})}
+              <Input
+                placeholder="e.g., 203.0.113.5 or 192.168.1.0/24"
+                value={formData.ip_cidr}
+                onChange={(e) => setFormData({ ...formData, ip_cidr: e.target.value })}
                 className="h-10 text-[13px] border-slate-300 focus-visible:ring-0 rounded-[4px]"
+                data-testid="input-ip-cidr"
               />
               <p className="text-[11px] text-slate-400 pt-1">
-                Enter the IP address to be allowed for DRM access
+                Enter an IP address or CIDR block allowed for DRM access
               </p>
             </div>
 
-            {/* Location */}
             <div className="space-y-1">
-              <Label className="text-[13px] font-bold text-[#555]">Location</Label>
-              <Input 
-                placeholder="e.g., Office Main Building" 
-                value={formData.location}
-                onChange={(e) => setFormData({...formData, location: e.target.value})}
+              <Label className="text-[13px] font-bold text-[#555]">Description</Label>
+              <Input
+                placeholder="e.g., Gulberg Office, Habib home"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className="h-10 text-[13px] border-slate-300 focus-visible:ring-0 rounded-[4px]"
+                data-testid="input-description"
               />
             </div>
 
-            {/* Browser */}
-            <div className="space-y-1">
-              <Label className="text-[13px] font-bold text-[#555]">Browser</Label>
-              <Input 
-                placeholder="e.g., Chrome, Firefox" 
-                value={formData.browser}
-                onChange={(e) => setFormData({...formData, browser: e.target.value})}
-                className="h-10 text-[13px] border-slate-300 focus-visible:ring-0 rounded-[4px]"
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={formData.is_active}
+                onCheckedChange={(v) => setFormData({ ...formData, is_active: v })}
+                data-testid="switch-form-active"
               />
-            </div>
-
-            {/* IP User */}
-            <div className="space-y-1">
-              <Label className="text-[13px] font-bold text-[#555]">IP User</Label>
-              <Input 
-                placeholder="Username or department" 
-                value={formData.ipUser}
-                onChange={(e) => setFormData({...formData, ipUser: e.target.value})}
-                className="h-10 text-[13px] border-slate-300 focus-visible:ring-0 rounded-[4px]"
-              />
+              <Label className="text-[13px] font-bold text-[#555]">
+                {formData.is_active ? "Active" : "Inactive"}
+              </Label>
             </div>
           </div>
 
           <DialogFooter className="p-4 border-t border-slate-100 bg-[#f8f9fa] flex gap-2 justify-end sm:justify-end">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => setIsDialogOpen(false)}
               className="bg-[#777] hover:bg-[#666] text-white border-0 h-9 px-6 rounded-[4px]"
             >
               Cancel
             </Button>
-            <Button 
+            <Button
               onClick={handleSave}
+              disabled={saveMutation.isPending}
               className="bg-[#00a65a] hover:bg-[#008d4c] text-white h-9 px-6 rounded-[4px] flex items-center gap-2"
+              data-testid="button-save-ip"
             >
               <Save className="w-4 h-4" />
-              Save IP
+              {saveMutation.isPending ? "Saving..." : "Save IP"}
             </Button>
           </DialogFooter>
         </DialogContent>
