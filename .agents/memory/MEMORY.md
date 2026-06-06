@@ -1,3 +1,2 @@
-- [WebExcels DRM auth model](webexcels-auth.md) — role authority is the verified JWT, not client headers; SPA fallback + mixed line endings gotchas.
-- [URL authorization model](url-authorization-model.md) — URL-permission middleware is default-allow; every sensitive route must carry its own in-handler role/ownership guard.
-- [Single active timer](single-active-timer.md) — scope one-running-timer to the task assignee (not caller), and auto-stop via compare-and-set on the start timestamp to avoid double-logging.
+- [Pre-existing tsc errors](tsc-baseline-errors.md) — repo has a stable set of ~57 pre-existing `tsc --noEmit` errors in unrelated files; don't treat them as your regression.
+- [ActivityLogService is best-effort](activity-log-best-effort.md) — `ActivityLogService.log()` never throws; safe to await on a mutation's critical path.

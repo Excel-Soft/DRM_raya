@@ -8,7 +8,7 @@ const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
 const priorityOptions = ["HIGH", "MEDIUM", "LOW"] as const;
 const statusBuckets = ["assign", "unreceived", "received", "pending", "finished"] as const;
 type StatusBucket = (typeof statusBuckets)[number];
-const allowedStatuses = ["ASSIGNED", "UNRECEIVED", "RECEIVED", "PENDING", "FINISHED", "DONE", "COMPLETED"] as const;
+const allowedStatuses = ["ASSIGNED", "UNRECEIVED", "RECEIVED", "PENDING", "REOPENED", "FINISHED", "DONE", "COMPLETED"] as const;
 
 // Canonical status mapping:
 // ASSIGNED -> assign
@@ -22,7 +22,7 @@ function mapStatusToBucket(raw?: string | null): StatusBucket {
   if (s === "UNRECEIVED" || s === "UN_RECEIVED" || s === "UNRECIEVED") return "unreceived";
   if (s === "RECEIVED") return "received";
   if (s === "FINISHED" || s === "DONE" || s === "COMPLETED") return "finished";
-  // Default pending bucket covers PENDING / OPEN / IN_PROGRESS / unknown.
+  // Default pending bucket covers PENDING / REOPENED / OPEN / IN_PROGRESS / unknown.
   return "pending";
 }
 
@@ -128,18 +128,74 @@ export function registerTodoRoutes(app: Express) {
       const role = req.user.roleId ?? "";
       const isAdmin = role === "admin";
 
-      let query = `
-        select id, title, category, description, priority, repeat, reminder, due_date, due_time, participants, status, created_at
-          from drm.todo_tasks
-      `;
+      const clauses: string[] = [];
       const params: any[] = [];
+      let p = 1;
 
       if (!isAdmin) {
-        query += ` where (created_by_user_id = $1::uuid OR $1::text = ANY(coalesce(participants, '{}')::text[])) `;
+        clauses.push(`(created_by_user_id = $${p}::uuid OR $${p}::text = ANY(coalesce(participants, '{}')::text[]))`);
         params.push(userId);
+        p++;
       }
 
-      query += ` order by due_date desc, created_at desc limit 100`;
+      // Optional server-side filters.
+      const statusFilter = (req.query.status as string | undefined)?.toUpperCase();
+      if (statusFilter && (allowedStatuses as readonly string[]).includes(statusFilter)) {
+        clauses.push(`upper(status) = $${p++}`);
+        params.push(statusFilter);
+      }
+
+      const participant = req.query.participant as string | undefined;
+      if (participant && participant.trim()) {
+        clauses.push(`$${p}::text = ANY(coalesce(participants, '{}')::text[])`);
+        params.push(participant.trim());
+        p++;
+      }
+
+      const category = req.query.category as string | undefined;
+      if (category && category.trim()) {
+        clauses.push(`category = $${p++}`);
+        params.push(category.trim());
+      }
+
+      const priority = (req.query.priority as string | undefined)?.toUpperCase();
+      if (priority && (priorityOptions as readonly string[]).includes(priority)) {
+        clauses.push(`upper(priority) = $${p++}`);
+        params.push(priority);
+      }
+
+      const fromParam = req.query.from as string | undefined;
+      if (fromParam) {
+        const d = new Date(fromParam);
+        if (!isNaN(d.getTime())) {
+          clauses.push(`due_date >= $${p++}`);
+          params.push(d);
+        }
+      }
+      const toParam = req.query.to as string | undefined;
+      if (toParam) {
+        const d = new Date(toParam);
+        if (!isNaN(d.getTime())) {
+          clauses.push(`due_date <= $${p++}`);
+          params.push(d);
+        }
+      }
+
+      // Pagination (defaults preserve prior behaviour: up to 100 rows).
+      let limit = Number(req.query.limit);
+      if (!Number.isInteger(limit) || limit <= 0 || limit > 200) limit = 100;
+      let offset = Number(req.query.offset);
+      if (!Number.isInteger(offset) || offset < 0) offset = 0;
+
+      const whereSql = clauses.length ? `where ${clauses.join(" and ")}` : "";
+      const query = `
+        select id, title, category, description, priority, repeat, reminder, due_date, due_time, participants, status, created_at
+          from drm.todo_tasks
+          ${whereSql}
+          order by due_date desc, created_at desc
+          limit $${p++} offset $${p++}
+      `;
+      params.push(limit, offset);
 
       const { rows } = await pool.query(query, params);
       return res.json(rows);
