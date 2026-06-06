@@ -45,6 +45,18 @@ export const url = z
  */
 export const approvalDecision = z.enum(["approve", "reject", "pending"]);
 
+/**
+ * Generic status-enum factory. Pass the allowed status values for a given
+ * module and get back a Zod enum, e.g. `statusEnum(["active", "inactive"])`.
+ * Use this instead of re-declaring ad-hoc `z.enum([...])` for status fields so
+ * status validation stays consistent across modified APIs.
+ */
+export const statusEnum = <T extends readonly [string, ...string[]]>(values: T) =>
+  z.enum(values);
+
+/** Common active/inactive status used by user/admin records. */
+export const activeStatus = z.enum(["active", "inactive"]);
+
 // --- Composite schemas -------------------------------------------------------
 
 /**

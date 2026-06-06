@@ -5,8 +5,16 @@ import { z } from "zod";
 import { normalizeRole } from "./utils/role-utils";
 import { pool } from "./db";
 import { sendError, errorEnvelope, badRequest, notFound, conflict } from "./utils/api-error";
+import { recordAuditLog } from "./services/activity-service";
+import { activeStatus } from "@shared/validators";
 
 const router = Router();
+
+/** Strip secret-bearing fields before an update payload is written to the audit log. */
+function safeUserAudit(data: Record<string, any>): Record<string, any> {
+    const { password, ...rest } = data || {};
+    return rest;
+}
 
 const createUserSchema = z.object({
     // Legacy fields (for backward compatibility)
@@ -198,6 +206,24 @@ router.post("/", async (req: Request, res: Response) => {
             }
         }
         // ----------------------------------------
+
+        await recordAuditLog({
+            actorUserId: req.user?.userId,
+            action: "user.create",
+            module: "admin/users",
+            entityType: "user",
+            entityId: result.rows[0].id,
+            after: {
+                email: data.email,
+                role: userRole,
+                roles: data.roles || [userRole],
+                branch: data.branch,
+                country: data.country,
+                department: data.department,
+                status: isActive ? "active" : "inactive",
+            },
+            req,
+        });
 
         res.status(201).json({ success: true, ...result.rows[0] });
     } catch (error: any) {
@@ -445,7 +471,21 @@ router.patch("/:id", async (req: Request, res: Response) => {
         query += ` where id = $${counter} returning id`;
         values.push(id);
 
-        await pool.query(query, values);
+        const updResult = await pool.query(query, values);
+        if (updResult.rowCount === 0) {
+            return sendError(res, notFound("User not found"));
+        }
+
+        await recordAuditLog({
+            actorUserId: req.user?.userId,
+            action: "user.update",
+            module: "admin/users",
+            entityType: "user",
+            entityId: id,
+            after: safeUserAudit(data),
+            req,
+        });
+
         res.json({ success: true, id });
     } catch (error: any) {
         if (error instanceof z.ZodError) {
@@ -460,10 +500,31 @@ router.patch("/:id", async (req: Request, res: Response) => {
 router.patch("/:id/status", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { status } = req.body;
-        const isActive = status === "active";
+        const parsedStatus = activeStatus.safeParse(req.body?.status);
+        if (!parsedStatus.success) {
+            return sendError(res, badRequest("status must be 'active' or 'inactive'"));
+        }
+        const isActive = parsedStatus.data === "active";
 
+        const prev = await pool.query("select is_active from drm.users where id = $1 limit 1", [id]);
+        if (!prev.rows[0]) {
+            return sendError(res, notFound("User not found"));
+        }
         await pool.query("update drm.users set is_active = $1, updated_at = now() where id = $2", [isActive, id]);
+
+        await recordAuditLog({
+            actorUserId: req.user?.userId,
+            action: "user.status_change",
+            module: "admin/users",
+            entityType: "user",
+            entityId: id,
+            before: prev.rows[0]
+                ? { status: prev.rows[0].is_active === false ? "inactive" : "active" }
+                : undefined,
+            after: { status: isActive ? "active" : "inactive" },
+            req,
+        });
+
         res.json({ success: true });
     } catch (error) {
         res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update status"));
@@ -474,8 +535,30 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
 router.delete("/:id", async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const prev = await pool.query("select email, is_active from drm.users where id = $1 limit 1", [id]);
+        if (!prev.rows[0]) {
+            return sendError(res, notFound("User not found"));
+        }
         // Soft delete
         await pool.query("update drm.users set is_active = false, updated_at = now() where id = $1", [id]);
+
+        await recordAuditLog({
+            actorUserId: req.user?.userId,
+            action: "user.delete",
+            module: "admin/users",
+            entityType: "user",
+            entityId: id,
+            before: prev.rows[0]
+                ? {
+                      email: prev.rows[0].email,
+                      status: prev.rows[0].is_active === false ? "inactive" : "active",
+                  }
+                : undefined,
+            after: { status: "inactive", softDeleted: true },
+            reason: req.body?.reason,
+            req,
+        });
+
         res.json({ success: true });
     } catch (error) {
         res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to delete user"));
