@@ -262,30 +262,9 @@ export default function ServicePrivatePool() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {modalType === "whatsapp" && (
-                                            <TableRow className="border-b-0 hover:bg-slate-50/50">
-                                                <TableCell className="font-medium text-slate-500 py-6 dark:text-zinc-400">04</TableCell>
-                                                <TableCell className="font-medium text-slate-500 py-6 dark:text-zinc-400">Ramzan Offer</TableCell>
-                                                <TableCell className="text-slate-500 font-medium py-6 dark:text-zinc-400">Ramzan offer 50% off</TableCell>
-                                                <TableCell className="text-right pr-6 py-6">
-                                                    <button className="bg-[#059669] hover:bg-emerald-700 transition-colors text-white px-6 py-2 rounded text-[14px] font-bold">use</button>
-                                                </TableCell>
-                                            </TableRow>
-                                        )}
-                                        {modalType === "email" && (
-                                            <TableRow className="border-b-0 hover:bg-slate-50/50">
-                                                <TableCell className="font-medium text-slate-500 py-6 align-top dark:text-zinc-400">01</TableCell>
-                                                <TableCell className="font-medium text-slate-500 py-6 align-top dark:text-zinc-400">Email</TableCell>
-                                                <TableCell className="text-slate-500 font-medium py-6 align-top leading-relaxed dark:text-zinc-400">
-                                                    Dear [Name], I hope this email finds you well.<br />
-                                                    I am writing to extend an invitation<br />
-                                                    to participate in a bet that I have proposed.
-                                                </TableCell>
-                                                <TableCell className="text-right pr-6 py-6 align-top">
-                                                    <button className="bg-[#059669] hover:bg-emerald-700 transition-colors text-white px-5 py-2 rounded text-[14px] font-bold">Active</button>
-                                                </TableCell>
-                                            </TableRow>
-                                        )}
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No templates available.</TableCell>
+                                        </TableRow>
                                     </TableBody>
                                 </Table>
                             </div>
@@ -321,10 +300,7 @@ function FollowupListView({
         action: { label: "Update Follow Up", visible: true },
     });
 
-    const mockData = activeTracingTab === "ALIBABA MEMBERSHIP" ? [
-        { id: 1, company: "Al khar store", serviceType: "GGS Digital", purpose: "New Sell", method: "Email", grade: "B+", comment: "Introduction Message", nextDate: "01-01-2026", note: "aaa", addedBy: "M. Shahbaz", date: "31-12-2025" },
-        { id: 2, company: "Al khar store", serviceType: "GGS Digital", purpose: "New Sell", method: "Mobile", grade: "B+", comment: "Promotion Discussion", nextDate: "31-12-2025", note: "he is ready to buy", addedBy: "M. Shahbaz", date: "31-12-2025" }
-    ] : [];
+    const mockData: any[] = [];
 
     const handleCopy = () => {
         if (mockData.length === 0) {
@@ -365,7 +341,7 @@ function FollowupListView({
 
             {/* Top Tabs */}
             <div className="flex w-full mb-6 rounded overflow-hidden shadow-sm">
-                <div onClick={() => setActiveTracingTab("ALIBABA MEMBERSHIP")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA MEMBERSHIP" ? "bg-[#059669]" : "bg-[#34d399]"}`}>Alibaba Membership (1)</div>
+                <div onClick={() => setActiveTracingTab("ALIBABA MEMBERSHIP")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA MEMBERSHIP" ? "bg-[#059669]" : "bg-[#34d399]"}`}>Alibaba Membership (0)</div>
                 <div onClick={() => setActiveTracingTab("ALIBABA SERVICES")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA SERVICES" ? "bg-[#059669]" : "bg-[#f43f5e]"}`}>Alibaba Services (0)</div>
                 <div onClick={() => setActiveTracingTab("DESIGN DEVELOPMENT")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DESIGN DEVELOPMENT" ? "bg-[#2563eb]" : "bg-[#60a5fa]"}`}>Design Development (0)</div>
                 <div onClick={() => setActiveTracingTab("DOMAIN HOSTING")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors bg-[#334155]`}>Domain Hosting (0)</div>
@@ -378,14 +354,12 @@ function FollowupListView({
                         <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Service Type Summary</h3>
                         <div className="flex gap-2">
                             <span className="px-3 py-1 bg-[#059669] text-white text-[12px] font-medium rounded">All</span>
-                            <span className="px-3 py-1 bg-white border border-[#059669] text-[#059669] text-[12px] font-medium rounded dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">GGS Digital (1)</span>
                         </div>
                     </div>
                     <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Grade Summary</h3>
                         <div className="flex gap-2">
                             <span className="px-3 py-1 bg-[#1e293b] text-white text-[12px] font-medium rounded">All</span>
-                            <span className="px-3 py-1 bg-white border border-slate-300 text-slate-600 text-[12px] font-medium rounded dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">B+ (1)</span>
                         </div>
                     </div>
                 </>
@@ -448,50 +422,9 @@ function FollowupListView({
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {activeTracingTab === "ALIBABA MEMBERSHIP" ? (
-                                <>
-                                    <TableRow className="hover:bg-slate-50/50">
-                                        {cols.id.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">1</TableCell>}
-                                        {cols.company.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Al khar store</TableCell>}
-                                        {cols.serviceType.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">GGS Digital</TableCell>}
-                                        {cols.purpose.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">New Sell</TableCell>}
-                                        {cols.method.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Email</TableCell>}
-                                        {cols.grade.visible && <TableCell className="py-4"><span className="bg-[#64748b] text-white px-2 py-0.5 rounded text-[11px] font-bold">B+</span></TableCell>}
-                                        {cols.comment.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Introduction Message</TableCell>}
-                                        {cols.nextDate.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">01-01-2026</TableCell>}
-                                        {cols.note.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">aaa</TableCell>}
-                                        {cols.addedBy.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">M. Shahbaz</TableCell>}
-                                        {cols.date.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">31-12-2025</TableCell>}
-                                        {cols.action.visible && (
-                                            <TableCell className="py-4">
-                                                <div onClick={() => { setActiveCustomerAction(1); setActiveTracingTab(null); }} className="w-6 h-6 rounded-full bg-[#059669] hover:bg-[#047857] transition-colors flex items-center justify-center text-white cursor-pointer"><Edit2 className="w-3.5 h-3.5" /></div>
-                                            </TableCell>
-                                        )}
-                                    </TableRow>
-                                    <TableRow className="hover:bg-slate-50/50 border-b-0">
-                                        {cols.id.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">2</TableCell>}
-                                        {cols.company.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Al khar store</TableCell>}
-                                        {cols.serviceType.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">GGS Digital</TableCell>}
-                                        {cols.purpose.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">New Sell</TableCell>}
-                                        {cols.method.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Mobile</TableCell>}
-                                        {cols.grade.visible && <TableCell className="py-4"><span className="bg-[#64748b] text-white px-2 py-0.5 rounded text-[11px] font-bold">B+</span></TableCell>}
-                                        {cols.comment.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">Promotion Discussion</TableCell>}
-                                        {cols.nextDate.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">31-12-2025</TableCell>}
-                                        {cols.note.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">he is ready to buy</TableCell>}
-                                        {cols.addedBy.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">M. Shahbaz</TableCell>}
-                                        {cols.date.visible && <TableCell className="text-[12px] font-medium text-slate-500 py-4 dark:text-zinc-400">31-12-2025</TableCell>}
-                                        {cols.action.visible && (
-                                            <TableCell className="py-4">
-                                                <div onClick={() => { setActiveCustomerAction(1); setActiveTracingTab(null); }} className="w-6 h-6 rounded-full bg-[#059669] hover:bg-[#047857] transition-colors flex items-center justify-center text-white cursor-pointer"><Edit2 className="w-3.5 h-3.5" /></div>
-                                            </TableCell>
-                                        )}
-                                    </TableRow>
-                                </>
-                            ) : (
-                                <TableRow>
-                                    <TableCell colSpan={Object.values(cols).filter(c => c.visible).length} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No companies found for this filter selection.</TableCell>
-                                </TableRow>
-                            )}
+                            <TableRow>
+                                <TableCell colSpan={Object.values(cols).filter(c => c.visible).length} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No companies found for this filter selection.</TableCell>
+                            </TableRow>
                         </TableBody>
                     </Table>
                 </div>
@@ -668,12 +601,8 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow className="border-b-0 hover:bg-slate-50/50">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">31-12-2025 10:23 PM</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">Email</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">01-01-2026 10:22 PM</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400"></TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">aaa</TableCell>
+                                <TableRow>
+                                    <TableCell colSpan={5} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No contact history recorded.</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>
@@ -690,29 +619,8 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Follow Up</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">Follow up with multiple services: Alibaba Membership. Notes: aaa</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">31-12-2025 10:23 PM</TableCell>
-                                </TableRow>
-                                <TableRow className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Grade Changed</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">Company Grade Change from To B+</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">31-12-2025 10:17 PM</TableCell>
-                                </TableRow>
-                                <TableRow className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Follow Up</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">Follow up with multiple services: Alibaba Membership. Notes: he is ready to buy</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">31-12-2025 10:17 PM</TableCell>
-                                </TableRow>
-                                <TableRow className="border-none hover:bg-slate-50/50">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Follow Up</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">Follow the customer by Mobile and user respose ghfjy</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">14-04-2025 06:10 PM</TableCell>
+                                <TableRow>
+                                    <TableCell colSpan={4} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No company history recorded.</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>
@@ -731,13 +639,8 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow className="border-none hover:bg-slate-50/50">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">14-05-2025 03:36 PM</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">200</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">26400</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">106.383</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">100</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
+                                <TableRow>
+                                    <TableCell colSpan={6} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotations recorded.</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>
@@ -758,19 +661,8 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow className="border-none hover:bg-slate-50/50">
-                                    <TableCell className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Alibaba Product Posting &</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">200</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">26400</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">106.383</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">100</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">M. Shahbaz</TableCell>
-                                    <TableCell className="font-medium text-slate-500 text-[12px] py-4 dark:text-zinc-400">14-05-2025 03:36 PM</TableCell>
-                                    <TableCell className="font-medium text-[#059669] text-[12px] py-4 dark:text-zinc-400">
-                                        <div onClick={() => setQuotationTemplateModalOpen(true)} className="w-5 h-5 rounded-full border border-[#059669] flex items-center justify-center cursor-pointer hover:bg-emerald-50 transition-colors dark:border-zinc-800">
-                                            <Eye className="w-3 h-3 text-[#059669] dark:text-zinc-400" />
-                                        </div>
-                                    </TableCell>
+                                <TableRow>
+                                    <TableCell colSpan={8} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotation templates available.</TableCell>
                                 </TableRow>
                             </TableBody>
                         </Table>

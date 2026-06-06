@@ -523,9 +523,21 @@ export class ServiceReportsRepository {
     const duePaymentsRes = await pool.query(
       `SELECT COUNT(*)::int AS n FROM drm.service_customers sc
        WHERE sc.expiry_date IS NOT NULL AND sc.expiry_date < now() + interval '30 days'
-       ${scopeSql}`,
+       ${userIds && userIds.length > 0 ? "AND sc.assigned_to = ANY($1)" : ""}`,
       scopeParams,
     );
+
+    // Real BV/VAS document counts (scoped by uploader, matching the document list).
+    const docScope = userIds && userIds.length > 0 ? `WHERE uploaded_by = ANY($1)` : "";
+    const docRes = await pool.query(
+      `SELECT doc_type, COUNT(*)::int AS n FROM drm.service_documents ${docScope} GROUP BY doc_type`,
+      scopeParams,
+    );
+    const documents: { bv: number; vas: number } = { bv: 0, vas: 0 };
+    for (const row of docRes.rows) {
+      if (row.doc_type === "BV") documents.bv = Number(row.n);
+      else if (row.doc_type === "VAS") documents.vas = Number(row.n);
+    }
 
     return {
       grades: gradeCounts,
@@ -533,6 +545,7 @@ export class ServiceReportsRepository {
       dueFollowups: dueFollowupsRes.rows[0]?.n || 0,
       dropouts: dropoutsRes.rows[0]?.n || 0,
       duePayments: duePaymentsRes.rows[0]?.n || 0,
+      documents,
       gradeKeys: SERVICE_GRADE_KEYS,
     };
   }

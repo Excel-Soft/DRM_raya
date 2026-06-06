@@ -19,6 +19,18 @@ type ServiceDashboardCounts = {
     dueFollowups?: number;
     dropouts?: number;
     duePayments?: number;
+    documents?: { bv?: number; vas?: number };
+};
+
+type ServiceManagerStats = {
+    totalRevenue?: number;
+    new?: number;
+    renew?: number;
+    expire?: number;
+    inService?: number;
+    kwa?: number;
+    psa?: number;
+    sponsorBrand?: number;
 };
 
 export default function ServiceAssistantManagerDashboard() {
@@ -29,6 +41,12 @@ export default function ServiceAssistantManagerDashboard() {
         queryFn: () => apiRequestJson<ServiceDashboardCounts>("GET", "/api/service/dashboard/counts"),
     });
     const counts = countsRes || {};
+
+    const { data: statsRes } = useQuery<ServiceManagerStats>({
+        queryKey: ["/api/service/manager/stats"],
+        queryFn: () => apiRequestJson<ServiceManagerStats>("GET", "/api/service/manager/stats"),
+    });
+    const stats = statsRes || {};
     const [inServiceModalOpen, setInServiceModalOpen] = useState(false);
     const [targetView, setTargetView] = useState<'overall' | 't-ab' | 't-vas'>('overall');
     const [customerMonthlyFilter, setCustomerMonthlyFilter] = useState<'gm' | 'bv'>('gm');
@@ -94,29 +112,25 @@ export default function ServiceAssistantManagerDashboard() {
     };
 
     const topSelling = [
-        { title: "Total Contact", value: "22(0)", icon: Users },
-        { title: "New", value: "1(799)$", icon: ArrowRightLeft },
-        { title: "Renew", value: "0(0)$", icon: Tag },
-        { title: "Expire", value: "0(0)$", icon: Target },
-        { title: "Vm", value: "0(0)$", icon: Users },
-        { title: "Kwa", value: "0(0)$", icon: ArrowRightLeft },
-        { title: "Psa", value: "0(0)$", icon: Tag },
-        { title: "Sponsor Brand", value: "0(0)$", icon: Target },
+        { title: "Total Revenue", value: `${stats.totalRevenue || 0}$`, icon: Users },
+        { title: "New", value: String(stats.new || 0), icon: ArrowRightLeft },
+        { title: "Renew", value: String(stats.renew || 0), icon: Tag },
+        { title: "Expire", value: String(stats.expire || 0), icon: Target },
+        { title: "In Service", value: String(stats.inService || 0), icon: Users },
+        { title: "Kwa", value: String(stats.kwa || 0), icon: ArrowRightLeft },
+        { title: "Psa", value: String(stats.psa || 0), icon: Tag },
+        { title: "Sponsor Brand", value: String(stats.sponsorBrand || 0), icon: Target },
     ];
 
     const targetData = [
-        { name: 'LD', count: 2 },
-        { name: 'QF', count: 0 },
-        { name: 'AY', count: 2 },
-        { name: 'IN', count: 3 },
-        { name: 'PM', count: 3 },
-        { name: 'GM', count: 1 },
-        { name: 'BV', count: 1 },
-        { name: 'NC', count: 1 },
-        { name: 'RC', count: 0 },
-        { name: 'EC', count: 0 },
-        { name: 'FW', count: 0 },
-        { name: 'NF', count: 0 },
+        { name: 'A', count: counts.grades?.A || 0 },
+        { name: 'B+', count: counts.grades?.B_PLUS || 0 },
+        { name: 'B', count: counts.grades?.B || 0 },
+        { name: 'B-', count: counts.grades?.B_MINUS || 0 },
+        { name: 'CMP', count: (counts.complaints?.open || 0) + (counts.complaints?.in_progress || 0) },
+        { name: 'DRP', count: counts.dropouts || 0 },
+        { name: 'FUP', count: counts.dueFollowups || 0 },
+        { name: 'PAY', count: counts.duePayments || 0 },
     ];
 
     const quickEntries = [
@@ -139,8 +153,8 @@ export default function ServiceAssistantManagerDashboard() {
         { label: "Dropout Leads", value: String(counts.dropouts || 0) },
         { label: "Complaints", value: String(openComplaints) },
         { label: "Not Follow Yet", value: String(counts.dueFollowups || 0) },
-        { label: "BV Document", value: "0" },
-        { label: "VAS Document", value: "0" },
+        { label: "BV Document", value: String(counts.documents?.bv || 0) },
+        { label: "VAS Document", value: String(counts.documents?.vas || 0) },
         { label: "Due Payment", value: String(counts.duePayments || 0) },
         { label: "To Do List", value: "►", isIcon: true },
     ];
