@@ -3,3 +3,4 @@
 - [Service dashboard honesty & scope clause](service-dashboard-honesty.md) — service dashboards bind real endpoints with 0/empty fallback; scopeSql is a full WHERE, append extra filters with AND not ${scopeSql}.
 - [Lead import duplicate enforcement](lead-import-duplicate-enforcement.md) — duplicate lookup must fail-closed (throw, never return []); commit must return {success:true}; override needs role+reason.
 - [opportunities vs customers id type mismatch](opportunities-customers-id-type-mismatch.md) — opportunities ids are varchar, customers.id is uuid; raw SQL joins/UNIONs need ::text casts or they 500.
+- [ripgrep -r mangles output](ripgrep-replace-pitfall.md) — `rg -rn` treats `-r` as --replace (rewrites matches to "n"); use plain `rg -n` or `grep -rn` to read real content.
