@@ -120,6 +120,38 @@ transition.
   public, not 404).
 - All six edited frontend pages hot-reloaded with no LSP/runtime errors.
 
+## Notification helper (task G) & communication log (task H)
+- Task G (notification abstraction): the shared `NotificationService` (in
+  `server/services/notification-service.ts`) already centralizes notification
+  creation and is reused across task assignment, QA/rework, verification, HR
+  approvals, service follow-ups, and salary/increment/penalty decisions. Rather
+  than introduce a parallel `createNotification` and risk breaking existing
+  notifications, the Stage 8 module was wired into that same abstraction:
+  `server/events-routes.ts` now fires a fire-and-forget `NotificationService.notify`
+  on **event duty assignment** (duty create with an assignee, and reassignment via
+  PATCH) — the "event duty assignment" target named in task G. Verified live: a
+  duty assigned to a user creates a `drm.notifications` row
+  ("You have been assigned an event duty: …").
+- Task H (communication_logs): intentionally NOT added. No external
+  email/SMS/WhatsApp provider is configured, and the spec says not to add
+  providers. An empty log table with no producer would be dead code, so it is
+  deferred until a real internal/external channel exists.
+
+## Re-verification (live authenticated smoke)
+A later pass ran live authenticated smoke (admin JWT) against every Stage 8
+endpoint — the HTTP smoke the original pass could not do. All green, no runtime
+bugs found:
+- Events: `GET /api/events` (200), `POST` create (201), `POST` speaker/menu-item/
+  duty (201 each), `GET /api/events/:id` returns persisted `speakers[]`,
+  `menuItems[]`, `duties[]`, `PATCH` status→Completed (200), invalid times →
+  400, `DELETE` soft delete (200).
+- `GET /api/events/report` (200), `GET /api/reports/reception` (200, empty),
+  `GET /api/training/tree` + `/summary` (200), `GET /api/notices` + `/api/policies`
+  + `/api/notifications` (200).
+- Duty assignment notification verified (notifications count incremented).
+- `npm run check`: unchanged baseline (57 pre-existing errors; none new, none in
+  `events-routes.ts`).
+
 ## Known limitations
 - DB is empty → all pages show empty states until data is entered. No authenticated
   HTTP/visual smoke test (no dev admin password); verified via build/boot/DDL/
