@@ -5,25 +5,50 @@ import { Link } from "wouter";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { useRef } from "react";
+import { LeadImportDialog } from "@/components/lead-import-dialog";
+import { getAuthHeader } from "@/lib/queryClient";
+
+const OVERRIDE_ROLES = ["admin", "super_admin", "superadmin", "sales_manager"];
 
 export default function MarketingManagerDashboard() {
   const [activeEventTab, setActiveEventTab] = useState<"today" | "week">("today");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  const role = (() => {
+    try {
+      return (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
+    } catch {
+      return "";
+    }
+  })();
+  const canOverride = OVERRIDE_ROLES.includes(role);
+
+  async function downloadTemplate() {
+    try {
+      const res = await fetch("/api/leads/template", { headers: getAuthHeader() });
+      if (!res.ok) throw new Error("Failed to download template");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "lead-import-template.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Surface failure honestly rather than silently downloading a fake file.
+      alert("Could not download the template. Please try again.");
+    }
+  }
 
   const { data: fetchedLeads, isLoading: leadsLoading } = useQuery<any[]>({
     queryKey: ["/api/customers"],
   });
 
-  // Use dummy data if API returns empty or fails, for UI testing purposes
-  const dummyLeads = [
-    { id: 101, companyName: "TechNova Solutions", contactPerson: "Sarah Khan", createdAt: new Date("2026-04-28T09:30:00").toISOString(), country: "UAE", status: "New" },
-    { id: 102, companyName: "Global Exports Ltd", contactPerson: "Ahmed Raza", createdAt: new Date("2026-04-27T14:15:00").toISOString(), country: "USA", status: "Contacted" },
-    { id: 103, companyName: "Prime Logistics", contactPerson: "John Doe", createdAt: new Date("2026-04-26T11:45:00").toISOString(), country: "UK", status: "Qualified" },
-    { id: 104, companyName: "Nexus Trading", contactPerson: "Ali Hassan", createdAt: new Date("2026-04-25T16:20:00").toISOString(), country: "Canada", status: "Lead" },
-  ];
-
-  const leads = fetchedLeads && fetchedLeads.length > 0 ? fetchedLeads : dummyLeads;
+  // Show only real leads returned by the API. Never fall back to fabricated
+  // leads — empty results render the dedicated "No leads found" state below.
+  const leads = Array.isArray(fetchedLeads) ? fetchedLeads : [];
 
   return (
     <div className="min-h-screen bg-[#f4f6f9] p-4 font-sans dark:bg-zinc-950">
@@ -243,22 +268,12 @@ export default function MarketingManagerDashboard() {
               <CardTitle className="text-[16px] font-bold text-gray-700 dark:text-zinc-400">Upload Leads</CardTitle>
               <button 
                 className="w-6 h-6 rounded-full bg-[#00a65a] flex items-center justify-center text-white hover:bg-[#008d4c] transition-colors shadow-sm"
-                onClick={() => fileInputRef.current?.click()}
-                title="Upload Lead File"
+                onClick={() => setImportOpen(true)}
+                title="Import Leads"
+                data-testid="button-open-import"
               >
                 <Plus className="w-4 h-4" strokeWidth={3} />
               </button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept=".xlsx,.xls,.csv" 
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    alert(`Selected file: ${e.target.files[0].name}. Upload functionality would go here.`);
-                  }
-                }}
-              />
             </CardHeader>
             <CardContent className="p-4 bg-slate-50 dark:bg-zinc-900">
               <div className="flex items-center justify-between p-4 border border-gray-100 rounded-lg hover:shadow-md transition-shadow bg-white dark:bg-zinc-900 dark:border-zinc-800">
@@ -267,24 +282,15 @@ export default function MarketingManagerDashboard() {
                     EXCEL
                   </div>
                   <div>
-                    <h4 className="font-bold text-[#344767] text-[15px] dark:text-zinc-100">Template.xlsx</h4>
-                    <p className="text-[13px] text-gray-500 mt-0.5 dark:text-zinc-400">Size : 133 KB</p>
+                    <h4 className="font-bold text-[#344767] text-[15px] dark:text-zinc-100">lead-import-template.csv</h4>
+                    <p className="text-[13px] text-gray-500 mt-0.5 dark:text-zinc-400">Expected columns for import</p>
                   </div>
                 </div>
                 <button 
                   className="border border-gray-800 rounded-[4px] p-0.5 hover:bg-gray-100 transition-colors text-[#344767] dark:border-zinc-800 dark:hover:bg-zinc-800 dark:text-zinc-100"
                   title="Download Template"
-                  onClick={() => {
-                    // Create a dummy CSV template and download it
-                    const csvContent = "data:text/csv;charset=utf-8,Name,Company,Phone,Email,Country\nJohn Doe,Acme Corp,123456789,john@acme.com,USA";
-                    const encodedUri = encodeURI(csvContent);
-                    const link = document.createElement("a");
-                    link.setAttribute("href", encodedUri);
-                    link.setAttribute("download", "Template.xlsx");
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                  }}
+                  data-testid="button-template-download"
+                  onClick={downloadTemplate}
                 >
                   <Download className="w-4 h-4" />
                 </button>
@@ -402,6 +408,12 @@ export default function MarketingManagerDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <LeadImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        canOverride={canOverride}
+      />
     </div>
   );
 }

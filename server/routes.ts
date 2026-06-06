@@ -65,6 +65,7 @@ import { notificationRouter } from "./routes/notification-routes";
 import { productPostingWorkflowRouter } from "./routes/product-posting-workflow-routes";
 import { softwareWorkflowRouter } from "./routes/software-workflow-routes";
 import { registerPostingDataRoutes } from "./posting-data-routes";
+import { registerLeadsImportRoutes } from "./leads-import-routes";
 import targetSystemRoutes from "./target-system-routes";
 import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
@@ -351,6 +352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/product-posting", productPostingWorkflowRouter);
   app.use("/api/software", softwareWorkflowRouter);
   registerPostingDataRoutes(app);
+  registerLeadsImportRoutes(app);
   app.use("/api/target-system", targetSystemRoutes);
 
   // Performance System routes (protected, read-only) — mounted after auth middleware

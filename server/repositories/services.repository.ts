@@ -69,6 +69,18 @@ export async function ensureServicesSchema() {
         alter column service_id type uuid using service_id::uuid;
     `);
 
+    // Older deployments created service_subservices without the unique
+    // constraints declared in the table definition above. Without them the seed
+    // below (which relies on ON CONFLICT (service_id, code)) fails with 42P10 and
+    // silently rolls back the whole transaction, leaving the catalogue empty.
+    // The table is empty in that state, so adding the indexes is safe.
+    await client.query(
+      `create unique index if not exists uq_service_subservices_service_code on service_subservices (service_id, code);`,
+    );
+    await client.query(
+      `create unique index if not exists uq_service_subservices_code on service_subservices (code);`,
+    );
+
     await client.query(`
       create table if not exists followup_subservices (
         followup_id uuid not null references follow_ups(id) on delete cascade,
@@ -178,12 +190,28 @@ export const servicesRepository = {
   },
 
   async listActiveWithSubservices(): Promise<Array<Service & { subServices: Array<{ id: string; code: string; name: string }> }>> {
+    // The service_subservices table has historically gained optional columns
+    // (price, discount, min_day, max_day, dep_id, legacy_id, legacy_main_id,
+    // order_index) in some deployments but not others. Detect which exist so the
+    // query never fails on a missing column. The base columns id/code/name/
+    // is_active/created_at/description are always present.
+    const colRes = await pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_name = 'service_subservices'`,
+    );
+    const cols = new Set(colRes.rows.map((r) => r.column_name));
+    const opt = (name: string) => (cols.has(name) ? `ss.${name}` : "null");
+    const hasDesc = cols.has("description");
+    const orderInner = cols.has("order_index")
+      ? "ss.order_index ASC NULLS LAST, ss.created_at ASC, ss.id ASC"
+      : "ss.created_at ASC, ss.id ASC";
+
     const res = await pool.query(`
       select 
         s.id,
         s.code,
         s.name,
-        s.description,
+        ${hasDesc ? "s.description" : "null as description"},
         s.is_active,
         s.created_at,
         coalesce(
@@ -192,22 +220,22 @@ export const servicesRepository = {
               'id', ss.id,
               'code', ss.code,
               'name', ss.name,
-              'description', ss.description,
-              'price', ss.price,
-              'discount', ss.discount,
-              'min_day', ss.min_day,
-              'max_day', ss.max_day,
-              'dep_id', ss.dep_id,
-              'legacy_id', ss.legacy_id,
-              'legacy_main_id', ss.legacy_main_id
-            ) order by ss.order_index ASC NULLS LAST, ss.created_at ASC, ss.id ASC
+              'description', ${opt("description")},
+              'price', ${opt("price")},
+              'discount', ${opt("discount")},
+              'min_day', ${opt("min_day")},
+              'max_day', ${opt("max_day")},
+              'dep_id', ${opt("dep_id")},
+              'legacy_id', ${opt("legacy_id")},
+              'legacy_main_id', ${opt("legacy_main_id")}
+            ) order by ${orderInner}
           ) filter (where ss.id is not null),
           '[]'
         ) as sub_services
       from drm.services s
       left join drm.service_subservices ss on ss.service_id = s.id and ss.is_active = true
       where s.is_active = true
-      group by s.id, s.code, s.name, s.is_active, s.created_at
+      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.is_active, s.created_at
       order by s.name
     `);
     return res.rows.map((row: any) => ({

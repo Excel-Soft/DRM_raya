@@ -63,6 +63,7 @@ import {
   ChevronRight,
   UserCheck,
   Loader2,
+  Download,
 } from "lucide-react";
 import type { Customer, Opportunity, Service } from "@shared/schema";
 
@@ -180,6 +181,7 @@ export default function CustomerManagement() {
   const [showMoreDetails, setShowMoreDetails] = useState(false);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
   const [viewFollowUp, setViewFollowUp] = useState<any | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (!followCustomer) {
@@ -213,6 +215,87 @@ export default function CustomerManagement() {
     params.append("sortBy", sortBy);
     params.append("sortOrder", sortOrder);
     return params.toString();
+  };
+
+  // Export the customers that match the CURRENT filters (search/stage/grade/sort)
+  // to a CSV file. Pulls the real, filtered rows from the API — never a cached or
+  // fabricated set — and surfaces failures honestly so the user can retry.
+  const handleExportCsv = async () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams();
+      params.append("page", "1");
+      params.append("pageSize", "100000");
+      if (search) params.append("search", search);
+      if (stageFilter && stageFilter !== "all") params.append("stage", stageFilter);
+      if (gradeFilter && gradeFilter !== "all") params.append("grade", gradeFilter);
+      params.append("sortBy", sortBy);
+      params.append("sortOrder", sortOrder);
+
+      const res = await apiRequest("GET", `/api/sales/customers?${params.toString()}`);
+      const json = await res.json();
+      const rows: CustomerWithOpportunity[] = json?.data ?? json?.customers ?? [];
+
+      if (!rows.length) {
+        toast({
+          title: "Nothing to export",
+          description: "No customers match the current filters.",
+        });
+        return;
+      }
+
+      const columns: { key: string; label: string; get: (r: any) => any }[] = [
+        { key: "drmId", label: "DRM ID", get: (r) => r.drmId },
+        { key: "companyName", label: "Company Name", get: (r) => r.companyName },
+        { key: "accountName", label: "Account Name", get: (r) => r.accountName },
+        { key: "personName", label: "Contact Person", get: (r) => r.personName },
+        { key: "email", label: "Email", get: (r) => r.email },
+        { key: "phone", label: "Phone", get: (r) => r.phone },
+        { key: "region", label: "Region", get: (r) => r.region },
+        { key: "country", label: "Country", get: (r) => r.country },
+        { key: "city", label: "City", get: (r) => r.city },
+        { key: "grade", label: "Grade", get: (r) => r.grade },
+        { key: "status", label: "Status", get: (r) => r.status },
+        { key: "stage", label: "Stage", get: (r) => getStageBadge(r.opportunity?.stage) },
+        { key: "source", label: "Source", get: (r) => r.source },
+        { key: "createdAt", label: "Created At", get: (r) => r.createdAt },
+      ];
+
+      const escapeCell = (value: any): string => {
+        if (value === null || value === undefined) return "";
+        const text = Array.isArray(value) ? value.join("; ") : String(value);
+        return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      };
+
+      const csv = [
+        columns.map((c) => escapeCell(c.label)).join(","),
+        ...rows.map((row) => columns.map((c) => escapeCell(c.get(row))).join(",")),
+      ].join("\n");
+
+      const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export ready",
+        description: `Exported ${rows.length} customer${rows.length === 1 ? "" : "s"}.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Export failed",
+        description: error?.message || "Could not export customers. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // Fetch customers
@@ -579,6 +662,20 @@ export default function CustomerManagement() {
                     Clear
                   </Button>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExportCsv}
+                  disabled={isExporting}
+                  data-testid="button-export-csv"
+                >
+                  {isExporting ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-1" />
+                  )}
+                  Export CSV
+                </Button>
               </div>
             </div>
           </CardContent>

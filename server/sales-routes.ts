@@ -4146,9 +4146,47 @@ export function registerSalesRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       await ensureCustomersSchema();
-      const [updated] = await db.update(customers).set({ ownerUserId: req.user.userId, updatedAt: new Date() as any }).where(eq(customers.id, req.params.id)).returning();
+
+      // Capture the previous owner so the audit trail records from -> to.
+      const [existing] = await db
+        .select({ ownerUserId: customers.ownerUserId })
+        .from(customers)
+        .where(eq(customers.id, req.params.id))
+        .limit(1);
+      if (!existing) return res.status(404).json({ error: "Lead not found" });
+
+      const fromUserId = (existing as any).ownerUserId ?? null;
+      // Optional explicit target (reassignment); defaults to self-assign.
+      const toUserId = (req.body?.toUserId as string) || req.user.userId;
+      // Authz: anyone may self-assign, but assigning a lead to a *different*
+      // user is a managerial action. Guard against privilege escalation.
+      if (toUserId !== req.user.userId) {
+        const requesterRole = ((req.user as any).activeRoleId || req.user.roleId) as string | undefined;
+        if (!isManagerialRole(requesterRole)) {
+          return res.status(403).json({ error: "Only managers can assign leads to other users." });
+        }
+      }
+      const reason =
+        typeof req.body?.reason === "string" && req.body.reason.trim()
+          ? req.body.reason.trim()
+          : toUserId === req.user.userId
+            ? "Assigned to self"
+            : "Reassigned";
+
+      const [updated] = await db
+        .update(customers)
+        .set({ ownerUserId: toUserId as any, updatedAt: new Date() as any })
+        .where(eq(customers.id, req.params.id))
+        .returning();
       if (!updated) return res.status(404).json({ error: "Lead not found" });
-      await leadActivitiesRepository.log({ customerId: req.params.id, action: "Assign" as any, performedBy: req.user.userId, note: "Assigned to self" });
+
+      await leadActivitiesRepository.log({
+        customerId: req.params.id,
+        action: "Assign" as any,
+        performedBy: req.user.userId,
+        note: reason,
+        meta: { fromUserId, toUserId, reason, at: new Date().toISOString() } as any,
+      });
       return res.json(updated);
     } catch (error) {
       console.error(error);
