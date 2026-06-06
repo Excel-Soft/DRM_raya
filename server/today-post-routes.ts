@@ -149,7 +149,7 @@ const SELECT_COLUMNS = `
   tp.created_at      AS "createdAt",
   tp.updated_at      AS "updatedAt",
   u.name             AS "postedByName",
-  c.name             AS "customerName"
+  c.company_name     AS "customerName"
 `;
 
 async function getPostRaw(id: string): Promise<any | null> {

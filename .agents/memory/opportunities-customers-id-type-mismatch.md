@@ -19,3 +19,18 @@ and cast `op.id::text` / `op.stage::text` / `op.owner_id::text`, with matching
 `null::text` / literal `::text` in the other UNION branch). Keep this as a
 local cast workaround; a proper fix is a schema migration to align the id types
 (left for a future stage).
+
+## Broader recurring pitfalls in schema `drm` (raw SQL)
+- `projects.id` is `uuid` but `project_approvals.project_id` and `tasks.project_id`
+  are `varchar`. Any join `projects.id = *.project_id` throws `operator does not
+  exist: uuid = character varying`; cast both sides `::text`
+  (seen in `projects.repository.ts` delayed/upcoming queries).
+- `drm.customers` has **no `name` column** — the display name is `company_name`
+  (and `person_name` for the contact). Selecting/filtering `c.name` throws
+  `column c.name does not exist` (Postgres often hints `u.name`/`cb.name`, which
+  are the *users* table). For customer display use `c.company_name`.
+- `drm.users` *does* have `name`; only `customers` lacks it.
+**Why:** these caused 500s on otherwise-correct Stage 6/7 list endpoints.
+**How to apply:** in any new raw SQL touching customers or project↔approval/task
+joins, default to `company_name` for customer names and `::text` casts on
+project-id joins.

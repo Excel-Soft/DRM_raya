@@ -130,6 +130,28 @@ altered. `shared/schema.ts` was not modified (consistent with the Stage-5 patter
 - Endpoint protection: unauthenticated `GET` on all 5 new endpoints returns
   **401** (registered + protected, not public, not 404).
 
+## Re-verification (live authenticated smoke)
+A later pass ran live authenticated smoke tests (admin JWT) against every Stage 7
+endpoint — the HTTP smoke that was not possible in the original pass. This
+surfaced three runtime-breaking SQL bugs in the Stage 7 code, now fixed:
+- `server/today-post-routes.ts` and `server/social-accounts-routes.ts` selected
+  `c.name` from `drm.customers`, which has no `name` column (it is
+  `company_name`) → both list endpoints 500'd. Fixed to `c.company_name`
+  (select list + social-accounts search clause).
+- `server/repositories/projects.repository.ts` (`getDetailedDelayedProjects` and
+  `getDetailedUpcomingProjects`) joined `projects.id` (uuid) to
+  `project_approvals.project_id` / `tasks.project_id` (varchar) → `operator does
+  not exist: uuid = character varying`, so `/api/hod/projects/delayed` 500'd.
+  Fixed with `::text` casts on both sides of the joins.
+
+Live smoke results (all pass): promotions, today-posts, social-accounts,
+commission-verifications, penalties, increment (users + report w/ date range),
+performance (team w/ date range), late-coming, monthly-complete, delayed
+projects, posting-data all return 200; create/persist verified for today-posts,
+social-accounts, and promotions (rows present in `drm.today_posts`,
+`drm.social_accounts`, `drm.promotions`). `npm run check`: unchanged baseline
+(57 pre-existing errors, none new in changed files).
+
 ## Known limitations
 - Database is empty → all pages render empty states until real data is entered.
 - No logged-in HTTP/visual smoke test was possible (no dev admin password

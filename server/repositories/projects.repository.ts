@@ -387,8 +387,8 @@ export class ProjectsRepository {
         END as "projectDeadLine",
         COALESCE(EXTRACT(DAY FROM (NOW() - pb.deadline)), 0)::text as "days"
       FROM project_base pb
-      LEFT JOIN approvals a ON pb.id = a.project_id
-      LEFT JOIN task_counts tc ON pb.id = tc.project_id
+      LEFT JOIN approvals a ON pb.id::text = a.project_id::text
+      LEFT JOIN task_counts tc ON pb.id::text = tc.project_id::text
       ORDER BY pb.deadline ASC
     `;
     const result = await db.execute(query);
@@ -438,7 +438,7 @@ export class ProjectsRepository {
         '0' as "projectDeadLine",
         COALESCE(EXTRACT(DAY FROM (pb.deadline - NOW())), 0)::text as "days"
       FROM project_base pb
-      LEFT JOIN task_counts tc ON pb.id = tc.project_id
+      LEFT JOIN task_counts tc ON pb.id::text = tc.project_id::text
       ORDER BY pb.deadline ASC
     `;
     const result = await db.execute(query);
