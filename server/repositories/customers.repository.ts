@@ -214,7 +214,7 @@ export class CustomersRepository {
       select count(*)::int as count from (
         select c.id::text as id
         from ${targetTable} c
-        left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
+        left join drm.opportunities op on op.customer_id = c.id::text and coalesce(op.is_deleted,false) = false
         ${whereSql}
         union all
         select t.id::text as id
@@ -266,9 +266,9 @@ export class CustomersRepository {
           0 as "isBusinessVerified",
           c.created_at as "createdAt",
           c.updated_at as "updatedAt",
-          op.id as "opportunityId",
-          op.stage as "opportunityStage",
-          op.owner_id as "opportunityOwnerId",
+          op.id::text as "opportunityId",
+          op.stage::text as "opportunityStage",
+          op.owner_id::text as "opportunityOwnerId",
           op.value as "opportunityAmount",
           op.title as "opportunityTitle",
           op.expected_close_date as "expectedCloseDate",
@@ -277,7 +277,7 @@ export class CustomersRepository {
           op.updated_at as "opportunityUpdatedAt",
           false as "isTemp"
         from ${targetTable} c
-        left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
+        left join drm.opportunities op on op.customer_id = c.id::text and coalesce(op.is_deleted,false) = false
         ${whereSql}
         
         union all
@@ -319,9 +319,9 @@ export class CustomersRepository {
           0 as "isBusinessVerified",
           t.created_at as "createdAt",
           t.updated_at as "updatedAt",
-          null::uuid as "opportunityId",
-          'LD' as "opportunityStage",
-          t.user_id::uuid as "opportunityOwnerId",
+          null::text as "opportunityId",
+          'LD'::text as "opportunityStage",
+          t.user_id::text as "opportunityOwnerId",
           0::numeric as "opportunityAmount",
           'Quick Lead' as "opportunityTitle",
           null::date as "expectedCloseDate",
@@ -769,7 +769,7 @@ export class CustomersRepositoryExtended extends CustomersRepository {
         c.created_at,
         op.stage
       from drm.customers c
-      left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
+      left join drm.opportunities op on op.customer_id = c.id::text and coalesce(op.is_deleted,false) = false
       left join drm.users u on u.id = c.owner_user_id
       where (${conditions.join(" or ")}) ${whereOwner}
       order by c.created_at desc
