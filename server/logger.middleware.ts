@@ -19,13 +19,16 @@ export function loggerMiddleware(req: Request, res: Response, next: NextFunction
 
   res.on("finish", () => {
     const duration = Date.now() - start;
+    // Request id (set by requestIdMiddleware) is included for log correlation.
+    // No request/response bodies or auth headers are ever logged.
+    const rid = req.id ? ` rid=${req.id}` : "";
     if (level === "short") {
       console.log(
-        `[${new Date().toISOString()}] ${req.method} ${path} -> ${res.statusCode} (${duration}ms)`,
+        `[${new Date().toISOString()}]${rid} ${req.method} ${path} -> ${res.statusCode} (${duration}ms)`,
       );
     } else {
       console.log(
-        `[${new Date().toISOString()}] ${req.method} ${path} -> ${res.statusCode} (${duration}ms) query=${JSON.stringify(
+        `[${new Date().toISOString()}]${rid} ${req.method} ${path} -> ${res.statusCode} (${duration}ms) query=${JSON.stringify(
           req.query,
         )}`,
       );
