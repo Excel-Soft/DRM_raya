@@ -4,6 +4,7 @@ import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { loggerMiddleware } from "./logger.middleware";
+import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
 import { errorEnvelope } from "./utils/api-error";
@@ -53,13 +54,15 @@ const corsOptions: CorsOptions = {
   origin: allowedOrigins.length > 0 ? allowedOrigins : true,
   credentials: true,
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Request-Id"],
+  exposedHeaders: ["X-Request-Id"],
   optionsSuccessStatus: 204,
 };
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
+app.use(requestIdMiddleware);
 app.use(loggerMiddleware);
 
 (async () => {
@@ -81,7 +84,8 @@ app.use(loggerMiddleware);
     const rawMessage = err.message || "Internal Server Error";
     const code = err.code || err.name || "INTERNAL_ERROR";
     // Always log full detail server-side (incl. stack) for debugging.
-    console.error(`[ERROR] ${req.method} ${req.originalUrl} -> ${status} code=${code} msg="${rawMessage}"`);
+    const rid = req.id ? ` rid=${req.id}` : "";
+    console.error(`[ERROR]${rid} ${req.method} ${req.originalUrl} -> ${status} code=${code} msg="${rawMessage}"`);
     if (err?.stack) {
       console.error(err.stack);
     }
@@ -110,12 +114,12 @@ app.use(loggerMiddleware);
   // It is the only port that is not firewalled.
   const requestedPort = Number(process.env.PORT) || 5000;
 
-  const makeListenOptions = (port: number) => {
+  const makeListenOptions = (port: number, host: string) => {
     const listenOptions: any = {
       port,
       // Bind IPv6 with dual-stack support so both localhost (::1)
       // and 127.0.0.1 work during local development on Windows.
-      host: "::",
+      host,
       ipv6Only: false,
     };
     // reusePort is not supported on Windows; enable only where available
@@ -125,7 +129,7 @@ app.use(loggerMiddleware);
     return listenOptions;
   };
 
-  const tryListen = (port: number) =>
+  const tryListen = (port: number, host: string) =>
     new Promise<void>((resolve, reject) => {
       const onError = (err: any) => {
         server.off("listening", onListening);
@@ -139,10 +143,22 @@ app.use(loggerMiddleware);
 
       server.once("error", onError);
       server.once("listening", onListening);
-      server.listen(makeListenOptions(port));
+      server.listen(makeListenOptions(port, host));
     });
 
-  await tryListen(requestedPort);
+  try {
+    await tryListen(requestedPort, "::");
+  } catch (err: any) {
+    // Some sandboxes/hosts don't support IPv6 binding (EAFNOSUPPORT) or the
+    // address isn't available (EADDRNOTAVAIL). Fall back to IPv4 so the server
+    // still serves on the only non-firewalled port.
+    if (err?.code === "EAFNOSUPPORT" || err?.code === "EADDRNOTAVAIL") {
+      log(`IPv6 bind failed (${err.code}); retrying on 0.0.0.0`);
+      await tryListen(requestedPort, "0.0.0.0");
+    } else {
+      throw err;
+    }
+  }
   log(`serving on fixed port ${requestedPort}`);
 
   // Start background jobs
