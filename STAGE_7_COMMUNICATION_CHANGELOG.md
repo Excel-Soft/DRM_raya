@@ -69,7 +69,8 @@ never turn the host handler into a 500.
 - `server/service-core-routes.ts`: service follow-up create + complete,
   complaint create + resolve, dropout create, renewal create.
 - `server/sales-routes.ts`: lead actions (`whatsapp` / `call` / `email`),
-  lead follow-up action, lead whatsapp action.
+  lead follow-up action, lead whatsapp action, and appointment end
+  (`PATCH /api/sales/appointments/:id/end`, logged as a `MEETING`).
 
 ### Frontend — `client/src/components/communication/communication-timeline.tsx`
 - Reusable `<CommunicationTimeline entityType entityId />` component, mirroring
