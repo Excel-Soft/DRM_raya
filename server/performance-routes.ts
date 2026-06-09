@@ -13,13 +13,10 @@ import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import {
   buildSummary, buildRecords, buildTrends, buildTeamLeaderboard,
-  getScoringConfig, saveScoringConfig, validateScoringConfig,
+  getScoringConfig,
 } from "./services/performance.service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"];
-
-// Roles allowed to change the scoring policy (weights & quality penalties).
-const SCORING_CONFIG_ADMIN_ROLES = ["admin", "super_admin", "super_hod"];
 
 function getUserId(req: Request): string | undefined {
   return (req.user as any)?.userId || (req.user as any)?.id;
@@ -286,37 +283,16 @@ export function registerPerformanceRoutes(app: Express) {
   });
 
   // GET /api/drm/performance/scoring-config
-  // Any authenticated user may read the active config (drives the formula display).
+  // Read-only: exposes the fixed scoring formula (40/30/20/10) for display.
+  // The formula is hard-locked and not editable, so `canEdit` is always false.
   app.get("/api/drm/performance/scoring-config", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const config = await getScoringConfig();
-      const activeRole = normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
-      res.json({ config, canEdit: SCORING_CONFIG_ADMIN_ROLES.includes(activeRole) });
+      res.json({ config, canEdit: false });
     } catch (err: any) {
       console.error("[performance] /scoring-config GET error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to fetch scoring configuration" });
-    }
-  });
-
-  // PUT /api/drm/performance/scoring-config
-  // Admin-only: update the formula weights and quality penalty amounts.
-  app.put("/api/drm/performance/scoring-config", async (req: Request, res: Response) => {
-    try {
-      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-      const activeRole = normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
-      if (!SCORING_CONFIG_ADMIN_ROLES.includes(activeRole)) {
-        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to change scoring configuration" });
-      }
-      const validated = validateScoringConfig(req.body);
-      if ("error" in validated) {
-        return res.status(400).json({ error: "BadRequest", message: validated.error });
-      }
-      const config = await saveScoringConfig(validated.config);
-      res.json({ config });
-    } catch (err: any) {
-      console.error("[performance] /scoring-config PUT error", err);
-      res.status(500).json({ error: "InternalError", message: "Failed to save scoring configuration" });
     }
   });
 }
