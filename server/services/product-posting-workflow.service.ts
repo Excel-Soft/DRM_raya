@@ -20,6 +20,7 @@ import { db, pool } from "../db";
 import {
   assertWorkflowTransition,
   maybeEscalateRework,
+  resolveWorkflowRouting,
 } from "./workflow-transition.service";
 
 const DEFAULT_PHASES = PRODUCT_POSTING_PHASE_KEYS.map((phaseKey, index) => ({
@@ -179,6 +180,37 @@ export async function getOrCreateProductPostingWorkflow(projectId: string) {
       currentPhase: "PENDING_PROJECT",
     } as any)
     .returning();
+
+  // Persist the structured routing department on the owning project so routing
+  // reads a stored value instead of re-guessing from names. Resolve DND vs
+  // PRODUCT_POSTING once here (using any structured signal first, name hints as
+  // fallback) and store the result. Best-effort and idempotent (only when unset).
+  try {
+    const [proj] = await db
+      .select({ id: projects.id, name: projects.name, invoiceId: projects.invoiceId, departmentType: projects.departmentType })
+      .from(projects)
+      .where(eq(projects.id, projectId));
+    let invoiceProjectName: string | null = null;
+    if (proj?.invoiceId) {
+      const [inv] = await db
+        .select({ projectName: productPostingInvoices.projectName })
+        .from(productPostingInvoices)
+        .where(eq(productPostingInvoices.id, proj.invoiceId));
+      invoiceProjectName = inv?.projectName ?? null;
+    }
+    const { departmentType } = resolveWorkflowRouting({
+      departmentType: proj?.departmentType ?? null,
+      workflowType: "product-posting",
+      projectName: proj?.name ?? null,
+      invoiceProjectName,
+    });
+    await pool.query(
+      `update drm.projects set department_type = $2 where id = $1 and department_type is null`,
+      [projectId, departmentType],
+    );
+  } catch (err) {
+    console.error("[product-posting-workflow] failed to persist project department_type", err);
+  }
 
   return created;
 }

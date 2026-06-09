@@ -483,6 +483,10 @@ export const projects = drmSchema.table("projects", {
   description: text("description"),
   ownerUserId: uuid("owner_user_id").notNull().references(() => users.id),
   workSpace: text("workspace"),
+  // Structured routing department for this project: DND | PRODUCT_POSTING |
+  // SOFTWARE. Set at workflow creation so notification/dashboard routing reads a
+  // stored value instead of guessing from free-text project/invoice names.
+  departmentType: text("department_type"),
   status: text("status").notNull().default("Active"),
   startDate: timestamp("start_date", { withTimezone: true }),
   endDate: timestamp("end_date", { withTimezone: true }),

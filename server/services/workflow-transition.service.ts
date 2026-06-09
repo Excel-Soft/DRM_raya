@@ -467,14 +467,21 @@ export function resolveWorkflowRouting(input: {
   let derivedFromText = false;
 
   if (explicitDept === "DND" || explicitDept === "PRODUCT_POSTING" || explicitDept === "SOFTWARE") {
+    // Structured department column present — the authoritative signal.
     department = explicitDept as DepartmentType;
+  } else if (explicitWorkflow === "software") {
+    // A software workflow lives in its own table, so the module identity is a
+    // structural signal — never a text guess. DND is a product-posting subtype,
+    // so it can never apply here.
+    department = "SOFTWARE";
   } else {
+    // No structured signal: fall back to free-text name matching to split
+    // product-posting into DND vs PRODUCT_POSTING. Flagged so such records can
+    // be back-filled with a structured department_type — see schema/projects.
     derivedFromText = true;
     const haystack = `${input.projectName || ""} ${input.invoiceProjectName || ""}`.toLowerCase();
     if (DND_HINTS.some((h) => haystack.includes(h))) {
       department = "DND";
-    } else if (explicitWorkflow === "software") {
-      department = "SOFTWARE";
     } else {
       department = "PRODUCT_POSTING";
     }

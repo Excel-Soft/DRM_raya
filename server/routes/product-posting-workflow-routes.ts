@@ -163,6 +163,14 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
       return res.status(400).json({ success: false, error: "Project is not ready for task assignment" });
     }
 
+    // Structured routing department for the sub-project: derive from the parent's
+    // stored department_type when present, otherwise from the DND-ness already
+    // resolved above (executiveDashboardUrl). Stored so downstream routing reads a
+    // value instead of re-guessing from names.
+    const subDepartmentType =
+      (project as any).departmentType ||
+      (executiveDashboardUrl === "/dd-executive-dashboard" ? "DND" : "PRODUCT_POSTING");
+
     // Automatically create a new project in PMS so it shows up in the Project Status table
     let targetProjectId = projectId;
     try {
@@ -172,6 +180,7 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
         invoiceId: project.invoiceId,
         ownerUserId: assigneeId,
         status: 'Active',
+        departmentType: subDepartmentType,
         description: description || `Task assigned from ${project.name}`,
       } as any).returning();
       if (newProject) {
