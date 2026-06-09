@@ -26,6 +26,13 @@ import { projects, projectFinancials, projectApprovals } from "@shared/schema";
 import { projectsRepository } from "./repositories/projects.repository";
 import { projectFinancialsRepository } from "./repositories/project-financials.repository";
 import { projectApprovalsRepository } from "./repositories/project-approvals.repository";
+import { sendError, ApiError } from "./utils/api-error";
+import {
+  INVOICE_WRITABLE_FIELDS,
+  pickWritable,
+  assertNonNegativeAmount,
+  assertValidCurrency,
+} from "./utils/financial-validation";
 
 // Helper to get user ID from request (supports both mock auth and JWT)
 function getUserId(req: Request): string | undefined {
@@ -382,6 +389,10 @@ export function registerAccountRoutes(app: Express) {
 
       const validated = gmInsertSchema.parse(req.body);
       const amountNumeric = Number.isFinite(validated.amountUsd) ? validated.amountUsd : 0;
+      // Stage 8: a GM entry must carry a positive USD amount.
+      if (!Number.isFinite(amountNumeric) || amountNumeric <= 0) {
+        return res.status(400).json({ error: "GM amount (USD) must be greater than 0" });
+      }
 
       let countryVal = "Other";
       let resolvedSalesPersonId: string | null = null;
@@ -1063,9 +1074,17 @@ export function registerAccountRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      // Mass-assignment guard: only whitelisted columns may be updated.
+      // invoiceNumber / id / createdByUserId / createdAt remain immutable here.
+      const writable = pickWritable(req.body ?? {}, INVOICE_WRITABLE_FIELDS);
+      if (writable.subtotal !== undefined) assertNonNegativeAmount(writable.subtotal, "subtotal");
+      if (writable.tax !== undefined) assertNonNegativeAmount(writable.tax, "tax");
+      if (writable.total !== undefined) assertNonNegativeAmount(writable.total, "total");
+      if (writable.currency !== undefined) assertValidCurrency(writable.currency, "currency");
+
       const [invoice] = await db.update(invoices)
         .set({
-          ...req.body,
+          ...(writable as any),
           updatedAt: new Date(),
         })
         .where(eq(invoices.id, req.params.id))
@@ -1077,6 +1096,7 @@ export function registerAccountRoutes(app: Express) {
 
       res.json(invoice);
     } catch (error) {
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating invoice:", error);
       res.status(500).json({ error: "Failed to update invoice" });
     }
@@ -1190,6 +1210,17 @@ export function registerAccountRoutes(app: Express) {
       }
 
       const validated = insertLedgerEntrySchema.parse(req.body);
+      // Stage 8: validate posting amount, currency and entry type.
+      const ledgerAmt = Number(validated.amount);
+      if (!Number.isFinite(ledgerAmt) || ledgerAmt <= 0) {
+        return res.status(400).json({ error: "Ledger amount must be greater than 0" });
+      }
+      if (!["USD", "PKR", "Dollar"].includes(String(validated.currency ?? "USD"))) {
+        return res.status(400).json({ error: "Invalid currency" });
+      }
+      if (!["Credit", "Debit"].includes(String((validated as any).entryType))) {
+        return res.status(400).json({ error: "entryType must be Credit or Debit" });
+      }
       const [entry] = await db.insert(ledgerEntries).values({
         ...validated,
         createdByUserId: getUserId(req)!,
@@ -1365,6 +1396,13 @@ export function registerAccountRoutes(app: Express) {
       const { companyName, personName, amount, amountType = 'PKR', comment } = req.body;
       if (!companyName || !personName || !amount) {
         return res.status(400).json({ error: "companyName, personName, amount are required" });
+      }
+      // Stage 8: refund amount must be positive and the reason is mandatory.
+      if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+        return res.status(400).json({ error: "Refund amount must be greater than 0" });
+      }
+      if (!String(comment ?? "").trim()) {
+        return res.status(400).json({ error: "A reason (comment) is required for a refund" });
       }
       const userId = getUserId(req)!;
       const { rows } = await pool.query(
