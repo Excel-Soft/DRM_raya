@@ -1,3 +1,7 @@
+// DEPRECATED / NOT ROUTED: This page is not registered in App.tsx and is not
+// rendered anywhere in the app. It is retained as a static scaffold only. It uses
+// placeholder data and is intentionally left untouched (no live data source).
+// Do not wire it to real APIs without first adding a route and product sign-off.
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useState } from "react";

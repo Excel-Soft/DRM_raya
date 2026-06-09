@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "./db";
 import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "./utils/api-error";
 import { ValidationService } from "./services/validation.service";
+import { ActivityLogService } from "./services/activity-service";
 
 const repeatOptions = ["HOUR", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "NONE"] as const;
 const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
@@ -256,6 +257,56 @@ export function registerTodoRoutes(app: Express) {
       }
       console.error("Error updating todo status", error);
       return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update status"));
+    }
+  });
+
+  // Remove a participant from a task. Only the creator or an admin may do this.
+  app.patch("/api/attendance/todo/:id/participants/remove", async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      const taskId = req.params.id;
+      const parsed = z.object({ userId: z.string().min(1) }).parse(req.body);
+      const removeId = parsed.userId;
+
+      const { rows } = await pool.query(
+        `select created_by_user_id, participants from drm.todo_tasks where id = $1 limit 1`,
+        [taskId],
+      );
+      if (rows.length === 0) {
+        return sendError(res, notFound("Task not found"));
+      }
+      const row = rows[0];
+      const role = req.user.roleId ?? "";
+      const isAdmin = role === "admin";
+      const isOwner = row.created_by_user_id === req.user.userId;
+      if (!isAdmin && !isOwner) {
+        return sendError(res, forbidden("Only the task creator or an admin can remove participants"));
+      }
+
+      const updateRes = await pool.query(
+        `update drm.todo_tasks
+            set participants = array_remove(coalesce(participants, '{}'), $2),
+                updated_at = now()
+          where id = $1
+          returning id, title, category, description, priority, repeat, reminder, due_date, due_time, participants, status, created_at`,
+        [taskId, removeId],
+      );
+
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "TODO_PARTICIPANT_REMOVED",
+        resourceType: "Task",
+        resourceId: taskId,
+        details: `Removed participant ${removeId}`,
+      });
+
+      return res.json({ success: true, task: updateRes.rows[0] });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return sendError(res, error);
+      }
+      console.error("Error removing todo participant", error);
+      return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to remove participant"));
     }
   });
 

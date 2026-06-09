@@ -1,3 +1,7 @@
+// DEPRECATED / NOT ROUTED: This component is not imported or rendered anywhere in
+// the app. It is retained as a static scaffold only and uses placeholder data.
+// It is intentionally left untouched (no live data source). Do not wire it to real
+// data without first mounting it somewhere and obtaining product sign-off.
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, CartesianGrid } from "recharts";
 

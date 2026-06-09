@@ -96,6 +96,11 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.patch("/api/service/followups/:id/complete", async (req: Request, res: Response) => {
     try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const outcome = req.body?.outcome;
+      if (!outcome || !String(outcome).trim()) {
+        return res.status(400).json({ error: "An outcome is required to complete a follow-up." });
+      }
       await db.update(serviceFollowups)
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(serviceFollowups.id, req.params.id));
@@ -254,6 +259,13 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/complaints/:id/close", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const existing = (await db.select().from(serviceComplaints).where(eq(serviceComplaints.id, req.params.id)))[0];
+      if (!existing) return res.status(404).json({ error: "Complaint not found" });
+      const provided = req.body?.remarks;
+      const finalRemark = (provided && String(provided).trim()) || existing.remarks;
+      if (!finalRemark || !String(finalRemark).trim()) {
+        return res.status(400).json({ error: "A resolution note is required before closing a complaint. Resolve it first or provide remarks." });
+      }
       const result = await pool.query(
         `UPDATE drm.service_complaints
            SET status = 'closed'::drm.service_complaint_status,
@@ -313,6 +325,9 @@ export function registerServiceCoreRoutes(app: Express) {
   app.post("/api/service/dropouts", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.body?.reason || !String(req.body.reason).trim()) {
+        return res.status(400).json({ error: "A reason is required to mark a customer as a dropout." });
+      }
       const result = await db.insert(serviceDropouts).values({
         ...req.body,
         createdBy: req.user.userId,
@@ -338,8 +353,12 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.patch("/api/service/dropouts/:id/recover", async (req: Request, res: Response) => {
     try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.body?.recoveryNote || !String(req.body.recoveryNote).trim()) {
+        return res.status(400).json({ error: "A recovery note is required to recover a dropout." });
+      }
       await db.update(serviceDropouts)
-        .set({ status: "recovered", recoveredAt: new Date(), recoveryNote: req.body.recoveryNote })
+        .set({ status: "recovered", recoveredAt: new Date(), recoveryNote: String(req.body.recoveryNote).trim() })
         .where(eq(serviceDropouts.id, req.params.id));
       res.json({ success: true });
     } catch (err) {
@@ -359,6 +378,22 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.post("/api/service/renewals", async (req: Request, res: Response) => {
     try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const b = req.body || {};
+      if (!b.serviceCustomerId) {
+        return res.status(400).json({ error: "serviceCustomerId is required for a renewal." });
+      }
+      const pkg = b.package ?? b.packageName ?? b.renewalType ?? b.service;
+      if (!pkg || !String(pkg).trim()) {
+        return res.status(400).json({ error: "A renewal package/service is required." });
+      }
+      const due = b.dueDate ?? b.newExpiryDate;
+      if (!due) {
+        return res.status(400).json({ error: "A renewal due/expiry date is required." });
+      }
+      if (b.amount === undefined || b.amount === null || Number(b.amount) <= 0 || Number.isNaN(Number(b.amount))) {
+        return res.status(400).json({ error: "A valid renewal amount greater than 0 is required." });
+      }
       const result = await db.insert(serviceRenewals).values({
         ...req.body,
         createdBy: req.user!.userId || (req.user as any)!.id,
@@ -409,27 +444,19 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.post("/api/service/gm", async (req: Request, res: Response) => {
-    try {
-      res.json({ success: true, message: "GM injected from Service Department" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to create GM entry" });
-    }
+  // Service → GM / VAS / BV bridges.
+  // These do not yet create real linked records. Rather than silently returning a
+  // fake success (which would let the UI believe a GM/VAS/BV record exists), they
+  // fail clearly so callers route through the real GM/VAS/BV modules.
+  app.post("/api/service/gm", async (_req: Request, res: Response) => {
+    res.status(501).json({ error: "Service→GM bridge is not implemented. Create the GM entry via the GM module." });
   });
 
-  app.post("/api/service/vas", async (req: Request, res: Response) => {
-    try {
-      res.json({ success: true, message: "VAS injected from Service Department" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to create VAS entry" });
-    }
+  app.post("/api/service/vas", async (_req: Request, res: Response) => {
+    res.status(501).json({ error: "Service→VAS bridge is not implemented. Create the VAS entry via the VAS module." });
   });
 
-  app.post("/api/service/bv", async (req: Request, res: Response) => {
-    try {
-      res.json({ success: true, message: "BV injected from Service Department" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to create BV entry" });
-    }
+  app.post("/api/service/bv", async (_req: Request, res: Response) => {
+    res.status(501).json({ error: "Service→BV bridge is not implemented. Create the BV entry via the BV module." });
   });
 }

@@ -7,8 +7,10 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { exportToCSV, exportToPDF } from "@/lib/export-utils";
 
 export default function ServicePrivatePool() {
+    const { toast } = useToast();
     const [searchCustomer, setSearchCustomer] = useState("");
     const [teamCustomer, setTeamCustomer] = useState("");
     const [modalType, setModalType] = useState<string | null>(null);
@@ -285,6 +287,7 @@ function FollowupListView({
     setActiveTracingTab: (val: string | null) => void;
     setActiveCustomerAction: (val: string | number | null) => void;
 }) {
+    const { toast } = useToast();
     const [cols, setCols] = useState({
         id: { label: "#", visible: true },
         company: { label: "Company", visible: true },
@@ -300,36 +303,45 @@ function FollowupListView({
         action: { label: "Update Follow Up", visible: true },
     });
 
-    const mockData: any[] = [];
+    // This followup list does not yet have a backend data source wired in, so the
+    // export buttons operate on the real (currently empty) row set rather than a
+    // fabricated mock array. When the rows are wired in, replace displayData with
+    // the fetched items.
+    const displayData: any[] = [];
+
+    // Export columns derive from the visible, non-action columns; rows come from the
+    // real row set (displayData), never a mock array.
+    const exportColumns = () =>
+        Object.entries(cols)
+            .filter(([, c]) => c.visible && c.label !== "Update Follow Up")
+            .map(([key, c]) => ({ key, header: c.label }));
 
     const handleCopy = () => {
-        if (mockData.length === 0) {
-            alert("No data available to copy.");
+        if (!displayData.length) {
+            toast({ title: "No data available to copy.", variant: "destructive" });
             return;
         }
-        const headers = Object.values(cols).filter(c => c.visible && c.label !== "Update Follow Up").map(c => c.label).join('\t');
-        const text = headers + '\n' + mockData.map(d => Object.values(d).join('\t')).join('\n');
+        const columns = exportColumns();
+        const headers = columns.map(c => c.header).join('\t');
+        const text = headers + '\n' + displayData.map((d: any) => columns.map(c => d[c.key] ?? "").join('\t')).join('\n');
         navigator.clipboard.writeText(text);
-        alert("Copied to clipboard");
+        toast({ title: "Copied to clipboard" });
     };
 
     const handleExcel = () => {
-        if (mockData.length === 0) {
-            alert("No data available to export to Excel.");
+        if (!displayData.length) {
+            toast({ title: "No data available to export.", variant: "destructive" });
             return;
         }
-        const headers = Object.values(cols).filter(c => c.visible && c.label !== "Update Follow Up").map(c => c.label).join(',');
-        const csvContent = "data:text/csv;charset=utf-8," + headers + '\n' + mockData.map(e => Object.values(e).join(",")).join("\n");
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "followup_data.csv");
-        document.body.appendChild(link);
-        link.click();
+        exportToCSV(displayData, exportColumns(), "private-pool-followups");
     };
 
     const handlePDF = () => {
-        window.print();
+        if (!displayData.length) {
+            toast({ title: "No data available to export.", variant: "destructive" });
+            return;
+        }
+        exportToPDF(displayData, exportColumns(), "private-pool-followups");
     };
 
     return (
