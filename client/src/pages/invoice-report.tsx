@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getAuthHeader } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,7 +72,7 @@ export default function InvoiceReport() {
 
   const { data: reportData, isLoading } = useQuery<InvoiceReportResponse>({
     queryKey: ["/api/reports/invoice-entries", startDate, endDate, searchQuery, filterStatus, currentPage],
-    queryFn: () => fetch(`/api/reports/invoice-entries?${queryParams}`).then(r => r.json()),
+    queryFn: () => fetch(`/api/reports/invoice-entries?${queryParams}`, { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
   });
 
   const entries = reportData?.data || [];

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { getAuthHeader } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,10 +98,10 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
     const { data: productsData = [] } = useQuery<any[]>({
         queryKey: ["/api/products"],
         queryFn: async () => {
-            const res = await fetch("/api/sales/products"); // Adjust endpoint if needed
+            const res = await fetch("/api/sales/products", { headers: getAuthHeader(), credentials: "include" }); // Adjust endpoint if needed
             if (!res.ok) {
                 // Fallback or handle error
-                const res2 = await fetch("/api/products");
+                const res2 = await fetch("/api/products", { headers: getAuthHeader(), credentials: "include" });
                 if (!res2.ok) return [];
                 return await res2.json();
             }
@@ -203,8 +204,9 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
 
             const res = await fetch("/api/quotations", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
+                headers: { "Content-Type": "application/json", ...getAuthHeader() },
+                body: JSON.stringify(payload),
+                credentials: "include"
             });
 
             if (!res.ok) {

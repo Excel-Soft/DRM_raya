@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
+import { getAuthHeader } from "@/lib/queryClient";
 
 interface ChartDataRow {
   id: string;
@@ -34,7 +35,7 @@ export function ChartDataWidget({ period }: { period?: string }) {
             if (search) params.append("search", search);
             if (period) params.append("period", period);
             
-            const res = await fetch(`/api/dashboard/chart-data?${params.toString()}`);
+            const res = await fetch(`/api/dashboard/chart-data?${params.toString()}`, { headers: getAuthHeader(), credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch chart data");
             return res.json();
         }
