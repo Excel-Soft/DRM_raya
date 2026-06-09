@@ -13,6 +13,7 @@ async function ensureProjectsSchema() {
       add column if not exists owner_user_id uuid,
       add column if not exists created_by uuid,
       add column if not exists workspace text,
+      add column if not exists department_type text,
       add column if not exists status text default 'Active',
       add column if not exists start_date timestamptz,
       add column if not exists end_date timestamptz,
@@ -30,10 +31,45 @@ async function ensureProjectsSchema() {
           updated_at = coalesce(updated_at, now());
   `;
 
+  // One-time backfill of the structured routing department for existing rows.
+  // Resolution order mirrors resolveWorkflowRouting: a software_workflows row is
+  // a structural SOFTWARE signal; otherwise DND vs PRODUCT_POSTING is split by
+  // the same free-text hints (this is the *only* sanctioned place to guess from
+  // names — once stored, routing reads the column instead of re-guessing).
+  const backfillSql = `
+    update drm.projects p set department_type = 'SOFTWARE'
+      where p.department_type is null
+        and exists (select 1 from drm.software_workflows sw where sw.project_id = p.id);
+
+    update drm.projects p set department_type = 'DND'
+      where p.department_type is null
+        and (
+          lower(coalesce(p.name, '')) ~ '(minisite|mini site|listing|alibaba)'
+          or exists (
+            select 1 from drm.product_posting_invoices i
+            where i.id = p.invoice_id
+              and lower(coalesce(i.project_name, '')) ~ '(minisite|mini site|listing|alibaba)'
+          )
+        );
+
+    update drm.projects p set department_type = 'PRODUCT_POSTING'
+      where p.department_type is null
+        and (
+          exists (select 1 from drm.product_posting_workflows pw where pw.project_id = p.id)
+          or p.invoice_id is not null
+        );
+  `;
+
   try {
     await pool.query(alterSql);
   } catch (err) {
     console.error("Failed to ensure projects schema (continuing):", err);
+  }
+
+  try {
+    await pool.query(backfillSql);
+  } catch (err) {
+    console.error("Failed to backfill project department_type (continuing):", err);
   }
 }
 
@@ -99,6 +135,7 @@ export class ProjectsRepository {
         invoiceId: projects.invoiceId,
         customerId: projects.customerId,
         workSpace: projects.workSpace,
+        departmentType: projects.departmentType,
         startDate: projects.startDate,
         endDate: projects.endDate,
         notes: projects.notes,
@@ -177,6 +214,7 @@ export class ProjectsRepository {
         invoiceId: projects.invoiceId,
         customerId: projects.customerId,
         workSpace: projects.workSpace,
+        departmentType: projects.departmentType,
         startDate: projects.startDate,
         endDate: projects.endDate,
         notes: projects.notes,

@@ -167,6 +167,9 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
         invoiceId: project.invoiceId,
         ownerUserId: assigneeId,
         status: 'Active',
+        // A software workflow's sub-project is structurally SOFTWARE — stored so
+        // downstream routing reads the column instead of guessing from names.
+        departmentType: (project as any).departmentType || "SOFTWARE",
         description: description || `Task assigned from ${project.name}`,
       } as any).returning();
       if (newProject) {

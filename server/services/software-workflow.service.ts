@@ -180,6 +180,18 @@ export async function getOrCreateSoftwareWorkflow(projectId: string) {
     } as any)
     .returning();
 
+  // Persist the structured routing department on the owning project so routing
+  // reads a stored value instead of guessing from names. A software workflow is
+  // structurally SOFTWARE. Best-effort and idempotent (only sets when unset).
+  try {
+    await pool.query(
+      `update drm.projects set department_type = 'SOFTWARE' where id = $1 and department_type is null`,
+      [projectId],
+    );
+  } catch (err) {
+    console.error("[software-workflow] failed to persist project department_type", err);
+  }
+
   return created;
 }
 
