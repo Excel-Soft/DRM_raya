@@ -10,6 +10,7 @@ import {
     getWorkflowQueueForManager,
     transitionWorkflowByProject,
 } from "../services/product-posting-workflow.service";
+import { mapWorkflowError } from "../services/workflow-transition.service";
 
 export const projectDocRouter = Router();
 
@@ -190,6 +191,8 @@ projectDocRouter.post("/:id/documents", async (req, res) => {
             nextPhase,
             actorUserId: userId,
             action: "DOCUMENT_UPLOADED",
+            actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+            enforceContent: true,
             patch: {
                 salespersonUploadedAt: new Date(),
             }
@@ -198,6 +201,7 @@ projectDocRouter.post("/:id/documents", async (req, res) => {
         res.json({ success: true, data: newDoc });
     } catch (error) {
         console.error("Doc upload error:", error);
+        if (mapWorkflowError(res, error)) return;
         res.status(500).json({ success: false, error: "Failed to upload document", details: (error as any)?.message });
     }
 });
@@ -208,6 +212,16 @@ projectDocRouter.put("/documents/:docId/verify", requireRole("product_posting_ma
         const { docId } = req.params;
         const { action, reason } = req.body; // action: "APPROVE" | "REJECT"
         const userId = req.user!.userId;
+
+        // Content guard mirrors the central DOCUMENT_REJECTED reason rule, run
+        // BEFORE any write so a content rejection never leaves a partial update.
+        if (action !== "APPROVE" && (!reason || !String(reason).trim())) {
+            return res.status(400).json({
+                success: false,
+                error: "A reason is required to reject a document.",
+                code: "WORKFLOW_REASON_REQUIRED",
+            });
+        }
 
         console.log(`[ProjectDoc] VERIFY - docId: ${docId}, action: ${action}, user: ${userId}`);
 
@@ -221,19 +235,17 @@ projectDocRouter.put("/documents/:docId/verify", requireRole("product_posting_ma
 
         const newStatus = action === "APPROVE" ? "APPROVED" : "REJECTED";
 
-        const [updatedDoc] = await db
-            .update(projectDocuments)
-            .set({ status: newStatus as any })
-            .where(eq(projectDocuments.id, docId))
-            .returning();
-
-        await ActivityLogService.log({
-            userId,
-            action: newStatus,
-            resourceType: "ProjectDocument",
-            resourceId: doc.id,
-            details: `Document verified. Reason: ${reason || 'N/A'}`
-        });
+        // The document status flip runs INSIDE the transition's transaction (via
+        // this callback) so a rejected transition leaves the document untouched.
+        let updatedDoc: any;
+        const applyDocStatus = async (tx: any) => {
+            const [row] = await tx
+                .update(projectDocuments)
+                .set({ status: newStatus as any })
+                .where(eq(projectDocuments.id, docId))
+                .returning();
+            updatedDoc = row;
+        };
 
         if (newStatus === "REJECTED") {
             await transitionWorkflowByProject({
@@ -241,7 +253,10 @@ projectDocRouter.put("/documents/:docId/verify", requireRole("product_posting_ma
                 nextPhase: "PENDING_PROJECT",
                 actorUserId: userId,
                 action: "DOCUMENT_REJECTED",
+                actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+                enforceContent: true,
                 remarks: reason,
+                applyWithinTx: applyDocStatus,
             });
             // Notify uploader
             await NotificationService.notify({
@@ -265,10 +280,13 @@ projectDocRouter.put("/documents/:docId/verify", requireRole("product_posting_ma
                 nextPhase: "PROJECT_OVERVIEW",
                 actorUserId: userId,
                 action: "DATA_VERIFIED",
+                actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+                enforceContent: true,
                 patch: {
                     dataVerifiedAt: new Date(),
                     managerUserId: userId,
-                }
+                },
+                applyWithinTx: applyDocStatus,
             });
             await NotificationService.notify({
                 userId: doc.uploadedByUserId,
@@ -283,8 +301,19 @@ projectDocRouter.put("/documents/:docId/verify", requireRole("product_posting_ma
             });
         }
 
+        // Logged only after a successful transition + status write so a rejected
+        // transition never records a status change that did not happen.
+        await ActivityLogService.log({
+            userId,
+            action: newStatus,
+            resourceType: "ProjectDocument",
+            resourceId: doc.id,
+            details: `Document verified. Reason: ${reason || 'N/A'}`
+        });
+
         res.json({ success: true, data: updatedDoc });
     } catch (error) {
+        if (mapWorkflowError(res, error)) return;
         res.status(500).json({ success: false, error: "Failed to verify document" });
     }
 });

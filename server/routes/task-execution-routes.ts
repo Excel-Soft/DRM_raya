@@ -10,6 +10,7 @@ import {
     getTaskSpentMinutes,
     transitionWorkflowByTask,
 } from "../services/product-posting-workflow.service";
+import { mapWorkflowError, validateExtensionRequestInput } from "../services/workflow-transition.service";
 
 export const taskExecutionRouter = Router();
 
@@ -90,16 +91,19 @@ taskExecutionRouter.post("/:id/timers/start", requireRole("product_posting_execu
             return res.json({ success: true, message: "Timer restarted" });
         }
 
-        await db.update(tasks)
-            .set({ timerStartedAt: new Date(), status: "InProgress" })
-            .where(eq(tasks.id, id));
-
         await transitionWorkflowByTask({
             taskId: id,
             nextPhase: "RUNNING_PROJECT",
             actorUserId: userId,
             action: "TIMER_STARTED",
-            patch: { executionStartedAt: new Date() }
+            actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+            enforceContent: true,
+            patch: { executionStartedAt: new Date() },
+            applyWithinTx: async (tx) => {
+                await tx.update(tasks)
+                    .set({ timerStartedAt: new Date(), status: "InProgress" })
+                    .where(eq(tasks.id, id));
+            },
         });
 
         await ActivityLogService.log({
@@ -111,6 +115,7 @@ taskExecutionRouter.post("/:id/timers/start", requireRole("product_posting_execu
 
         res.json({ success: true, message: "Timer started" });
     } catch (error) {
+        if (mapWorkflowError(res, error)) return;
         res.status(500).json({ success: false, error: "Failed to start timer" });
     }
 });
@@ -175,24 +180,67 @@ taskExecutionRouter.post("/:id/extensions", requireRole("product_posting_executi
         const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
         if (!task) return res.status(404).json({ success: false, error: "Task not found" });
 
-        // Insert extension request
-        const [ext] = await db.insert(taskTimeExtensions).values({
-            taskId: id,
-            requestedTimeMinutes,
-            reason,
-            status: "PENDING"
-        }).returning();
+        // Ownership: only the assigned executive may request an extension on a
+        // task. Admins are exempted. A non-owner is rejected with 403 BEFORE any
+        // write.
+        const isAdmin =
+            (req.user!.roles || []).includes("admin") || req.user!.roleId === "admin";
+        const ownershipSatisfied = task.assignedToUserId === userId || isAdmin;
+        if (!ownershipSatisfied) {
+            return res.status(403).json({
+                success: false,
+                error: "You are not assigned to this task.",
+                code: "WORKFLOW_OWNERSHIP_FORBIDDEN",
+            });
+        }
 
+        // Business validation of the payload — reject (400) before any write so a
+        // bad request creates no row.
+        const inputError = validateExtensionRequestInput({ requestedTimeMinutes, reason });
+        if (inputError) {
+            return res
+                .status(inputError.status)
+                .json({ success: false, error: inputError.message, code: inputError.code });
+        }
+
+        // Prevent stacking: only one pending extension request per task at a time.
+        const [pendingExtension] = await db
+            .select()
+            .from(taskTimeExtensions)
+            .where(and(eq(taskTimeExtensions.taskId, id), eq(taskTimeExtensions.status, "PENDING")));
+        if (pendingExtension) {
+            return res.status(400).json({
+                success: false,
+                error: "A pending extension request already exists for this task.",
+                code: "EXTENSION_DUPLICATE_PENDING",
+            });
+        }
+
+        // The extension insert runs INSIDE the transition's transaction so a
+        // rejected transition (ownership 403 / illegal state) leaves no row.
+        let ext: any;
         await transitionWorkflowByTask({
             taskId: id,
             nextPhase: "RUNNING_PROJECT",
             actorUserId: userId,
             action: "EXTENSION_REQUESTED",
+            actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+            ownershipSatisfied,
+            enforceContent: true,
             remarks: reason,
             patch: {
                 overtimeRequestedMinutes: Number(requestedTimeMinutes) || 0,
                 overtimeReason: reason,
-            }
+            },
+            applyWithinTx: async (tx) => {
+                const [row] = await tx.insert(taskTimeExtensions).values({
+                    taskId: id,
+                    requestedTimeMinutes,
+                    reason,
+                    status: "PENDING"
+                }).returning();
+                ext = row;
+            },
         });
 
         await NotificationService.notify({
@@ -210,6 +258,7 @@ taskExecutionRouter.post("/:id/extensions", requireRole("product_posting_executi
 
         res.json({ success: true, data: ext });
     } catch (error) {
+        if (mapWorkflowError(res, error)) return;
         res.status(500).json({ success: false, error: "Failed to request extension" });
     }
 });
@@ -228,34 +277,51 @@ taskExecutionRouter.post("/:id/complete", requireRole("product_posting_executive
             return res.status(400).json({ success: false, error: "Cannot complete task while timer is running!" });
         }
 
-        const totalDurationMinutes = await getTaskSpentMinutes(id);
+        // Content guard mirrors the central EXECUTIVE_SUBMITTED evidence rule, run
+        // BEFORE any write so a content rejection never leaves a partial result.
+        if ((Number(linksPosted) || 0) < 1) {
+            return res.status(400).json({
+                success: false,
+                error: "At least one evidence link is required to submit this task.",
+                code: "WORKFLOW_EVIDENCE_REQUIRED",
+            });
+        }
 
-        await db.insert(taskResults).values({
-            taskId: id,
-            linksPosted: linksPosted || 0,
-            totalDurationMinutes
-        }).onConflictDoUpdate({
-            target: taskResults.taskId,
-            set: {
-                linksPosted: linksPosted || 0,
-                totalDurationMinutes,
-                updatedAt: new Date(),
-            }
-        });
+        const totalDurationMinutes = await getTaskSpentMinutes(id);
 
         // Save outputNotes directly on task notes field so frontend can display submitted links
         const notesUpdate: any = { status: "InProgress" as any };
         if (outputNotes) notesUpdate.notes = outputNotes;
-        await db.update(tasks).set(notesUpdate).where(eq(tasks.id, id));
 
+        // The taskResults upsert + task notes write run INSIDE the transition's
+        // transaction so an ownership 403 (wrong executive) or content 400 leaves
+        // no partial result row.
         await transitionWorkflowByTask({
             taskId: id,
             nextPhase: "RUNNING_PROJECT",
             actorUserId: userId,
             action: "EXECUTIVE_SUBMITTED",
+            actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+            evidenceCount: Number(linksPosted) || 0,
+            enforceContent: true,
             patch: {
                 executiveSubmittedAt: new Date(),
                 outputNotes: outputNotes || null,
+            },
+            applyWithinTx: async (tx) => {
+                await tx.insert(taskResults).values({
+                    taskId: id,
+                    linksPosted: linksPosted || 0,
+                    totalDurationMinutes
+                }).onConflictDoUpdate({
+                    target: taskResults.taskId,
+                    set: {
+                        linksPosted: linksPosted || 0,
+                        totalDurationMinutes,
+                        updatedAt: new Date(),
+                    }
+                });
+                await tx.update(tasks).set(notesUpdate).where(eq(tasks.id, id));
             }
         });
 
@@ -276,6 +342,7 @@ taskExecutionRouter.post("/:id/complete", requireRole("product_posting_executive
         res.json({ success: true, message: "Task submitted to manager review" });
     } catch (error) {
         console.error("Task Complete Error:", error);
+        if (mapWorkflowError(res, error)) return;
         res.status(500).json({ success: false, error: (error as Error).message || "Failed to complete task" });
     }
 });

@@ -17,6 +17,10 @@ import {
   productPostingInvoices,
 } from "../../shared/schema";
 import { db, pool } from "../db";
+import {
+  assertWorkflowTransition,
+  maybeEscalateRework,
+} from "./workflow-transition.service";
 
 const DEFAULT_PHASES = PRODUCT_POSTING_PHASE_KEYS.map((phaseKey, index) => ({
   phaseKey,
@@ -179,17 +183,23 @@ export async function getOrCreateProductPostingWorkflow(projectId: string) {
   return created;
 }
 
-export async function appendWorkflowHistory(input: {
-  workflowId: string;
-  fromPhase?: string | null;
-  toPhase: string;
-  action: string;
-  remarks?: string | null;
-  actorUserId: string;
-  metadata?: Record<string, unknown>;
-}) {
-  await ensureProductPostingWorkflowInfrastructure();
-  await db.insert(productPostingReworkHistory).values({
+export async function appendWorkflowHistory(
+  input: {
+    workflowId: string;
+    fromPhase?: string | null;
+    toPhase: string;
+    action: string;
+    remarks?: string | null;
+    actorUserId: string;
+    metadata?: Record<string, unknown>;
+  },
+  executor?: { insert: typeof db.insert },
+) {
+  // When running inside a transaction the infrastructure is already ensured by
+  // the caller (getOrCreate*Workflow); only ensure on the standalone path.
+  if (!executor) await ensureProductPostingWorkflowInfrastructure();
+  const exec = executor ?? db;
+  await exec.insert(productPostingReworkHistory).values({
     workflowId: input.workflowId,
     fromPhase: input.fromPhase ?? null,
     toPhase: input.toPhase,
@@ -200,6 +210,29 @@ export async function appendWorkflowHistory(input: {
   } as any);
 }
 
+/**
+ * Bridge the executor's return-count patch to the centralized rework escalation.
+ * Only QA/Verification returns carry a `returnCount` patch; others are no-ops.
+ */
+async function escalateReworkIfNeeded(
+  module: "product-posting" | "software",
+  workflowId: string,
+  input: { action: string; patch?: Record<string, unknown>; actorUserId: string; remarks?: string | null; projectId?: string; taskId?: string },
+) {
+  const isReturn = input.action === "QA_RETURNED" || input.action === "VERIFICATION_RETURNED";
+  const returnCount = Number((input.patch as any)?.returnCount);
+  if (!isReturn || !Number.isFinite(returnCount)) return;
+  await maybeEscalateRework({
+    module,
+    workflowId,
+    taskId: input.taskId ?? null,
+    projectId: input.projectId ?? null,
+    returnCount,
+    actorUserId: input.actorUserId,
+    reason: input.remarks ?? null,
+  });
+}
+
 export async function transitionWorkflowByProject(input: {
   projectId: string;
   nextPhase: string;
@@ -207,36 +240,75 @@ export async function transitionWorkflowByProject(input: {
   action: string;
   remarks?: string | null;
   patch?: Record<string, unknown>;
+  actorRole?: string | null;
+  actorRoles?: readonly string[] | null;
+  ownershipSatisfied?: boolean;
+  evidenceCount?: number;
+  enforceContent?: boolean;
+  override?: boolean;
+  applyWithinTx?: (tx: any) => Promise<void>;
 }) {
   const workflow = await getOrCreateProductPostingWorkflow(input.projectId);
 
-  const [updated] = await db
-    .update(productPostingWorkflows)
-    .set({
-      currentPhase: input.nextPhase,
-      updatedAt: new Date(),
-      ...(input.patch || {}),
-    } as any)
-    .where(eq(productPostingWorkflows.id, workflow.id))
-    .returning();
-
-  // If we are moving to DATA_VERIFY or PENDING_PROJECT (docs uploaded), mark project as Active
-  if (['DATA_VERIFY', 'PENDING_PROJECT', 'RUNNING_PROJECT'].includes(input.nextPhase)) {
-    await db
-      .update(projects)
-      .set({ status: 'Active', updatedAt: new Date() })
-      .where(eq(projects.id, input.projectId));
-  }
-
-  await appendWorkflowHistory({
-    workflowId: workflow.id,
-    fromPhase: workflow.currentPhase,
-    toPhase: input.nextPhase,
+  // Centralized guard — throws WorkflowTransitionError (400/403) before any write.
+  assertWorkflowTransition({
+    from: workflow.currentPhase,
+    to: input.nextPhase,
     action: input.action,
-    remarks: input.remarks,
-    actorUserId: input.actorUserId,
-    metadata: input.patch,
+    actorRole: input.actorRole,
+    actorRoles: input.actorRoles,
+    ownershipSatisfied:
+      input.ownershipSatisfied ??
+      (input.action === "EXECUTIVE_SUBMITTED"
+        ? !(workflow as any).executiveUserId ||
+          (workflow as any).executiveUserId === input.actorUserId
+        : undefined),
+    reason: input.remarks,
+    evidenceCount: input.evidenceCount,
+    enforceContent: input.enforceContent,
+    override: input.override,
   });
+
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(productPostingWorkflows)
+      .set({
+        currentPhase: input.nextPhase,
+        updatedAt: new Date(),
+        ...(input.patch || {}),
+      } as any)
+      .where(eq(productPostingWorkflows.id, workflow.id))
+      .returning();
+
+    // Moving to DATA_VERIFY / PENDING_PROJECT / RUNNING_PROJECT marks project Active.
+    if (['DATA_VERIFY', 'PENDING_PROJECT', 'RUNNING_PROJECT'].includes(input.nextPhase)) {
+      await tx
+        .update(projects)
+        .set({ status: 'Active', updatedAt: new Date() })
+        .where(eq(projects.id, input.projectId));
+    }
+
+    await appendWorkflowHistory(
+      {
+        workflowId: workflow.id,
+        fromPhase: workflow.currentPhase,
+        toPhase: input.nextPhase,
+        action: input.action,
+        remarks: input.remarks,
+        actorUserId: input.actorUserId,
+        metadata: input.patch,
+      },
+      tx,
+    );
+
+    // Run the caller's related-record writes inside the SAME transaction so a
+    // rejected/failed transition leaves no partial update (atomic with history).
+    if (input.applyWithinTx) await input.applyWithinTx(tx);
+
+    return row;
+  });
+
+  await escalateReworkIfNeeded("product-posting", workflow.id, input);
 
   return updated;
 }
@@ -248,6 +320,13 @@ export async function transitionWorkflowByTask(input: {
   action: string;
   remarks?: string | null;
   patch?: Record<string, unknown>;
+  actorRole?: string | null;
+  actorRoles?: readonly string[] | null;
+  ownershipSatisfied?: boolean;
+  evidenceCount?: number;
+  enforceContent?: boolean;
+  override?: boolean;
+  applyWithinTx?: (tx: any) => Promise<void>;
 }) {
   await ensureProductPostingWorkflowInfrastructure();
   const [workflow] = await db
@@ -259,25 +338,57 @@ export async function transitionWorkflowByTask(input: {
     throw new Error("Workflow not found for task");
   }
 
-  const [updated] = await db
-    .update(productPostingWorkflows)
-    .set({
-      currentPhase: input.nextPhase,
-      updatedAt: new Date(),
-      ...(input.patch || {}),
-    } as any)
-    .where(eq(productPostingWorkflows.id, workflow.id))
-    .returning();
-
-  await appendWorkflowHistory({
-    workflowId: workflow.id,
-    fromPhase: workflow.currentPhase,
-    toPhase: input.nextPhase,
+  // Centralized guard — throws WorkflowTransitionError (400/403) before any write.
+  assertWorkflowTransition({
+    from: workflow.currentPhase,
+    to: input.nextPhase,
     action: input.action,
-    remarks: input.remarks,
-    actorUserId: input.actorUserId,
-    metadata: input.patch,
+    actorRole: input.actorRole,
+    actorRoles: input.actorRoles,
+    ownershipSatisfied:
+      input.ownershipSatisfied ??
+      (input.action === "EXECUTIVE_SUBMITTED"
+        ? !(workflow as any).executiveUserId ||
+          (workflow as any).executiveUserId === input.actorUserId
+        : undefined),
+    reason: input.remarks,
+    evidenceCount: input.evidenceCount,
+    enforceContent: input.enforceContent,
+    override: input.override,
   });
+
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(productPostingWorkflows)
+      .set({
+        currentPhase: input.nextPhase,
+        updatedAt: new Date(),
+        ...(input.patch || {}),
+      } as any)
+      .where(eq(productPostingWorkflows.id, workflow.id))
+      .returning();
+
+    await appendWorkflowHistory(
+      {
+        workflowId: workflow.id,
+        fromPhase: workflow.currentPhase,
+        toPhase: input.nextPhase,
+        action: input.action,
+        remarks: input.remarks,
+        actorUserId: input.actorUserId,
+        metadata: input.patch,
+      },
+      tx,
+    );
+
+    // Run the caller's related-record writes inside the SAME transaction so a
+    // rejected/failed transition leaves no partial update (atomic with history).
+    if (input.applyWithinTx) await input.applyWithinTx(tx);
+
+    return row;
+  });
+
+  await escalateReworkIfNeeded("product-posting", workflow.id, { ...input, taskId: input.taskId });
 
   return updated;
 }
