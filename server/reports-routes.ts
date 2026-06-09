@@ -1,7 +1,8 @@
 import { Router, type Express } from "express";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { normalizeRole } from "./utils/role-utils";
-import { db } from "./db";
+import { db, pool } from "./db";
+import { mapToCanonical } from "./utils/gm-bv-state-machine";
 import { z } from "zod";
 import {
   loanRequests,
@@ -37,6 +38,137 @@ import { isManagerialRole } from "./utils/role-utils";
 import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound } from "./utils/api-error";
 
 const router = Router();
+
+// ===== Stage 8 — GM/BV financial reconciliation (read-only) =====
+// The GM model has no shared customer_id FK across gm_entries / invoices /
+// refund_gm_entries, so the reliable join key is the NORMALIZED company name.
+// Honest by design: when a source has no matching financial records the figures
+// are 0, never fabricated.
+const reconNorm = (s: string) =>
+  `regexp_replace(lower(coalesce(${s}, '')), '[^a-z0-9]', '', 'g')`;
+
+router.get("/reports/gm-bv-reconciliation", async (req, res) => {
+  try {
+    if (!(req as any).user) return res.status(401).json({ error: "Not authenticated" });
+
+    const where: string[] = ["coalesce(g.is_deleted, false) = false"];
+    const params: any[] = [];
+    const add = (clause: string, val: any) => {
+      params.push(val);
+      where.push(clause.replace("$$", `$${params.length}`));
+    };
+
+    if (req.query.dateFrom) add("g.created_at >= $$", new Date(String(req.query.dateFrom)));
+    if (req.query.dateTo) add("g.created_at <= $$", new Date(String(req.query.dateTo)));
+    if (req.query.userId) add("g.sales_person_id::text = $$::text", String(req.query.userId));
+    if (req.query.customer)
+      add(
+        `${reconNorm("g.company_name")} like $$`,
+        `%${String(req.query.customer).toLowerCase().replace(/[^a-z0-9]/g, "")}%`,
+      );
+    if (req.query.status) add("g.status = $$", String(req.query.status));
+    if (req.query.department) add("u.department = $$", String(req.query.department));
+
+    const reconSql = `
+      with gm as (
+        select g.*, u.department as sales_department, u.name as sales_user_name
+          from drm.gm_entries g
+          left join drm.users u on u.id::text = g.sales_person_id::text
+         where ${where.join(" and ")}
+         order by g.created_at desc
+         limit 1000
+      ),
+      inv as (
+        select ${reconNorm("customer_name")} as ckey,
+               sum(coalesce(total,0)::numeric) as invoiced,
+               sum(case when status = 'Paid' then coalesce(total,0)::numeric else 0 end) as received
+          from drm.invoices
+         group by ${reconNorm("customer_name")}
+      ),
+      led as (
+        select reference_id,
+               sum(coalesce(amount,0)::numeric) as ledger_amount
+          from drm.ledger_entries
+         where reference_type = 'gm_entry'
+         group by reference_id
+      ),
+      ref as (
+        select ${reconNorm("company_name")} as ckey,
+               sum(coalesce(amount,0)::numeric) as refunded
+          from drm.refund_gm_entries
+         where status = 'approved'
+         group by ${reconNorm("company_name")}
+      )
+      select gm.id, gm.drm_id, gm.order_id, gm.company_name, gm.status,
+             gm.approval_status, gm.withdrawal_status, gm.account_manager_status,
+             gm.sales_person_name, gm.sales_user_name, gm.sales_department,
+             gm.created_at,
+             coalesce(gm.amount_pkr, 0)::numeric as gm_amount_pkr,
+             coalesce(gm.amount_usd, 0)::numeric as gm_amount_usd,
+             coalesce(inv.invoiced, 0)::numeric as invoiced,
+             coalesce(inv.received, 0)::numeric as received,
+             coalesce(led.ledger_amount, 0)::numeric as ledger_amount,
+             coalesce(ref.refunded, 0)::numeric as refunded
+        from gm
+        left join inv on inv.ckey = ${reconNorm("gm.company_name")}
+        left join led on led.reference_id = gm.id
+        left join ref on ref.ckey = ${reconNorm("gm.company_name")}
+    `;
+
+    const { rows } = await pool.query(reconSql, params);
+    const EPS = 0.01;
+    const items = rows.map((r: any) => {
+      const gmAmount = Number(r.gm_amount_pkr) || 0;
+      const invoiced = Number(r.invoiced) || 0;
+      const received = Number(r.received) || 0;
+      const ledger = Number(r.ledger_amount) || 0;
+      const refunded = Number(r.refunded) || 0;
+      const due = Math.max(0, invoiced - received);
+      const canonical = mapToCanonical(r);
+      const flags: string[] = [];
+      if (invoiced > 0 && Math.abs(gmAmount - invoiced) > EPS) flags.push("gm_vs_invoice_mismatch");
+      if (Math.abs(invoiced - (received + due)) > EPS) flags.push("invoice_balance_mismatch");
+      if (ledger > 0 && Math.abs(ledger - received) > EPS) flags.push("ledger_vs_received_mismatch");
+      if (refunded > received + EPS) flags.push("refund_exceeds_received");
+      return {
+        gmId: r.id,
+        drmId: r.drm_id,
+        projectLink: r.order_id || null,
+        customer: r.company_name,
+        salesPerson: r.sales_user_name || r.sales_person_name,
+        department: r.sales_department,
+        status: r.status,
+        canonicalStatus: canonical,
+        createdAt: r.created_at,
+        gmAmount,
+        gmAmountUsd: Number(r.gm_amount_usd) || 0,
+        invoicedAmount: invoiced,
+        receivedAmount: received,
+        dueAmount: due,
+        ledgerAmount: ledger,
+        refundAmount: refunded,
+        mismatchFlags: flags,
+        hasMismatch: flags.length > 0,
+      };
+    });
+
+    const totals = items.reduce(
+      (acc: any, i: any) => {
+        acc.gm += i.gmAmount; acc.invoiced += i.invoicedAmount;
+        acc.received += i.receivedAmount; acc.due += i.dueAmount;
+        acc.ledger += i.ledgerAmount; acc.refund += i.refundAmount;
+        if (i.hasMismatch) acc.mismatches += 1;
+        return acc;
+      },
+      { gm: 0, invoiced: 0, received: 0, due: 0, ledger: 0, refund: 0, mismatches: 0 },
+    );
+
+    res.json({ success: true, matchBasis: "normalized_company_name", count: items.length, totals, items });
+  } catch (error: any) {
+    console.error("Error in gm-bv-reconciliation:", error);
+    res.status(500).json({ error: "Failed to build reconciliation report" });
+  }
+});
 
 type ReportType = "loan" | "vas" | "gm" | "bv";
 

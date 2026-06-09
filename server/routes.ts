@@ -66,6 +66,8 @@ import { productPostingWorkflowRouter } from "./routes/product-posting-workflow-
 import { softwareWorkflowRouter } from "./routes/software-workflow-routes";
 import { registerPostingDataRoutes } from "./posting-data-routes";
 import { registerLeadsImportRoutes } from "./leads-import-routes";
+import { registerCrmDuplicatesRoutes } from "./crm-duplicates-routes";
+import { registerLeadBulkRoutes } from "./lead-bulk-routes";
 import targetSystemRoutes from "./target-system-routes";
 import { registerPerformanceRoutes } from "./performance-routes";
 import { registerIncrementRoutes } from "./increment-routes";
@@ -360,6 +362,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/communications", communicationRouter);
   registerPostingDataRoutes(app);
   registerLeadsImportRoutes(app);
+  registerCrmDuplicatesRoutes(app);
+  registerLeadBulkRoutes(app);
   app.use("/api/target-system", targetSystemRoutes);
 
   // Performance System routes (protected, read-only) — mounted after auth middleware

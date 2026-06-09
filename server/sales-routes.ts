@@ -21,6 +21,9 @@ import crypto from "crypto";
 import { ensureBvReportsSchema } from "./repositories/bv-reports.repository";
 import { generateDrmId } from "./utils/drm-id-utils";
 import { isManagerialRole, normalizeRole } from "./utils/role-utils";
+import { assertCanEditCustomer } from "./utils/ownership";
+import { sendError, ApiError } from "./utils/api-error";
+import { recordAssignment, getAssignmentHistory } from "./utils/assignment-history";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 
 let customersSchemaEnsured = false;
@@ -3356,6 +3359,10 @@ export function registerSalesRoutes(app: Express) {
         talkTimeSeconds: req.body.talk_time_seconds ?? req.body.talkTimeSeconds,
       });
 
+      // Stage 8: a follow-up may only be logged on a lead/customer the caller owns
+      // (managers: their team; admin/super_admin: any). Throws 403/404.
+      await assertCanEditCustomer(req, parsed.customerId, "customer");
+
       const reservationNormalized = parsed.reservationType ? normalizeCode(parsed.reservationType) : undefined;
       let reservationValue: typeof reservationEnum._type | null = null;
       if (reservationNormalized) {
@@ -3633,6 +3640,7 @@ export function registerSalesRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Invalid follow-up request", details: error.errors });
       }
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error creating followup", error);
       res.status(500).json({ error: "Failed to create followup" });
     }
@@ -3710,6 +3718,7 @@ export function registerSalesRoutes(app: Express) {
         return res.status(400).json({ error: "Grade is required" });
       }
 
+      await assertCanEditCustomer(req, req.params.id, "customer");
       const customer = await customersRepository.updateGrade(req.params.id, grade);
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
@@ -3717,6 +3726,7 @@ export function registerSalesRoutes(app: Express) {
 
       res.json(customer);
     } catch (error) {
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating grade:", error);
       res.status(500).json({ error: "Failed to update grade" });
     }
@@ -3734,6 +3744,7 @@ export function registerSalesRoutes(app: Express) {
         return res.status(400).json({ error: "Note is required" });
       }
 
+      await assertCanEditCustomer(req, req.params.id, "customer");
       const customer = await customersRepository.updateNote(req.params.id, note);
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
@@ -3741,6 +3752,7 @@ export function registerSalesRoutes(app: Express) {
 
       res.json(customer);
     } catch (error) {
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating note:", error);
       res.status(500).json({ error: "Failed to update note" });
     }
@@ -3763,9 +3775,11 @@ export function registerSalesRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid stage" });
       }
 
+      await assertCanEditCustomer(req, req.params.id, "customer");
       await customersRepository.updateStage(req.params.id, req.user.userId, stage);
       res.json({ success: true });
     } catch (error) {
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating stage:", error);
       res.status(500).json({ error: "Failed to update stage" });
     }
@@ -4134,9 +4148,18 @@ export function registerSalesRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       await ensureCustomersSchema();
 
+      // Stage 8: ownership enforcement — executives may only edit their own
+      // leads; managers their team; admin/super_admin any. Throws 403/404.
+      await assertCanEditCustomer(req, req.params.id, "lead");
+
       const payload = updateLeadSchema.parse(req.body);
       if (Object.keys(payload).length === 0) {
         return res.status(400).json({ error: "No fields to update" });
+      }
+
+      // Stage 8: moving a lead to a contraction state requires a reason.
+      if (payload.status === "Expire" && !String((req.body as any)?.reason ?? "").trim()) {
+        return res.status(400).json({ error: "A reason is required to expire a lead" });
       }
 
       const updates: Record<string, unknown> = {};
@@ -4186,6 +4209,7 @@ export function registerSalesRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
+      if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating lead", error);
       return res.status(500).json({ error: "Failed to update lead" });
     }
@@ -4236,6 +4260,14 @@ export function registerSalesRoutes(app: Express) {
         note: reason,
         meta: { fromUserId, toUserId, reason, at: new Date().toISOString() } as any,
       });
+      await recordAssignment({
+        entityType: "lead",
+        entityId: req.params.id,
+        fromUserId,
+        toUserId,
+        reason,
+        req,
+      });
       return res.json(updated);
     } catch (error) {
       console.error(error);
@@ -4255,12 +4287,14 @@ export function registerSalesRoutes(app: Express) {
       const services = await leadServicesRepository.listByLead(req.params.id);
       const activities = await leadActivitiesRepository.listByCustomer(req.params.id);
       const lastContact = activities.find((a) => a.action === "call" || a.action === "whatsapp" || a.action === "email");
+      const assignmentHistory = await getAssignmentHistory("lead", req.params.id);
 
       return res.json({
         lead,
         services,
         lastContactAt: lastContact?.createdAt ?? null,
         phones: [lead.phone, (lead as any).mobile].filter(Boolean),
+        assignmentHistory,
       });
     } catch (error) {
       console.error("Error fetching lead profile", error);

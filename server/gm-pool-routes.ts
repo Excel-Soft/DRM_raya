@@ -652,9 +652,13 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { comment } = req.body;
+      // Stage 8: rejecting a GM entry requires a reason.
+      if (!String(comment ?? "").trim()) {
+        return res.status(400).json({ error: "A reason (comment) is required to reject a GM entry" });
+      }
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = 'rejected_by_hod', final_status = 'rejected', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod' RETURNING *`,
-        [id, req.user.userId, comment || 'Rejected by HOD']
+        [id, req.user.userId, comment]
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       res.json({ success: true, message: "Rejected by HOD", data: result.rows[0] });
@@ -713,9 +717,13 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { comment } = req.body;
+      // Stage 8: rejecting a GM entry requires a reason.
+      if (!String(comment ?? "").trim()) {
+        return res.status(400).json({ error: "A reason (comment) is required to reject a GM entry" });
+      }
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = 'rejected_by_account_manager', final_status = 'rejected', account_manager_status = 'rejected', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' RETURNING *`,
-        [id, req.user.userId, comment || 'Rejected by Account Manager']
+        [id, req.user.userId, comment]
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       res.json({ success: true, message: "Rejected by Account Manager", data: result.rows[0] });
@@ -995,6 +1003,10 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { reason } = req.body;
+      // Stage 8: a withdrawal request requires a reason.
+      if (!String(reason ?? "").trim()) {
+        return res.status(400).json({ error: "A reason is required to request a withdrawal" });
+      }
       const result = await pool.query(
         `UPDATE drm.gm_entries
          SET withdrawal_status = 'pending_hod',
