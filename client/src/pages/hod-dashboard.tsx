@@ -1209,7 +1209,7 @@ export default function HodDashboard() {
                                             if (!res.ok) throw new Error(d?.message || "Failed to approve");
                                             updateRequestsQuery.refetch();
                                           } catch (e: any) {
-                                            alert(e.message || "Error");
+                                            toast({ title: "Approve failed", description: e.message || "Error", variant: "destructive" });
                                           }
                                         }}
                                       >
@@ -1231,7 +1231,7 @@ export default function HodDashboard() {
                                             if (!res.ok) throw new Error(d?.message || "Failed to reject");
                                             updateRequestsQuery.refetch();
                                           } catch (e: any) {
-                                            alert(e.message || "Error");
+                                            toast({ title: "Reject failed", description: e.message || "Error", variant: "destructive" });
                                           }
                                         }}
                                       >

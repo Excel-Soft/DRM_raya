@@ -499,7 +499,7 @@ export default function ProductPostingDashboard() {
         },
         onSuccess: () => {
             refetchManagerQueue();
-            alert("Task moved to QA review.");
+            toast({ title: "Task moved to QA review." });
         }
     });
 
@@ -916,7 +916,7 @@ export default function ProductPostingDashboard() {
                                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold h-11 px-8 rounded-lg shadow-lg active:scale-95 text-[14px]"
                                 onClick={() => {
                                     if (!taskDetails.assigneeId || !taskDetails.title) {
-                                        alert("Please select a person and a task type.");
+                                        toast({ title: "Please select a person and a task type.", variant: "destructive" });
                                         return;
                                     }
                                     setConfirmAction("task");
@@ -1150,7 +1150,7 @@ export default function ProductPostingDashboard() {
                                         });
                                     } else if (confirmAction === "reject") {
                                         if (!rejectionReason.trim()) {
-                                            alert("Please enter a rejection reason.");
+                                            toast({ title: "Please enter a rejection reason.", variant: "destructive" });
                                             return;
                                         }
                                         verifyDocMutation.mutate({ 

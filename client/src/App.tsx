@@ -124,6 +124,7 @@ const ServiceExecutiveDashboard = lazy(() => import("@/pages/service-executive-d
 const ReceptionDashboard = lazy(() => import("@/pages/reception-dashboard"));
 const SuperAdminDashboard = lazy(() => import("@/pages/super-admin-dashboard"));
 const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
+const AuditLogsPage = lazy(() => import("@/pages/admin/audit-logs"));
 const ProductPostingDashboard = lazy(() => import("@/pages/product-posting-dashboard"));
 const QAManagerDashboard = lazy(() => import("@/pages/qa-manager-dashboard"));
 const VerificationManagerDashboard = lazy(() => import("@/pages/verification-manager-dashboard"));
@@ -371,6 +372,7 @@ function Router() {
       <Route path="/training" component={TrainingCenter} />
       <Route path="/super-admin" component={SuperAdminDashboard} />
       <Route path="/admin" component={AdminDashboard} />
+      <Route path="/admin/audit-logs" component={AuditLogsPage} />
       <Route path="/training/:category" component={TrainingCenter} />
       <Route path="/workspace" component={Workspace} />
       <Route path="/policies" component={PoliciesSettings} />
