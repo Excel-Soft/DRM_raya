@@ -459,6 +459,19 @@ export const productPostingInvoices = drmSchema.table("product_posting_invoices"
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   paymentMethod: varchar("payment_method"),
+  // --- Stage 3 invoice-workflow additive fields (all optional, no data loss) ---
+  currency: text("currency").default("USD"),
+  invoiceDate: timestamp("invoice_date", { withTimezone: true }),
+  paymentTerms: text("payment_terms"),
+  serviceType: text("service_type"),
+  servicePackage: text("service_package"),
+  sourceModule: text("source_module"),
+  sourceId: text("source_id"),
+  receiptReference: text("receipt_reference"),
+  paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }),
+  paidDate: timestamp("paid_date", { withTimezone: true }),
+  rejectionReason: text("rejection_reason"),
+  notes: text("notes"),
 });
 
 // Projects

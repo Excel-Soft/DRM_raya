@@ -6,8 +6,23 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { FileText, Plus, AlertCircle, Upload } from "lucide-react";
+
+/** Pull a clean message out of the `${status}: ${jsonBody}` error apiRequest throws. */
+function readApiError(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err);
+    const idx = raw.indexOf(":");
+    const body = idx >= 0 ? raw.slice(idx + 1).trim() : raw;
+    try {
+        const parsed = JSON.parse(body);
+        return parsed?.error?.message || parsed?.message || body;
+    } catch {
+        return body || "Something went wrong";
+    }
+}
 
 interface Invoice {
     id: string;
@@ -20,10 +35,12 @@ interface Invoice {
 
 export function ProductPostingSalesWidget() {
     const queryClient = useQueryClient();
+    const { toast } = useToast();
     const [isOpen, setIsOpen] = useState(false);
     const [amount, setAmount] = useState("");
     const [projectName, setProjectName] = useState("");
     const [companyName, setCompanyName] = useState("");
+    const [customerId, setCustomerId] = useState("");
     const [docUploadOpen, setDocUploadOpen] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState("");
     const [docUrl, setDocUrl] = useState("");
@@ -36,8 +53,17 @@ export function ProductPostingSalesWidget() {
         }
     });
 
+    const { data: customersData } = useQuery({
+        queryKey: ["/api/sales/customers", "invoice-widget"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/sales/customers?pageSize=5000");
+            return res.json();
+        }
+    });
+    const customers = (customersData as any)?.data || [];
+
     const createInvoiceMutation = useMutation({
-        mutationFn: async (data: { amount: string, projectName: string, companyName: string }) => {
+        mutationFn: async (data: { amount: string, projectName: string, companyName: string, customerId: string }) => {
             await apiRequest("POST", "/api/invoices", data);
         },
         onSuccess: () => {
@@ -46,6 +72,11 @@ export function ProductPostingSalesWidget() {
             setAmount("");
             setProjectName("");
             setCompanyName("");
+            setCustomerId("");
+            toast({ title: "Invoice created", description: "Submitted for HOD approval." });
+        },
+        onError: (err) => {
+            toast({ title: "Could not create invoice", description: readApiError(err), variant: "destructive" });
         }
     });
 
@@ -65,7 +96,10 @@ export function ProductPostingSalesWidget() {
         onSuccess: () => {
             setDocUploadOpen(false);
             setDocUrl("");
-            alert("Document uploaded successfully for review.");
+            toast({ title: "Document uploaded", description: "Submitted for review." });
+        },
+        onError: (err) => {
+            toast({ title: "Upload failed", description: readApiError(err), variant: "destructive" });
         }
     });
 
@@ -102,7 +136,22 @@ export function ProductPostingSalesWidget() {
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
                             <div className="space-y-2">
-                                <Label htmlFor="projectName">Project Name</Label>
+                                <Label htmlFor="customer">Customer</Label>
+                                <Select value={customerId} onValueChange={setCustomerId}>
+                                    <SelectTrigger id="customer">
+                                        <SelectValue placeholder="Select a customer" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {customers.map((c: any) => (
+                                            <SelectItem key={c.id} value={c.id}>
+                                                {c.companyName || c.name || c.contactName || `Customer ${String(c.id).substring(0, 6)}`}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="projectName">Project / Service Name</Label>
                                 <Input
                                     id="projectName"
                                     placeholder="e.g. SEO Campaign"
@@ -124,18 +173,21 @@ export function ProductPostingSalesWidget() {
                                 <Input
                                     id="amount"
                                     type="number"
-                                    placeholder="e.g. 0 for complimentary, or 500"
+                                    min="0.01"
+                                    step="0.01"
+                                    placeholder="e.g. 500"
                                     value={amount}
                                     onChange={(e) => setAmount(e.target.value)}
                                 />
                             </div>
                             <Button
-                                onClick={() => createInvoiceMutation.mutate({ 
-                                    amount: amount || "0", 
-                                    projectName: projectName, 
-                                    companyName: companyName 
+                                onClick={() => createInvoiceMutation.mutate({
+                                    amount: amount,
+                                    projectName: projectName,
+                                    companyName: companyName,
+                                    customerId: customerId,
                                 })}
-                                disabled={createInvoiceMutation.isPending}
+                                disabled={createInvoiceMutation.isPending || !customerId || !amount || !projectName.trim()}
                             >
                                 {createInvoiceMutation.isPending ? "Creating..." : "Submit Invoice"}
                             </Button>
@@ -184,7 +236,7 @@ export function ProductPostingSalesWidget() {
                                         onClick={() => {
                                             const projId = getProjectIdForInvoice(inv.id);
                                             if (!projId) {
-                                                alert("Project not ready yet. Please wait.");
+                                                toast({ title: "Project not ready yet", description: "Please wait for project creation to complete." });
                                                 return;
                                             }
                                             setSelectedProjectId(projId);

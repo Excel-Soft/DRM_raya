@@ -5,3 +5,4 @@
 - [opportunities vs customers id type mismatch](opportunities-customers-id-type-mismatch.md) — opportunities ids are varchar, customers.id is uuid; raw SQL joins/UNIONs need ::text casts or they 500.
 - [ripgrep -r mangles output](ripgrep-replace-pitfall.md) — `rg -rn` treats `-r` as --replace (rewrites matches to "n"); use plain `rg -n` or `grep -rn` to read real content.
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
+- [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
