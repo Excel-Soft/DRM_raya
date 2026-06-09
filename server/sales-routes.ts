@@ -1856,6 +1856,25 @@ export function registerSalesRoutes(app: Express) {
       if (result.rowCount === 0) {
         return res.status(404).json({ error: "Appointment not found" });
       }
+      const appt = result.rows[0];
+      const apptCustomerId = salesAsUuid(appt?.customer_id);
+      const apptEntityId = apptCustomerId ?? (appt?.customer_id != null ? String(appt.customer_id) : undefined);
+      if (apptEntityId) {
+        const nextAt = safeIso(req.body?.nextFollowupAt ?? req.body?.next_followup_at);
+        const APPT_OUTCOMES = new Set(["INTERESTED","NOT_INTERESTED","CALLBACK","NO_RESPONSE","CONVERTED","COMPLAINT","RENEWAL","RESOLVED","DROPOUT_RISK","OTHER"]);
+        const apptOutcome = String(req.body?.outcome ?? "").toUpperCase();
+        void CommunicationService.log({
+          entityType: "appointment",
+          entityId: apptEntityId,
+          customerId: apptCustomerId,
+          channel: "MEETING",
+          outcome: APPT_OUTCOMES.has(apptOutcome) ? apptOutcome : undefined,
+          notes: typeof req.body?.notes === "string" ? req.body.notes : (appt?.notes ?? undefined),
+          status: nextAt ? "PENDING" : "COMPLETED",
+          nextFollowupAt: nextAt,
+          relatedAppointmentId: String(appt?.id ?? id),
+        } as any, { userId: req.user.userId }, req);
+      }
       res.json(result.rows[0]);
     } catch (error) {
       console.error("Error ending appointment:", error);

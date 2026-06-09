@@ -84,7 +84,7 @@ alongside the original record; if logging fails, the host action still succeeds.
 
 Currently wired:
 - Sales: lead actions (`whatsapp`/`call`/`email`), lead follow-up action, lead
-  whatsapp action.
+  whatsapp action, and appointment end (logged as a `MEETING`).
 - Service: service follow-up create + complete, complaint create + resolve,
   dropout create, renewal create.
 
