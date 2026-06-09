@@ -7,8 +7,18 @@ import { pool } from "./db";
 import { sendError, errorEnvelope, badRequest, notFound, conflict } from "./utils/api-error";
 import { recordAuditLog } from "./services/activity-service";
 import { activeStatus } from "@shared/validators";
+import { requireActionPermission } from "./middleware/action-permission";
 
 const router = Router();
+
+// User management (create / edit / status / delete / groups / team / impersonate)
+// is an administrative action. Fail-closed: only admin / super_admin may invoke
+// these write routes, regardless of authentication. Read routes stay open to any
+// authenticated user (existing behaviour).
+const requireUserAdmin = requireActionPermission("user.manage", {
+    roles: ["admin"],
+    message: "You are not authorized to manage users.",
+});
 
 /** Strip secret-bearing fields before an update payload is written to the audit log. */
 function safeUserAudit(data: Record<string, any>): Record<string, any> {
@@ -127,7 +137,7 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // POST /api/users - Create user
-router.post("/", async (req: Request, res: Response) => {
+router.post("/", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const data = createUserSchema.parse(req.body);
         console.log(`[USER_MGMT] Attempting to create user: ${data.email}`);
@@ -290,7 +300,7 @@ router.get("/:id", async (req: Request, res: Response) => {
 });
 
 // PATCH /api/users/:id - Update user
-router.patch("/:id", async (req: Request, res: Response) => {
+router.patch("/:id", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const data = updateUserSchema.parse(req.body);
@@ -497,7 +507,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
 });
 
 // PATCH /api/users/:id/status
-router.patch("/:id/status", async (req: Request, res: Response) => {
+router.patch("/:id/status", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const parsedStatus = activeStatus.safeParse(req.body?.status);
@@ -532,7 +542,7 @@ router.patch("/:id/status", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/users/:id
-router.delete("/:id", async (req: Request, res: Response) => {
+router.delete("/:id", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const prev = await pool.query("select email, is_active from drm.users where id = $1 limit 1", [id]);
@@ -601,7 +611,7 @@ router.get("/groups", async (req: Request, res: Response) => {
 });
 
 // POST /api/users/groups
-router.post("/groups", async (req: Request, res: Response) => {
+router.post("/groups", requireUserAdmin, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
         const data = createGroupSchema.parse(req.body);
@@ -635,7 +645,7 @@ router.post("/groups", async (req: Request, res: Response) => {
 });
 
 // PATCH /api/users/groups/:id
-router.patch("/groups/:id", async (req: Request, res: Response) => {
+router.patch("/groups/:id", requireUserAdmin, async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
         const { id } = req.params;
@@ -674,7 +684,7 @@ router.patch("/groups/:id", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/users/groups/:id
-router.delete("/groups/:id", async (req: Request, res: Response) => {
+router.delete("/groups/:id", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         await pool.query("delete from drm.user_groups where id = $1", [id]);
@@ -710,7 +720,7 @@ router.get("/:id/team-members", async (req: Request, res: Response) => {
 });
 
 // POST /api/users/:id/team-members — add a member
-router.post("/:id/team-members", async (req: Request, res: Response) => {
+router.post("/:id/team-members", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const { memberId } = req.body;
@@ -730,7 +740,7 @@ router.post("/:id/team-members", async (req: Request, res: Response) => {
 });
 
 // DELETE /api/users/:id/team-members/:memberId — remove a member
-router.delete("/:id/team-members/:memberId", async (req: Request, res: Response) => {
+router.delete("/:id/team-members/:memberId", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id, memberId } = req.params;
         await pool.query(`
@@ -745,7 +755,7 @@ router.delete("/:id/team-members/:memberId", async (req: Request, res: Response)
 });
 
 // POST /api/users/:id/impersonate
-router.post("/:id/impersonate", async (req: Request, res: Response) => {
+router.post("/:id/impersonate", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const user = await usersRepository.findById(id);

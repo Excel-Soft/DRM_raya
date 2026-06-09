@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
 import type { Cheque } from "@shared/schema";
 
 function numberToWords(num: number): string {
@@ -47,7 +47,7 @@ export default function ChequeSystem() {
 
   const { data: cheques = [], isLoading } = useQuery<Cheque[]>({
     queryKey: ["/api/office/cheques"],
-    queryFn: () => fetch(`/api/office/cheques`).then((r) => r.json()),
+    queryFn: () => fetch(`/api/office/cheques`, { headers: getAuthHeader(), credentials: "include" }).then((r) => r.json()),
   });
 
   const createMutation = useMutation({

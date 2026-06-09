@@ -1,4 +1,5 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { getAuthHeader } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +37,7 @@ export default function DollarSystem() {
     const { data: fullData, isLoading } = useQuery({
         queryKey: ["/api/account/dollar-system/list"],
         queryFn: async () => {
-            const res = await fetch(`/api/account/dollar-system/list`);
+            const res = await fetch(`/api/account/dollar-system/list`, { headers: getAuthHeader(), credentials: "include" });
             if (!res.ok) throw new Error("Fetch failed");
             return res.json();
         }

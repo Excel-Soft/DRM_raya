@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { getAuthHeader } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -21,7 +22,7 @@ export default function BusinessCustomers() {
 
   const { data: customers = [], isLoading } = useQuery<BusinessCustomer[]>({
     queryKey: ["/api/office/business-customers"],
-    queryFn: () => fetch("/api/office/business-customers").then(r => r.json()),
+    queryFn: () => fetch("/api/office/business-customers", { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
   });
 
   // Filter local logic for visual mock matching

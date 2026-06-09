@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
 import { Trash2, FileSpreadsheet, FileText, ChevronDown } from "lucide-react";
 import { utils, writeFile } from "xlsx";
 import type { OfficeExpense } from "@shared/schema";
@@ -185,12 +185,12 @@ export default function OfficeExpenses() {
 
   const { data: expenses = [], isLoading } = useQuery<OfficeExpense[]>({
     queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), filterAccountingHead.join(",")],
-    queryFn: () => fetch(`/api/office/expenses?${queryParams}`).then(r => r.json()),
+    queryFn: () => fetch(`/api/office/expenses?${queryParams}`, { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
   });
 
   const { data: cheques = [] } = useQuery<any[]>({
     queryKey: ["/api/office/cheques"],
-    queryFn: () => fetch("/api/office/cheques").then(r => r.json()),
+    queryFn: () => fetch("/api/office/cheques", { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
   });
 
   const unusedCheques = (Array.isArray(cheques) ? cheques : []).filter((c: any) => 

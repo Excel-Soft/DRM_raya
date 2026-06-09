@@ -4,3 +4,4 @@
 - [Lead import duplicate enforcement](lead-import-duplicate-enforcement.md) — duplicate lookup must fail-closed (throw, never return []); commit must return {success:true}; override needs role+reason.
 - [opportunities vs customers id type mismatch](opportunities-customers-id-type-mismatch.md) — opportunities ids are varchar, customers.id is uuid; raw SQL joins/UNIONs need ::text casts or they 500.
 - [ripgrep -r mangles output](ripgrep-replace-pitfall.md) — `rg -rn` treats `-r` as --replace (rewrites matches to "n"); use plain `rg -n` or `grep -rn` to read real content.
+- [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.

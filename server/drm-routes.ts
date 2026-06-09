@@ -3,12 +3,24 @@ import { pool } from "./db";
 import { projectsRepository } from "./repositories/projects.repository";
 import { authMiddleware } from "./auth.middleware";
 import { normalizeRole } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
 
 const router = Router();
 const TABLE = "drm.menu_permissions";
 
+// drmRoutes is mounted BEFORE the global auth middleware, so auth must be applied
+// locally. Reading the menu-permission config requires an authenticated session;
+// mutating it (create / update / toggle / delete) is an admin-only RBAC action.
+const requirePermsAdmin = [
+    authMiddleware,
+    requireActionPermission("drm.permissions.manage", {
+        roles: ["admin"],
+        message: "You are not authorized to modify permissions.",
+    }),
+];
+
 // GET /api/drm/delay-projects
-router.get("/delay-projects", async (req, res) => {
+router.get("/delay-projects", authMiddleware, async (req, res) => {
     try {
         const projects = await projectsRepository.findDelayed();
         res.json({ success: true, data: projects });
@@ -19,7 +31,7 @@ router.get("/delay-projects", async (req, res) => {
 });
 
 // GET /api/drm/permissions
-router.get("/permissions", async (req, res) => {
+router.get("/permissions", authMiddleware, async (req, res) => {
     try {
         const client = await pool.connect();
         const result = await client.query(
@@ -67,7 +79,7 @@ router.get("/permissions/debug", authMiddleware, async (req, res) => {
 });
 
 // POST /api/drm/permissions
-router.post("/permissions", async (req, res) => {
+router.post("/permissions", ...requirePermsAdmin, async (req, res) => {
     try {
         const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = req.body;
         if (!name) return res.status(400).json({ message: "Name is required" });
@@ -101,7 +113,7 @@ router.post("/permissions", async (req, res) => {
 });
 
 // POST /api/drm/permissions/:id/sub-urls
-router.post("/permissions/:id/sub-urls", async (req, res) => {
+router.post("/permissions/:id/sub-urls", ...requirePermsAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { url } = req.body;
@@ -141,7 +153,7 @@ router.post("/permissions/:id/sub-urls", async (req, res) => {
 });
 
 // PUT /api/drm/permissions/:id/toggle
-router.put("/permissions/:id/toggle", async (req, res) => {
+router.put("/permissions/:id/toggle", ...requirePermsAdmin, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -173,7 +185,7 @@ router.put("/permissions/:id/toggle", async (req, res) => {
 });
 
 // PUT /api/drm/permissions/:id  (full update)
-router.put("/permissions/:id", async (req, res) => {
+router.put("/permissions/:id", ...requirePermsAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = req.body;
@@ -215,7 +227,7 @@ router.put("/permissions/:id", async (req, res) => {
 });
 
 // DELETE /api/drm/permissions/:id
-router.delete("/permissions/:id", async (req, res) => {
+router.delete("/permissions/:id", ...requirePermsAdmin, async (req, res) => {
     try {
         const { id } = req.params;
         const client = await pool.connect();
