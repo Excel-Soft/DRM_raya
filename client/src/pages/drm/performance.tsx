@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -123,7 +123,6 @@ export default function PerformancePage() {
   const [teamParams, setTeamParams] = useState<TeamParams | null>(null);
   const [teamPage, setTeamPage] = useState<number>(1);
   const [formError, setFormError] = useState<string>("");
-  const queryClient = useQueryClient();
 
   const { data: users = [] } = useQuery<UserOpt[]>({
     queryKey: ["/api/drm/performance/users"],
@@ -266,9 +265,8 @@ export default function PerformancePage() {
   const effectiveScore = summary ? (summary.normalizedFinalScore ?? summary.finalScore) : null;
   const records = summary?.records ?? [];
 
-  // Prefer the config that produced the displayed score; fall back to the live one.
+  // The scoring formula is fixed (40/30/20/10) and not configurable.
   const activeConfig = summary?.scoringConfig ?? scoringConfigQuery.data?.config ?? null;
-  const canEditConfig = scoringConfigQuery.data?.canEdit ?? false;
   const formulaText = activeConfig
     ? `${activeConfig.weights.workCompletion}% Work Completion + ${activeConfig.weights.quality}% Quality + ${activeConfig.weights.targetAchievement}% Target Achievement + ${activeConfig.weights.timeliness}% Timeliness`
     : "40% Work Completion + 30% Quality + 20% Target Achievement + 10% Timeliness";
@@ -349,16 +347,6 @@ export default function PerformancePage() {
         </CardContent>
       </Card>
 
-      {/* Admin: scoring configuration editor */}
-      {canEditConfig && scoringConfigQuery.data && (
-        <ScoringConfigEditor
-          initial={scoringConfigQuery.data.config}
-          onSaved={() => {
-            queryClient.invalidateQueries({ queryKey: ["/api/drm/performance/scoring-config"] });
-            queryClient.invalidateQueries({ queryKey: ["/api/drm/performance/summary"] });
-          }}
-        />
-      )}
 
       {/* States */}
       {mode === "individual" && !fetchParams && (
@@ -642,122 +630,6 @@ function CtxStat({ label, value }: { label: string; value: number }) {
       <div className="text-[20px] font-bold text-[#495057] dark:text-zinc-200">{value}</div>
       <div className="text-[12px] text-slate-400">{label}</div>
     </div>
-  );
-}
-
-function ScoringConfigEditor({ initial, onSaved }: { initial: ScoringConfig; onSaved: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [weights, setWeights] = useState(initial.weights);
-  const [penalties, setPenalties] = useState(initial.penalties);
-  const [error, setError] = useState<string>("");
-  const [savedMsg, setSavedMsg] = useState<string>("");
-
-  // Keep the form in sync if the server config changes (e.g. after a save).
-  useEffect(() => {
-    setWeights(initial.weights);
-    setPenalties(initial.penalties);
-  }, [initial]);
-
-  const weightSum = weights.workCompletion + weights.quality + weights.targetAchievement + weights.timeliness;
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("PUT", "/api/drm/performance/scoring-config", { weights, penalties });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.message || "Failed to save scoring configuration");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      setError("");
-      setSavedMsg("Scoring configuration saved.");
-      onSaved();
-      setTimeout(() => setSavedMsg(""), 4000);
-    },
-    onError: (e: Error) => {
-      setSavedMsg("");
-      setError(e.message);
-    },
-  });
-
-  const handleSave = () => {
-    setError("");
-    setSavedMsg("");
-    const values = [weights.workCompletion, weights.quality, weights.targetAchievement, weights.timeliness,
-      penalties.revision, penalties.return, penalties.rejected, penalties.complaint];
-    if (values.some((v) => !Number.isFinite(v) || v < 0)) {
-      setError("All values must be numbers greater than or equal to 0.");
-      return;
-    }
-    if (Math.round(weightSum * 10) / 10 !== 100) {
-      setError(`Component weights must sum to 100 (currently ${Math.round(weightSum * 10) / 10}).`);
-      return;
-    }
-    saveMutation.mutate();
-  };
-
-  const handleResetDefaults = () => {
-    setWeights({ workCompletion: 40, quality: 30, targetAchievement: 20, timeliness: 10 });
-    setPenalties({ revision: 2, return: 2, rejected: 5, complaint: 5 });
-    setError("");
-    setSavedMsg("");
-  };
-
-  const numField = (label: string, value: number, onChange: (n: number) => void, testid: string, suffix?: string) => (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[12px] font-semibold text-[#495057] dark:text-zinc-400">{label}{suffix ? <span className="text-slate-400 font-normal"> {suffix}</span> : null}</label>
-      <Input
-        type="number" min={0} step="0.1" className="h-9 text-[13px]"
-        value={Number.isFinite(value) ? value : ""}
-        onChange={(e) => onChange(e.target.value === "" ? NaN : Number(e.target.value))}
-        data-testid={testid}
-      />
-    </div>
-  );
-
-  return (
-    <Card className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800" data-testid="card-scoring-config">
-      <div className="p-4 border-b border-gray-100 dark:border-zinc-800 flex items-center justify-between">
-        <div className="font-bold text-[15px] text-[#495057] dark:text-zinc-300">Scoring Configuration <span className="text-[12px] font-normal text-slate-400">(admin)</span></div>
-        <Button variant="outline" className="h-8 px-4 text-[12px] font-semibold" onClick={() => setOpen((o) => !o)} data-testid="button-toggle-scoring-config">
-          {open ? "Hide" : "Edit Weights & Penalties"}
-        </Button>
-      </div>
-      {open && (
-        <CardContent className="p-5 space-y-5">
-          <div>
-            <div className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300 mb-2">Component Weights <span className="text-[12px] font-normal text-slate-400">(must total 100%)</span></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {numField("Work Completion", weights.workCompletion, (n) => setWeights((w) => ({ ...w, workCompletion: n })), "input-weight-work", "%")}
-              {numField("Quality", weights.quality, (n) => setWeights((w) => ({ ...w, quality: n })), "input-weight-quality", "%")}
-              {numField("Target Achievement", weights.targetAchievement, (n) => setWeights((w) => ({ ...w, targetAchievement: n })), "input-weight-target", "%")}
-              {numField("Timeliness", weights.timeliness, (n) => setWeights((w) => ({ ...w, timeliness: n })), "input-weight-timeliness", "%")}
-            </div>
-            <div className={`mt-2 text-[12px] font-semibold ${Math.round(weightSum * 10) / 10 === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} data-testid="text-weight-sum">
-              Total: {Math.round(weightSum * 10) / 10}%
-            </div>
-          </div>
-          <div>
-            <div className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300 mb-2">Quality Penalties <span className="text-[12px] font-normal text-slate-400">(points deducted per occurrence)</span></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {numField("Per Revision", penalties.revision, (n) => setPenalties((p) => ({ ...p, revision: n })), "input-penalty-revision")}
-              {numField("Per Return", penalties.return, (n) => setPenalties((p) => ({ ...p, return: n })), "input-penalty-return")}
-              {numField("Per Rejection", penalties.rejected, (n) => setPenalties((p) => ({ ...p, rejected: n })), "input-penalty-rejected")}
-              {numField("Per Open Complaint", penalties.complaint, (n) => setPenalties((p) => ({ ...p, complaint: n })), "input-penalty-complaint")}
-            </div>
-          </div>
-          {error && <p className="text-[13px] text-red-600 dark:text-red-400" data-testid="text-config-error">{error}</p>}
-          {savedMsg && <p className="text-[13px] text-emerald-600 dark:text-emerald-400" data-testid="text-config-saved">{savedMsg}</p>}
-          <div className="flex gap-3">
-            <Button onClick={handleSave} disabled={saveMutation.isPending} className="h-9 px-6 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide" data-testid="button-save-scoring-config">
-              {saveMutation.isPending ? "Saving…" : "Save"}
-            </Button>
-            <Button onClick={handleResetDefaults} variant="outline" className="h-9 px-6 font-semibold" data-testid="button-reset-scoring-config">Reset to Defaults</Button>
-          </div>
-        </CardContent>
-      )}
-    </Card>
   );
 }
 

@@ -943,13 +943,12 @@ export function validateScoringConfig(raw: any): { config: ScoringConfig } | { e
   return { config: normalizeScoringConfig(raw) };
 }
 
+// Hard-locked: the performance score uses the exact, fixed formula
+// (40% Work Completion + 30% Quality + 20% Target Achievement + 10% Timeliness)
+// with fixed quality penalties. The formula is NOT configurable — this getter
+// always returns the canonical constants so production behaviour can never
+// deviate from the required formula.
 export async function getScoringConfig(): Promise<ScoringConfig> {
-  try {
-    const policy = await policiesRepository.findByKey(SCORING_CONFIG_KEY);
-    if (policy?.value_json) return normalizeScoringConfig(policy.value_json);
-  } catch (e: any) {
-    adapterCatch("scoring config load skipped", e);
-  }
   return DEFAULT_SCORING_CONFIG;
 }
 
