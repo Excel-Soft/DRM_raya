@@ -11,3 +11,4 @@
 - [apiRequest doesn't throw on non-2xx](apirequest-non-throwing.md) — `apiRequest()` deliberately skips throwIfResNotOk; use `apiRequestJson()` in queries or `isError` never fires.
 - [Ownership scope enforcement](ownership-scope-enforcement.md) — scope writes with `allowed===null || allowed.includes(owner)`; never add `|| isManagerialRole` on top (privilege escalation).
 - [Workflow self-loop guard order](workflow-selfloop-guard.md) — self-loop (from===to) transitions must still run role/ownership/content; only skip the legal-state check, never a top-level early return.
+- [Central workflow enforcement invariants](workflow-central-enforcement.md) — role/reason/evidence now enforced end-to-end; keep route requireRole a subset of each rule's roles or you get false 403s.
