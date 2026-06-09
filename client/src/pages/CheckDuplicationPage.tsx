@@ -256,7 +256,7 @@ export default function CheckDuplicationPage() {
                   />
                 </th>
                 <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">ID</th>
-                <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Comapny</th>
+                <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
                 <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Holder</th>
                 <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Sale Person</th>
                 <th className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Email</th>

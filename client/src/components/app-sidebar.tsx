@@ -62,6 +62,7 @@ import {
   LayoutGrid,
   Inbox,
   Edit,
+  ScrollText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -193,6 +194,7 @@ const menuItems: MenuItem[] = [
     items: [
       { title: "Super Admin", url: "/super-admin", icon: Crown, permKey: "Admin" },
       { title: "Admin", url: "/admin", icon: ShieldCheck, permKey: "Admin" },
+      { title: "Audit Logs", url: "/admin/audit-logs", icon: ScrollText, permKey: "Admin" },
       { title: "Attributes", url: "/drm/attributes", icon: List },
       { title: "Drm Permission", url: "/drm/permission", icon: Shield },
       { title: "Promotion", url: "/drm/promotion", icon: Megaphone },
@@ -311,7 +313,7 @@ const menuItems: MenuItem[] = [
   {
     title: "Social Media Posting", icon: Contact, permKey: "Social Media Posting",
     items: [
-      { title: "Add Post/View Statics", url: "/social-media", icon: Share2 },
+      { title: "Add Post/View Statistics", url: "/social-media", icon: Share2 },
     ],
   },
   {

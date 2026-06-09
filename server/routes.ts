@@ -39,6 +39,7 @@ import { authService } from "./auth.service";
 import { normalizeRole } from "./utils/role-utils";
 import usersRoutes from "./users-routes";
 import adminActivityRoutes from "./admin-activity-routes";
+import auditLogRoutes from "./audit-log-routes";
 import rbacRoutes from "./rbac-routes";
 import attributesRoutes from "./attributes-routes";
 import drmRoutes from "./drm-routes";
@@ -336,6 +337,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Admin activity/dashboard routes (protected)
   app.use("/api/admin/activities", adminActivityRoutes);
+  app.use("/api/audit-logs", auditLogRoutes);
 
   // RBAC & Role Navigator routes (protected)
   app.use("/api", rbacRoutes);

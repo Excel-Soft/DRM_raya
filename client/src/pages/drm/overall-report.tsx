@@ -16,7 +16,7 @@ type AccordionData = {
 
 const ACCORDION_ITEMS: AccordionData[] = [
     { id: "drm-attendance", title: "Drm Attendance Report", count: 0, columns: ["S.No", "Name", "Date"], data: [] },
-    { id: "total-recieved", title: "Total Recieved", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
+    { id: "total-recieved", title: "Total Received", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { id: "total-unapproved", title: "Total Un-Approved", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { id: "total-approved", title: "Total Approved", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { 
@@ -28,7 +28,7 @@ const ACCORDION_ITEMS: AccordionData[] = [
             { sno: "1", company: "WELC", project: "SEO (1)", date: "06/04/2026" }
         ] 
     },
-    { id: "qa-recieved", title: "QA Recieved", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
+    { id: "qa-recieved", title: "QA Received", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { id: "qa-approved", title: "QA Approved", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { id: "qa-reject", title: "QA Reject / Changing", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },
     { id: "delay-projects", title: "Delay Projects", count: 0, columns: ["S.No", "Company Name", "Project", "Date"], data: [] },

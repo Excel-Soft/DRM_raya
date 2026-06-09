@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { NotificationDropdown } from "./notification-dropdown";
 
 interface TopBarProps {
@@ -44,6 +45,7 @@ export function TopBar({
   onNavigate,
   userRoles = [],
 }: TopBarProps) {
+  const { toast } = useToast();
   const [period, setPeriod] = useState(() => sessionStorage.getItem("globalPeriod") || "TD");
 
   // Fetch RBAC data
@@ -125,11 +127,11 @@ export function TopBar({
         }
       } else {
         console.error("Role switch failed:", data);
-        alert(data.message || data.error || "Failed to switch role. Please try again.");
+        toast({ title: "Role switch failed", description: data.message || data.error || "Please try again.", variant: "destructive" });
       }
     } catch (err) {
       console.error("Role switch failed", err);
-      alert("Failed to switch role. Please try again.");
+      toast({ title: "Role switch failed", description: "Please try again.", variant: "destructive" });
     }
   };
 
@@ -149,7 +151,7 @@ export function TopBar({
       }
     } catch (err) {
       console.error("Stop impersonation failed", err);
-      alert("Failed to stop impersonation. Please try again.");
+      toast({ title: "Failed to stop impersonation", description: "Please try again.", variant: "destructive" });
     }
   };
 

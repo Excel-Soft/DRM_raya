@@ -57,6 +57,7 @@ export options, intended roles, and current data status.
 | Pending BV Report | `/reports/bv-pending-rc` | `pages/reports-bv-pending-rc.tsx` | No backend source yet | User (grouped by role), start/end date, search text | — | Reports viewers | Empty state (no source) |
 | Project Activity (PMS setting) | `/drm/pms-setting` | `pages/drm/pms-setting.tsx` | No backend source yet | Search (company) | Copy / Excel / CSV / PDF (guarded: report "no data" when empty) | DRM users | Empty state (no source) |
 | Performance graph | (none) | `components/performance-graph.tsx` | Placeholder scaffold | — | — | — | Not routed |
+| Audit Logs viewer | `/admin/audit-logs` | `pages/admin/audit-logs.tsx` | `GET /api/audit-logs` (`audit-log-routes.ts`, reads `drm.activity_logs` joined to `drm.users`) | Actor, module, entity type, entity id, action, date range; pagination | — | admin / super_admin / super_hod | Live |
 
 ---
 

@@ -77,3 +77,23 @@ npm start        # NODE_ENV=production smoke on the built bundle
   topology; add one if absent (out of Stage 10 code scope).
 - Error envelope is fully adopted in the global handler + key routes; some legacy
   routes still return `{ error }` (backward-compatible, gradual migration).
+
+## Stage 10 — UI / QA / UAT additions
+- [x] **No mock screens in production navigation.** Routed mock pages were
+      converted to real APIs or honest empty states in Stage 9; non-routed
+      scaffolds (`service-commission-verifications.tsx`, `performance-graph.tsx`)
+      remain unrouted. See `REPORT_CATALOG.md` / `MOCK_STATIC_SCREEN_INVENTORY.md`.
+- [x] **Audit log viewer gated.** `GET /api/audit-logs` is restricted to
+      `admin` / `super_admin` / `super_hod` and is read-only over
+      `drm.activity_logs` (no schema change). Filters are parameterized.
+- [x] **`alert()` removed from converted screens** (top-bar, product-posting and
+      HOD dashboards) in favour of toast / inline messages. Remaining `alert()`
+      sites are tracked in `STAGE_10_UI_QA_UAT_CHANGELOG.md` (Unresolved).
+- [x] **Reusable validation / approval / table primitives** added
+      (`ui/field-error.tsx`, `approval-action-modal.tsx`, `data-table-state.tsx`)
+      so future screens share consistent states; backend remains the enforcement
+      boundary.
+- [x] **Smoke test** `scripts/api-smoke-test.ts` verifies auth gating,
+      required-reason validation, and the audit viewer (8/8 passing).
+- [ ] **KPI drill-downs:** placeholder KPIs (training/engagement/data-entry) must
+      stay non-clickable until backed by a real query — see `KPI_DEFINITIONS.md`.
