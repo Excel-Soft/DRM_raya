@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CommunicationTimeline } from "@/components/communication/communication-timeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -1256,6 +1257,13 @@ export default function CustomerManagement() {
                   className="min-h-[120px]"
                 />
               </div>
+
+              {activeFollowCustomer?.id && (
+                <CommunicationTimeline
+                  entityType="customer"
+                  entityId={activeFollowCustomer.id}
+                />
+              )}
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => { setFollowDialogOpen(false); setFollowCustomer(null); }}>

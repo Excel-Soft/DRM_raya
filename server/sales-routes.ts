@@ -7,6 +7,7 @@ import { appointmentsRepository } from "./repositories/appointments.repository";
 import { targetsRepository } from "./repositories/targets.repository";
 import { vasProgressRepository } from "./repositories/vas-progress.repository";
 import { followUpsRepository } from "./repositories/followups.repository";
+import { CommunicationService } from "./services/communication.service";
 import { customersRepository } from "./repositories/customers.repository";
 import { leadActivitiesRepository } from "./repositories/lead-activities.repository";
 import { leadServicesRepository } from "./repositories/lead-services.repository";
@@ -723,6 +724,24 @@ const leadActionSchema = z.object({
   note: z.string().optional(),
   meta: z.record(z.any()).optional(),
 });
+
+// --- Stage 7 best-effort communication logging helpers --------------------
+const SALES_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const salesAsUuid = (v: any): string | undefined =>
+  typeof v === "string" && SALES_UUID_RE.test(v) ? v : undefined;
+const SALES_CHANNEL_MAP: Record<string, string> = {
+  whatsapp: "WHATSAPP", call: "CALL", email: "EMAIL", sms: "SMS",
+  meeting: "MEETING", visit: "VISIT", w_call: "CALL", mobile: "CALL",
+  e_mail: "EMAIL",
+};
+const mapSalesChannel = (a: any): any =>
+  SALES_CHANNEL_MAP[String(a ?? "").toLowerCase()] ?? "NOTE";
+// Parse user-supplied dates safely — never throw into the host handler.
+const safeIso = (v: any): string | undefined => {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+};
 
 const updateLeadSchema = z.object({
   companyName: z.string().optional(),
@@ -4052,6 +4071,17 @@ export function registerSalesRoutes(app: Express) {
         meta: parsed.meta as any,
       });
 
+      if (["whatsapp", "call", "email"].includes(parsed.action)) {
+        void CommunicationService.log({
+          entityType: "lead",
+          entityId: req.params.id,
+          customerId: salesAsUuid(req.params.id),
+          channel: mapSalesChannel(parsed.action),
+          notes: parsed.note,
+          status: "COMPLETED",
+        }, { userId: req.user.userId }, req);
+      }
+
       return res.status(201).json(activity);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -4278,6 +4308,18 @@ export function registerSalesRoutes(app: Express) {
       
       await db.update(customers).set(updates).where(eq(customers.id, req.params.id));
 
+      const nextAt = safeIso(meta?.nextDate || meta?.dueAt);
+      void CommunicationService.log({
+        entityType: "lead",
+        entityId: req.params.id,
+        customerId: salesAsUuid(req.params.id),
+        channel: mapSalesChannel(meta?.method),
+        notes: note,
+        nextAction: meta?.purpose || meta?.nextAction || undefined,
+        status: nextAt ? "PENDING" : "COMPLETED",
+        nextFollowupAt: nextAt,
+      }, { userId: req.user.userId }, req);
+
       return res.status(201).json(activity);
     } catch (error) {
       console.error("Error logging followup", error);
@@ -4297,6 +4339,14 @@ export function registerSalesRoutes(app: Express) {
         note,
         meta: req.body?.meta as any,
       });
+      void CommunicationService.log({
+        entityType: "lead",
+        entityId: req.params.id,
+        customerId: salesAsUuid(req.params.id),
+        channel: "WHATSAPP",
+        notes: note,
+        status: "COMPLETED",
+      }, { userId: req.user.userId }, req);
       return res.status(201).json(activity);
     } catch (error) {
       console.error("Error logging whatsapp", error);

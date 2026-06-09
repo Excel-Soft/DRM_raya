@@ -78,6 +78,8 @@ import { registerLateComingRoutes } from "./late-coming-routes";
 import { registerEventsRoutes } from "./events-routes";
 import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
 import { registerProjectReportRoutes } from "./project-report-routes";
+import { communicationRouter } from "./routes/communication-routes";
+import { CommunicationService } from "./services/communication.service";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -351,6 +353,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/notifications", notificationRouter);
   app.use("/api/product-posting", productPostingWorkflowRouter);
   app.use("/api/software", softwareWorkflowRouter);
+
+  // Stage 7 — unified communication / follow-up timeline (protected). Ensure the
+  // runtime table/enums exist before serving (db:push is broken repo-wide).
+  await CommunicationService.ensureSchema();
+  app.use("/api/communications", communicationRouter);
   registerPostingDataRoutes(app);
   registerLeadsImportRoutes(app);
   app.use("/api/target-system", targetSystemRoutes);

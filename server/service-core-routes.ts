@@ -11,6 +11,31 @@ import { eq } from "drizzle-orm";
 import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { isManagerialRole } from "./utils/role-utils";
+import { CommunicationService } from "./services/communication.service";
+
+// --- Stage 7 best-effort communication logging helpers ---------------------
+const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const COMM_CHANNELS = new Set(["CALL", "WHATSAPP", "EMAIL", "MEETING", "VISIT", "SMS", "NOTE", "OTHER"]);
+const COMM_OUTCOMES = new Set([
+  "INTERESTED", "NOT_INTERESTED", "CALLBACK", "NO_RESPONSE", "CONVERTED",
+  "COMPLAINT", "RENEWAL", "RESOLVED", "DROPOUT_RISK", "OTHER",
+]);
+const asUuid = (v: any): string | undefined =>
+  typeof v === "string" && COMM_UUID_RE.test(v) ? v : undefined;
+const mapChannel = (v: any): any => {
+  const s = String(v ?? "").toUpperCase();
+  return COMM_CHANNELS.has(s) ? s : "NOTE";
+};
+const validOutcome = (v: any): any => {
+  const s = String(v ?? "").toUpperCase();
+  return COMM_OUTCOMES.has(s) ? s : undefined;
+};
+// Parse a date safely — never throw into the host handler before log() runs.
+const commSafeIso = (v: any): string | undefined => {
+  if (!v) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+};
 
 async function scopedUserIds(req: Request): Promise<string[] | null> {
   const isManager = isManagerialRole((req.user as any).activeRoleId || req.user!.roleId);
@@ -49,6 +74,20 @@ export function registerServiceCoreRoutes(app: Express) {
         ...req.body,
         createdBy: req.user!.userId || (req.user as any)!.id,
       }).returning();
+      const created = result[0];
+      if (created?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(created.serviceCustomerId),
+          customerId: asUuid(created.customerId),
+          channel: mapChannel(created.method),
+          outcome: validOutcome(req.body?.outcome),
+          notes: created.note ?? created.purpose ?? undefined,
+          status: created.status === "completed" ? "COMPLETED" : "PENDING",
+          nextFollowupAt: commSafeIso(created.nextFollowupDate),
+          relatedFollowupId: String(created.id),
+        }, { userId: req.user!.userId }, req);
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to create followup" });
@@ -60,6 +99,19 @@ export function registerServiceCoreRoutes(app: Express) {
       await db.update(serviceFollowups)
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(serviceFollowups.id, req.params.id));
+      const fu = (await db.select().from(serviceFollowups).where(eq(serviceFollowups.id, req.params.id)))[0];
+      if (fu?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(fu.serviceCustomerId),
+          customerId: asUuid(fu.customerId),
+          channel: mapChannel(fu.method),
+          outcome: validOutcome(req.body?.outcome),
+          notes: req.body?.note ?? undefined,
+          status: "COMPLETED",
+          relatedFollowupId: String(fu.id),
+        }, { userId: req.user!.userId || (req.user as any)!.id }, req);
+      }
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to complete followup" });
@@ -92,6 +144,19 @@ export function registerServiceCoreRoutes(app: Express) {
         title: String(title).trim(),
         createdBy: req.user.userId,
       }).returning();
+      const created = result[0];
+      if (created?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(created.serviceCustomerId),
+          customerId: asUuid(created.customerId),
+          channel: "NOTE",
+          outcome: "COMPLAINT",
+          notes: [created.title, created.description].filter(Boolean).join(" — ") || undefined,
+          status: "COMPLETED",
+          relatedFollowupId: String(created.id),
+        }, { userId: req.user.userId }, req);
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
       console.error("Error creating complaint:", err);
@@ -166,6 +231,19 @@ export function registerServiceCoreRoutes(app: Express) {
         [req.params.id, String(remarks).trim(), req.user.userId],
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "Complaint not found" });
+      const cmp = (await db.select().from(serviceComplaints).where(eq(serviceComplaints.id, req.params.id)))[0];
+      if (cmp?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(cmp.serviceCustomerId),
+          customerId: asUuid(cmp.customerId),
+          channel: "NOTE",
+          outcome: "RESOLVED",
+          notes: String(remarks).trim(),
+          status: "COMPLETED",
+          relatedFollowupId: String(cmp.id),
+        }, { userId: req.user.userId }, req);
+      }
       res.json({ success: true });
     } catch (err) {
       console.error("Error resolving complaint:", err);
@@ -239,6 +317,19 @@ export function registerServiceCoreRoutes(app: Express) {
         ...req.body,
         createdBy: req.user.userId,
       }).returning();
+      const created = result[0];
+      if (created?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(created.serviceCustomerId),
+          customerId: asUuid(created.customerId),
+          channel: "NOTE",
+          outcome: "DROPOUT_RISK",
+          notes: created.reason ?? undefined,
+          status: "COMPLETED",
+          relatedFollowupId: String(created.id),
+        }, { userId: req.user.userId }, req);
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to mark dropout" });
@@ -272,6 +363,21 @@ export function registerServiceCoreRoutes(app: Express) {
         ...req.body,
         createdBy: req.user!.userId || (req.user as any)!.id,
       }).returning();
+      const created = result[0];
+      if (created?.serviceCustomerId) {
+        void CommunicationService.log({
+          entityType: "service_customer",
+          entityId: String(created.serviceCustomerId),
+          channel: "NOTE",
+          outcome: "RENEWAL",
+          notes: (() => {
+            const iso = commSafeIso(created.newExpiryDate);
+            return iso ? `Renewed; new expiry ${iso.slice(0, 10)}` : undefined;
+          })(),
+          status: "COMPLETED",
+          relatedFollowupId: String(created.id),
+        }, { userId: req.user!.userId || (req.user as any)!.id }, req);
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to create renewal" });

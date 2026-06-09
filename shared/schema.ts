@@ -2875,3 +2875,67 @@ export type LinkReport = typeof linkReports.$inferSelect;
 export type InsertLinkReport = typeof linkReports.$inferInsert;
 export type LinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferSelect;
 export type InsertLinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferInsert;
+
+// ===========================================================================
+// Stage 7 — Unified Follow-Up Communication Model
+// A single timeline of calls, WhatsApp, emails, meetings, visits, notes and
+// reminders across Sales / CRM / Service. Net-new; does not replace the existing
+// per-module follow-up tables (lead_activities, follow_ups, service_followups,
+// service_complaints, ...). The physical table + enum types are also created at
+// runtime by CommunicationService.ensureCommunicationSchema() because repo-wide
+// `db:push` is broken on a pre-existing FK mismatch.
+// ===========================================================================
+
+export const communicationChannelEnum = drmSchema.enum("communication_channel", [
+  "CALL",
+  "WHATSAPP",
+  "EMAIL",
+  "MEETING",
+  "VISIT",
+  "SMS",
+  "NOTE",
+  "OTHER",
+]);
+
+export const communicationOutcomeEnum = drmSchema.enum("communication_outcome", [
+  "INTERESTED",
+  "NOT_INTERESTED",
+  "CALLBACK",
+  "NO_RESPONSE",
+  "CONVERTED",
+  "COMPLAINT",
+  "RENEWAL",
+  "RESOLVED",
+  "DROPOUT_RISK",
+  "OTHER",
+]);
+
+export const communicationLogs = drmSchema.table("communication_logs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Polymorphic subject of the communication.
+  entityType: text("entity_type").notNull(), // customer | lead | service_customer | ticket | project
+  entityId: text("entity_id").notNull(),
+  customerId: uuid("customer_id"),
+  leadId: uuid("lead_id"),
+  userId: uuid("user_id"), // actor
+  channel: communicationChannelEnum("channel").notNull(),
+  outcome: communicationOutcomeEnum("outcome"),
+  notes: text("notes"),
+  nextAction: text("next_action"),
+  nextFollowupAt: timestamp("next_followup_at"),
+  status: text("status").notNull().default("COMPLETED"), // PENDING | COMPLETED | CANCELLED
+  relatedFollowupId: text("related_followup_id"),
+  relatedAppointmentId: text("related_appointment_id"),
+  messageTemplate: text("message_template"),
+  externalReference: text("external_reference"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_comm_logs_entity").on(t.entityType, t.entityId),
+  index("idx_comm_logs_customer").on(t.customerId),
+  index("idx_comm_logs_user").on(t.userId),
+  index("idx_comm_logs_followup_due").on(t.nextFollowupAt, t.status),
+]);
+
+export type CommunicationLog = typeof communicationLogs.$inferSelect;
+export type InsertCommunicationLog = typeof communicationLogs.$inferInsert;
