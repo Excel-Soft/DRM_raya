@@ -10,12 +10,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
-const MOCK_ACTIVITIES = [
-    { id: 3442, company: "NAVEED ELECTRONICS", person: "Zohaib Nisar Ahmad", project: "SEO", status: "Start Work", docUpload: "21/05/2024 11:40:34 AM", depApproved: "29/02/2024" },
-    { id: 1616, company: "Players Apparel", person: "Rohina Munir", project: "SEO", status: "Start Work", docUpload: "02/06/2023 09:57:08 AM", depApproved: "01/01/1970" },
-    { id: 1069, company: "univenture", person: "Jibran Razzaq", project: "SEO", status: "Start Work", docUpload: "02/01/2024 09:59:59 AM", depApproved: "01/01/1970" },
-    { id: 1044, company: "WELC", person: "Jibran Razzaq", project: "SEO", status: "Start Work", docUpload: "07/01/2025 13:20:52 PM", depApproved: "01/01/1970" },
-];
+interface ProjectActivity {
+    id: number;
+    company: string;
+    person: string;
+    project: string;
+    status: string;
+    docUpload: string;
+    depApproved: string;
+}
+
+// This screen does not yet have a backend data source. Until one is wired in it
+// renders an honest empty state rather than fabricated rows.
+const PROJECT_ACTIVITIES: ProjectActivity[] = [];
 
 export default function PmsSettingPage() {
     const { toast } = useToast();
@@ -29,13 +36,13 @@ export default function PmsSettingPage() {
     };
 
     const exportData = (formatType: "copy" | "csv" | "excel" | "pdf") => {
-        if (!MOCK_ACTIVITIES || MOCK_ACTIVITIES.length === 0) {
+        if (!PROJECT_ACTIVITIES || PROJECT_ACTIVITIES.length === 0) {
             toast({ title: "No data to export", variant: "destructive" });
             return;
         }
 
         const headers = ["No#", "Company", "Person", "Project", "Status", "Doc Upload", "Dep Approved"];
-        const rows = MOCK_ACTIVITIES.map((activity) => [
+        const rows = PROJECT_ACTIVITIES.map((activity) => [
             activity.id.toString(),
             activity.company,
             activity.person,
@@ -105,7 +112,11 @@ export default function PmsSettingPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {MOCK_ACTIVITIES.filter((a) => !searchTerm || a.company.toLowerCase().includes(searchTerm.toLowerCase())).map((activity, index) => (
+                                {PROJECT_ACTIVITIES.filter((a) => !searchTerm || a.company.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 ? (
+                                    <tr>
+                                        <td colSpan={8} className="p-8 text-center text-[13px] text-[#868e96]">No project activity to display. This screen is not yet connected to a live data source.</td>
+                                    </tr>
+                                ) : PROJECT_ACTIVITIES.filter((a) => !searchTerm || a.company.toLowerCase().includes(searchTerm.toLowerCase())).map((activity, index) => (
                                     <tr key={index} className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors dark:border-zinc-800">
                                         <td className="p-3 py-[18px] pl-4 text-[13px] font-bold text-[#00a65a] dark:text-zinc-400">{activity.id}</td>
                                         <td className="p-3 py-[18px] text-[13px] font-semibold text-[#6c757d]">{activity.company}</td>
@@ -135,7 +146,7 @@ export default function PmsSettingPage() {
 
                     {/* Footer Info */}
                     <div className="mt-6 text-[13px] text-[#868e96] pl-2 font-medium">
-                        Showing 1 to {MOCK_ACTIVITIES.length} of {MOCK_ACTIVITIES.length} entries
+                        Showing {PROJECT_ACTIVITIES.length === 0 ? 0 : 1} to {PROJECT_ACTIVITIES.length} of {PROJECT_ACTIVITIES.length} entries
                     </div>
                 </CardContent>
             </Card>

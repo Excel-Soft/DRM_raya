@@ -7,5 +7,7 @@
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
 - [Workflow route write ordering](workflow-route-write-ordering.md) — related-record writes must go inside applyWithinTx; payload/duplicate validation must be fail-fast route checks before the transition (no DB write on rejection).
 - [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
+- [todo_tasks lazy table](todo-tasks-lazy-table.md) — `drm.todo_tasks` has no CREATE migration; all todo endpoints 500 (not 404) on a DB where no todo exists; also qualified vs unqualified between routes.
+- [apiRequest doesn't throw on non-2xx](apirequest-non-throwing.md) — `apiRequest()` deliberately skips throwIfResNotOk; use `apiRequestJson()` in queries or `isError` never fires.
 - [Ownership scope enforcement](ownership-scope-enforcement.md) — scope writes with `allowed===null || allowed.includes(owner)`; never add `|| isManagerialRole` on top (privilege escalation).
 - [Workflow self-loop guard order](workflow-selfloop-guard.md) — self-loop (from===to) transitions must still run role/ownership/content; only skip the legal-state check, never a top-level early return.

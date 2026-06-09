@@ -21,13 +21,22 @@ import {
   SelectLabel
 } from "@/components/ui/select";
 
-const MOCK_DATA = [
-  { srNo: 1, memberId: "pk1563512273twaw", companyId: "100311", companyName: "AIFRAN SPORTS", persons: "Waqas Ahmed", type: "RC", userBvDate: "2025-09-23", bvDate: "2025-09-23", abPayDate: "", startDate: "2025-09-23" },
-  { srNo: 2, memberId: "pk19045292498wsmy", companyId: "101147", companyName: "PANDOX INDUSTRY", persons: "Rohina Munir", type: "RC", userBvDate: "2024-07-09", bvDate: "2024-07-09", abPayDate: "", startDate: "2024-07-09" },
-  { srNo: 3, memberId: "pk19034228968bfmt", companyId: "101284", companyName: "SKYRAY IMPEX", persons: "Adan", type: "RC", userBvDate: "2023-12-20", bvDate: "2023-12-20", abPayDate: "", startDate: "2023-12-20" },
-  { srNo: 4, memberId: "pk1564446526ucuy", companyId: "10223", companyName: "Nel Naz Enterprises", persons: "Tahir Mehmood Bhatti", type: "RC", userBvDate: "2025-08-07", bvDate: "2025-08-07", abPayDate: "", startDate: "2025-07-07" },
-  { srNo: 5, memberId: "pk1563462890fijb", companyId: "102691", companyName: "ADIHA IMPEX", persons: "Samman Khalid", type: "RC", userBvDate: "2025-03-04", bvDate: "2025-03-04", abPayDate: "", startDate: "" },
-];
+interface PendingBvRow {
+  srNo: number;
+  memberId: string;
+  companyId: string;
+  companyName: string;
+  persons: string;
+  type: string;
+  userBvDate: string;
+  bvDate: string;
+  abPayDate: string;
+  startDate: string;
+}
+
+// This report does not yet have a backend data source. Until one is wired in it
+// renders an honest empty state rather than fabricated rows.
+const REPORT_DATA: PendingBvRow[] = [];
 
 export default function ReportsBvPendingRc() {
   const { data: allUsers = [] } = useQuery<any[]>({
@@ -94,7 +103,7 @@ export default function ReportsBvPendingRc() {
   };
 
   const displayedData = useMemo(() => {
-    return MOCK_DATA.filter((row) => {
+    return REPORT_DATA.filter((row) => {
       if (appliedFilters.searchText) {
         const q = appliedFilters.searchText.toLowerCase();
         if (
@@ -237,7 +246,7 @@ export default function ReportsBvPendingRc() {
           </div>
           
           <div className="bg-[#e9ecef] p-2.5 px-4 flex justify-between text-[13px] font-semibold text-[#555] border-b border-[#dee2e6]">
-            <div>Total Records: {MOCK_DATA.length}</div>
+            <div>Total Records: {REPORT_DATA.length}</div>
             <div>Filtered Results: {displayedData.length}</div>
             <div>Active Filter: {Object.values(appliedFilters).some(v => v !== "" && v !== "all") ? "Yes" : "None"}</div>
           </div>
@@ -261,7 +270,7 @@ export default function ReportsBvPendingRc() {
               <tbody className="divide-y divide-[#dee2e6] bg-white">
                 {displayedData.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-slate-500">No records found matching your filters.</td>
+                    <td colSpan={10} className="py-8 text-center text-slate-500">No pending BV records to display. This report is not yet connected to a live data source.</td>
                   </tr>
                 ) : (
                   displayedData.map((row, index) => (
