@@ -71,5 +71,110 @@ export const markInvoicePaidSchema = z.object({
   reference: z.string().trim().max(200).optional(),
 });
 
+// ===========================================================================
+// Stage 3 — workflow invoice validators (product_posting_invoices state machine)
+// ===========================================================================
+
+/** A strictly positive money amount (zero / negative rejected). */
+const positiveAmount = z.coerce
+  .number({ invalid_type_error: "Amount must be a number" })
+  .finite("Amount must be a finite number")
+  .positive("Amount must be greater than zero")
+  .refine(
+    (n) => Math.abs(n * 100 - Math.round(n * 100)) < 1e-9,
+    "Amount supports at most 2 decimals",
+  );
+
+/**
+ * Create a workflow invoice. Enforces: positive amount, valid currency,
+ * customer present, and a known service (serviceType OR projectName). Optional
+ * source linkage and an override (admin/manager) to bypass duplicate blocking.
+ */
+export const workflowCreateInvoiceSchema = z
+  .object({
+    customerId: uuid,
+    amount: positiveAmount,
+    currency: currency.optional(),
+    projectName: z.string().trim().max(300).optional(),
+    serviceType: z.string().trim().max(200).optional(),
+    servicePackage: z.string().trim().max(200).optional(),
+    companyName: z.string().trim().max(300).optional(),
+    invoiceDate: isoDate.optional(),
+    paymentTerms: z.string().trim().max(200).optional(),
+    sourceModule: z.string().trim().max(100).optional(),
+    sourceId: z.string().trim().max(128).optional(),
+    notes: remarks.optional(),
+    status: z.enum(["DRAFT", "PENDING_HOD"]).optional(),
+    overrideDuplicate: z.boolean().optional(),
+    overrideReason: z.string().trim().max(2000).optional(),
+  })
+  .refine((v) => Boolean(v.serviceType || v.projectName), {
+    message: "A service (serviceType or projectName) is required",
+    path: ["serviceType"],
+  })
+  .refine((v) => !v.overrideDuplicate || (v.overrideReason && v.overrideReason.length > 0), {
+    message: "An override reason is required to bypass the duplicate check",
+    path: ["overrideReason"],
+  });
+
+/** Approve/reject decision for HOD or Account stages; reject requires a reason. */
+export const workflowDecisionSchema = z
+  .object({
+    action: z
+      .string()
+      .trim()
+      .transform((v) => v.toUpperCase())
+      .pipe(z.enum(["APPROVE", "REJECT"])),
+    reason: z.string().trim().max(2000).optional(),
+  })
+  .refine((v) => v.action !== "REJECT" || (v.reason && v.reason.length > 0), {
+    message: "A rejection reason is required when rejecting",
+    path: ["reason"],
+  });
+
+/** Mark an APPROVED invoice as PAID. Method + reference required; amount reconciles. */
+export const workflowMarkPaidSchema = z.object({
+  paymentMethod: z.string().trim().min(1, "Payment method is required").max(100),
+  receiptReference: z
+    .string()
+    .trim()
+    .min(1, "A receipt / reference number is required")
+    .max(200),
+  paidAmount: positiveAmount,
+  paidDate: isoDate.optional(),
+  notes: remarks.optional(),
+});
+
+/** Cancel an in-flight invoice. Reason required. */
+export const workflowCancelSchema = z.object({
+  reason,
+});
+
+/**
+ * Edit a workflow invoice. The set of fields actually allowed is enforced by
+ * the service per current status/role; this only validates the shapes.
+ */
+export const workflowPatchSchema = z
+  .object({
+    amount: positiveAmount.optional(),
+    currency: currency.optional(),
+    projectName: z.string().trim().max(300).optional(),
+    serviceType: z.string().trim().max(200).optional(),
+    servicePackage: z.string().trim().max(200).optional(),
+    companyName: z.string().trim().max(300).optional(),
+    invoiceDate: isoDate.optional(),
+    paymentTerms: z.string().trim().max(200).optional(),
+    notes: remarks.optional(),
+    reason: z.string().trim().max(2000).optional(),
+  })
+  .refine((v) => Object.keys(v).some((k) => k !== "reason" && (v as any)[k] !== undefined), {
+    message: "At least one editable field must be provided",
+  });
+
+export type WorkflowCreateInvoice = z.infer<typeof workflowCreateInvoiceSchema>;
+export type WorkflowDecision = z.infer<typeof workflowDecisionSchema>;
+export type WorkflowMarkPaid = z.infer<typeof workflowMarkPaidSchema>;
+export type WorkflowPatch = z.infer<typeof workflowPatchSchema>;
+
 export type CreateInvoice = z.infer<typeof createInvoiceSchema>;
 export type UpdateInvoiceStatus = z.infer<typeof updateInvoiceStatusSchema>;

@@ -1,0 +1,3 @@
+[2026-06-09T16:03:18.864Z] USER: 04921d75-955f-4828-b7c5-dca525aa3d1e MESSAGE: Invoice INV-7e4101 fully approved and queued for project creation.
+[2026-06-09T16:03:18.889Z] USER: 04921d75-955f-4828-b7c5-dca525aa3d1e MESSAGE: Payment recorded for invoice INV-7e4101.
+[2026-06-09T16:03:18.915Z] USER: 04921d75-955f-4828-b7c5-dca525aa3d1e MESSAGE: Your invoice INV-50c4fb was rejected at the HOD stage. Reason: not approved
