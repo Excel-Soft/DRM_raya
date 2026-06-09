@@ -22,6 +22,7 @@ import {
   transitionWorkflowByProject,
   transitionWorkflowByTask,
 } from "../services/product-posting-workflow.service";
+import { mapWorkflowError } from "../services/workflow-transition.service";
 import { ActivityLogService } from "../services/activity-service";
 import { NotificationService } from "../services/notification-service";
 
@@ -100,6 +101,8 @@ productPostingWorkflowRouter.post("/workflows/:projectId/transition", requireRol
         nextPhase: "PROJECT_OVERVIEW",
         actorUserId,
         action: "DATA_VERIFIED",
+        actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+        enforceContent: true,
         patch: {
           dataVerifiedAt: new Date(),
           managerUserId: actorUserId,
@@ -110,6 +113,7 @@ productPostingWorkflowRouter.post("/workflows/:projectId/transition", requireRol
       res.status(400).json({ success: false, error: "Unsupported transition status" });
     }
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to transition workflow" });
   }
 });
@@ -212,6 +216,8 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
       nextPhase: "RUNNING_PROJECT",
       actorUserId: managerUserId,
       action: "TASK_ASSIGNED",
+      actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+      enforceContent: true,
       patch: {
         taskId,
         executiveUserId: assigneeId,
@@ -244,6 +250,7 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
 
     res.json({ success: true, taskId });
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to assign task" });
   }
 });
@@ -365,28 +372,32 @@ productPostingWorkflowRouter.post("/tasks/:taskId/submit-to-manager", requireRol
       return res.status(400).json({ success: false, error: "Overtime reason is required before submission" });
     }
 
-    await db.insert(taskResults).values({
-      taskId,
-      linksPosted: evidenceCount.length,
-      totalDurationMinutes: spentMinutes,
-    } as any).onConflictDoUpdate({
-      target: taskResults.taskId,
-      set: {
-        linksPosted: evidenceCount.length,
-        totalDurationMinutes: spentMinutes,
-        updatedAt: new Date(),
-      },
-    });
-
-    await db.update(tasks).set({ status: "InProgress" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     await transitionWorkflowByTask({
       taskId,
       nextPhase: "RUNNING_PROJECT",
       actorUserId,
       action: "EXECUTIVE_SUBMITTED",
+      actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+      evidenceCount: evidenceCount.length,
+      enforceContent: true,
       patch: {
         executiveSubmittedAt: new Date(),
         outputNotes: outputNotes || null,
+      },
+      applyWithinTx: async (tx) => {
+        await tx.insert(taskResults).values({
+          taskId,
+          linksPosted: evidenceCount.length,
+          totalDurationMinutes: spentMinutes,
+        } as any).onConflictDoUpdate({
+          target: taskResults.taskId,
+          set: {
+            linksPosted: evidenceCount.length,
+            totalDurationMinutes: spentMinutes,
+            updatedAt: new Date(),
+          },
+        });
+        await tx.update(tasks).set({ status: "InProgress" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       },
     });
 
@@ -399,6 +410,7 @@ productPostingWorkflowRouter.post("/tasks/:taskId/submit-to-manager", requireRol
 
     res.json({ success: true });
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to submit task to manager" });
   }
 });
@@ -409,16 +421,20 @@ productPostingWorkflowRouter.post("/tasks/:taskId/manager-complete", requireRole
     const { remarks } = req.body;
     const actorUserId = req.user!.userId;
 
-    await db.update(tasks).set({ status: "READY_FOR_QA" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     const workflow = await transitionWorkflowByTask({
       taskId,
       nextPhase: "QA_REVIEW",
       actorUserId,
       action: "MANAGER_COMPLETE",
+      actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+      enforceContent: true,
       remarks,
       patch: {
         managerCompletedAt: new Date(),
         managerUserId: actorUserId,
+      },
+      applyWithinTx: async (tx) => {
+        await tx.update(tasks).set({ status: "READY_FOR_QA" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       },
     });
 
@@ -431,6 +447,7 @@ productPostingWorkflowRouter.post("/tasks/:taskId/manager-complete", requireRole
 
     res.json({ success: true, data: workflow });
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to mark manager complete" });
   }
 });
@@ -453,17 +470,21 @@ productPostingWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_ma
     if (!workflow) return res.status(404).json({ success: false, error: "Workflow not found" });
 
     if (action === "complete") {
-      await db.update(tasks).set({ status: "Completed" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       const updated = await transitionWorkflowByTask({
         taskId,
         nextPhase: "VERIFICATION_PENDING",
         actorUserId,
         action: "QA_COMPLETE",
+        actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+        enforceContent: true,
         remarks,
         patch: {
           qaReviewedAt: new Date(),
           qaUserId: actorUserId,
           qaRemarks: remarks || null,
+        },
+        applyWithinTx: async (tx) => {
+          await tx.update(tasks).set({ status: "Completed" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
         },
       });
       await NotificationService.notify({
@@ -475,12 +496,13 @@ productPostingWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_ma
       return res.json({ success: true, data: updated });
     }
 
-    await db.update(tasks).set({ status: "Blocked" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     const updated = await transitionWorkflowByTask({
       taskId,
       nextPhase: "RETURNED_FOR_CHANGE",
       actorUserId,
       action: "QA_RETURNED",
+      actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+      enforceContent: true,
       remarks,
       patch: {
         qaReviewedAt: new Date(),
@@ -488,6 +510,9 @@ productPostingWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_ma
         qaRemarks: remarks,
         returnCount: (workflow.returnCount || 0) + 1,
         lastReturnReason: remarks,
+      },
+      applyWithinTx: async (tx) => {
+        await tx.update(tasks).set({ status: "Blocked" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       },
     });
     let targetDashboard = "/product-posting/manager";
@@ -507,6 +532,7 @@ productPostingWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_ma
 
     res.json({ success: true, data: updated });
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to process QA review" });
   }
 });
@@ -529,17 +555,21 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
     if (!workflow) return res.status(404).json({ success: false, error: "Workflow not found" });
 
     if (action === "complete") {
-      await db.update(tasks).set({ status: "Completed" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       const updated = await transitionWorkflowByTask({
         taskId,
         nextPhase: "VERIFICATION_COMPLETE",
         actorUserId,
         action: "VERIFICATION_COMPLETE",
+        actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+        enforceContent: true,
         remarks,
         patch: {
           verificationReviewedAt: new Date(),
           verificationUserId: actorUserId,
           verificationRemarks: remarks || null,
+        },
+        applyWithinTx: async (tx) => {
+          await tx.update(tasks).set({ status: "Completed" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
         },
       });
 
@@ -571,12 +601,13 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
       return res.json({ success: true, data: updated });
     }
 
-    await db.update(tasks).set({ status: "Blocked" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
     const updated = await transitionWorkflowByTask({
       taskId,
       nextPhase: "QA_REVIEW",
       actorUserId,
       action: "VERIFICATION_RETURNED",
+      actorRoles: [...(req.user!.roles || []), req.user!.roleId],
+      enforceContent: true,
       remarks,
       patch: {
         verificationReviewedAt: new Date(),
@@ -584,6 +615,9 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
         verificationRemarks: remarks || null,
         returnCount: (workflow.returnCount || 0) + 1,
         lastReturnReason: remarks || workflow.lastReturnReason,
+      },
+      applyWithinTx: async (tx) => {
+        await tx.update(tasks).set({ status: "Blocked" as any, updatedAt: new Date() }).where(eq(tasks.id, taskId));
       },
     });
 
@@ -596,6 +630,7 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
 
     res.json({ success: true, data: updated });
   } catch (error: any) {
+    if (mapWorkflowError(res, error)) return;
     res.status(500).json({ success: false, error: error?.message || "Failed to process verification review" });
   }
 });
