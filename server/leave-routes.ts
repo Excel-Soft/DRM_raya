@@ -4,6 +4,8 @@ import { z } from "zod";
 import { pool } from "./db";
 import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
+import { sendApiError, sendError, ApiError } from "./utils/api-error";
+import { ValidationService } from "./services/validation.service";
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -144,7 +146,11 @@ export function registerLeaveRoutes(app: Express) {
   app.post("/api/leave", async (req, res) => {
     try {
       if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
+        return sendApiError(res, {
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: "Not authenticated",
+        });
       }
 
       const userId = req.user.userId;
@@ -189,9 +195,13 @@ export function registerLeaveRoutes(app: Express) {
         }
       });
 
-      const parsed = schema.parse(req.body);
+      const parsed = ValidationService.parse(schema, req.body);
       if (!parsed.type) {
-        return res.status(400).json({ error: "type is required" });
+        return sendApiError(res, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+          message: "type is required",
+        });
       }
 
       const request = await leaveRequestRepository.create({
@@ -203,8 +213,8 @@ export function registerLeaveRoutes(app: Express) {
       });
       res.status(201).json(request);
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Invalid request data", details: error.errors });
+      if (error instanceof ApiError || error instanceof z.ZodError) {
+        return sendError(res, error);
       }
       console.error("Error creating leave request:", error);
       res.status(500).json({ error: "Failed to create leave request" });
