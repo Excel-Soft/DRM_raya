@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { pool } from "./db";
-import { sendError, errorEnvelope, unauthorized, forbidden, notFound } from "./utils/api-error";
+import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "./utils/api-error";
+import { ValidationService } from "./services/validation.service";
 
 const repeatOptions = ["HOUR", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "NONE"] as const;
 const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
@@ -71,7 +72,10 @@ export function registerTodoRoutes(app: Express) {
   app.post("/api/attendance/todo", async (req, res) => {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
-      const parsed = z.object({ items: z.array(todoItemSchema).min(1) }).parse(req.body);
+      const parsed = ValidationService.parse(
+        z.object({ items: z.array(todoItemSchema).min(1) }),
+        req.body,
+      );
       const userId = req.user.userId;
 
       const values: any[] = [];
@@ -111,7 +115,7 @@ export function registerTodoRoutes(app: Express) {
       const result = await pool.query(sql, values);
       return res.json({ success: true, created: result.rowCount });
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (error instanceof ApiError || error instanceof z.ZodError) {
         return sendError(res, error);
       }
       // Log full DB error details server-side only; do not leak PG message/detail/code to the client.

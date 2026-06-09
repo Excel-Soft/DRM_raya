@@ -139,3 +139,19 @@ export function sendSafeError(
 ): Response {
   return res.status(status).json(errorEnvelope(code, message));
 }
+
+/**
+ * Object-form helper for the standard error envelope:
+ *
+ *   sendApiError(res, { status, code, message, details });
+ *
+ * Emits exactly `{ success:false, error:{ code, message, details? }, message }`.
+ * `details` must already be safe (no stack traces, SQL, driver internals or
+ * secrets) — only the fields you pass are serialized.
+ */
+export function sendApiError(
+  res: Response,
+  opts: { status: number; code: ErrorCode; message: string; details?: unknown },
+): Response {
+  return res.status(opts.status).json(errorEnvelope(opts.code, opts.message, opts.details));
+}

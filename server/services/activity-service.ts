@@ -69,6 +69,8 @@ export async function recordAuditLog(data: {
     module?: string;
     entityType: string;
     entityId: string;
+    previousStatus?: string;
+    nextStatus?: string;
     before?: unknown;
     after?: unknown;
     reason?: string;
@@ -76,6 +78,8 @@ export async function recordAuditLog(data: {
 }): Promise<void> {
     const context = stripUndefined({
         module: data.module,
+        previousStatus: data.previousStatus,
+        nextStatus: data.nextStatus,
         before: data.before,
         after: data.after,
         reason: data.reason,
