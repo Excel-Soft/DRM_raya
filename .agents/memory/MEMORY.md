@@ -16,3 +16,5 @@
 - [Workflow self-loop guard order](workflow-selfloop-guard.md) — self-loop (from===to) transitions must still run role/ownership/content; only skip the legal-state check, never a top-level early return.
 - [Central workflow enforcement invariants](workflow-central-enforcement.md) — role/reason/evidence now enforced end-to-end; keep route requireRole a subset of each rule's roles or you get false 403s.
 - [Project department routing](project-department-routing.md) — projects.department_type set once at workflow creation & read after; resolveWorkflowRouting treats software as structural, only DND-vs-PP split guesses from names.
+- [HR table id types + payroll honest-zeros](hr-tables-id-types.md) — attendance/leave/overtime user_id are varchar (cast users.id::text); penalties.employee_id is uuid; allowance/bonus/loan/OT-amount have no source, stay manual/0.
+- [pg client double-release pitfall](pg-client-double-release.md) — with try/finally release, never also call client.release() on early-return paths; double-release destabilizes the pool (blocking review bug).

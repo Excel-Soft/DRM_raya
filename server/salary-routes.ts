@@ -4,113 +4,118 @@ import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { recordAuditLog } from "./services/activity-service";
 
 // ---------------------------------------------------------------------------
-// Patch 2 Stage 4 — Real Salary Creation & Reporting
+// Permissions (Patch 2 Stage 4) — action-aware, role-based.
 //
-// Payroll is computed ONLY from real source data (attendance, approved
-// unpaid-leave, approved overtime, ACTIVE penalties) plus explicit manual
-// adjustments (bonus/allowance/loan/other) entered by an authorized user. No
-// metric is ever fabricated: where the system has no source (overtime rate,
-// late-minute policy, loan schedule) the value is 0 and that assumption is
-// recorded in each line's calculation_snapshot.
-//
-// Documented formulas (per employee, per period):
-//   basic              = parsed users.basic_salary (TEXT; commas/symbols stripped, blank->0)
-//   perDay             = basic / 30
-//   gross              = basic + allowance + bonus + overtimeAmount
-//   absenceDeduction   = absentDaysDeducted * perDay
-//                        (absent attendance days NOT covered by an approved leave,
-//                         so an unpaid-leave day is never deducted twice)
-//   unpaidLeaveDeduct  = unpaidLeaveDays * perDay   (approved leave_type='Unpaid', clamped to period)
-//   lateDeduction      = 0   (no late policy configured; lateMinutes informational)
-//   overtimeAmount     = 0   (no overtime rate configured; overtimeMinutes informational)
-//   penaltyAmount      = SUM(ACTIVE penalties in period)
-//   loanDeduction      = manual (no loan table; default 0)
-//   otherDeductions    = manual (default 0)
-//   totalDeductions    = absenceDeduction + unpaidLeaveDeduct + lateDeduction
-//                        + penaltyAmount + loanDeduction + otherDeductions
-//   net                = gross - totalDeductions
-//   payable            = max(0, net)
-// Leave/absence days are counted as inclusive calendar days within the period
-// (no working-calendar configuration exists in the system).
+// Salary is sensitive. The previous flat allow-list is replaced by a class +
+// per-action matrix, all compared on NORMALIZED role keys (normalizeRole
+// collapses super_admin/administrator -> admin, accountant/accounts_office ->
+// account_manager, etc). Row-level scoping ("own"/"department"/"all") is layered
+// on top by resolveScope().
 // ---------------------------------------------------------------------------
 
-const SNAPSHOT_VERSION = "stage4-v1";
+type SalaryAction =
+  | "preview"
+  | "generate"
+  | "view"
+  | "export"
+  | "approve"
+  | "finalize"
+  | "edit"
+  | "cancel";
 
-// Core roles permitted to GENERATE / APPROVE / FINALIZE / EDIT payroll and to
-// view run-level aggregates (which expose every employee). Salary is sensitive.
-// Executives are NOT here — they may only see their OWN salary lines via the
-// report endpoint. NOTE: hasSalaryManagementRole() also grants access to any
-// general managerial role (isManagerialRole, e.g. HOD / *_manager); to restrict
-// payroll to ONLY this explicit set, drop the isManagerialRole() check below.
-const SALARY_MGMT_ROLES = new Set([
-  "admin",
-  "super_admin",
-  "administrator",
-  "super_hod",
-  "hod",
-  "account_manager",
-  "accountant",
-  "hr",
-  "hr_manager",
-]);
+type SalaryClass = "full" | "accounts" | "hr" | "hod" | "manager" | "executive";
 
-function actorRoleCandidates(req: Request): string[] {
-  // Authorization is derived SOLELY from the signed JWT (req.user). We must NOT
-  // trust the client-supplied `x-acting-role` header here: it is purely additive
-  // and would let any authenticated user forge a management role and escalate to
-  // full payroll access. The header is a UI hint only and is never an authority.
-  const u: any = req.user || {};
-  const out: string[] = [];
-  if (u.roleId) out.push(String(u.roleId));
-  if (u.role) out.push(String(u.role));
-  if (Array.isArray(u.roles)) out.push(...u.roles.map(String));
-  return out.map((r) => normalizeRole(r));
+// What each class may do. `full` (admin/super_hod) may do everything.
+const CLASS_ACTIONS: Record<SalaryClass, Set<SalaryAction>> = {
+  full: new Set<SalaryAction>([
+    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel",
+  ]),
+  accounts: new Set<SalaryAction>([
+    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel",
+  ]),
+  hr: new Set<SalaryAction>([
+    "preview", "generate", "view", "export", "approve", "edit", "cancel",
+  ]),
+  hod: new Set<SalaryAction>(["view", "approve"]),
+  manager: new Set<SalaryAction>(["view"]),
+  executive: new Set<SalaryAction>(["view"]),
+};
+
+function callerRole(req: Request): string {
+  const u = req.user as any;
+  return String(u?.activeRoleId ?? u?.roleId ?? u?.role ?? "");
 }
 
-// Management role => full payroll access (all employees). Used for generate,
-// approve, finalize, edit, and unrestricted viewing of runs/reports.
-function hasSalaryManagementRole(req: Request): boolean {
-  const roles = actorRoleCandidates(req);
-  return roles.some((r) => SALARY_MGMT_ROLES.has(r) || isManagerialRole(r));
+function salaryClass(req: Request): SalaryClass {
+  const role = normalizeRole(callerRole(req));
+  if (role === "admin" || role === "super_hod") return "full";
+  if (role === "account_manager") return "accounts";
+  if (role === "hr" || role === "hr_manager") return "hr";
+  if (role === "hod") return "hod";
+  if (isManagerialRole(role)) return "manager";
+  return "executive";
 }
 
-function actorUserId(req: Request): string | undefined {
-  const u: any = req.user || {};
-  return u.userId ? String(u.userId) : undefined;
+function can(req: Request, action: SalaryAction): boolean {
+  return CLASS_ACTIONS[salaryClass(req)].has(action);
+}
+
+function deny(res: Response, action: string) {
+  return res.status(403).json({ error: `You are not authorized to ${action} salary.` });
+}
+
+// Caller's own department, resolved once and cached on the request. Used for
+// HOD / manager row-scoping. Returns null when unknown.
+async function callerDepartment(req: Request): Promise<string | null> {
+  const cached = (req as any)._salaryDept;
+  if (cached !== undefined) return cached;
+  let dept: string | null = null;
+  try {
+    const r = await pool.query(`SELECT department FROM drm.users WHERE id = $1`, [req.user!.userId]);
+    dept = r.rows[0]?.department ?? null;
+  } catch {
+    dept = null;
+  }
+  (req as any)._salaryDept = dept;
+  return dept;
+}
+
+interface Scope {
+  kind: "all" | "department" | "self";
+  department?: string | null;
+  userId?: string;
+}
+
+async function resolveScope(req: Request): Promise<Scope> {
+  const cls = salaryClass(req);
+  if (cls === "full" || cls === "accounts" || cls === "hr") return { kind: "all" };
+  if (cls === "hod" || cls === "manager") {
+    return { kind: "department", department: await callerDepartment(req) };
+  }
+  return { kind: "self", userId: req.user!.userId };
 }
 
 // ---------------------------------------------------------------------------
-// numeric helpers
+// Numeric helpers — parse/validate money + period.
 // ---------------------------------------------------------------------------
 
-function parseMoney(v: unknown): number {
-  if (v === null || v === undefined) return 0;
-  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
-  const cleaned = String(v).replace(/[^0-9.\-]/g, "");
-  if (cleaned === "" || cleaned === "-" || cleaned === ".") return 0;
-  const n = Number(cleaned);
+function toNum(v: unknown): number {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, "").trim());
   return Number.isFinite(n) ? n : 0;
-}
-
-function nonNegMoney(v: unknown): number {
-  return Math.max(0, parseMoney(v));
 }
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-function num(v: unknown): number {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-
-// salary_run_items.user_id and salary_runs.generated_by_user_id are `uuid`
-// columns. Comparing them against a non-uuid text param raises 22P02 (a 500),
-// so we validate the shape and turn an invalid filter into an honest empty
-// result instead of an error.
-function isUuid(v: string): boolean {
-  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v);
+// Validate a manual money input: must be a finite number >= 0. Returns the
+// parsed number, or null when invalid (so the route can 400 honestly).
+function parseManualMoney(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return 0;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, "").trim());
+  if (!Number.isFinite(n) || n < 0) return null;
+  return round2(n);
 }
 
 function periodBounds(month: number, year: number) {
@@ -127,54 +132,80 @@ function parsePeriod(req: Request): { month: number; year: number } | null {
   return { month, year };
 }
 
-// ---------------------------------------------------------------------------
-// computation engine
-// ---------------------------------------------------------------------------
-
-interface ManualAdjustment {
-  bonusAmount?: number;
-  allowanceAmount?: number;
-  loanDeduction?: number;
-  otherDeductions?: number;
+// Inclusive whole-day overlap between [aStart,aEnd] and [bStart,bEnd].
+function overlapDays(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): number {
+  const s = Math.max(aStart.getTime(), bStart.getTime());
+  const e = Math.min(aEnd.getTime(), bEnd.getTime());
+  if (e < s) return 0;
+  const day = 24 * 60 * 60 * 1000;
+  const sd = new Date(s); sd.setHours(0, 0, 0, 0);
+  const ed = new Date(e); ed.setHours(0, 0, 0, 0);
+  return Math.floor((ed.getTime() - sd.getTime()) / day) + 1;
 }
 
-interface ComputedItem {
+// ---------------------------------------------------------------------------
+// Preview computation — full per-employee payroll lines from live data only.
+//
+// Formulas (documented in PATCH2_STAGE4_SALARY_CHANGELOG.md):
+//   perDaySalary           = basicSalary / 30
+//   grossSalary            = basicSalary + allowance + bonus + overtimeAmount
+//   unpaidLeaveDeduction   = unpaidLeaveDays * perDaySalary
+//   absenceDeduction       = daysAbsent * perDaySalary
+//   lateDeduction          = 0  (no late-penalty policy; lateMinutes informational)
+//   penaltyAmount          = SUM approved, non-voided penalties in period
+//   loanDeduction          = 0  (no loan tables; manual field)
+//   overtimeAmount         = 0  (no overtime rate; minutes informational, manual)
+//   totalDeductions        = unpaidLeave + absence + late + penalty + loan + other
+//   netSalary              = gross - totalDeductions
+//   payableSalary          = max(0, netSalary)
+// Values without a real source (allowance/bonus/loan/overtimeAmount/other) are
+// 0 by default and only set via manual adjustments — never fabricated.
+// ---------------------------------------------------------------------------
+
+interface ManualAdj {
+  bonusAmount?: number;
+  allowanceAmount?: number;
+  overtimeAmount?: number;
+  loanDeduction?: number;
+  otherDeductions?: number;
+  remarks?: string | null;
+}
+
+interface PreviewItem {
   userId: string;
   employeeName: string;
-  role: string | null;
   department: string | null;
   branch: string | null;
   basicSalary: number;
   perDaySalary: number;
   daysPresent: number;
-  daysAbsent: number; // total absent attendance rows (informational)
-  daysAbsentDeducted: number; // absent rows not covered by approved leave
+  daysAbsent: number;
   leaveDays: number;
   unpaidLeaveDays: number;
   lateMinutes: number;
   overtimeMinutes: number;
+  allowanceAmount: number;
+  bonusAmount: number;
   overtimeAmount: number;
   grossSalary: number;
-  absenceDeduction: number;
   unpaidLeaveDeduction: number;
+  absenceDeduction: number;
   lateDeduction: number;
   penaltyAmount: number;
   loanDeduction: number;
-  bonusAmount: number;
-  allowanceAmount: number;
   otherDeductions: number;
   totalDeductions: number;
   netSalary: number;
   payableSalary: number;
-  snapshot: Record<string, unknown>;
+  calculationSnapshot: Record<string, unknown>;
 }
 
-async function computeItems(
+async function computePreview(
   month: number,
   year: number,
   filters: { branch?: string; department?: string; userId?: string },
-  adjustments: Map<string, ManualAdjustment>,
-): Promise<ComputedItem[]> {
+  manual: Record<string, ManualAdj> = {},
+): Promise<PreviewItem[]> {
   const { start, end } = periodBounds(month, year);
 
   const where: string[] = ["u.is_active = true"];
@@ -185,395 +216,236 @@ async function computeItems(
 
   const usersRes = await pool.query(
     `SELECT u.id, COALESCE(u.full_name, u.name, u.username) AS name,
-            u.role, u.department, u.branch, u.basic_salary
+            u.department, u.branch, u.basic_salary
        FROM drm.users u
       WHERE ${where.join(" AND ")}
       ORDER BY name ASC`,
     params,
   );
 
-  // Attendance: present, total absent, absent NOT covered by approved leave, late days.
-  // user_id is varchar holding the uuid string; status is an enum compared as text.
+  // Attendance present/absent counts (attendance.user_id is varchar = users.id::text).
   const attRes = await pool.query(
-    `SELECT a.user_id,
-            COUNT(*) FILTER (WHERE a.status::text IN ('Present','Late','HalfDay')) AS present,
-            COUNT(*) FILTER (WHERE a.status::text = 'Absent') AS absent_total,
-            COUNT(*) FILTER (WHERE a.status::text = 'Late') AS late_days,
-            COUNT(*) FILTER (WHERE a.status::text = 'Absent' AND NOT EXISTS (
-              SELECT 1 FROM drm.leave_requests lr
-               WHERE lr.user_id = a.user_id
-                 AND lr.status::text = 'Approved'
-                 AND a.date::date BETWEEN lr.from_date::date AND lr.to_date::date
-            )) AS absent_uncovered
-       FROM drm.attendance a
-      WHERE a.date >= $1 AND a.date <= $2
-      GROUP BY a.user_id`,
-    [start, end],
-  );
-  const attMap = new Map<string, { present: number; absentTotal: number; absentUncovered: number; lateDays: number }>();
-  for (const r of attRes.rows) {
-    attMap.set(String(r.user_id), {
-      present: Number(r.present || 0),
-      absentTotal: Number(r.absent_total || 0),
-      absentUncovered: Number(r.absent_uncovered || 0),
-      lateDays: Number(r.late_days || 0),
-    });
-  }
-
-  // Approved leave days overlapping the period, clamped to period bounds.
-  const leaveRes = await pool.query(
     `SELECT user_id,
-            COALESCE(SUM((LEAST(to_date::date, $2::date) - GREATEST(from_date::date, $1::date)) + 1), 0) AS leave_days,
-            COALESCE(SUM(CASE WHEN leave_type::text = 'Unpaid'
-                              THEN (LEAST(to_date::date, $2::date) - GREATEST(from_date::date, $1::date)) + 1
-                              ELSE 0 END), 0) AS unpaid_days
-       FROM drm.leave_requests
-      WHERE status::text = 'Approved'
-        AND from_date::date <= $2::date AND to_date::date >= $1::date
+            COUNT(*) FILTER (WHERE status IN ('Present','Late','HalfDay')) AS present,
+            COUNT(*) FILTER (WHERE status = 'Absent') AS absent
+       FROM drm.attendance
+      WHERE date >= $1 AND date <= $2
       GROUP BY user_id`,
     [start, end],
   );
-  const leaveMap = new Map<string, { leaveDays: number; unpaidDays: number }>();
-  for (const r of leaveRes.rows) {
-    leaveMap.set(String(r.user_id), {
-      leaveDays: Number(r.leave_days || 0),
-      unpaidDays: Number(r.unpaid_days || 0),
-    });
+  const attMap = new Map<string, { present: number; absent: number }>();
+  for (const r of attRes.rows) {
+    attMap.set(String(r.user_id), { present: Number(r.present || 0), absent: Number(r.absent || 0) });
   }
 
-  // Approved overtime minutes in period (no rate -> amount stays 0).
+  // Approved leave overlapping the period (Unpaid -> deduction, others informational).
+  const leaveRes = await pool.query(
+    `SELECT user_id, leave_type, from_date, to_date
+       FROM drm.leave_requests
+      WHERE status = 'Approved' AND from_date <= $2 AND to_date >= $1`,
+    [start, end],
+  );
+  const leaveMap = new Map<string, { unpaid: number; other: number }>();
+  for (const r of leaveRes.rows) {
+    const days = overlapDays(new Date(r.from_date), new Date(r.to_date), start, end);
+    if (days <= 0) continue;
+    const key = String(r.user_id);
+    const acc = leaveMap.get(key) || { unpaid: 0, other: 0 };
+    if (String(r.leave_type) === "Unpaid") acc.unpaid += days;
+    else acc.other += days;
+    leaveMap.set(key, acc);
+  }
+
+  // Approved overtime minutes (informational; no rate -> overtimeAmount 0).
   const otRes = await pool.query(
-    `SELECT user_id, COALESCE(SUM(time_spent), 0) AS ot_minutes
+    `SELECT user_id, COALESCE(SUM(time_spent),0) AS minutes
        FROM drm.overtime_records
-      WHERE status::text = 'Approved' AND date >= $1 AND date <= $2
+      WHERE status = 'Approved' AND date >= $1 AND date <= $2
       GROUP BY user_id`,
     [start, end],
   );
   const otMap = new Map<string, number>();
-  for (const r of otRes.rows) otMap.set(String(r.user_id), Number(r.ot_minutes || 0));
+  for (const r of otRes.rows) otMap.set(String(r.user_id), Number(r.minutes || 0));
 
-  // ACTIVE (non-voided, non-deleted) penalties dated within the period.
+  // Approved, non-voided penalties in the period (penalties.employee_id is uuid).
   const penRes = await pool.query(
-    `SELECT employee_id, COALESCE(SUM(amount), 0) AS penalty
+    `SELECT employee_id, COALESCE(SUM(amount),0) AS total
        FROM drm.penalties
-      WHERE status = 'ACTIVE' AND deleted_at IS NULL
-        AND penalty_date >= $1::date AND penalty_date <= $2::date
+      WHERE approval_status = 'APPROVED'
+        AND COALESCE(status,'ACTIVE') <> 'VOIDED'
+        AND deleted_at IS NULL
+        AND penalty_date >= $1 AND penalty_date <= $2
       GROUP BY employee_id`,
     [start, end],
   );
   const penMap = new Map<string, number>();
-  for (const r of penRes.rows) penMap.set(String(r.employee_id), Number(r.penalty || 0));
+  for (const r of penRes.rows) penMap.set(String(r.employee_id), Number(r.total || 0));
 
   return usersRes.rows.map((u: any) => {
-    const key = String(u.id);
-    const adj = adjustments.get(key) || {};
-    const att = attMap.get(key) || { present: 0, absentTotal: 0, absentUncovered: 0, lateDays: 0 };
-    const lv = leaveMap.get(key) || { leaveDays: 0, unpaidDays: 0 };
-    const otMinutes = otMap.get(key) || 0;
-    const penaltyAmount = round2(penMap.get(key) || 0);
+    const id = String(u.id);
+    const basicSalary = round2(toNum(u.basic_salary));
+    const perDaySalary = round2(basicSalary / 30);
+    const att = attMap.get(id) || { present: 0, absent: 0 };
+    const lv = leaveMap.get(id) || { unpaid: 0, other: 0 };
+    const overtimeMinutes = otMap.get(id) || 0;
+    const penaltyAmount = round2(penMap.get(id) || 0);
 
-    const basic = parseMoney(u.basic_salary);
-    const perDay = round2(basic / 30);
-    const allowance = nonNegMoney(adj.allowanceAmount);
-    const bonus = nonNegMoney(adj.bonusAmount);
-    const loanDeduction = nonNegMoney(adj.loanDeduction);
-    const otherDeductions = nonNegMoney(adj.otherDeductions);
+    const m = manual[id] || {};
+    const allowanceAmount = round2(toNum(m.allowanceAmount));
+    const bonusAmount = round2(toNum(m.bonusAmount));
+    const overtimeAmount = round2(toNum(m.overtimeAmount)); // no rate policy -> manual only
+    const loanDeduction = round2(toNum(m.loanDeduction));
+    const otherDeductions = round2(toNum(m.otherDeductions));
 
-    const overtimeAmount = 0; // no configured rate
-    const lateDeduction = 0; // no configured policy
-    const gross = round2(basic + allowance + bonus + overtimeAmount);
-    const absenceDeduction = round2(att.absentUncovered * perDay);
-    const unpaidLeaveDeduction = round2(lv.unpaidDays * perDay);
+    const lateMinutes = 0; // no late-minutes source column
+    const lateDeduction = 0; // no late-penalty policy
+
+    const unpaidLeaveDeduction = round2(lv.unpaid * perDaySalary);
+    const absenceDeduction = round2(att.absent * perDaySalary);
+    const grossSalary = round2(basicSalary + allowanceAmount + bonusAmount + overtimeAmount);
     const totalDeductions = round2(
-      absenceDeduction + unpaidLeaveDeduction + lateDeduction + penaltyAmount + loanDeduction + otherDeductions,
+      unpaidLeaveDeduction + absenceDeduction + lateDeduction + penaltyAmount + loanDeduction + otherDeductions,
     );
-    const net = round2(gross - totalDeductions);
-    const payable = Math.max(0, net);
-
-    const snapshot = {
-      version: SNAPSHOT_VERSION,
-      period: { month, year },
-      inputs: {
-        basicSalary: basic,
-        perDaySalary: perDay,
-        daysPresent: att.present,
-        daysAbsentTotal: att.absentTotal,
-        daysAbsentDeducted: att.absentUncovered,
-        lateDays: att.lateDays,
-        leaveDays: lv.leaveDays,
-        unpaidLeaveDays: lv.unpaidDays,
-        overtimeMinutes: otMinutes,
-        allowanceAmount: allowance,
-        bonusAmount: bonus,
-        loanDeduction,
-        otherDeductions,
-        penaltyAmount,
-      },
-      deductions: {
-        absenceDeduction,
-        unpaidLeaveDeduction,
-        lateDeduction,
-        penaltyAmount,
-        loanDeduction,
-        otherDeductions,
-        totalDeductions,
-      },
-      gross,
-      net,
-      payable,
-      assumptions: [
-        "perDay = basic / 30",
-        "leave & absence counted as inclusive calendar days within the period",
-        "absent days covered by an approved leave are NOT deducted (no double-count)",
-        "overtimeAmount = 0 (no overtime rate configured; minutes are informational)",
-        "lateDeduction = 0 (no late policy configured; late days are informational)",
-        "loanDeduction has no source table — manual entry only",
-      ],
-    };
+    const netSalary = round2(grossSalary - totalDeductions);
+    const payableSalary = round2(Math.max(0, netSalary));
 
     return {
-      userId: key,
+      userId: id,
       employeeName: u.name || "",
-      role: u.role ?? null,
       department: u.department ?? null,
       branch: u.branch ?? null,
-      basicSalary: basic,
-      perDaySalary: perDay,
+      basicSalary,
+      perDaySalary,
       daysPresent: att.present,
-      daysAbsent: att.absentTotal,
-      daysAbsentDeducted: att.absentUncovered,
-      leaveDays: lv.leaveDays,
-      unpaidLeaveDays: lv.unpaidDays,
-      lateMinutes: 0,
-      overtimeMinutes: otMinutes,
+      daysAbsent: att.absent,
+      leaveDays: lv.other,
+      unpaidLeaveDays: lv.unpaid,
+      lateMinutes,
+      overtimeMinutes,
+      allowanceAmount,
+      bonusAmount,
       overtimeAmount,
-      grossSalary: gross,
-      absenceDeduction,
+      grossSalary,
       unpaidLeaveDeduction,
+      absenceDeduction,
       lateDeduction,
       penaltyAmount,
       loanDeduction,
-      bonusAmount: bonus,
-      allowanceAmount: allowance,
       otherDeductions,
       totalDeductions,
-      netSalary: net,
-      payableSalary: payable,
-      snapshot,
-    } as ComputedItem;
+      netSalary,
+      payableSalary,
+      calculationSnapshot: {
+        period: { month, year },
+        inputs: {
+          basicSalary, perDaySalary,
+          daysPresent: att.present, daysAbsent: att.absent,
+          leaveDays: lv.other, unpaidLeaveDays: lv.unpaid,
+          overtimeMinutes, penaltyAmount,
+          allowanceAmount, bonusAmount, overtimeAmount, loanDeduction, otherDeductions,
+        },
+        outputs: {
+          grossSalary, unpaidLeaveDeduction, absenceDeduction, lateDeduction,
+          totalDeductions, netSalary, payableSalary,
+        },
+        assumptions: {
+          perDayBasis: "basicSalary/30",
+          lateDeduction: "0 (no late-penalty policy)",
+          overtimeAmount: "0 (no overtime-rate policy; minutes informational)",
+          loanDeduction: "manual (no loan tables)",
+          allowanceBonus: "manual (no source tables)",
+        },
+        computedAt: new Date().toISOString(),
+      },
+    };
   });
 }
 
-function totalsFromComputed(items: ComputedItem[]) {
+function sumTotals(items: PreviewItem[]) {
   return items.reduce(
-    (acc, it) => {
-      acc.totalGross += it.grossSalary;
-      acc.totalDeductions += it.totalDeductions;
-      acc.totalNet += it.payableSalary;
-      return acc;
+    (a, it) => {
+      a.gross += it.grossSalary;
+      a.ded += it.totalDeductions;
+      a.net += it.netSalary;
+      a.payable += it.payableSalary;
+      return a;
     },
-    { totalGross: 0, totalDeductions: 0, totalNet: 0 },
+    { gross: 0, ded: 0, net: 0, payable: 0 },
   );
 }
 
-function computedToJson(it: ComputedItem) {
-  return {
-    employeeId: it.userId,
-    employeeName: it.employeeName,
-    role: it.role,
-    department: it.department,
-    branch: it.branch,
-    basicSalary: it.basicSalary,
-    perDaySalary: it.perDaySalary,
-    grossSalary: it.grossSalary,
-    daysPresent: it.daysPresent,
-    daysAbsent: it.daysAbsent,
-    daysAbsentDeducted: it.daysAbsentDeducted,
-    leaveDays: it.leaveDays,
-    unpaidLeaveDays: it.unpaidLeaveDays,
-    lateMinutes: it.lateMinutes,
-    overtimeMinutes: it.overtimeMinutes,
-    overtimeAmount: it.overtimeAmount,
-    absenceDeduction: it.absenceDeduction,
-    unpaidLeaveDeduction: it.unpaidLeaveDeduction,
-    penaltyAmount: it.penaltyAmount,
-    loanDeduction: it.loanDeduction,
-    bonusAmount: it.bonusAmount,
-    allowanceAmount: it.allowanceAmount,
-    otherDeductions: it.otherDeductions,
-    totalDeductions: it.totalDeductions,
-    netSalary: it.netSalary,
-    payableSalary: it.payableSalary,
-  };
+// Returns names of employees who already have a FINALIZED/LOCKED salary line for
+// the period (optionally excluding one run). Empty array => no conflict.
+async function finalizedConflicts(
+  month: number,
+  year: number,
+  userIds: string[],
+  excludeRunId?: string,
+): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const params: any[] = [month, year, userIds];
+  let exclude = "";
+  if (excludeRunId) { params.push(excludeRunId); exclude = `AND sr.id <> $${params.length}`; }
+  const r = await pool.query(
+    `SELECT DISTINCT sri.employee_name
+       FROM drm.salary_run_items sri
+       JOIN drm.salary_runs sr ON sr.id = sri.run_id
+      WHERE sr.status IN ('FINALIZED','LOCKED')
+        AND sr.deleted_at IS NULL
+        AND sr.period_month = $1 AND sr.period_year = $2
+        AND sri.user_id = ANY($3) ${exclude}`,
+    params,
+  );
+  return r.rows.map((x: any) => x.employee_name).filter(Boolean);
 }
 
-// Maps a persisted salary_run_items row (optionally joined with its run) to the
-// report/detail JSON shape, parsing numeric strings to numbers.
-function mapItemRow(r: any) {
-  return {
-    id: r.id,
-    runId: r.run_id,
-    employeeId: r.user_id,
-    employeeName: r.employee_name,
-    role: r.role ?? null,
-    department: r.department,
-    branch: r.branch,
-    month: r.period_month ?? null,
-    year: r.period_year ?? null,
-    runStatus: r.run_status ?? null,
-    basicSalary: num(r.basic_salary),
-    perDaySalary: num(r.per_day_salary),
-    grossSalary: num(r.gross_salary),
-    daysPresent: num(r.days_present),
-    daysAbsent: num(r.days_absent),
-    leaveDays: num(r.leave_days),
-    unpaidLeaveDays: num(r.unpaid_leave_days),
-    lateMinutes: num(r.late_minutes),
-    overtimeMinutes: num(r.overtime_minutes),
-    overtimeAmount: num(r.overtime_amount),
-    absenceDeduction: num(r.absence_deduction),
-    penaltyAmount: num(r.penalty_amount),
-    loanDeduction: num(r.loan_deduction),
-    bonusAmount: num(r.bonus_amount),
-    allowanceAmount: num(r.allowance_amount),
-    otherDeductions: num(r.other_deductions),
-    totalDeductions: num(r.total_deductions),
-    netSalary: num(r.net_salary),
-    payableSalary: num(r.payable_salary),
-    paymentStatus: r.payment_status ?? "UNPAID",
-    calculationSnapshot: r.calculation_snapshot ?? null,
-  };
-}
-
-function parseAdjustments(body: any): Map<string, ManualAdjustment> {
-  const map = new Map<string, ManualAdjustment>();
-  const raw = body?.manualAdjustments;
-  if (!Array.isArray(raw)) return map;
-  for (const entry of raw) {
-    const id = entry?.userId ?? entry?.employeeId;
-    if (!id) continue;
-    map.set(String(id), {
-      bonusAmount: entry?.bonusAmount,
-      allowanceAmount: entry?.allowanceAmount,
-      loanDeduction: entry?.loanDeduction,
-      otherDeductions: entry?.otherDeductions,
-    });
-  }
-  return map;
-}
-
-// Status lifecycle. FINALIZED and legacy LOCKED are terminal/locked.
-const STATUS_TRANSITIONS: Record<string, string[]> = {
+const LOCKED_STATUSES = new Set(["FINALIZED", "LOCKED"]);
+const ALLOWED_NEXT: Record<string, string[]> = {
   DRAFT: ["GENERATED", "CANCELLED"],
-  GENERATED: ["APPROVED", "DRAFT", "CANCELLED"],
-  APPROVED: ["FINALIZED", "GENERATED", "CANCELLED"],
+  GENERATED: ["APPROVED", "CANCELLED"],
+  APPROVED: ["FINALIZED", "CANCELLED"],
   FINALIZED: [],
-  CANCELLED: [],
   LOCKED: [],
+  CANCELLED: [],
 };
-const ALL_STATUSES = Object.keys(STATUS_TRANSITIONS);
-function isLockedStatus(status: string): boolean {
-  return status === "FINALIZED" || status === "LOCKED";
-}
-
-function csvCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = v instanceof Date ? v.toISOString() : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-// Shared filter builder for the salary report list + export. Returns a WHERE
-// clause over a (salary_run_items i JOIN salary_runs r) query. Executives are
-// hard-scoped to their own user_id regardless of any client-supplied filter.
-function buildReportFilters(req: Request): { clause: string; params: any[]; selfScoped: boolean } {
-  const where: string[] = ["r.deleted_at IS NULL"];
-  const params: any[] = [];
-  const isMgmt = hasSalaryManagementRole(req);
-
-  if (!isMgmt) {
-    // Hard self-scope: non-management users only ever see their OWN salary lines,
-    // and the client-supplied employeeId/userId is ignored entirely.
-    const self = actorUserId(req);
-    if (!self || !isUuid(self)) {
-      where.push("false");
-    } else {
-      params.push(self);
-      where.push(`i.user_id = $${params.length}`);
-    }
-  } else if (req.query.userId || req.query.employeeId) {
-    const uid = String(req.query.userId ?? req.query.employeeId);
-    if (!isUuid(uid)) {
-      where.push("false");
-    } else {
-      params.push(uid);
-      where.push(`i.user_id = $${params.length}`);
-    }
-  }
-
-  if (req.query.department) { params.push(String(req.query.department)); where.push(`i.department = $${params.length}`); }
-  if (req.query.branch) { params.push(String(req.query.branch)); where.push(`i.branch = $${params.length}`); }
-  if (req.query.month) { params.push(Number(req.query.month)); where.push(`r.period_month = $${params.length}`); }
-  if (req.query.year) { params.push(Number(req.query.year)); where.push(`r.period_year = $${params.length}`); }
-  if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`r.status = $${params.length}`); }
-  if (req.query.paymentStatus) { params.push(String(req.query.paymentStatus).toUpperCase()); where.push(`i.payment_status = $${params.length}`); }
-  if (req.query.generatedBy) {
-    const gb = String(req.query.generatedBy);
-    if (!isUuid(gb)) { where.push("false"); }
-    else { params.push(gb); where.push(`r.generated_by_user_id = $${params.length}`); }
-  }
-
-  return { clause: `WHERE ${where.join(" AND ")}`, params, selfScoped: !isMgmt };
-}
-
-const REPORT_SELECT = `
-  SELECT i.id, i.run_id, i.user_id, i.employee_name, i.department, i.branch,
-         i.basic_salary, i.per_day_salary, i.gross_salary, i.days_present, i.days_absent,
-         i.leave_days, i.unpaid_leave_days, i.late_minutes, i.overtime_minutes, i.overtime_amount,
-         i.absence_deduction, i.penalty_amount, i.loan_deduction, i.bonus_amount, i.allowance_amount,
-         i.other_deductions, i.total_deductions, i.net_salary, i.payable_salary, i.payment_status,
-         i.calculation_snapshot,
-         r.period_month, r.period_year, r.status AS run_status
-    FROM drm.salary_run_items i
-    JOIN drm.salary_runs r ON r.id = i.run_id`;
+const STATUS_ACTION: Record<string, SalaryAction> = {
+  GENERATED: "generate",
+  APPROVED: "approve",
+  FINALIZED: "finalize",
+  CANCELLED: "cancel",
+};
 
 export function registerSalaryRoutes(app: Express) {
-  // -------------------------------------------------------------------------
-  // GET /api/salary/preview — live computed lines (not persisted). Mgmt only.
-  // -------------------------------------------------------------------------
+  // GET /api/salary/preview — live computed lines, not persisted.
   app.get("/api/salary/preview", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
+      if (!can(req, "preview")) return deny(res, "preview");
       const period = parsePeriod(req);
       if (!period) return res.status(400).json({ error: "Valid month (1-12) and year are required" });
 
-      const items = await computeItems(
-        period.month,
-        period.year,
-        {
-          branch: (req.query.branch as string) || undefined,
-          department: (req.query.department as string) || undefined,
-          userId: (req.query.userId as string) || undefined,
-        },
-        new Map(),
+      const items = await computePreview(period.month, period.year, {
+        branch: (req.query.branch as string) || undefined,
+        department: (req.query.department as string) || undefined,
+        userId: (req.query.employeeId as string) || (req.query.userId as string) || undefined,
+      });
+
+      // Surface employees who would block a later FINALIZE so the UI can warn.
+      const conflicts = await finalizedConflicts(
+        period.month, period.year, items.map((i) => i.userId),
       );
-
-      // Surface employees who cannot be paid honestly because basic salary is unset.
-      const missingData = items
-        .filter((it) => it.basicSalary <= 0)
-        .map((it) => ({ employeeId: it.userId, employeeName: it.employeeName, reason: "basic_salary not set" }));
-
-      const totals = totalsFromComputed(items);
+      const t = sumTotals(items);
       res.json({
         period,
-        items: items.map(computedToJson),
+        items,
         totals: {
-          totalGross: round2(totals.totalGross),
-          totalDeductions: round2(totals.totalDeductions),
-          totalNet: round2(totals.totalNet),
+          totalGross: round2(t.gross),
+          totalDeductions: round2(t.ded),
+          totalNet: round2(t.net),
+          totalPayable: round2(t.payable),
         },
         employeeCount: items.length,
-        missingData,
+        finalizedConflicts: conflicts,
       });
     } catch (err) {
       console.error("Error computing salary preview:", err);
@@ -581,82 +453,71 @@ export function registerSalaryRoutes(app: Express) {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // POST /api/salary/runs — persist a run as DRAFT (default) or GENERATED.
-  // -------------------------------------------------------------------------
+  // POST /api/salary/runs — persist a run (DRAFT or GENERATED) with full lines.
   app.post("/api/salary/runs", async (req: Request, res: Response) => {
     const client = await pool.connect();
     let began = false;
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
+      if (!can(req, "generate")) { return deny(res, "create"); }
       const period = parsePeriod(req);
-      if (!period) return res.status(400).json({ error: "Valid month (1-12) and year are required" });
+      if (!period) { return res.status(400).json({ error: "Valid month (1-12) and year are required" }); }
 
-      const requested = String(req.body?.status || "DRAFT").toUpperCase();
-      if (requested !== "DRAFT" && requested !== "GENERATED") {
-        return res.status(400).json({ error: "status on create must be DRAFT or GENERATED" });
+      const mode = String(req.body?.mode || "DRAFT").toUpperCase();
+      if (mode !== "DRAFT" && mode !== "GENERATED") {
+        return res.status(400).json({ error: "mode must be DRAFT or GENERATED" });
       }
       const branch = (req.body?.branch as string) || null;
       const department = (req.body?.department as string) || null;
-      const notes = (req.body?.notes as string) || null;
-      const remarks = (req.body?.remarks as string) || null;
+      const employeeId = (req.body?.employeeId as string) || undefined;
+      const remarks = (req.body?.remarks as string) || (req.body?.notes as string) || null;
 
-      const adjustments = parseAdjustments(req.body);
-      // Validate any client-supplied adjustment numbers (reject non-finite).
-      for (const a of Array.from(adjustments.values())) {
-        for (const v of [a.bonusAmount, a.allowanceAmount, a.loanDeduction, a.otherDeductions]) {
-          if (v !== undefined && v !== null && !Number.isFinite(Number(v))) {
-            return res.status(400).json({ error: "manualAdjustments must contain finite numbers" });
-          }
+      // Validate + normalize manual adjustments keyed by userId.
+      const rawAdj = (req.body?.manualAdjustments ?? {}) as Record<string, any>;
+      const manual: Record<string, ManualAdj> = {};
+      for (const [uid, adj] of Object.entries(rawAdj || {})) {
+        const fields: (keyof ManualAdj)[] = [
+          "bonusAmount", "allowanceAmount", "overtimeAmount", "loanDeduction", "otherDeductions",
+        ];
+        const parsed: ManualAdj = {};
+        for (const f of fields) {
+          const v = parseManualMoney((adj as any)?.[f]);
+          if (v === null) { return res.status(400).json({ error: `Invalid numeric value for ${f}` }); }
+          (parsed as any)[f] = v;
         }
+        if ((adj as any)?.remarks != null) parsed.remarks = String((adj as any).remarks).slice(0, 1000);
+        manual[uid] = parsed;
       }
 
-      // Duplicate-period guard: one run per month/year/branch/department.
-      const dup = await client.query(
-        `SELECT id, status FROM drm.salary_runs
-          WHERE period_month = $1 AND period_year = $2
-            AND COALESCE(branch,'') = COALESCE($3,'')
-            AND COALESCE(department,'') = COALESCE($4,'')
-            AND deleted_at IS NULL
-          LIMIT 1`,
-        [period.month, period.year, branch, department],
-      );
-      if (dup.rows.length > 0) {
+      const items = await computePreview(period.month, period.year,
+        { branch: branch || undefined, department: department || undefined, userId: employeeId }, manual);
+      if (items.length === 0) { return res.status(400).json({ error: "No active employees match this period/scope" }); }
+
+      // Duplicate-FINALIZED guard (cannot create lines that already have a
+      // finalized salary for the same employee + month + year).
+      const conflicts = await finalizedConflicts(period.month, period.year, items.map((i) => i.userId));
+      if (conflicts.length > 0) {
         return res.status(409).json({
-          error: "A salary run for this period and scope already exists",
-          existingRunId: dup.rows[0].id,
-          existingStatus: dup.rows[0].status,
+          error: "A finalized salary already exists for some employees in this period",
+          employees: conflicts,
         });
       }
 
-      const items = await computeItems(
-        period.month,
-        period.year,
-        { branch: branch || undefined, department: department || undefined },
-        adjustments,
-      );
-      if (items.length === 0) {
-        return res.status(400).json({ error: "No active employees match this period/scope" });
-      }
-      const totals = totalsFromComputed(items);
-
-      const actor = actorUserId(req);
-      await client.query("BEGIN");
-      began = true;
+      const t = sumTotals(items);
+      await client.query("BEGIN"); began = true;
+      const genCols = mode === "GENERATED" ? `, generated_by, generated_at` : "";
+      const genVals = mode === "GENERATED" ? `, $11, now()` : "";
+      const runParams: any[] = [
+        period.month, period.year, branch, department, mode, remarks,
+        items.length, round2(t.gross), round2(t.ded), round2(t.net), req.user.userId,
+      ];
       const runRes = await client.query(
         `INSERT INTO drm.salary_runs
            (period_month, period_year, branch, department, status, notes, remarks,
-            employee_count, total_gross, total_deductions, total_net, created_by_user_id,
-            generated_by_user_id, generated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::uuid,
-                 CASE WHEN $5 = 'GENERATED' THEN $12::uuid ELSE NULL END,
-                 CASE WHEN $5 = 'GENERATED' THEN now() ELSE NULL END)
+            employee_count, total_gross, total_deductions, total_net, created_by_user_id${genCols})
+         VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10,$11${genVals})
          RETURNING *`,
-        [
-          period.month, period.year, branch, department, requested, notes, remarks,
-          items.length, round2(totals.totalGross), round2(totals.totalDeductions), round2(totals.totalNet), actor,
-        ],
+        runParams,
       );
       const run = runRes.rows[0];
 
@@ -664,38 +525,41 @@ export function registerSalaryRoutes(app: Express) {
         await client.query(
           `INSERT INTO drm.salary_run_items
              (run_id, user_id, employee_name, department, branch,
-              basic_salary, per_day_salary, days_present, days_absent,
-              leave_days, unpaid_leave_days, late_minutes, overtime_minutes,
-              gross_salary, absence_deduction, penalty_amount, loan_deduction,
-              bonus_amount, allowance_amount, other_deductions, overtime_amount,
-              total_deductions, net_salary, payable_salary, payment_status, calculation_snapshot)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,'UNPAID',$25::jsonb)`,
+              basic_salary, gross_salary, per_day_salary, days_present, days_absent,
+              leave_days, unpaid_leave_days, unpaid_leave_deduction, late_minutes, late_deduction,
+              overtime_minutes, overtime_amount, allowance_amount, bonus_amount,
+              absence_deduction, penalty_amount, loan_deduction, other_deductions,
+              total_deductions, net_salary, payable_salary, payment_status, remarks, calculation_snapshot)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,'UNPAID',$27,$28)`,
           [
             run.id, it.userId, it.employeeName, it.department, it.branch,
-            it.basicSalary, it.perDaySalary, it.daysPresent, it.daysAbsent,
-            it.leaveDays, it.unpaidLeaveDays, it.lateMinutes, it.overtimeMinutes,
-            it.grossSalary, it.absenceDeduction, it.penaltyAmount, it.loanDeduction,
-            it.bonusAmount, it.allowanceAmount, it.otherDeductions, it.overtimeAmount,
-            it.totalDeductions, it.netSalary, it.payableSalary, JSON.stringify(it.snapshot),
+            it.basicSalary, it.grossSalary, it.perDaySalary, it.daysPresent, it.daysAbsent,
+            it.leaveDays, it.unpaidLeaveDays, it.unpaidLeaveDeduction, it.lateMinutes, it.lateDeduction,
+            it.overtimeMinutes, it.overtimeAmount, it.allowanceAmount, it.bonusAmount,
+            it.absenceDeduction, it.penaltyAmount, it.loanDeduction, it.otherDeductions,
+            it.totalDeductions, it.netSalary, it.payableSalary,
+            manual[it.userId]?.remarks ?? null, JSON.stringify(it.calculationSnapshot),
           ],
         );
       }
-      await client.query("COMMIT");
-      began = false;
+      await client.query("COMMIT"); began = false;
 
       await recordAuditLog({
-        actorUserId: actor,
-        action: "salary.run.created",
-        module: "payroll",
+        actorUserId: req.user.userId,
+        action: mode === "GENERATED" ? "salary.generate" : "salary.create_draft",
+        module: "salary",
         entityType: "salary_run",
         entityId: run.id,
-        nextStatus: requested,
-        after: { period, branch, department, employeeCount: items.length, totals },
+        nextStatus: mode,
+        after: { period, branch, department, employeeCount: items.length, totals: t },
+        reason: remarks ?? undefined,
         req,
       });
 
-      const itemsRes = await pool.query(`${REPORT_SELECT} WHERE i.run_id = $1 ORDER BY i.employee_name ASC`, [run.id]);
-      res.status(201).json({ run, items: itemsRes.rows.map(mapItemRow) });
+      const itemsRes = await pool.query(
+        `SELECT * FROM drm.salary_run_items WHERE run_id = $1 ORDER BY employee_name ASC`, [run.id],
+      );
+      res.status(201).json({ run, items: itemsRes.rows });
     } catch (err) {
       if (began) await client.query("ROLLBACK").catch(() => {});
       console.error("Error creating salary run:", err);
@@ -705,276 +569,248 @@ export function registerSalaryRoutes(app: Express) {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // GET /api/salary/runs — list runs (mgmt only; exposes aggregates).
-  // -------------------------------------------------------------------------
+  // GET /api/salary/runs — list runs (filters + pagination + scope).
   app.get("/api/salary/runs", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
-      const where: string[] = ["deleted_at IS NULL"];
+      if (!can(req, "view")) return deny(res, "view");
+      const scope = await resolveScope(req);
+
+      const where: string[] = ["sr.deleted_at IS NULL"];
       const params: any[] = [];
-      if (req.query.month) { params.push(Number(req.query.month)); where.push(`period_month = $${params.length}`); }
-      if (req.query.year) { params.push(Number(req.query.year)); where.push(`period_year = $${params.length}`); }
-      if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`status = $${params.length}`); }
-      if (req.query.branch) { params.push(String(req.query.branch)); where.push(`branch = $${params.length}`); }
-      if (req.query.department) { params.push(String(req.query.department)); where.push(`department = $${params.length}`); }
+      if (req.query.month) { params.push(Number(req.query.month)); where.push(`sr.period_month = $${params.length}`); }
+      if (req.query.year) { params.push(Number(req.query.year)); where.push(`sr.period_year = $${params.length}`); }
+      if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`sr.status = $${params.length}`); }
+      if (req.query.branch) { params.push(String(req.query.branch)); where.push(`sr.branch = $${params.length}`); }
+      if (req.query.department) { params.push(String(req.query.department)); where.push(`sr.department = $${params.length}`); }
+      if (req.query.generatedBy) { params.push(String(req.query.generatedBy)); where.push(`(sr.generated_by = $${params.length} OR sr.created_by_user_id = $${params.length})`); }
+
+      if (scope.kind === "department") {
+        if (!scope.department) return res.json({ runs: [], total: 0, page: 1, pageSize: 0 });
+        params.push(scope.department);
+        where.push(`(sr.department = $${params.length} OR EXISTS (SELECT 1 FROM drm.salary_run_items i WHERE i.run_id = sr.id AND i.department = $${params.length}))`);
+      } else if (scope.kind === "self") {
+        params.push(scope.userId);
+        where.push(`EXISTS (SELECT 1 FROM drm.salary_run_items i WHERE i.run_id = sr.id AND i.user_id = $${params.length})`);
+      }
+
       const clause = `WHERE ${where.join(" AND ")}`;
+      let page = Number(req.query.page ?? 1); if (!Number.isInteger(page) || page < 1) page = 1;
+      let pageSize = Number(req.query.pageSize ?? 50); if (!Number.isInteger(pageSize) || pageSize < 1) pageSize = 50; if (pageSize > 200) pageSize = 200;
+      const offset = (page - 1) * pageSize;
+
+      const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM drm.salary_runs sr ${clause}`, params);
+      const total = countRes.rows[0]?.total ?? 0;
       const runs = await pool.query(
-        `SELECT * FROM drm.salary_runs ${clause} ORDER BY period_year DESC, period_month DESC, created_at DESC`,
+        `SELECT sr.* FROM drm.salary_runs sr ${clause}
+          ORDER BY sr.period_year DESC, sr.period_month DESC, sr.created_at DESC
+          LIMIT ${pageSize} OFFSET ${offset}`,
         params,
       );
-      res.json({ runs: runs.rows });
+      res.json({ runs: runs.rows, total, page, pageSize });
     } catch (err) {
       console.error("Error listing salary runs:", err);
       res.status(500).json({ error: "Failed to list salary runs" });
     }
   });
 
-  // -------------------------------------------------------------------------
-  // GET /api/salary/runs/:id — run + items (mgmt only; exposes all employees).
-  // -------------------------------------------------------------------------
+  // GET /api/salary/runs/:id — run + items (scoped).
   app.get("/api/salary/runs/:id", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
+      if (!can(req, "view")) return deny(res, "view");
       const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
       if (runRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
+      const run = runRes.rows[0];
+
+      const scope = await resolveScope(req);
+      const where: string[] = ["run_id = $1"];
+      const params: any[] = [req.params.id];
+      if (scope.kind === "department") {
+        if (!scope.department) return res.status(403).json({ error: "Not authorized for this run" });
+        params.push(scope.department); where.push(`department = $${params.length}`);
+      } else if (scope.kind === "self") {
+        params.push(scope.userId); where.push(`user_id = $${params.length}`);
+      }
       const itemsRes = await pool.query(
-        `${REPORT_SELECT} WHERE i.run_id = $1 ORDER BY i.employee_name ASC`,
-        [req.params.id],
+        `SELECT * FROM drm.salary_run_items WHERE ${where.join(" AND ")} ORDER BY employee_name ASC`, params,
       );
-      res.json({ run: runRes.rows[0], items: itemsRes.rows.map(mapItemRow) });
+      if (scope.kind !== "all" && itemsRes.rows.length === 0) {
+        return res.status(403).json({ error: "Not authorized for this run" });
+      }
+      res.json({ run, items: itemsRes.rows });
     } catch (err) {
       console.error("Error fetching salary run:", err);
       res.status(500).json({ error: "Failed to fetch salary run" });
     }
   });
 
-  // -------------------------------------------------------------------------
-  // PATCH /api/salary/runs/:id/status — guarded lifecycle transition.
-  // -------------------------------------------------------------------------
+  // PATCH /api/salary/runs/:id/status — lifecycle transitions with locking + audit.
   app.patch("/api/salary/runs/:id/status", async (req: Request, res: Response) => {
-    const client = await pool.connect();
-    let began = false;
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
-      const target = String(req.body?.status || "").toUpperCase();
-      if (!ALL_STATUSES.includes(target)) {
-        return res.status(400).json({ error: `status must be one of ${ALL_STATUSES.join(", ")}` });
+      const status = String(req.body?.status || "").toUpperCase();
+      const reason = (req.body?.reason as string) || undefined;
+      if (!Object.keys(STATUS_ACTION).includes(status)) {
+        return res.status(400).json({ error: `status must be one of ${Object.keys(STATUS_ACTION).join(", ")}` });
       }
-      const actor = actorUserId(req);
+      const action = STATUS_ACTION[status];
+      if (!can(req, action)) return deny(res, action);
 
-      await client.query("BEGIN");
-      began = true;
-      const existing = await client.query(
-        `SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
-        [req.params.id],
-      );
-      if (existing.rows.length === 0) {
-        await client.query("ROLLBACK");
-        began = false;
-        return res.status(404).json({ error: "Salary run not found" });
-      }
-      const run = existing.rows[0];
-      const current = String(run.status).toUpperCase();
+      const existingRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+      if (existingRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
+      const existing = existingRes.rows[0];
+      const current = String(existing.status || "DRAFT").toUpperCase();
 
-      if (isLockedStatus(current)) {
-        await client.query("ROLLBACK");
-        began = false;
-        return res.status(409).json({ error: `A ${current} salary run cannot be modified` });
+      if (LOCKED_STATUSES.has(current)) {
+        return res.status(409).json({ error: "Finalized/locked salary runs cannot be modified" });
       }
-      const allowedTargets = STATUS_TRANSITIONS[current] || [];
-      if (!allowedTargets.includes(target)) {
-        await client.query("ROLLBACK");
-        began = false;
-        return res.status(409).json({
-          error: `Invalid transition ${current} -> ${target}`,
-          allowedTransitions: allowedTargets,
-        });
+      if (!(ALLOWED_NEXT[current] || []).includes(status)) {
+        return res.status(409).json({ error: `Cannot move a ${current} run to ${status}` });
       }
 
-      // FINALIZED: serialize per-period finalizes and block a second FINALIZED
-      // salary for the same employee/month/year (across any other run).
-      if (target === "FINALIZED") {
-        await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-          `salary_finalize:${run.period_year}-${run.period_month}`,
-        ]);
-        const conflict = await client.query(
-          `SELECT i.user_id, i.employee_name
-             FROM drm.salary_run_items i
-             JOIN drm.salary_runs r ON r.id = i.run_id
-            WHERE r.period_month = $1 AND r.period_year = $2
-              AND r.status = 'FINALIZED' AND r.id <> $3 AND r.deleted_at IS NULL
-              AND i.user_id IN (SELECT user_id FROM drm.salary_run_items WHERE run_id = $3)
-            LIMIT 20`,
-          [run.period_month, run.period_year, run.id],
-        );
-        if (conflict.rows.length > 0) {
-          await client.query("ROLLBACK");
-          began = false;
-          return res.status(409).json({
-            error: "One or more employees already have a FINALIZED salary for this month/year",
-            conflicts: conflict.rows.map((c: any) => ({ employeeId: c.user_id, employeeName: c.employee_name })),
-          });
+      // HOD may only approve their own department's run.
+      if (salaryClass(req) === "hod" && action === "approve") {
+        const dept = await callerDepartment(req);
+        if (!dept || existing.department !== dept) {
+          return res.status(403).json({ error: "You can only approve salary for your own department" });
         }
       }
 
-      const sets: string[] = ["status = $1", "updated_at = now()"];
-      const params: any[] = [target, req.params.id];
-      if (target === "APPROVED") {
-        params.push(actor);
-        sets.push(`approved_by_user_id = $${params.length}`, "approved_at = now()");
-      } else if (target === "GENERATED") {
-        params.push(actor);
-        sets.push(`generated_by_user_id = $${params.length}`, "generated_at = now()");
-      } else if (target === "FINALIZED") {
-        params.push(actor);
-        sets.push(`finalized_by_user_id = $${params.length}`, "finalized_at = now()");
+      // Re-check the duplicate-FINALIZED guard at finalize time.
+      if (status === "FINALIZED") {
+        const idsRes = await pool.query(`SELECT user_id FROM drm.salary_run_items WHERE run_id = $1`, [req.params.id]);
+        const conflicts = await finalizedConflicts(
+          existing.period_month, existing.period_year,
+          idsRes.rows.map((r: any) => String(r.user_id)), req.params.id,
+        );
+        if (conflicts.length > 0) {
+          return res.status(409).json({ error: "A finalized salary already exists for some employees in this period", employees: conflicts });
+        }
       }
-      const updated = await client.query(
-        `UPDATE drm.salary_runs SET ${sets.join(", ")} WHERE id = $2 RETURNING *`,
-        params,
+
+      const sets = ["status = $1", "updated_at = now()"];
+      const params: any[] = [status, req.params.id];
+      if (status === "APPROVED") { params.push(req.user.userId); sets.push(`approved_by_user_id = $${params.length}`, "approved_at = now()"); }
+      if (status === "FINALIZED") { params.push(req.user.userId); sets.push(`finalized_by = $${params.length}`, "finalized_at = now()"); }
+      const updated = await pool.query(
+        `UPDATE drm.salary_runs SET ${sets.join(", ")} WHERE id = $2 RETURNING *`, params,
       );
-      await client.query("COMMIT");
-      began = false;
 
       await recordAuditLog({
-        actorUserId: actor,
-        action: "salary.run.status_changed",
-        module: "payroll",
+        actorUserId: req.user.userId,
+        action: `salary.${action}`,
+        module: "salary",
         entityType: "salary_run",
         entityId: req.params.id,
         previousStatus: current,
-        nextStatus: target,
-        reason: (req.body?.reason as string) || undefined,
+        nextStatus: status,
+        reason,
         req,
       });
-
       res.json({ run: updated.rows[0] });
     } catch (err) {
-      if (began) await client.query("ROLLBACK").catch(() => {});
       console.error("Error updating salary run status:", err);
       res.status(500).json({ error: "Failed to update salary run status" });
-    } finally {
-      client.release();
     }
   });
 
-  // -------------------------------------------------------------------------
-  // PATCH /api/salary/run-items/:id — edit manual adjustments (DRAFT/GENERATED).
-  // -------------------------------------------------------------------------
+  // PATCH /api/salary/run-items/:id — edit allowed line items (DRAFT/GENERATED only).
   app.patch("/api/salary/run-items/:id", async (req: Request, res: Response) => {
     const client = await pool.connect();
     let began = false;
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!hasSalaryManagementRole(req)) return res.status(403).json({ error: "Not authorized for salary" });
+      if (!req.user) { return res.status(401).json({ error: "Not authenticated" }); }
+      if (!can(req, "edit")) { return deny(res, "edit"); }
 
-      const EDITABLE = ["bonusAmount", "allowanceAmount", "loanDeduction", "otherDeductions"] as const;
-      const updates: Record<string, number> = {};
-      for (const f of EDITABLE) {
-        if (req.body?.[f] !== undefined && req.body?.[f] !== null) {
-          if (!Number.isFinite(Number(req.body[f]))) {
-            return res.status(400).json({ error: `${f} must be a finite number` });
-          }
-          updates[f] = nonNegMoney(req.body[f]);
+      const itemRes = await pool.query(`SELECT * FROM drm.salary_run_items WHERE id = $1`, [req.params.id]);
+      if (itemRes.rows.length === 0) { return res.status(404).json({ error: "Salary line not found" }); }
+      const item = itemRes.rows[0];
+      const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [item.run_id]);
+      if (runRes.rows.length === 0) { return res.status(404).json({ error: "Salary run not found" }); }
+      const run = runRes.rows[0];
+      const runStatus = String(run.status || "DRAFT").toUpperCase();
+      if (runStatus !== "DRAFT" && runStatus !== "GENERATED") {
+        return res.status(409).json({ error: "Only DRAFT or GENERATED salary lines can be edited" });
+      }
+
+      // Only these fields are editable; everything else is computed.
+      const editable: (keyof ManualAdj)[] = ["bonusAmount", "allowanceAmount", "overtimeAmount", "loanDeduction", "otherDeductions"];
+      const next: Record<string, number> = {
+        bonusAmount: toNum(item.bonus_amount),
+        allowanceAmount: toNum(item.allowance_amount),
+        overtimeAmount: toNum(item.overtime_amount),
+        loanDeduction: toNum(item.loan_deduction),
+        otherDeductions: toNum(item.other_deductions),
+      };
+      for (const f of editable) {
+        if (req.body?.[f] !== undefined) {
+          const v = parseManualMoney(req.body[f]);
+          if (v === null) { return res.status(400).json({ error: `Invalid numeric value for ${f}` }); }
+          next[f] = v;
         }
       }
-      if (Object.keys(updates).length === 0) {
-        return res.status(400).json({ error: `Provide at least one of: ${EDITABLE.join(", ")}` });
-      }
+      const remarks = req.body?.remarks != null ? String(req.body.remarks).slice(0, 1000) : item.remarks;
 
-      await client.query("BEGIN");
-      began = true;
-      const itemRes = await client.query(
-        `SELECT i.*, r.status AS run_status, r.id AS run_id
-           FROM drm.salary_run_items i
-           JOIN drm.salary_runs r ON r.id = i.run_id
-          WHERE i.id = $1 AND r.deleted_at IS NULL
-          FOR UPDATE OF i`,
-        [req.params.id],
-      );
-      if (itemRes.rows.length === 0) {
-        await client.query("ROLLBACK");
-        began = false;
-        return res.status(404).json({ error: "Salary line not found" });
-      }
-      const item = itemRes.rows[0];
-      const runStatus = String(item.run_status).toUpperCase();
-      if (runStatus !== "DRAFT" && runStatus !== "GENERATED") {
-        await client.query("ROLLBACK");
-        began = false;
-        return res.status(409).json({ error: `Lines can only be edited while the run is DRAFT or GENERATED (run is ${runStatus})` });
-      }
+      const basic = toNum(item.basic_salary);
+      const unpaidLeaveDeduction = toNum(item.unpaid_leave_deduction);
+      const absenceDeduction = toNum(item.absence_deduction);
+      const lateDeduction = toNum(item.late_deduction);
+      const penaltyAmount = toNum(item.penalty_amount);
 
-      const before = mapItemRow(item);
-      const basic = num(item.basic_salary);
-      const perDay = num(item.per_day_salary);
-      const absenceDeduction = num(item.absence_deduction);
-      const penaltyAmount = num(item.penalty_amount);
-      const unpaidLeaveDeduction = round2(num(item.unpaid_leave_days) * perDay);
-      const overtimeAmount = num(item.overtime_amount);
+      const grossSalary = round2(basic + next.allowanceAmount + next.bonusAmount + next.overtimeAmount);
+      const totalDeductions = round2(unpaidLeaveDeduction + absenceDeduction + lateDeduction + penaltyAmount + next.loanDeduction + next.otherDeductions);
+      const netSalary = round2(grossSalary - totalDeductions);
+      const payableSalary = round2(Math.max(0, netSalary));
 
-      const bonus = updates.bonusAmount ?? num(item.bonus_amount);
-      const allowance = updates.allowanceAmount ?? num(item.allowance_amount);
-      const loanDeduction = updates.loanDeduction ?? num(item.loan_deduction);
-      const otherDeductions = updates.otherDeductions ?? num(item.other_deductions);
+      const snapshot = (item.calculation_snapshot && typeof item.calculation_snapshot === "object") ? item.calculation_snapshot : {};
+      const newSnapshot = {
+        ...snapshot,
+        inputs: { ...(snapshot as any).inputs, ...next },
+        outputs: { ...(snapshot as any).outputs, grossSalary, totalDeductions, netSalary, payableSalary },
+        editedBy: req.user.userId,
+        editedAt: new Date().toISOString(),
+      };
 
-      const gross = round2(basic + allowance + bonus + overtimeAmount);
-      const totalDeductions = round2(
-        absenceDeduction + unpaidLeaveDeduction + penaltyAmount + loanDeduction + otherDeductions,
-      );
-      const net = round2(gross - totalDeductions);
-      const payable = Math.max(0, net);
-
-      await client.query(
+      await client.query("BEGIN"); began = true;
+      const updatedItem = await client.query(
         `UPDATE drm.salary_run_items
-            SET bonus_amount = $1, allowance_amount = $2, loan_deduction = $3, other_deductions = $4,
-                gross_salary = $5, total_deductions = $6, net_salary = $7, payable_salary = $8
-          WHERE id = $9`,
-        [bonus, allowance, loanDeduction, otherDeductions, gross, totalDeductions, net, payable, req.params.id],
+            SET bonus_amount = $1, allowance_amount = $2, overtime_amount = $3,
+                loan_deduction = $4, other_deductions = $5, gross_salary = $6,
+                total_deductions = $7, net_salary = $8, payable_salary = $9,
+                remarks = $10, calculation_snapshot = $11
+          WHERE id = $12 RETURNING *`,
+        [next.bonusAmount, next.allowanceAmount, next.overtimeAmount, next.loanDeduction,
+         next.otherDeductions, grossSalary, totalDeductions, netSalary, payableSalary,
+         remarks, JSON.stringify(newSnapshot), req.params.id],
       );
 
-      // Recompute parent run aggregates from its lines.
+      // Recompute parent-run totals from its lines.
+      const totRes = await client.query(
+        `SELECT COALESCE(SUM(gross_salary),0) g, COALESCE(SUM(total_deductions),0) d, COALESCE(SUM(net_salary),0) n
+           FROM drm.salary_run_items WHERE run_id = $1`, [item.run_id],
+      );
       await client.query(
-        `UPDATE drm.salary_runs r
-            SET total_gross = agg.g, total_deductions = agg.d, total_net = agg.n, updated_at = now()
-           FROM (SELECT COALESCE(SUM(gross_salary),0) AS g,
-                        COALESCE(SUM(total_deductions),0) AS d,
-                        COALESCE(SUM(payable_salary),0) AS n
-                   FROM drm.salary_run_items WHERE run_id = $1) agg
-          WHERE r.id = $1`,
-        [item.run_id],
+        `UPDATE drm.salary_runs SET total_gross = $1, total_deductions = $2, total_net = $3, updated_at = now() WHERE id = $4`,
+        [round2(toNum(totRes.rows[0].g)), round2(toNum(totRes.rows[0].d)), round2(toNum(totRes.rows[0].n)), item.run_id],
       );
-      await client.query("COMMIT");
-      began = false;
+      await client.query("COMMIT"); began = false;
 
-      const actor = actorUserId(req);
-      const updatedRes = await pool.query(`${REPORT_SELECT} WHERE i.id = $1`, [req.params.id]);
-      const after = mapItemRow(updatedRes.rows[0]);
       await recordAuditLog({
-        actorUserId: actor,
-        action: "salary.item.edited",
-        module: "payroll",
+        actorUserId: req.user.userId,
+        action: "salary.edit_item",
+        module: "salary",
         entityType: "salary_run_item",
         entityId: req.params.id,
         before: {
-          bonusAmount: before.bonusAmount, allowanceAmount: before.allowanceAmount,
-          loanDeduction: before.loanDeduction, otherDeductions: before.otherDeductions,
-          totalDeductions: before.totalDeductions, payableSalary: before.payableSalary,
+          bonusAmount: toNum(item.bonus_amount), allowanceAmount: toNum(item.allowance_amount),
+          overtimeAmount: toNum(item.overtime_amount), loanDeduction: toNum(item.loan_deduction),
+          otherDeductions: toNum(item.other_deductions), netSalary: toNum(item.net_salary),
         },
-        after: {
-          bonusAmount: after.bonusAmount, allowanceAmount: after.allowanceAmount,
-          loanDeduction: after.loanDeduction, otherDeductions: after.otherDeductions,
-          totalDeductions: after.totalDeductions, payableSalary: after.payableSalary,
-        },
-        reason: (req.body?.reason as string) || undefined,
+        after: { ...next, grossSalary, totalDeductions, netSalary, payableSalary },
         req,
       });
-
-      res.json({ item: after });
+      res.json({ item: updatedItem.rows[0] });
     } catch (err) {
       if (began) await client.query("ROLLBACK").catch(() => {});
       console.error("Error editing salary line:", err);
@@ -984,65 +820,85 @@ export function registerSalaryRoutes(app: Express) {
     }
   });
 
-  // -------------------------------------------------------------------------
-  // GET /api/reports/salary — paginated report (registered before the reports
-  // catch-all so the exact path wins). Mgmt sees all; others see self only.
-  // -------------------------------------------------------------------------
+  registerSalaryReportRoutes(app);
+}
+
+// ---------------------------------------------------------------------------
+// Report endpoints (compat path for the Salary Report screen). Registered here
+// (salary routes are mounted BEFORE the reports catch-all) so /api/reports/salary
+// wins over the parameterized /reports/:type route.
+// ---------------------------------------------------------------------------
+
+function buildReportFilters(req: Request, scope: Scope): { where: string; params: any[] } {
+  const where: string[] = ["sr.deleted_at IS NULL"];
+  const params: any[] = [];
+  const add = (val: any, frag: (p: number) => string) => { params.push(val); where.push(frag(params.length)); };
+
+  if (req.query.month) add(Number(req.query.month), (p) => `sr.period_month = $${p}`);
+  if (req.query.year) add(Number(req.query.year), (p) => `sr.period_year = $${p}`);
+  if (req.query.employeeId) add(String(req.query.employeeId), (p) => `sri.user_id = $${p}`);
+  if (req.query.department) add(String(req.query.department), (p) => `sri.department = $${p}`);
+  if (req.query.branch) add(String(req.query.branch), (p) => `sri.branch = $${p}`);
+  if (req.query.status) add(String(req.query.status).toUpperCase(), (p) => `sr.status = $${p}`);
+  if (req.query.paymentStatus) add(String(req.query.paymentStatus).toUpperCase(), (p) => `sri.payment_status = $${p}`);
+  if (req.query.generatedBy) {
+    params.push(String(req.query.generatedBy));
+    where.push(`(sr.generated_by = $${params.length} OR sr.created_by_user_id = $${params.length})`);
+  }
+  if (req.query.search) add(`%${String(req.query.search)}%`, (p) => `sri.employee_name ILIKE $${p}`);
+
+  if (scope.kind === "department") {
+    if (!scope.department) { where.push("false"); }
+    else add(scope.department, (p) => `sri.department = $${p}`);
+  } else if (scope.kind === "self") {
+    add(scope.userId, (p) => `sri.user_id = $${p}`);
+  }
+  return { where: `WHERE ${where.join(" AND ")}`, params };
+}
+
+const REPORT_COLUMNS = `
+  sri.id, sri.user_id, sri.employee_name, sri.department, sri.branch,
+  sri.basic_salary, sri.per_day_salary, sri.days_present, sri.days_absent,
+  sri.leave_days, sri.unpaid_leave_days, sri.unpaid_leave_deduction,
+  sri.late_minutes, sri.late_deduction, sri.overtime_minutes, sri.overtime_amount,
+  sri.allowance_amount, sri.bonus_amount, sri.gross_salary,
+  sri.absence_deduction, sri.penalty_amount, sri.loan_deduction, sri.other_deductions,
+  sri.total_deductions, sri.net_salary, sri.payable_salary, sri.payment_status, sri.remarks,
+  sr.id AS run_id, sr.period_month, sr.period_year, sr.status AS run_status,
+  sr.generated_by, sr.created_by_user_id, sr.approved_at, sr.finalized_at`;
+
+function registerSalaryReportRoutes(app: Express) {
+  // GET /api/reports/salary — item-level report with filters, totals, pagination.
   app.get("/api/reports/salary", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { clause, params, selfScoped } = buildReportFilters(req);
+      if (!can(req, "view")) return deny(res, "view");
+      const scope = await resolveScope(req);
+      const { where, params } = buildReportFilters(req, scope);
 
-      let page = Number(req.query.page ?? 1);
-      if (!Number.isInteger(page) || page < 1) page = 1;
-      let limit = Number(req.query.limit ?? req.query.pageSize ?? 50);
-      if (!Number.isInteger(limit) || limit < 1) limit = 50;
-      if (limit > 200) limit = 200;
-      const offset = (page - 1) * limit;
+      let page = Number(req.query.page ?? 1); if (!Number.isInteger(page) || page < 1) page = 1;
+      let pageSize = Number(req.query.pageSize ?? 50); if (!Number.isInteger(pageSize) || pageSize < 1) pageSize = 50; if (pageSize > 200) pageSize = 200;
+      const offset = (page - 1) * pageSize;
 
-      const countRes = await pool.query(
-        `SELECT COUNT(*)::int AS total FROM drm.salary_run_items i JOIN drm.salary_runs r ON r.id = i.run_id ${clause}`,
-        params,
-      );
+      const base = `FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id ${where}`;
+      const countRes = await pool.query(`SELECT COUNT(*)::int AS total ${base}`, params);
       const total = countRes.rows[0]?.total ?? 0;
-
-      const sumRes = await pool.query(
-        `SELECT COALESCE(SUM(i.gross_salary),0) AS gross,
-                COALESCE(SUM(i.total_deductions),0) AS ded,
-                COALESCE(SUM(i.payable_salary),0) AS net,
-                COUNT(DISTINCT i.user_id)::int AS employees
-           FROM drm.salary_run_items i JOIN drm.salary_runs r ON r.id = i.run_id ${clause}`,
+      const totalsRes = await pool.query(
+        `SELECT COALESCE(SUM(sri.gross_salary),0) g, COALESCE(SUM(sri.total_deductions),0) d,
+                COALESCE(SUM(sri.net_salary),0) n, COALESCE(SUM(sri.payable_salary),0) p ${base}`,
         params,
       );
-      const s = sumRes.rows[0] || {};
-
       const rowsRes = await pool.query(
-        `${REPORT_SELECT} ${clause}
-         ORDER BY r.period_year DESC, r.period_month DESC, i.employee_name ASC
-         LIMIT ${limit} OFFSET ${offset}`,
+        `SELECT ${REPORT_COLUMNS} ${base} ORDER BY sr.period_year DESC, sr.period_month DESC, sri.employee_name ASC LIMIT ${pageSize} OFFSET ${offset}`,
         params,
       );
-
+      const tt = totalsRes.rows[0];
       res.json({
-        filters: {
-          userId: selfScoped ? actorUserId(req) : (req.query.userId ?? req.query.employeeId ?? null),
-          department: req.query.department ?? null,
-          branch: req.query.branch ?? null,
-          month: req.query.month ?? null,
-          year: req.query.year ?? null,
-          status: req.query.status ?? null,
-          paymentStatus: req.query.paymentStatus ?? null,
-          generatedBy: req.query.generatedBy ?? null,
-          selfScoped,
+        rows: rowsRes.rows, total, page, pageSize,
+        totals: {
+          totalGross: round2(toNum(tt.g)), totalDeductions: round2(toNum(tt.d)),
+          totalNet: round2(toNum(tt.n)), totalPayable: round2(toNum(tt.p)),
         },
-        rows: rowsRes.rows.map(mapItemRow),
-        summary: {
-          totalGross: round2(num(s.gross)),
-          totalDeductions: round2(num(s.ded)),
-          totalNet: round2(num(s.net)),
-          employeeCount: num(s.employees),
-        },
-        pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
       });
     } catch (err) {
       console.error("Error in salary report:", err);
@@ -1054,31 +910,44 @@ export function registerSalaryRoutes(app: Express) {
   app.get("/api/reports/salary/export", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { clause, params } = buildReportFilters(req);
+      if (!can(req, "export")) return deny(res, "export");
+      const scope = await resolveScope(req);
+      const { where, params } = buildReportFilters(req, scope);
       const rowsRes = await pool.query(
-        `${REPORT_SELECT} ${clause}
-         ORDER BY r.period_year DESC, r.period_month DESC, i.employee_name ASC
-         LIMIT 5000`,
+        `SELECT ${REPORT_COLUMNS}
+           FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id
+           ${where} ORDER BY sr.period_year DESC, sr.period_month DESC, sri.employee_name ASC LIMIT 10000`,
         params,
       );
+
       const header = [
-        "Year", "Month", "Employee", "Department", "Branch", "Run Status", "Payment Status",
-        "Basic", "Per Day", "Gross", "Days Present", "Days Absent", "Leave Days", "Unpaid Leave Days",
-        "Overtime Minutes", "Absence Deduction", "Penalty", "Loan", "Bonus", "Allowance",
-        "Other Deductions", "Total Deductions", "Net", "Payable",
+        "Month", "Year", "Employee", "Department", "Branch", "Basic", "Per Day",
+        "Present", "Absent", "Leave Days", "Unpaid Leave Days", "Allowance", "Bonus",
+        "Overtime Mins", "Overtime Amt", "Gross", "Absence Ded", "Unpaid Leave Ded",
+        "Penalty", "Loan", "Other Ded", "Total Deductions", "Net", "Payable",
+        "Salary Status", "Payment Status",
       ];
+      const csvCell = (v: unknown) => {
+        if (v === null || v === undefined) return "";
+        const s = v instanceof Date ? v.toISOString() : String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
       const lines = [header.join(",")];
-      for (const raw of rowsRes.rows) {
-        const r = mapItemRow(raw);
+      for (const r of rowsRes.rows) {
         lines.push([
-          csvCell(r.year), csvCell(r.month), csvCell(r.employeeName), csvCell(r.department), csvCell(r.branch),
-          csvCell(r.runStatus), csvCell(r.paymentStatus), csvCell(r.basicSalary), csvCell(r.perDaySalary),
-          csvCell(r.grossSalary), csvCell(r.daysPresent), csvCell(r.daysAbsent), csvCell(r.leaveDays),
-          csvCell(r.unpaidLeaveDays), csvCell(r.overtimeMinutes), csvCell(r.absenceDeduction), csvCell(r.penaltyAmount),
-          csvCell(r.loanDeduction), csvCell(r.bonusAmount), csvCell(r.allowanceAmount), csvCell(r.otherDeductions),
-          csvCell(r.totalDeductions), csvCell(r.netSalary), csvCell(r.payableSalary),
-        ].join(","));
+          r.period_month, r.period_year, r.employee_name, r.department, r.branch,
+          r.basic_salary, r.per_day_salary, r.days_present, r.days_absent, r.leave_days,
+          r.unpaid_leave_days, r.allowance_amount, r.bonus_amount, r.overtime_minutes,
+          r.overtime_amount, r.gross_salary, r.absence_deduction, r.unpaid_leave_deduction,
+          r.penalty_amount, r.loan_deduction, r.other_deductions, r.total_deductions,
+          r.net_salary, r.payable_salary, r.run_status, r.payment_status,
+        ].map(csvCell).join(","));
       }
+
+      await recordAuditLog({
+        actorUserId: req.user.userId, action: "salary.export", module: "salary",
+        entityType: "salary_report", entityId: "export", after: { rows: rowsRes.rows.length }, req,
+      });
       res.setHeader("Content-Type", "text/csv");
       res.setHeader("Content-Disposition", `attachment; filename="salary_report.csv"`);
       res.send(lines.join("\n"));
