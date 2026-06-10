@@ -1,105 +1,355 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequestJson } from "@/lib/queryClient";
+import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
 
-type RawAttendanceResponse = {
-  records: any[];
-  available?: boolean;
-  message?: string;
+type RawRow = {
+  id: string;
+  employeeId: string;
+  employeeName: string | null;
+  attendanceId: string;
+  branch: string | null;
+  department: string | null;
+  date: string | null;
+  checkIn: string | null;
+  checkOut: string | null;
+  status: string | null;
+  workingMinutes: number | null;
+  isLate: boolean;
+  source: string;
+  remarks: string | null;
 };
 
-const BRANCHES = [
-  "Lahore Gulburg Branch",
-  "Lahore Raya Branch",
-  "Sialkot Branch",
-];
+type RawResponse = {
+  rows: RawRow[];
+  total: number;
+  page: number;
+  limit: number;
+  source: string;
+};
+
+type UserListItem = { id: string; name: string | null; branch: string | null };
+
+const STATUSES = ["Present", "Absent", "Late", "HalfDay", "Leave"];
+const PAGE_SIZES = [10, 25, 50, 100];
+const ALL = "__all__";
+
+function ymd(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+function defaultStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return ymd(d);
+}
+function fmtDate(value: string | null) {
+  if (!value) return "-";
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? "-" : d.toLocaleDateString();
+}
+function fmtTime(value: string | null) {
+  if (!value) return "-";
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? "-" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+type Applied = {
+  startDate: string;
+  endDate: string;
+  branch: string;
+  department: string;
+  userId: string;
+  attendanceStatus: string;
+  page: number;
+  limit: number;
+};
+
+function buildQuery(a: Applied, includePaging: boolean): string {
+  const p = new URLSearchParams();
+  p.set("startDate", a.startDate);
+  p.set("endDate", a.endDate);
+  if (a.branch && a.branch !== ALL) p.set("branch", a.branch);
+  if (a.department.trim()) p.set("department", a.department.trim());
+  if (a.userId && a.userId !== ALL) p.set("userId", a.userId);
+  if (a.attendanceStatus && a.attendanceStatus !== ALL) p.set("attendanceStatus", a.attendanceStatus);
+  if (includePaging) {
+    p.set("page", String(a.page));
+    p.set("limit", String(a.limit));
+  }
+  return p.toString();
+}
 
 export default function ReportsRawAttendance() {
-  const [activeBranch, setActiveBranch] = useState("Lahore Gulburg Branch");
+  const { toast } = useToast();
+  const [startDate, setStartDate] = useState(defaultStart());
+  const [endDate, setEndDate] = useState(ymd(new Date()));
+  const [branch, setBranch] = useState(ALL);
+  const [department, setDepartment] = useState("");
+  const [userId, setUserId] = useState(ALL);
+  const [attendanceStatus, setAttendanceStatus] = useState(ALL);
+  const [limit, setLimit] = useState(25);
+  const [exporting, setExporting] = useState(false);
 
-  const { data, isLoading, isError } = useQuery<RawAttendanceResponse>({
-    queryKey: ["/api/attendance/raw", activeBranch],
+  const [applied, setApplied] = useState<Applied>(() => ({
+    startDate: defaultStart(),
+    endDate: ymd(new Date()),
+    branch: ALL,
+    department: "",
+    userId: ALL,
+    attendanceStatus: ALL,
+    page: 1,
+    limit: 25,
+  }));
+
+  // Optional employee filter. Privileged-only endpoint; degrade silently if 403.
+  const usersQuery = useQuery<UserListItem[]>({
+    queryKey: ["/api/reports/users-list"],
+    queryFn: async () => apiRequestJson("GET", "/api/reports/users-list"),
+    retry: false,
+  });
+  const users = usersQuery.data ?? [];
+  const branches = useMemo(() => {
+    const set = new Set<string>();
+    for (const u of users) if (u.branch) set.add(u.branch);
+    return Array.from(set).sort();
+  }, [users]);
+
+  const reportQuery = useQuery<RawResponse>({
+    queryKey: ["/api/reports/raw-attendance", applied],
     queryFn: async () =>
-      apiRequestJson("GET", `/api/attendance/raw?branch=${encodeURIComponent(activeBranch)}`),
+      apiRequestJson("GET", `/api/reports/raw-attendance?${buildQuery(applied, true)}`),
+    retry: 1,
   });
 
-  const records = data?.records ?? [];
+  const rows = reportQuery.data?.rows ?? [];
+  const total = reportQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / applied.limit));
+
+  function applyFilters() {
+    if (!startDate || !endDate) {
+      toast({ title: "Date range required", description: "Pick both a start and end date.", variant: "destructive" });
+      return;
+    }
+    if (startDate > endDate) {
+      toast({ title: "Invalid range", description: "Start date must be on or before end date.", variant: "destructive" });
+      return;
+    }
+    setApplied({ startDate, endDate, branch, department, userId, attendanceStatus, page: 1, limit });
+  }
+
+  function goToPage(next: number) {
+    setApplied((a) => ({ ...a, page: Math.min(Math.max(1, next), totalPages) }));
+  }
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/reports/raw-attendance/export?${buildQuery(applied, false)}`, {
+        headers: getAuthHeader(),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const text = (await res.text()) || res.statusText;
+        throw new Error(text);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `raw_attendance_${applied.startDate}_${applied.endDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err?.message || "Could not export CSV.", variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
-    <div className="flex-1 overflow-auto bg-white min-h-screen">
-      <div className="p-6 max-w-[1600px] mx-auto space-y-6">
-        <h1 className="text-sm font-bold text-slate-600 uppercase tracking-wide">
-          ZKT ATTENDANCE REPORT
-        </h1>
-
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-          <div className="text-sm text-slate-400">
-            Current year attendance only. Missing days = leave, Sunday/Public Holiday skip.
-          </div>
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+      <div className="p-4 max-w-[1600px] mx-auto space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-[17px] font-bold text-[#555] uppercase">Raw Attendance Report</h1>
+          <Button
+            onClick={exportCsv}
+            disabled={exporting || reportQuery.isLoading}
+            className="h-8 px-4 bg-[#5c7cfa] hover:bg-[#4c6ef5] text-white text-xs rounded-sm"
+          >
+            {exporting ? "Exporting…" : "Export CSV"}
+          </Button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {BRANCHES.map(branch => (
-            <button
-              key={branch}
-              onClick={() => setActiveBranch(branch)}
-              className={`px-5 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeBranch === branch
-                  ? "bg-[#5c7cfa] text-white"
-                  : "bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {branch}
-            </button>
-          ))}
-        </div>
+        <Card className="border-none shadow-sm bg-white rounded-sm">
+          <CardContent className="p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">Start date</label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">End date</label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">Branch</label>
+                <Select value={branch} onValueChange={setBranch}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All branches" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All branches</SelectItem>
+                    {branches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">Department</label>
+                <Input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Any" className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">Employee</label>
+                <Select value={userId} onValueChange={setUserId} disabled={users.length === 0}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All employees" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All employees</SelectItem>
+                    {users.map((u) => <SelectItem key={u.id} value={u.id}>{u.name || u.id}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-500">Status</label>
+                <Select value={attendanceStatus} onValueChange={setAttendanceStatus}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All statuses" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>All statuses</SelectItem>
+                    {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
-        <div className="pt-2">
-          {isLoading ? (
-            <div className="text-center text-slate-500 py-12 text-sm">Loading...</div>
-          ) : isError ? (
-            <div className="text-center text-[#d9534f] py-12 text-sm">
-              Could not load raw attendance. Please try again.
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <Button onClick={applyFilters} className="h-8 px-4 bg-[#343a40] hover:bg-[#23272b] text-white text-xs rounded-sm">
+                  View
+                </Button>
+                <span className="text-xs text-slate-400">
+                  {reportQuery.isFetching ? "Loading…" : `${total} record${total === 1 ? "" : "s"}`}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500">Per page</span>
+                <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
+                  <SelectTrigger className="h-8 w-[80px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZES.map((n) => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          ) : records.length === 0 ? (
-            <div className="bg-[#f8f9fa] border border-slate-200 rounded-md px-6 py-12 text-center">
-              <h2 className="text-sm font-bold text-slate-700 mb-2">No raw attendance logs</h2>
-              <p className="text-sm text-slate-500 max-w-2xl mx-auto">
-                {data?.message ||
-                  "No biometric/raw attendance source is connected for this branch. Once a device or import is integrated, raw logs will appear here."}
-              </p>
+
+            <div className="overflow-x-auto border border-slate-100">
+              <Table className="w-full text-[13px] whitespace-nowrap">
+                <TableHeader>
+                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#fdf3db]">
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Date</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Employee</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Branch</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Department</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Status</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Check In</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Check Out</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Worked (min)</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Late</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Remarks</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="bg-white">
+                  {reportQuery.isLoading ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell>
+                    </TableRow>
+                  ) : reportQuery.isError ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center py-8">
+                        <div className="text-[#d9534f] mb-2">Could not load the raw attendance report.</div>
+                        <Button size="sm" variant="outline" onClick={() => reportQuery.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                      </TableCell>
+                    </TableRow>
+                  ) : rows.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
+                        No attendance records match these filters.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    rows.map((r) => (
+                      <TableRow key={r.id} className="border-b border-slate-100 hover:bg-[#f1f3f5] transition-colors">
+                        <TableCell className="py-3 px-3 text-[#555]">{fmtDate(r.date)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] font-semibold">{r.employeeName || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{r.branch || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{r.department || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{r.status || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{fmtTime(r.checkIn)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{fmtTime(r.checkOut)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555]">{r.workingMinutes ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-3">
+                          {r.isLate
+                            ? <span className="px-2 py-0.5 rounded text-xs font-semibold bg-[#fdecea] text-[#d9534f]">Late</span>
+                            : <span className="text-xs text-slate-400">-</span>}
+                        </TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] max-w-[240px] truncate" title={r.remarks || ""}>{r.remarks || "-"}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
             </div>
-          ) : (
-            <div className="overflow-x-auto border border-slate-200 rounded-md">
-              <table className="w-full text-sm text-center">
-                <thead className="bg-[#343a40] text-white">
-                  <tr>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">#</th>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">Date</th>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">Check In Time</th>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">Check Out Time</th>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">Office</th>
-                    <th className="py-3 px-4 font-semibold text-xs border-r border-slate-600 whitespace-nowrap">Device IP</th>
-                    <th className="py-3 px-4 font-semibold text-xs whitespace-nowrap">UID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {records.map((record: any, idx: number) => (
-                    <tr key={record.id ?? idx} className="hover:bg-slate-50/50">
-                      <td className="py-3 px-4 text-slate-500 font-medium">{idx + 1}</td>
-                      <td className="py-3 px-4 text-slate-600 font-medium">{record.date ?? "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 font-medium">{record.in ?? "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 font-medium">{record.out ?? "-"}</td>
-                      <td className="py-3 px-4 text-slate-500">{activeBranch}</td>
-                      <td className="py-3 px-4 text-slate-500">{record.ip ?? "-"}</td>
-                      <td className="py-3 px-4 text-slate-500">{record.uid ?? "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">Page {applied.page} of {totalPages}</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={applied.page <= 1 || reportQuery.isFetching}
+                  onClick={() => goToPage(applied.page - 1)}
+                  className="h-7 px-3 text-xs"
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={applied.page >= totalPages || reportQuery.isFetching}
+                  onClick={() => goToPage(applied.page + 1)}
+                  className="h-7 px-3 text-xs"
+                >
+                  Next
+                </Button>
+              </div>
             </div>
-          )}
-        </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

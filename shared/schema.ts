@@ -848,6 +848,9 @@ export const attendanceEditRequests = drmSchema.table("attendance_edit_requests"
   reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id),
   reviewedAt: timestamp("reviewed_at"),
   rejectionReason: text("rejection_reason"),
+  // Patch 2 Stage 3 — salary-lock guard on approval/correction.
+  salaryLocked: boolean("salary_locked").notNull().default(false),
+  overrideReason: text("override_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [
