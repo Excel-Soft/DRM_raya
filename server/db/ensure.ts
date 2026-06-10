@@ -9,6 +9,31 @@ import {
 
 let ensurePromise: Promise<void> | null = null;
 
+/**
+ * Patch 2 Stage 2 — additive, idempotent lifecycle/void columns on drm.penalties.
+ * `db:push` is broken repo-wide (pre-existing FK mismatch), so schema changes are
+ * applied at runtime here (mirrors migrations/20260603_add_penalties_table.sql).
+ */
+async function ensurePenaltiesSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE'`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS voided_by uuid REFERENCES drm.users(id)`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS voided_at timestamp`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS void_reason text`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_penalties_lifecycle_status ON drm.penalties (status)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -33,6 +58,7 @@ export async function ensureDbOnce(): Promise<void> {
         // await ensureLoanReportsSchema();
         // await ensureVasReportsSchema();
         // await ensureGmReportsSchema();
+        await ensurePenaltiesSchema(client);
         return;
       } catch (err) {
         lastErr = err;

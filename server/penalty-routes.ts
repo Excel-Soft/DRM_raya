@@ -28,8 +28,10 @@ import {
   decidePenalty,
   acknowledgePenalty,
   softDeletePenalty,
+  voidPenalty,
   monthlyReport,
 } from "./services/penalty.service";
+import { recordAuditLog } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -57,6 +59,12 @@ function canCreate(role: string): boolean {
 // Who can approve/reject: full-access and HOD only.
 function canDecide(role: string): boolean {
   return isFullAccess(role) || isHod(role);
+}
+// Who can void: same authority as approve/reject. Voiding reverses an approval
+// decision, so a managerial creator must NOT be able to void (only delete their
+// own still-PENDING penalties). Full-access + HOD (dept-scoped) only.
+function canVoid(role: string): boolean {
+  return canDecide(role);
 }
 // Who can see reports: full-access, HOD, HR.
 function canViewReports(role: string): boolean {
@@ -146,6 +154,7 @@ export function registerPenaltyRoutes(app: Express) {
       permissions: {
         canCreate: canCreate(role),
         canDecide: canDecide(role),
+        canVoid: canVoid(role),
         canViewReports: canViewReports(role),
         isFullAccess: isFullAccess(role),
         role,
@@ -281,6 +290,16 @@ export function registerPenaltyRoutes(app: Express) {
         attachmentName: b.attachmentName ? String(b.attachmentName) : null,
         managerRemarks: b.managerRemarks ? String(b.managerRemarks) : null,
       });
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.create",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: String((created as any)?.id ?? ""),
+        nextStatus: approvalStatus,
+        after: { employeeId, penaltyHead, amount, penaltyDate, approvalStatus },
+        req,
+      });
       res.status(201).json({ success: true, penalty: created });
     } catch (err) {
       console.error("[penalty] create error", err);
@@ -296,6 +315,9 @@ export function registerPenaltyRoutes(app: Express) {
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be edited" });
+      }
 
       // Full access can always edit. Otherwise only the creator may edit, and only while PENDING.
       const isOwner = String(raw.createdBy) === String(getUserId(req));
@@ -340,6 +362,14 @@ export function registerPenaltyRoutes(app: Express) {
         attachmentName: b.attachmentName !== undefined ? (b.attachmentName ? String(b.attachmentName) : null) : undefined,
         managerRemarks: b.managerRemarks !== undefined ? (b.managerRemarks ? String(b.managerRemarks) : null) : undefined,
       });
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.update",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        req,
+      });
       res.json({ success: true, penalty: updated });
     } catch (err) {
       console.error("[penalty] update error", err);
@@ -362,19 +392,41 @@ export function registerPenaltyRoutes(app: Express) {
       if (!(await canViewEmployee(req, raw.employeeId))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to decide this penalty" });
       }
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be approved or rejected" });
+      }
       if (raw.approvalStatus !== "PENDING") {
         return res.status(409).json({ error: "Conflict", message: "Only pending penalties can be approved or rejected" });
       }
-      const decision = String(req.body?.decision ?? req.body?.status ?? "").toUpperCase();
+      // Accept the spec body shape {approvalStatus} as well as the legacy {decision|status}.
+      const decision = String(
+        req.body?.approvalStatus ?? req.body?.decision ?? req.body?.status ?? "",
+      ).toUpperCase();
       if (!["APPROVED", "REJECTED"].includes(decision)) {
-        return badRequest(res, "decision must be APPROVED or REJECTED");
+        return badRequest(res, "approvalStatus must be APPROVED or REJECTED");
+      }
+      // Rejection must be justified — the remarks become part of the audit trail.
+      const hodRemarks = req.body?.hodRemarks ? String(req.body.hodRemarks).trim() : "";
+      if (decision === "REJECTED" && !hodRemarks) {
+        return badRequest(res, "hodRemarks is required when rejecting a penalty");
       }
       const updated = await decidePenalty(
         id,
         String(getUserId(req)),
         decision as "APPROVED" | "REJECTED",
-        req.body?.hodRemarks ? String(req.body.hodRemarks) : null,
+        hodRemarks || null,
       );
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: decision === "APPROVED" ? "penalty.approve" : "penalty.reject",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        previousStatus: "PENDING",
+        nextStatus: decision,
+        reason: hodRemarks || undefined,
+        req,
+      });
       res.json({ success: true, penalty: updated });
     } catch (err) {
       console.error("[penalty] approval error", err);
@@ -389,6 +441,9 @@ export function registerPenaltyRoutes(app: Express) {
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be acknowledged" });
+      }
       const isSelf = String(raw.employeeId) === String(getUserId(req));
       // Acknowledgement is the employee's own action — nobody may acknowledge on their behalf.
       if (!isSelf) {
@@ -410,6 +465,9 @@ export function registerPenaltyRoutes(app: Express) {
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be deleted" });
+      }
 
       const isOwner = String(raw.createdBy) === String(getUserId(req));
       if (!isFullAccess(role)) {
@@ -421,10 +479,65 @@ export function registerPenaltyRoutes(app: Express) {
         }
       }
       await softDeletePenalty(id);
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.delete",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        previousStatus: raw.approvalStatus,
+        req,
+      });
       res.json({ success: true });
     } catch (err) {
       console.error("[penalty] delete error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to delete penalty" });
+    }
+  });
+
+  // PATCH /api/penalties/:id/void — soft, audited cancellation (distinct from
+  // delete). Reverses a penalty's financial liability without destroying its
+  // approval history. Authority mirrors approve/reject: full-access + HOD
+  // (department-scoped). A reason is mandatory.
+  app.patch("/api/penalties/:id/void", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const role = getActiveRole(req);
+      if (!canVoid(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to void penalties" });
+      }
+      const id = String(req.params.id);
+      const raw = await getPenaltyRaw(id);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      // HOD is scoped to their own department.
+      if (!(await canViewEmployee(req, raw.employeeId))) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to void this penalty" });
+      }
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Penalty is already voided" });
+      }
+      const reason = req.body?.reason ? String(req.body.reason).trim() : "";
+      if (!reason) return badRequest(res, "reason is required to void a penalty");
+
+      const updated = await voidPenalty(id, String(getUserId(req)), reason);
+      if (!updated) {
+        return res.status(409).json({ error: "Conflict", message: "Penalty is already voided" });
+      }
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.void",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        previousStatus: raw.approvalStatus,
+        nextStatus: "VOIDED",
+        reason,
+        req,
+      });
+      res.json({ success: true, penalty: updated });
+    } catch (err) {
+      console.error("[penalty] void error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to void penalty" });
     }
   });
 }
