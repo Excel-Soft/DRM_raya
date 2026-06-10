@@ -8,12 +8,32 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function BvReportNew() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const queryClient = useQueryClient();
   const statusOptions = ["Draft", "Submitted", "Approved", "Rejected"] as const;
+
+  // Patch 2 Stage 7: only approvers may finalize a report to Approved/Rejected.
+  // The server clamps this authoritatively; here we restrict the visible options
+  // so non-approvers can only pick Draft/Submitted.
+  const { data: currentUser } = useQuery({
+    queryKey: ["/api/auth/me"],
+    queryFn: () => apiRequest("GET", "/api/auth/me").then((r) => r.json()),
+  });
+  const role = String(currentUser?.role ?? "").toLowerCase();
+  const isApprover = ["admin", "super_admin", "super_hod", "account_manager", "hod"].includes(role);
+  const allowedStatusOptions: readonly string[] = isApprover
+    ? statusOptions
+    : ["Draft", "Submitted"];
 
   const [title, setTitle] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -45,7 +65,7 @@ export default function BvReportNew() {
   const createMutation = useMutation({
     mutationFn: async () => {
       const trimmedTitle = title.trim();
-      const safeStatus = statusOptions.includes(status as typeof statusOptions[number]) ? status : "Draft";
+      const safeStatus = allowedStatusOptions.includes(status) ? status : "Draft";
       const body: any = {
         title: trimmedTitle,
         customerId: customerId || null,
@@ -118,17 +138,23 @@ export default function BvReportNew() {
               </div>
               <div>
                 <Label>Status</Label>
-                <Input
-                  list="bv-status-options"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                  placeholder="Draft / Submitted"
-                />
-                <datalist id="bv-status-options">
-                  {statusOptions.map(option => (
-                    <option key={option} value={option} />
-                  ))}
-                </datalist>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allowedStatusOptions.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!isApprover && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Only approvers can set Approved or Rejected.
+                  </p>
+                )}
               </div>
               <div>
                 <Label>Customer ID (optional)</Label>

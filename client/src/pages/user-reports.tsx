@@ -73,7 +73,9 @@ type ReportType = "loan" | "vas" | "gm" | "bv";
 interface ReportMetrics {
   totalTasks: number;
   valueOfServiceSold: number;
-  successRate: number;
+  // Patch 2 Stage 7: BV success rate is the average over the report rows and is
+  // `null` (not 0/100) when there are no rows — render it honestly.
+  successRate: number | null;
   followUpsCompleted: number;
   missedLeads: number;
 }
@@ -454,11 +456,11 @@ function BvReportTable({
   const [perPage, setPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedType, setSelectedType] = useState<string>("all");
-  const [viewFilters, setViewFilters] = useState({ type: "all" });
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [viewFilters, setViewFilters] = useState({ status: "all" });
 
   const handleView = () => {
-    setViewFilters({ type: selectedType });
+    setViewFilters({ status: selectedStatus });
     setCurrentPage(1);
   };
 
@@ -473,14 +475,15 @@ function BvReportTable({
 
   const filtered = useMemo(() => {
     return filteredDetails.filter(item => {
-      if (viewFilters.type !== "all" && item.type?.toLowerCase() !== viewFilters.type.toLowerCase()) {
+      if (viewFilters.status !== "all" && item.status?.toLowerCase() !== viewFilters.status.toLowerCase()) {
         return false;
       }
       if (!searchTerm) return true;
       const lower = searchTerm.toLowerCase();
       return (
         item.companyName?.toLowerCase().includes(lower) ||
-        item.personName?.toLowerCase().includes(lower)
+        item.title?.toLowerCase().includes(lower) ||
+        item.authorName?.toLowerCase().includes(lower)
       );
     });
   }, [filteredDetails, searchTerm, viewFilters]);
@@ -506,17 +509,17 @@ function BvReportTable({
             </div>
 
             <div className="md:col-span-3 space-y-2">
-              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select Type</Label>
-              <Select value={selectedType} onValueChange={setSelectedType}>
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select Status</Label>
+              <Select value={selectedStatus} onValueChange={setSelectedStatus}>
                 <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800">
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="new">New</SelectItem>
-                  <SelectItem value="renew">Renew</SelectItem>
-                  <SelectItem value="expire">Expire</SelectItem>
-                  <SelectItem value="rc/up">Rc/Up</SelectItem>
+                  <SelectItem value="Draft">Draft</SelectItem>
+                  <SelectItem value="Submitted">Submitted</SelectItem>
+                  <SelectItem value="Approved">Approved</SelectItem>
+                  <SelectItem value="Rejected">Rejected</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -587,26 +590,22 @@ function BvReportTable({
               <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
                 <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
                   <TableHead className="font-bold text-black w-10 text-center">#</TableHead>
+                  <TableHead className="font-bold text-black min-w-[120px]">Date</TableHead>
+                  <TableHead className="font-bold text-black min-w-[150px]">Title</TableHead>
                   <TableHead className="font-bold text-black min-w-[150px]">Company</TableHead>
-                  <TableHead className="font-bold text-black text-center">Package</TableHead>
-                  <TableHead className="font-bold text-black text-center">Price</TableHead>
-                  <TableHead className="font-bold text-black text-center">Comm</TableHead>
-                  <TableHead className="font-bold text-black text-center">Reward</TableHead>
-                  <TableHead className="font-bold text-black text-center">VAS</TableHead>
-                  <TableHead className="font-bold text-black text-center">KWA</TableHead>
-                  <TableHead className="font-bold text-black text-center">Method</TableHead>
-                  <TableHead className="font-bold text-black text-center">Person</TableHead>
-                  <TableHead className="font-bold text-black text-center">Pay</TableHead>
-                  <TableHead className="font-bold text-black text-center">BV</TableHead>
-                  <TableHead className="font-bold text-black text-center">Rc/New</TableHead>
-                  <TableHead className="font-bold text-black text-center">Type</TableHead>
-                  <TableHead className="font-bold text-black min-w-[150px]">Receive Date</TableHead>
+                  <TableHead className="font-bold text-black min-w-[130px]">Author</TableHead>
+                  <TableHead className="font-bold text-black text-center">Status</TableHead>
+                  <TableHead className="font-bold text-black text-center">Total Tasks</TableHead>
+                  <TableHead className="font-bold text-black text-center">Value Sold</TableHead>
+                  <TableHead className="font-bold text-black text-center">Success Rate</TableHead>
+                  <TableHead className="font-bold text-black text-center">Follow-ups</TableHead>
+                  <TableHead className="font-bold text-black text-center">Missed Leads</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={15} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       No Records Found
                     </TableCell>
                   </TableRow>
@@ -614,22 +613,16 @@ function BvReportTable({
                   paginatedData.map((item, idx) => (
                     <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
                       <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
-                      <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.companyName}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.packageType}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.amount}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.commission}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.reward}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.vasAmount}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.kwaAmount}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.method}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.personName}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.payAmount}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvAmount}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.entryType}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.type}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">
-                        {item.receivedAt ? new Date(item.receivedAt).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') : "-"}
-                      </TableCell>
+                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
+                      <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
+                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
+                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.authorName || "-"}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.status || "-"}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.totalTasks ?? 0}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.successRate == null ? "—" : `${item.successRate}%`}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.followUpsDone ?? 0}</TableCell>
+                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.missedLeads ?? 0}</TableCell>
                     </TableRow>
                   ))
                 )}

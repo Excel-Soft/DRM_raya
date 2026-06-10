@@ -84,6 +84,21 @@ export async function ensureBvReportsSchema() {
         add column if not exists assigned_to uuid references users(id),
         add column if not exists company_name text;
     `);
+    // A legacy import may have created assigned_to as varchar, so the
+    // `add column if not exists ... uuid` above is a no-op and leaves it varchar.
+    // Coalescing a varchar assigned_to with a uuid user_id then fails. Normalize
+    // assigned_to to uuid (matching user_id) before any uuid-typed write touches it.
+    await client.query(`
+      do $$
+      begin
+        if exists (
+          select 1 from information_schema.columns
+          where table_name = 'bv_reports' and column_name = 'assigned_to' and data_type <> 'uuid'
+        ) then
+          alter table bv_reports alter column assigned_to type uuid using nullif(assigned_to, '')::uuid;
+        end if;
+      end$$;
+    `);
     await client.query(`update bv_reports set assigned_to = coalesce(assigned_to, user_id) where assigned_to is null;`);
     await client.query(`create index if not exists idx_bv_reports_assigned on bv_reports (assigned_to);`);
     await client.query(`create index if not exists idx_bv_reports_status on bv_reports (status);`);
@@ -100,6 +115,26 @@ export async function ensureBvReportsSchema() {
 }
 
 const updateSchema = insertBvReportSchema.partial();
+
+const RETURNING_COLUMNS = `
+         id,
+         user_id     as "userId",
+         assigned_to as "assignedTo",
+         customer_id as "customerId",
+         company_name as "companyName",
+         report_date as "reportDate",
+         status,
+         title,
+         summary,
+         notes,
+         total_tasks     as "totalTasks",
+         value_sold      as "valueSold",
+         success_rate    as "successRate",
+         follow_ups_done as "followUpsDone",
+         missed_leads    as "missedLeads",
+         meta,
+         created_at as "createdAt",
+         updated_at as "updatedAt"`;
 
 export const bvReportsRepository = {
   async create(userId: string, payload: unknown): Promise<BvReport> {
@@ -288,15 +323,15 @@ export const bvReportsRepository = {
     return res.rows[0] ?? null;
   },
 
-  async list(userId: string | null, from?: Date, to?: Date): Promise<BvReport[]> {
+  async list(filterUserIds: string[] | null, from?: Date, to?: Date): Promise<BvReport[]> {
     await ensureBvReportsSchema();
     const clauses: string[] = [];
     const params: any[] = [];
     let idx = 1;
 
-    if (userId) {
-      clauses.push(`(user_id = $${idx} or assigned_to = $${idx})`);
-      params.push(userId);
+    if (filterUserIds) {
+      clauses.push(`(user_id = ANY($${idx}::uuid[]) or assigned_to = ANY($${idx}::uuid[]))`);
+      params.push(filterUserIds);
       idx++;
     }
 
@@ -335,5 +370,42 @@ export const bvReportsRepository = {
       params,
     );
     return res.rows;
+  },
+
+  /**
+   * Fetch a single report. When `filterUserIds` is null the lookup is unscoped
+   * (used by approvers/admins who may not own the row); otherwise it is limited
+   * to rows whose author OR assignee is in the list.
+   */
+  async findById(filterUserIds: string[] | null, id: string): Promise<BvReport | null> {
+    await ensureBvReportsSchema();
+    const clauses: string[] = [`id = $1`];
+    const params: any[] = [id];
+    if (filterUserIds) {
+      clauses.push(`(user_id = ANY($2::uuid[]) or assigned_to = ANY($2::uuid[]))`);
+      params.push(filterUserIds);
+    }
+    const res = await pool.query<BvReport>(
+      `select ${RETURNING_COLUMNS}
+       from drm.bv_reports
+       where ${clauses.join(" and ")}
+       limit 1`,
+      params,
+    );
+    return res.rows[0] ?? null;
+  },
+
+  /** Transition a report's status (approve/reject). Unscoped by design — the
+   * route guards who may call it and validates the source status first. */
+  async setStatus(id: string, status: string): Promise<BvReport | null> {
+    await ensureBvReportsSchema();
+    const res = await pool.query<BvReport>(
+      `update drm.bv_reports
+          set status = $2, updated_at = now()
+        where id = $1
+        returning ${RETURNING_COLUMNS}`,
+      [id, status],
+    );
+    return res.rows[0] ?? null;
   },
 };
