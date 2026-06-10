@@ -2649,6 +2649,38 @@ export const insertServiceComplaintSchema = createInsertSchema(serviceComplaints
 export const insertServiceDropoutSchema = createInsertSchema(serviceDropouts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceRenewalSchema = createInsertSchema(serviceRenewals).omit({ id: true, createdAt: true, updatedAt: true });
 
+// ---------------------------------------------------------------------------
+// Patch 2 Stage 6 — Diagnosis Report (drm.diagnosis_reports)
+// Dedicated source for the Diagnosis Report — deliberately NOT reusing BV data.
+// The physical table is also created at runtime by ensureDiagnosisSchema()
+// because db:push is broken repo-wide.
+// ---------------------------------------------------------------------------
+export const diagnosisReports = drmSchema.table("diagnosis_reports", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: uuid("customer_id").references(() => customers.id),
+  companyName: text("company_name"),
+  personName: text("person_name"),
+  diagnosisType: text("diagnosis_type"),
+  diagnosisStatus: text("diagnosis_status").notNull().default("OPEN"),
+  diagnosisDate: date("diagnosis_date").notNull(),
+  assignedTo: uuid("assigned_to").references(() => users.id),
+  branch: text("branch"),
+  department: text("department"),
+  notes: text("notes"),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+}, (t) => ({
+  statusIdx: index("idx_diagnosis_reports_status").on(t.diagnosisStatus),
+  dateIdx: index("idx_diagnosis_reports_date").on(t.diagnosisDate),
+  assignedIdx: index("idx_diagnosis_reports_assigned").on(t.assignedTo),
+}));
+
+export const insertDiagnosisReportSchema = createInsertSchema(diagnosisReports).omit({ id: true, createdAt: true, updatedAt: true });
+export type DiagnosisReport = typeof diagnosisReports.$inferSelect;
+export type InsertDiagnosisReport = z.infer<typeof insertDiagnosisReportSchema>;
+
 export type ServiceActivity = typeof serviceActivities.$inferSelect;
 export type InsertServiceActivity = z.infer<typeof insertServiceActivitySchema>;
 

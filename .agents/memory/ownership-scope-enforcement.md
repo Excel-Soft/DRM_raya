@@ -23,3 +23,20 @@ was caught in review.
 **How to apply:** any new endpoint that mutates owned records (leads, customers,
 follow-ups, bulk actions) should call `getEditableUserIds` / `assertCanEditCustomer`
 and rely solely on the returned list — never re-widen it by role.
+
+## Update endpoints must re-clamp the owner/assignee, not just the row
+
+When a create endpoint clamps who a record may belong to (e.g. own-scope callers
+forced to self-assign, team-scope callers limited to their department), the
+matching update/PATCH endpoint must apply the **same** clamp to the
+owner/assignee field — not only the row-level "can I touch this record" check.
+
+**Why:** verifying the caller may edit *this* row is not enough. If PATCH then
+lets them set `assignedTo`/owner to an arbitrary user id, a low-privilege caller
+can push the record *out of* their own scope (handing it to someone else) or a
+manager can reassign across departments — re-introducing the exact scope leak the
+create-side clamp was meant to prevent. Caught in review on the diagnosis report
+PATCH (own/team could reassign freely while POST forced self/department).
+
+**How to apply:** mirror the create rule on update — own → force owner to self;
+team → reject (403) any target outside the team list; full-access → unrestricted.

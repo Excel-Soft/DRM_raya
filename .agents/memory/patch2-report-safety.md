@@ -17,9 +17,9 @@ NORMALIZED role keys, because `normalizeRole`:
 ## Rollout decision (do this gradually)
 Wire the matrix onto report endpoints ONE report at a time, in each report's own
 stage — not all at once.
-**Why:** GLOBAL-001 — existing report endpoints have inconsistent / unknown
-de-facto access sets; applying the full matrix everywhere at once risks 403ing
-roles that legitimately use a report today.
+**Why:** existing report endpoints have inconsistent / unknown de-facto access
+sets; applying the full matrix everywhere at once risks 403ing roles that
+legitimately use a report today.
 **How to apply:** when implementing a report, add `requireReportPermission` to
 that report's view/create/edit/export/approve/finalize/delete routes and verify
 against the roles that actually use it now.
