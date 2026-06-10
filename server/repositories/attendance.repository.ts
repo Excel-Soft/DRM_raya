@@ -66,6 +66,15 @@ export class AttendanceRepository {
     return { hour, minute };
   }
 
+  /**
+   * Patch 2 Stage 3 — public wrapper so the edit-approval/correction flow can
+   * recompute late flags from the resulting check-in/out using the SAME policy
+   * (timezone + cutoffs) as check-in/out, keeping flags in sync with timestamps.
+   */
+  recomputeLateFlags(checkIn?: Date | null, checkOut?: Date | null) {
+    return this.computeLateFlags(checkIn, checkOut);
+  }
+
   private computeLateFlags(checkIn?: Date | null, checkOut?: Date | null) {
     let lateCheckin = false;
     let lateCheckout = false;

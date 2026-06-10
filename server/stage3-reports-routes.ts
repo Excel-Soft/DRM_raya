@@ -1,5 +1,75 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
+import { requireReportPermission } from "./middleware/report-permission";
+
+const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
+
+/**
+ * Builds the shared WHERE clause for the raw-attendance report (used by both the
+ * paginated list and the CSV export so they honor identical filters). Returns an
+ * `error` string for a 400 when the required date range is missing/invalid.
+ * `a.status` is compared as text to avoid a raw 22P02 on an unknown status value.
+ */
+function buildRawAttendanceFilters(req: Request): {
+  error?: string;
+  clause: string;
+  params: any[];
+} {
+  const { start, end } = parseDateRange(req);
+  if (!start || !end) return { error: "startDate and endDate are required", clause: "", params: [] };
+  if (start > end) return { error: "startDate must be on or before endDate", clause: "", params: [] };
+
+  const where: string[] = ["a.date >= $1", "a.date <= $2"];
+  const params: any[] = [start, end];
+  if (req.query.branch) { params.push(String(req.query.branch)); where.push(`u.branch = $${params.length}`); }
+  if (req.query.department) { params.push(String(req.query.department)); where.push(`u.department = $${params.length}`); }
+  if (req.query.userId) { params.push(String(req.query.userId)); where.push(`a.user_id = $${params.length}`); }
+  if (req.query.attendanceStatus) { params.push(String(req.query.attendanceStatus)); where.push(`a.status::text = $${params.length}`); }
+  return { clause: `WHERE ${where.join(" AND ")}`, params };
+}
+
+/**
+ * Maps a raw drm.attendance row to the report row shape. Metrics with no source
+ * column (lateMinutes/earlyOutMinutes/overtimeMinutes/leaveType/penaltyAmount)
+ * are returned as null rather than fabricated; source is always "attendance".
+ */
+function mapRawAttendanceRow(r: any) {
+  const workingMinutes =
+    r.working_hours != null
+      ? Math.round(Number(r.working_hours) * 60)
+      : r.check_in && r.check_out
+        ? Math.max(0, Math.round((new Date(r.check_out).getTime() - new Date(r.check_in).getTime()) / 60000))
+        : null;
+  return {
+    id: r.id,
+    employeeId: r.user_id,
+    employeeName: r.employee_name ?? null,
+    attendanceId: r.id,
+    branch: r.branch ?? null,
+    department: r.department ?? null,
+    date: r.date,
+    checkIn: r.check_in,
+    checkOut: r.check_out,
+    status: r.status,
+    lateMinutes: null,
+    earlyOutMinutes: null,
+    workingMinutes,
+    overtimeMinutes: null,
+    leaveType: null,
+    penaltyAmount: null,
+    isLate: r.is_late ?? false,
+    lateCheckin: r.late_checkin ?? false,
+    lateCheckout: r.late_checkout ?? false,
+    source: "attendance",
+    remarks: r.notes ?? null,
+  };
+}
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = v instanceof Date ? v.toISOString() : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
 
 function parsePaging(req: Request) {
   let page = Number(req.query.page ?? 1);
@@ -185,4 +255,113 @@ export function registerStage3ReportsRoutes(app: Express) {
       res.status(500).json({ error: "Failed to load reception report" });
     }
   });
+
+  // GET /api/reports/raw-attendance - real, attendance-sourced report.
+  // No biometric table exists, so rows come from drm.attendance (source:"attendance").
+  // Requires startDate + endDate; filters branch/department/userId/attendanceStatus.
+  app.get(
+    "/api/reports/raw-attendance",
+    requireReportPermission("raw_attendance", "view"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { error, clause, params } = buildRawAttendanceFilters(req);
+        if (error) return res.status(400).json({ error });
+
+        let page = Number(req.query.page ?? 1);
+        if (!Number.isInteger(page) || page < 1) page = 1;
+        let limit = Number(req.query.limit ?? 25);
+        if (!RAW_ATTENDANCE_LIMITS.includes(limit)) limit = 25;
+        const offset = (page - 1) * limit;
+
+        const countRes = await pool.query(
+          `SELECT COUNT(*)::int AS total
+             FROM drm.attendance a
+             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             ${clause}`,
+          params,
+        );
+        const total = countRes.rows[0]?.total ?? 0;
+
+        const rowsRes = await pool.query(
+          `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
+                  a.late_checkin, a.late_checkout, a.is_late, a.working_hours, a.notes,
+                  COALESCE(u.full_name, u.name, u.username) AS employee_name,
+                  u.branch, u.department
+             FROM drm.attendance a
+             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             ${clause}
+             ORDER BY a.date DESC, employee_name ASC
+             LIMIT ${limit} OFFSET ${offset}`,
+          params,
+        );
+
+        res.json({
+          rows: rowsRes.rows.map(mapRawAttendanceRow),
+          total,
+          page,
+          limit,
+          source: "attendance",
+        });
+      } catch (err) {
+        console.error("Error in raw-attendance report:", err);
+        res.status(500).json({ error: "Failed to load raw attendance report" });
+      }
+    },
+  );
+
+  // GET /api/reports/raw-attendance/export - CSV honoring the same filters.
+  app.get(
+    "/api/reports/raw-attendance/export",
+    requireReportPermission("raw_attendance", "export"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { error, clause, params } = buildRawAttendanceFilters(req);
+        if (error) return res.status(400).json({ error });
+
+        const rowsRes = await pool.query(
+          `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
+                  a.late_checkin, a.late_checkout, a.is_late, a.working_hours, a.notes,
+                  COALESCE(u.full_name, u.name, u.username) AS employee_name,
+                  u.branch, u.department
+             FROM drm.attendance a
+             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             ${clause}
+             ORDER BY a.date DESC, employee_name ASC
+             LIMIT 5000`,
+          params,
+        );
+
+        const header = [
+          "Date", "Employee", "Branch", "Department", "Status",
+          "Check In", "Check Out", "Working Minutes", "Is Late", "Source", "Remarks",
+        ];
+        const lines = [header.join(",")];
+        for (const raw of rowsRes.rows) {
+          const r = mapRawAttendanceRow(raw);
+          lines.push([
+            csvCell(r.date),
+            csvCell(r.employeeName),
+            csvCell(r.branch),
+            csvCell(r.department),
+            csvCell(r.status),
+            csvCell(r.checkIn),
+            csvCell(r.checkOut),
+            csvCell(r.workingMinutes),
+            csvCell(r.isLate),
+            csvCell(r.source),
+            csvCell(r.remarks),
+          ].join(","));
+        }
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="raw_attendance.csv"`);
+        res.send(lines.join("\n"));
+      } catch (err) {
+        console.error("Error exporting raw-attendance report:", err);
+        res.status(500).json({ error: "Failed to export raw attendance report" });
+      }
+    },
+  );
 }

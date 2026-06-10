@@ -34,6 +34,23 @@ async function ensurePenaltiesSchema(client: {
   );
 }
 
+/**
+ * Patch 2 Stage 3 — additive, idempotent salary-lock/override columns on
+ * drm.attendance_edit_requests (mirrors shared/schema.ts). `db:push` is broken
+ * repo-wide (pre-existing FK mismatch), so schema changes are applied at runtime
+ * here. The table itself already exists; this only adds the two new columns.
+ */
+async function ensureAttendanceEditSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.attendance_edit_requests ADD COLUMN IF NOT EXISTS salary_locked boolean NOT NULL DEFAULT false`,
+  );
+  await client.query(
+    `ALTER TABLE drm.attendance_edit_requests ADD COLUMN IF NOT EXISTS override_reason text`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -59,6 +76,7 @@ export async function ensureDbOnce(): Promise<void> {
         // await ensureVasReportsSchema();
         // await ensureGmReportsSchema();
         await ensurePenaltiesSchema(client);
+        await ensureAttendanceEditSchema(client);
         return;
       } catch (err) {
         lastErr = err;

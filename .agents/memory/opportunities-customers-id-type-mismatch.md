@@ -29,6 +29,12 @@ local cast workaround; a proper fix is a schema migration to align the id types
   (and `person_name` for the contact). Selecting/filtering `c.name` throws
   `column c.name does not exist` (Postgres often hints `u.name`/`cb.name`, which
   are the *users* table). For customer display use `c.company_name`.
+- `drm.attendance.id` and `drm.attendance.user_id` are `varchar`, but
+  `drm.users.id` is `uuid`. A join `drm.users u ON u.id = a.user_id` throws
+  `operator does not exist: uuid = character varying`; cast the uuid side
+  (`u.id::text = a.user_id`). Note `attendance_edit_requests.user_id` is `uuid`
+  (so its join to users needs no cast) while `attendance_edit_requests.attendance_id`
+  is `varchar` (matches `attendance.id`).
 - `drm.users` *does* have `name`; only `customers` lacks it.
 **Why:** these caused 500s on otherwise-correct Stage 6/7 list endpoints.
 **How to apply:** in any new raw SQL touching customers or project↔approval/task
