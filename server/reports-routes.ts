@@ -24,7 +24,6 @@ import {
   vasReports,
   gmReports,
   officeVas,
-  bvEntries,
   productPostingInvoices,
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, count, ilike, or, desc, inArray } from "drizzle-orm";
@@ -36,7 +35,9 @@ import {
 } from "./repositories/generic-report.repository";
 import { isManagerialRole } from "./utils/role-utils";
 import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
-import { requireReportPermission } from "./middleware/report-permission";
+import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
+import { ActivityLogService } from "./services/activity-service";
+import { getBvReportData } from "./services/bv-report.service";
 
 const router = Router();
 
@@ -176,7 +177,7 @@ type ReportType = "loan" | "vas" | "gm" | "bv";
 interface ReportMetrics {
   totalTasks: number;
   valueOfServiceSold: number;
-  successRate: number;
+  successRate: number | null;
   followUpsCompleted: number;
   missedLeads: number;
 }
@@ -256,11 +257,48 @@ const gmPayloadSchema = insertGmReportSchema.extend({
   reportDate: z.union([z.string(), z.date()]).optional(),
 });
 
-router.post("/bv-reports", async (req, res) => {
+/**
+ * True when the caller's (active) role may approve/reject BV reports — i.e. may
+ * set a report to Approved or Rejected. Mirrors the role resolution used by the
+ * report-permission guard.
+ */
+function isBvApprover(req: any): boolean {
+  const callerRole = normalizeRole((req.user as any)?.activeRoleId ?? req.user?.roleId);
+  return resolveReportRoles("bv_report", "approve").includes(callerRole);
+}
+
+/**
+ * Resolve the BV row-scope for the caller, identical to the report dispatcher:
+ * executives → own only, global admins → no scope (null), managers →
+ * department/team list (optionally narrowed to a requested userId).
+ */
+async function resolveBvScope(req: any): Promise<string[] | null> {
+  const user = req.user;
+  const isPrivileged = isManagerialRole(user.roleId);
+  const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
+  const queryUserId =
+    typeof req.query.userId === "string" && req.query.userId !== "all" ? req.query.userId : null;
+  if (!isPrivileged) return [user.userId];
+  if (isGlobalAdmin) return queryUserId ? [queryUserId] : null;
+  const allowedIds = await getDepartmentFilterUserIds(req);
+  if (queryUserId) {
+    return allowedIds && allowedIds.includes(queryUserId)
+      ? [queryUserId]
+      : ["00000000-0000-0000-0000-000000000000"];
+  }
+  return allowedIds;
+}
+
+router.post("/bv-reports", requireReportPermission("bv_report", "create"), async (req, res) => {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const parsed = bvPayloadSchema.parse(req.body);
+    if (["Approved", "Rejected"].includes(parsed.status) && !isBvApprover(req)) {
+      return res
+        .status(403)
+        .json(errorEnvelope("FORBIDDEN", "Only approvers can create BV reports with Approved or Rejected status."));
+    }
     console.debug(`[${requestId}] create bv-report`, {
       userId: req.user.userId,
       customerId: parsed.customerId,
@@ -271,6 +309,13 @@ router.post("/bv-reports", async (req, res) => {
     const report = await bvReportsRepository.create(req.user.userId, {
       ...parsed,
       reportDate: parsed.reportDate ?? new Date(),
+    });
+    await ActivityLogService.log({
+      userId: req.user.userId,
+      action: "bv_report.create",
+      resourceType: "bv_report",
+      resourceId: report.id,
+      details: JSON.stringify({ status: report.status, title: report.title }),
     });
     return res.status(201).json({ success: true, data: report });
   } catch (error: any) {
@@ -292,14 +337,14 @@ router.post("/bv-reports", async (req, res) => {
   }
 });
 
-router.get("/bv-reports", async (req, res) => {
+router.get("/bv-reports", requireReportPermission("bv_report", "view"), async (req, res) => {
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const from = req.query.from as string | undefined;
     const to = req.query.to as string | undefined;
     const { fromDate, toDate } = parseDateRange(from, to);
-    const userId = isManagerialRole(req.user.roleId) ? null : req.user.userId;
-    const items = await bvReportsRepository.list(userId, fromDate, toDate);
+    const filterUserIds = await resolveBvScope(req);
+    const items = await bvReportsRepository.list(filterUserIds, fromDate, toDate);
     return res.json({ success: true, items });
   } catch (error) {
     console.error("Failed to list BV reports", error);
@@ -307,10 +352,11 @@ router.get("/bv-reports", async (req, res) => {
   }
 });
 
-router.get("/bv-reports/:id", async (req, res) => {
+router.get("/bv-reports/:id", requireReportPermission("bv_report", "view"), async (req, res) => {
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
-    const report = await bvReportsRepository.getById(req.user.userId, req.params.id);
+    const filterUserIds = await resolveBvScope(req);
+    const report = await bvReportsRepository.findById(filterUserIds, req.params.id);
     if (!report) return sendError(res, notFound("Not found"));
     return res.json({ success: true, data: report });
   } catch (error) {
@@ -319,12 +365,32 @@ router.get("/bv-reports/:id", async (req, res) => {
   }
 });
 
-router.put("/bv-reports/:id", async (req, res) => {
+router.put("/bv-reports/:id", requireReportPermission("bv_report", "edit"), async (req, res) => {
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const parsed = bvUpdateSchema.parse(req.body);
+    const approver = isBvApprover(req);
+    if (parsed.status && ["Approved", "Rejected"].includes(parsed.status) && !approver) {
+      return res
+        .status(403)
+        .json(errorEnvelope("FORBIDDEN", "Only approvers can set Approved or Rejected status."));
+    }
+    const current = await bvReportsRepository.findById(null, req.params.id);
+    if (!current) return sendError(res, notFound("Not found"));
+    if (["Approved", "Rejected"].includes(current.status) && !approver) {
+      return res
+        .status(403)
+        .json(errorEnvelope("FORBIDDEN", "This BV report is finalized and can no longer be edited."));
+    }
     const updated = await bvReportsRepository.update(req.user.userId, req.params.id, parsed);
     if (!updated) return sendError(res, notFound("Not found"));
+    await ActivityLogService.log({
+      userId: req.user.userId,
+      action: "bv_report.update",
+      resourceType: "bv_report",
+      resourceId: req.params.id,
+      details: JSON.stringify({ status: updated.status }),
+    });
     return res.json({ success: true, data: updated });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
@@ -335,6 +401,54 @@ router.put("/bv-reports/:id", async (req, res) => {
     }
     console.error("Failed to update BV report", error);
     return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update BV report"));
+  }
+});
+
+router.post("/bv-reports/:id/approve", requireReportPermission("bv_report", "approve"), async (req, res) => {
+  try {
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+    const current = await bvReportsRepository.findById(null, req.params.id);
+    if (!current) return sendError(res, notFound("Not found"));
+    if (current.status !== "Submitted") {
+      return res
+        .status(409)
+        .json(errorEnvelope("INVALID_TRANSITION", "Only Submitted BV reports can be approved."));
+    }
+    const updated = await bvReportsRepository.setStatus(req.params.id, "Approved");
+    await ActivityLogService.log({
+      userId: req.user.userId,
+      action: "bv_report.approve",
+      resourceType: "bv_report",
+      resourceId: req.params.id,
+    });
+    return res.json({ success: true, data: updated });
+  } catch (error) {
+    console.error("Failed to approve BV report", error);
+    return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to approve BV report"));
+  }
+});
+
+router.post("/bv-reports/:id/reject", requireReportPermission("bv_report", "approve"), async (req, res) => {
+  try {
+    if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+    const current = await bvReportsRepository.findById(null, req.params.id);
+    if (!current) return sendError(res, notFound("Not found"));
+    if (current.status !== "Submitted") {
+      return res
+        .status(409)
+        .json(errorEnvelope("INVALID_TRANSITION", "Only Submitted BV reports can be rejected."));
+    }
+    const updated = await bvReportsRepository.setStatus(req.params.id, "Rejected");
+    await ActivityLogService.log({
+      userId: req.user.userId,
+      action: "bv_report.reject",
+      resourceType: "bv_report",
+      resourceId: req.params.id,
+    });
+    return res.json({ success: true, data: updated });
+  } catch (error) {
+    console.error("Failed to reject BV report", error);
+    return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to reject BV report"));
   }
 });
 
@@ -708,72 +822,6 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
   };
 }
 
-async function getBvReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
-  console.log("🔍 getBvReport called with:", { userIds, fromDate, toDate });
-
-  const conditions = [
-    gte(bvEntries.createdAt, fromDate),
-    lte(bvEntries.createdAt, toDate)
-  ];
-
-  if (userIds && userIds.length > 0) {
-    conditions.push(
-      or(
-        inArray(bvEntries.salesPersonId, userIds),
-        inArray(bvEntries.createdByUserId, userIds)
-      )
-    );
-  }
-
-  const entries = await db
-    .select()
-    .from(bvEntries)
-    .where(and(...conditions))
-    .orderBy(desc(bvEntries.createdAt));
-
-  console.log(`✅ getBvReport found ${entries.length} entries`);
-
-
-  const totalValue = entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const chartData = generateChartData(entries.map(e => ({ ...e, createdAt: e.createdAt })), fromDate, toDate, 'amount');
-
-  return {
-    type: "bv",
-    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
-    meta: {
-      from: fromDate.toISOString(),
-      to: toDate.toISOString(),
-      timezone: "UTC", // Placeholder
-    },
-    metrics: {
-      totalTasks: entries.length,
-      valueOfServiceSold: totalValue,
-      successRate: 100,
-      followUpsCompleted: 0,
-      missedLeads: 0,
-    },
-    chartData,
-    details: entries.map(e => ({
-      id: e.id,
-      companyName: e.companyName,
-      packageType: e.packageType,
-      amount: e.amount,
-      commission: e.commission || "-",
-      reward: e.reward || "-",
-      vasAmount: e.vasAmount || "-",
-      kwaAmount: e.kwaAmount || "-",
-      method: e.method || "-",
-      personName: e.personName || "-",
-      payAmount: e.payAmount || "-",
-      bvAmount: e.bvAmount || "-",
-      entryType: e.entryType || "-", // Rc/New
-      type: e.type || "-",
-      receivedAt: e.receivedAt,
-      date: e.createdAt,
-    })),
-  };
-}
-
 function generateChartData(data: any[], fromDate: Date, toDate: Date, valueField?: string) {
   const chartMap = new Map<string, { value: number; count: number }>();
 
@@ -813,7 +861,7 @@ function buildReportCsv(report: ReportData) {
   lines.push("Metric,Value");
   lines.push(`Total Tasks,${report.metrics.totalTasks}`);
   lines.push(`Value Sold,${report.metrics.valueOfServiceSold}`);
-  lines.push(`Success Rate,${report.metrics.successRate}%`);
+  lines.push(`Success Rate,${report.metrics.successRate == null ? "N/A" : `${report.metrics.successRate}%`}`);
   lines.push(`Follow-ups Done,${report.metrics.followUpsCompleted}`);
   lines.push(`Missed Leads,${report.metrics.missedLeads}`);
 
@@ -855,8 +903,25 @@ function buildReportCsv(report: ReportData) {
         });
         break;
       }
-      case "gm":
       case "bv": {
+        lines.push("Date,Title,Company,Author,Status,Total Tasks,Value Sold,Success Rate,Follow-ups,Missed Leads");
+        report.details.forEach((item: any) => {
+          lines.push(
+            `${item.date ? new Date(item.date).toISOString().split("T")[0] : ""},` +
+            `"${item.title ?? ""}",` +
+            `"${item.companyName ?? ""}",` +
+            `"${item.authorName ?? ""}",` +
+            `"${item.status ?? ""}",` +
+            `${item.totalTasks ?? 0},` +
+            `${item.valueSold ?? 0},` +
+            `${item.successRate ?? 0},` +
+            `${item.followUpsDone ?? 0},` +
+            `${item.missedLeads ?? 0}`
+          );
+        });
+        break;
+      }
+      case "gm": {
         lines.push("Date,Company,Account,Grade");
         report.details.forEach((item: any) => {
           lines.push(
@@ -894,6 +959,79 @@ router.get(
   },
 );
 
+// Patch 2 Stage 7 — BV Report canonical source (bv_reports). Registered BEFORE
+// the /reports/:type catch-alls so it always wins for "bv". Gated by the BV
+// report permission matrix + row-scope; metrics come from bv-report.service.
+router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    let parsedRange;
+    try {
+      parsedRange = parseDateRange(from, to);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "Invalid date range" });
+    }
+    const { fromDate, toDate } = parsedRange;
+    const filterUserIds = await resolveBvScope(req);
+    const report = await getBvReportData(filterUserIds, fromDate, toDate);
+    res.json(report);
+  } catch (error) {
+    console.error("Error fetching BV report:", error);
+    res.status(500).json({ error: "Failed to fetch report" });
+  }
+});
+
+router.get("/reports/bv/export", requireReportPermission("bv_report", "export"), async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const format = (req.query.format as string) || "csv";
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    let parsedRange;
+    try {
+      parsedRange = parseDateRange(from, to);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "Invalid date range" });
+    }
+    const { fromDate, toDate } = parsedRange;
+    const filterUserIds = await resolveBvScope(req);
+    const report = await getBvReportData(filterUserIds, fromDate, toDate);
+    const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}`;
+
+    if (format === "csv") {
+      const csvContent = buildReportCsv(report);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${suffix}.csv"`);
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "bv_report.export",
+        resourceType: "bv_report",
+        resourceId: "bv",
+        details: JSON.stringify({ format, from: report.meta.from, to: report.meta.to, count: report.reportCount }),
+      });
+      res.send(csvContent);
+    } else if (format === "json") {
+      res.setHeader("Content-Type", "application/json");
+      res.setHeader("Content-Disposition", `attachment; filename="${suffix}.json"`);
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "bv_report.export",
+        resourceType: "bv_report",
+        resourceId: "bv",
+        details: JSON.stringify({ format, from: report.meta.from, to: report.meta.to, count: report.reportCount }),
+      });
+      res.json(report);
+    } else {
+      res.status(400).json({ error: "Unsupported export format" });
+    }
+  } catch (error) {
+    console.error("Error exporting BV report:", error);
+    res.status(500).json({ error: "Failed to export report" });
+  }
+});
+
 router.get("/reports/:type", async (req, res, next) => {
   const reportType = req.params.type as string;
   const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
@@ -907,7 +1045,7 @@ router.get("/reports/:type", async (req, res, next) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!["loan", "vas", "gm", "bv"].includes(reportType)) {
+    if (!["loan", "vas", "gm"].includes(reportType)) {
       return res.status(400).json({ error: "Invalid report type" });
     }
 
@@ -949,10 +1087,6 @@ router.get("/reports/:type", async (req, res, next) => {
         break;
       case "gm":
         report = await getGmReport(filterUserIds, fromDate, toDate);
-        break;
-      case "bv":
-        console.log("➡️ Dispatching to getBvReport");
-        report = await getBvReport(filterUserIds, fromDate, toDate);
         break;
       default:
         return res.status(400).json({ error: "Invalid report type" });
@@ -1011,9 +1145,6 @@ router.get("/reports/:type/export", async (req, res, next) => {
         break;
       case "gm":
         report = await getGmReport(filterUserIds, fromDate, toDate);
-        break;
-      case "bv":
-        report = await getBvReport(filterUserIds, fromDate, toDate);
         break;
       default:
         return res.status(400).json({ error: "Invalid report type" });
@@ -1097,7 +1228,7 @@ router.get("/reports/summary", async (req, res) => {
       getLoanReport(filterUserIds, fromDate, toDate),
       getVasReport(filterUserIds, fromDate, toDate),
       getGmReport(filterUserIds, fromDate, toDate),
-      getBvReport(filterUserIds, fromDate, toDate),
+      getBvReportData(filterUserIds, fromDate, toDate),
     ]);
 
     res.json({

@@ -109,6 +109,7 @@ const REPORT_PERMISSION_MATRIX: Record<
       "dd_manager",
     ],
     create: ["sales_executive", "sales_assistant_manager", "sales_manager", "account_manager"],
+    edit: ["sales_executive", "sales_assistant_manager", "sales_manager", "account_manager"],
     export: ["account_manager", "hod", "sales_manager"],
     approve: ["account_manager", "hod"],
   },
