@@ -134,9 +134,11 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
       return res.status(404).json({ success: false, error: "Project not found" });
     }
 
-    // Get invoice to determine correct task type label and executive dashboard URL
+    // Get invoice to determine the correct task type label. The label is still
+    // derived from the invoice's free-text project name; only the routing URL
+    // below reads the structured department column.
     let taskTypeLabel = "Product Listing";
-    let executiveDashboardUrl = "/product-posting/executive"; // default: PP executive
+    let invNameLower = "";
     if ((project as any).invoiceId) {
       try {
         const invResult = await db.execute(
@@ -145,12 +147,27 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
         const invName: string = (invResult?.rows?.[0] as any)?.project_name || "";
         if (invName) {
           taskTypeLabel = invName;
-          const lower = invName.toLowerCase();
-          if (lower.includes("listing") || lower.includes("minisite") || lower.includes("mini site") || lower.includes("mini-site")) {
-            executiveDashboardUrl = "/dd-executive-dashboard";
-          }
+          invNameLower = invName.toLowerCase();
         }
       } catch (_e) {}
+    }
+
+    // Choose the executive dashboard URL from the project's stored structured
+    // department first. Only fall back to the fragile invoice-name match when the
+    // column is null (legacy projects created before department_type existed).
+    let executiveDashboardUrl = "/product-posting/executive"; // default: PP executive
+    const storedDept = (project as any).departmentType as string | null | undefined;
+    if (storedDept === "DND") {
+      executiveDashboardUrl = "/dd-executive-dashboard";
+    } else if (storedDept === "PRODUCT_POSTING" || storedDept === "SOFTWARE") {
+      executiveDashboardUrl = "/product-posting/executive";
+    } else if (
+      invNameLower.includes("listing") ||
+      invNameLower.includes("minisite") ||
+      invNameLower.includes("mini site") ||
+      invNameLower.includes("mini-site")
+    ) {
+      executiveDashboardUrl = "/dd-executive-dashboard";
     }
 
     const workflow = await getOrCreateSoftwareWorkflow(projectId);
