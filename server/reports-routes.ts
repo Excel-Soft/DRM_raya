@@ -35,7 +35,8 @@ import {
   gmReportsRepository,
 } from "./repositories/generic-report.repository";
 import { isManagerialRole } from "./utils/role-utils";
-import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound } from "./utils/api-error";
+import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
+import { requireReportPermission } from "./middleware/report-permission";
 
 const router = Router();
 
@@ -874,6 +875,24 @@ function buildReportCsv(report: ReportData) {
 
   return lines.join("\n");
 }
+
+// Patch 2 Stage 1 — Day Activities (day-target) report.
+// The data source for this report is not wired yet. Rather than fabricating rows
+// (the previous frontend mock) or returning a fake-empty success, the route is
+// gated by the report-permission matrix and responds honestly with 501
+// NOT_IMPLEMENTED so the UI surfaces a real error state. Registered BEFORE the
+// catch-all GET /reports/:type so it wins routing.
+router.get(
+  "/reports/day-target",
+  requireReportPermission("day_target", "view"),
+  (_req, res) => {
+    return sendApiError(res, {
+      status: 501,
+      code: "NOT_IMPLEMENTED",
+      message: "The Day Activities (day-target) report data source is not wired yet.",
+    });
+  },
+);
 
 router.get("/reports/:type", async (req, res, next) => {
   const reportType = req.params.type as string;

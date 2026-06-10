@@ -7,7 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { buildReportQueryParams } from "@/lib/reportApi";
 
 export default function ReportsDayTarget() {
   const [selectedUser, setSelectedUser] = useState<string>("");
@@ -31,32 +32,28 @@ export default function ReportsDayTarget() {
     }
   });
 
-  // Placeholder query
-  const { data: reportData, isLoading } = useQuery<any>({
+  // Day-target report query. No mock fallback: a backend failure surfaces as a
+  // real error state with retry, never fabricated rows.
+  const { data: reportData, isLoading, isError, refetch, isFetching } = useQuery<any>({
     queryKey: ["/api/reports/day-target", fetchParams],
     queryFn: async () => {
       if (!fetchParams) return { details: [] };
-      const params = new URLSearchParams();
-      if (fetchParams.from) params.set("from", fetchParams.from);
-      if (fetchParams.to) params.set("to", fetchParams.to);
-      if (fetchParams.userId && fetchParams.userId !== "all") params.set("userId", fetchParams.userId);
-      if (fetchParams.ourTeam) params.set("ourTeam", "true");
-      
-      try {
-        const res = await apiRequest("GET", `/api/reports/day-target?${params}`);
-        if (!res.ok) throw new Error("Not found");
-        return res.json();
-      } catch (err) {
-        // Mock data to match screenshot
-        return {
-          details: [
-            { id: 1, name: "Shaila Khaild", date: "2021-07-13T17:08:25.000Z" },
-            { id: 2, name: "Shaila Khaild", date: "2021-07-13T17:08:25.000Z" }
-          ]
-        };
-      }
+      const query = buildReportQueryParams({
+        from: fetchParams.from,
+        to: fetchParams.to,
+        userId:
+          fetchParams.userId && fetchParams.userId !== "all"
+            ? fetchParams.userId
+            : undefined,
+        ourTeam: fetchParams.ourTeam ? "true" : undefined,
+      });
+      return apiRequestJson<{ details?: any[] }>(
+        "GET",
+        `/api/reports/day-target${query ? `?${query}` : ""}`,
+      );
     },
-    enabled: !!fetchParams
+    enabled: !!fetchParams,
+    retry: false,
   });
 
   const handleView = () => {
@@ -156,9 +153,16 @@ export default function ReportsDayTarget() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
-                {isLoading ? (
+                {isLoading || isFetching ? (
                   <tr>
                     <td colSpan={2} className="py-8 text-center text-slate-500">Loading data...</td>
+                  </tr>
+                ) : isError ? (
+                  <tr>
+                    <td colSpan={2} className="py-10 text-center text-rose-600 text-sm">
+                      Failed to load the report.{" "}
+                      <button onClick={() => refetch()} className="underline font-semibold ml-1">Retry</button>
+                    </td>
                   </tr>
                 ) : details.length === 0 ? (
                   <tr>
