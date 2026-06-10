@@ -7,6 +7,7 @@
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
 - [Workflow route write ordering](workflow-route-write-ordering.md) — related-record writes must go inside applyWithinTx; payload/duplicate validation must be fail-fast route checks before the transition (no DB write on rejection).
 - [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
+- [Penalty void lifecycle](penalty-void-lifecycle.md) — penalties carry status (ACTIVE/VOIDED) separate from approval_status; coalesce(status,'ACTIVE'), void excluded from money totals but stays visible.
 - [Patch 2 report safety](patch2-report-safety.md) — report authz matrix in normalized role keys, roll out per-endpoint (GLOBAL-001), `/reports/:type` catch-all ordering trap, honest 501 not fake-empty.
 - [todo_tasks lazy table](todo-tasks-lazy-table.md) — `drm.todo_tasks` has no CREATE migration; all todo endpoints 500 (not 404) on a DB where no todo exists; also qualified vs unqualified between routes.
 - [apiRequest doesn't throw on non-2xx](apirequest-non-throwing.md) — `apiRequest()` deliberately skips throwIfResNotOk; use `apiRequestJson()` in queries or `isError` never fires.

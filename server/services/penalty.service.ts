@@ -48,6 +48,11 @@ const ROW_SELECT = `
   coalesce(r.full_name, r.name, r.email) as "rejectedByName",
   p.rejected_at            as "rejectedAt",
   p.employee_acknowledged_at as "employeeAcknowledgedAt",
+  coalesce(p.status, 'ACTIVE') as "status",
+  p.void_reason            as "voidReason",
+  p.voided_by              as "voidedById",
+  coalesce(v.full_name, v.name, v.email) as "voidedByName",
+  p.voided_at              as "voidedAt",
   p.created_at             as "createdAt",
   p.updated_at             as "updatedAt"
 `;
@@ -58,6 +63,7 @@ const ROW_JOINS = `
   left join drm.users c on c.id = p.created_by
   left join drm.users a on a.id = p.approved_by
   left join drm.users r on r.id = p.rejected_by
+  left join drm.users v on v.id = p.voided_by
 `;
 
 export interface ListFilters {
@@ -126,18 +132,21 @@ export async function listPenalties(filters: ListFilters) {
   const offset = (page - 1) * limit;
 
   // Summary across the whole filtered set (not just the page).
+  // VOIDED penalties are excluded from the approval-state counts and the money
+  // total (a void cancels the financial liability); they get their own bucket.
   const summaryQ = await pool.query(
     `select
        count(*)::int as "totalPenalties",
-       count(*) filter (where p.approval_status = 'PENDING')::int as "pendingCount",
-       count(*) filter (where p.approval_status = 'APPROVED')::int as "approvedCount",
-       count(*) filter (where p.approval_status = 'REJECTED')::int as "rejectedCount",
-       coalesce(sum(p.amount), 0) as "totalAmount"
+       count(*) filter (where coalesce(p.status,'ACTIVE') <> 'VOIDED' and p.approval_status = 'PENDING')::int as "pendingCount",
+       count(*) filter (where coalesce(p.status,'ACTIVE') <> 'VOIDED' and p.approval_status = 'APPROVED')::int as "approvedCount",
+       count(*) filter (where coalesce(p.status,'ACTIVE') <> 'VOIDED' and p.approval_status = 'REJECTED')::int as "rejectedCount",
+       count(*) filter (where coalesce(p.status,'ACTIVE') = 'VOIDED')::int as "voidedCount",
+       coalesce(sum(p.amount) filter (where coalesce(p.status,'ACTIVE') <> 'VOIDED'), 0) as "totalAmount"
      ${ROW_JOINS} ${whereSql}`,
     params,
   );
   const summary = summaryQ.rows[0] || {
-    totalPenalties: 0, pendingCount: 0, approvedCount: 0, rejectedCount: 0, totalAmount: 0,
+    totalPenalties: 0, pendingCount: 0, approvedCount: 0, rejectedCount: 0, voidedCount: 0, totalAmount: 0,
   };
 
   const dataQ = await pool.query(
@@ -156,6 +165,7 @@ export async function listPenalties(filters: ListFilters) {
       pendingCount: Number(summary.pendingCount) || 0,
       approvedCount: Number(summary.approvedCount) || 0,
       rejectedCount: Number(summary.rejectedCount) || 0,
+      voidedCount: Number(summary.voidedCount) || 0,
       totalAmount: Number(summary.totalAmount) || 0,
     },
   };
@@ -173,7 +183,8 @@ export async function getPenaltyById(id: string) {
 export async function getPenaltyRaw(id: string) {
   const { rows } = await pool.query(
     `select id, employee_id as "employeeId", created_by as "createdBy", department,
-            approval_status as "approvalStatus", deleted_at as "deletedAt"
+            approval_status as "approvalStatus", coalesce(status, 'ACTIVE') as "status",
+            deleted_at as "deletedAt"
        from drm.penalties where id::text = $1::text limit 1`,
     [id],
   );
@@ -335,6 +346,37 @@ export async function softDeletePenalty(id: string) {
   return true;
 }
 
+/**
+ * Void a penalty: a soft, audited cancellation distinct from delete. Sets the
+ * lifecycle status to VOIDED (approval_status is preserved so the original
+ * decision stays auditable) and records who/why. Returns the updated row, or
+ * null if it was already voided/deleted (no-op — the route maps this to 409).
+ */
+export async function voidPenalty(id: string, voidedBy: string, reason: string) {
+  const { rowCount } = await pool.query(
+    `update drm.penalties
+       set status = 'VOIDED', voided_by = $2::uuid, voided_at = now(),
+           void_reason = $3, updated_at = now()
+     where id::text = $1::text and deleted_at is null
+       and coalesce(status, 'ACTIVE') <> 'VOIDED'`,
+    [id, voidedBy, reason],
+  );
+  if (!rowCount) return null;
+  const updated = await getPenaltyById(id);
+  // Notify the employee the penalty recorded against them was voided.
+  try {
+    if (updated?.employeeId) {
+      await NotificationService.notify({
+        userId: updated.employeeId,
+        message: `A penalty (${updated.penaltyHead}) recorded against you was voided.`,
+        type: "INFO",
+        targetUrl: "/drm/add-penalty",
+      });
+    }
+  } catch { /* non-fatal */ }
+  return updated;
+}
+
 export async function monthlyReport(opts: { month?: string; department?: string; employeeId?: string }) {
   const where: string[] = ["p.deleted_at is null"];
   const params: any[] = [];
@@ -356,26 +398,29 @@ export async function monthlyReport(opts: { month?: string; department?: string;
     params.push(opts.employeeId);
   }
   const whereSql = `where ${where.join(" and ")}`;
+  // Money aggregates exclude VOIDED penalties so reported liability is honest;
+  // the records list keeps voided rows (with status) for full visibility.
+  const whereSqlActive = `${whereSql} and coalesce(p.status,'ACTIVE') <> 'VOIDED'`;
 
   const totals = await pool.query(
     `select count(*)::int as "totalPenalties", coalesce(sum(p.amount),0) as "totalAmount"
-     ${ROW_JOINS} ${whereSql}`,
+     ${ROW_JOINS} ${whereSqlActive}`,
     params,
   );
   const byDepartment = await pool.query(
     `select coalesce(p.department,'(none)') as department, count(*)::int as count, coalesce(sum(p.amount),0) as amount
-     ${ROW_JOINS} ${whereSql} group by p.department order by amount desc`,
+     ${ROW_JOINS} ${whereSqlActive} group by p.department order by amount desc`,
     params,
   );
   const byEmployee = await pool.query(
     `select p.employee_id as "employeeId", coalesce(e.full_name,e.name,e.email) as name,
             count(*)::int as count, coalesce(sum(p.amount),0) as amount
-     ${ROW_JOINS} ${whereSql} group by p.employee_id, e.full_name, e.name, e.email order by amount desc`,
+     ${ROW_JOINS} ${whereSqlActive} group by p.employee_id, e.full_name, e.name, e.email order by amount desc`,
     params,
   );
   const byPenaltyHead = await pool.query(
     `select p.penalty_head as "penaltyHead", count(*)::int as count, coalesce(sum(p.amount),0) as amount
-     ${ROW_JOINS} ${whereSql} group by p.penalty_head order by amount desc`,
+     ${ROW_JOINS} ${whereSqlActive} group by p.penalty_head order by amount desc`,
     params,
   );
   const records = await pool.query(
@@ -399,7 +444,7 @@ export async function monthlyReport(opts: { month?: string; department?: string;
 // Ready for future integration: returns approved-penalty discipline data for an
 // employee over a date range. Counts/sums only APPROVED, non-deleted penalties.
 export async function getPenaltySummaryForEmployee(employeeId: string, startDate?: string, endDate?: string) {
-  const where: string[] = ["deleted_at is null", "approval_status = 'APPROVED'", "employee_id::text = $1::text"];
+  const where: string[] = ["deleted_at is null", "coalesce(status, 'ACTIVE') <> 'VOIDED'", "approval_status = 'APPROVED'", "employee_id::text = $1::text"];
   const params: any[] = [employeeId];
   let i = 2;
   if (startDate) { where.push(`penalty_date >= $${i++}`); params.push(startDate); }

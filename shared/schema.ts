@@ -2823,6 +2823,11 @@ export const penalties = drmSchema.table("penalties", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
   deletedAt: timestamp("deleted_at"),
+  // Patch 2 Stage 2: lifecycle status (ACTIVE/VOIDED), distinct from approval_status.
+  status: text("status").notNull().default("ACTIVE"),
+  voidedBy: uuid("voided_by").references(() => users.id),
+  voidedAt: timestamp("voided_at"),
+  voidReason: text("void_reason"),
 }, (t) => [
   index("idx_penalties_employee").on(t.employeeId),
   index("idx_penalties_created_by").on(t.createdBy),
@@ -2830,6 +2835,7 @@ export const penalties = drmSchema.table("penalties", {
   index("idx_penalties_status").on(t.approvalStatus),
   index("idx_penalties_department").on(t.department),
   index("idx_penalties_deleted_at").on(t.deletedAt),
+  index("idx_penalties_lifecycle_status").on(t.status),
 ]);
 
 export type Penalty = typeof penalties.$inferSelect;

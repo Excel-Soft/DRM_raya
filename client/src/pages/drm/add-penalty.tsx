@@ -60,6 +60,11 @@ interface PenaltyRow {
   approvedAt: string | null;
   rejectedByName: string | null;
   rejectedAt: string | null;
+  status: string;
+  voidReason: string | null;
+  voidedById: string | null;
+  voidedByName: string | null;
+  voidedAt: string | null;
   employeeAcknowledgedAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
@@ -69,14 +74,14 @@ interface ListResult {
   pagination: { page: number; limit: number; total: number; totalPages: number };
   summary: {
     totalPenalties: number; pendingCount: number; approvedCount: number;
-    rejectedCount: number; totalAmount: number;
+    rejectedCount: number; voidedCount: number; totalAmount: number;
   };
 }
 interface MetaResult {
   penaltyHeads: string[];
   statuses: string[];
   permissions: {
-    canCreate: boolean; canDecide: boolean; canViewReports: boolean;
+    canCreate: boolean; canDecide: boolean; canVoid: boolean; canViewReports: boolean;
     isFullAccess: boolean; role: string;
   };
 }
@@ -110,6 +115,7 @@ function statusBadge(status: string) {
     PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
     APPROVED: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
     REJECTED: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+    VOIDED: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
     CANCELLED: "bg-gray-200 text-gray-700 dark:bg-zinc-800 dark:text-zinc-300",
   };
   return (
@@ -151,6 +157,8 @@ export default function AddPenaltyPage() {
   const [approvalDecision, setApprovalDecision] = useState<"APPROVED" | "REJECTED">("APPROVED");
   const [hodRemarks, setHodRemarks] = useState("");
   const [deleteRow, setDeleteRow] = useState<PenaltyRow | null>(null);
+  const [voidRow, setVoidRow] = useState<PenaltyRow | null>(null);
+  const [voidReason, setVoidReason] = useState("");
 
   const metaQuery = useQuery<MetaResult>({
     queryKey: ["/api/penalties/meta"],
@@ -231,7 +239,7 @@ export default function AddPenaltyPage() {
     mutationFn: async () => {
       if (!approvalRow) return;
       const res = await apiRequest("PATCH", `/api/penalties/${approvalRow.id}/approval`, {
-        decision: approvalDecision,
+        approvalStatus: approvalDecision,
         hodRemarks: hodRemarks || null,
       });
       const json = await res.json();
@@ -271,6 +279,25 @@ export default function AddPenaltyPage() {
     onSuccess: () => {
       toast({ title: "Penalty deleted" });
       setDeleteRow(null);
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const voidMutation = useMutation({
+    mutationFn: async () => {
+      if (!voidRow) return;
+      const res = await apiRequest("PATCH", `/api/penalties/${voidRow.id}/void`, {
+        reason: voidReason.trim(),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Void failed");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "Penalty voided" });
+      setVoidRow(null);
+      setVoidReason("");
       invalidate();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -326,6 +353,7 @@ export default function AddPenaltyPage() {
   }, [allUsers, form.employeeId, editing, viewRow]);
 
   const canDecide = !!perms?.canDecide;
+  const canVoid = !!perms?.canVoid;
   const canCreate = !!perms?.canCreate;
   const editApproved = editing && form.approvalStatus === "APPROVED" && !perms?.isFullAccess;
 
@@ -339,12 +367,13 @@ export default function AddPenaltyPage() {
 
       {/* Summary cards */}
       {summary && (
-        <div className="mb-5 grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="mb-5 grid grid-cols-2 md:grid-cols-6 gap-3">
           {[
             { label: "Total", value: summary.totalPenalties },
             { label: "Pending", value: summary.pendingCount },
             { label: "Approved", value: summary.approvedCount },
             { label: "Rejected", value: summary.rejectedCount },
+            { label: "Voided", value: summary.voidedCount },
             { label: "Total Amount", value: fmtMoney(summary.totalAmount) },
           ].map((c) => (
             <Card key={c.label} className="border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
@@ -419,7 +448,8 @@ export default function AddPenaltyPage() {
                 )}
                 {rows.map((row, idx) => {
                   const no = pagination ? (pagination.page - 1) * pagination.limit + idx + 1 : idx + 1;
-                  const isPending = row.approvalStatus === "PENDING";
+                  const isVoided = row.status === "VOIDED";
+                  const isPending = row.approvalStatus === "PENDING" && !isVoided;
                   return (
                     <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{no}</td>
@@ -428,7 +458,12 @@ export default function AddPenaltyPage() {
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{fmtMoney(row.amount)}</td>
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{fmtDate(row.penaltyDate)}</td>
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{row.addedByName ?? "—"}</td>
-                      <td className="px-4 py-3 text-[13px]">{statusBadge(row.approvalStatus)}</td>
+                      <td className="px-4 py-3 text-[13px]">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {statusBadge(row.approvalStatus)}
+                          {isVoided && statusBadge("VOIDED")}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-[13px]">
                         <div className="flex flex-wrap gap-1.5">
                           <button onClick={() => setViewRow(row)} className="text-[12px] text-blue-600 hover:underline">View</button>
@@ -450,7 +485,13 @@ export default function AddPenaltyPage() {
                           {canCreate && isPending && (
                             <button onClick={() => setDeleteRow(row)} className="text-[12px] text-red-600 hover:underline">Delete</button>
                           )}
-                          {!row.employeeAcknowledgedAt && (
+                          {canVoid && !isVoided && (
+                            <button
+                              onClick={() => { setVoidRow(row); setVoidReason(""); }}
+                              className="text-[12px] text-orange-600 hover:underline"
+                            >Void</button>
+                          )}
+                          {!row.employeeAcknowledgedAt && !isVoided && (
                             <button
                               onClick={() => acknowledgeMutation.mutate(row.id)}
                               className="text-[12px] text-purple-600 hover:underline"
@@ -680,6 +721,14 @@ export default function AddPenaltyPage() {
               <Detail label="Approved At" value={fmtDateTime(viewRow.approvedAt)} />
               <Detail label="Rejected By" value={viewRow.rejectedByName} />
               <Detail label="Rejected At" value={fmtDateTime(viewRow.rejectedAt)} />
+              {viewRow.status === "VOIDED" && (
+                <>
+                  <Detail label="Lifecycle" valueNode={statusBadge("VOIDED")} />
+                  <Detail label="Voided By" value={viewRow.voidedByName} />
+                  <Detail label="Voided At" value={fmtDateTime(viewRow.voidedAt)} />
+                  <div className="col-span-2"><Detail label="Void Reason" value={viewRow.voidReason} /></div>
+                </>
+              )}
               <Detail label="Acknowledged" value={viewRow.employeeAcknowledgedAt ? fmtDateTime(viewRow.employeeAcknowledgedAt) : "Not acknowledged"} />
               <Detail label="Created" value={fmtDateTime(viewRow.createdAt)} />
               <Detail label="Updated" value={fmtDateTime(viewRow.updatedAt)} />
@@ -719,15 +768,20 @@ export default function AddPenaltyPage() {
               >Reject</Button>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[13px]">HOD Remarks</Label>
+              <Label className="text-[13px]">
+                HOD Remarks{approvalDecision === "REJECTED" && <span className="text-red-600"> *</span>}
+              </Label>
               <Textarea value={hodRemarks} onChange={(e) => setHodRemarks(e.target.value)} className="text-[13px]" />
+              {approvalDecision === "REJECTED" && !hodRemarks.trim() && (
+                <p className="text-[12px] text-red-600">Remarks are required to reject a penalty.</p>
+              )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setApprovalRow(null)}>Cancel</Button>
             <Button
               onClick={() => approvalMutation.mutate()}
-              disabled={approvalMutation.isPending}
+              disabled={approvalMutation.isPending || (approvalDecision === "REJECTED" && !hodRemarks.trim())}
               className={approvalDecision === "APPROVED" ? "bg-[#00a65a] hover:bg-[#008d4c] text-white" : ""}
               variant={approvalDecision === "REJECTED" ? "destructive" : "default"}
             >
@@ -755,6 +809,41 @@ export default function AddPenaltyPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Void confirm */}
+      <Dialog open={!!voidRow} onOpenChange={(o) => !o && setVoidRow(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Void Penalty</DialogTitle>
+            <DialogDescription>
+              {voidRow?.employeeName} — {voidRow?.penaltyHead} ({fmtMoney(voidRow?.amount ?? null)}).
+              Voiding cancels this penalty's liability while keeping its history. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label className="text-[13px]">Reason<span className="text-red-600"> *</span></Label>
+            <Textarea
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              className="text-[13px]"
+              placeholder="Why is this penalty being voided?"
+            />
+            {!voidReason.trim() && (
+              <p className="text-[12px] text-red-600">A reason is required to void a penalty.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVoidRow(null)}>Cancel</Button>
+            <Button
+              onClick={() => voidMutation.mutate()}
+              disabled={voidMutation.isPending || !voidReason.trim()}
+              className="bg-orange-600 hover:bg-orange-700 text-white"
+            >
+              {voidMutation.isPending ? "Voiding…" : "Void Penalty"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

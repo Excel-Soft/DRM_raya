@@ -32,3 +32,12 @@ CREATE INDEX IF NOT EXISTS idx_penalties_date ON drm.penalties (penalty_date);
 CREATE INDEX IF NOT EXISTS idx_penalties_status ON drm.penalties (approval_status);
 CREATE INDEX IF NOT EXISTS idx_penalties_department ON drm.penalties (department);
 CREATE INDEX IF NOT EXISTS idx_penalties_deleted_at ON drm.penalties (deleted_at);
+
+-- Patch 2 Stage 2: lifecycle status (ACTIVE/VOIDED) + void audit columns.
+-- A separate dimension from approval_status so a void never destroys the
+-- original approval state. Additive + idempotent.
+ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ACTIVE';
+ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS voided_by uuid REFERENCES drm.users(id);
+ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS voided_at timestamp;
+ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS void_reason text;
+CREATE INDEX IF NOT EXISTS idx_penalties_lifecycle_status ON drm.penalties (status);
