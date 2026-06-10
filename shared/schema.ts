@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, serial } from "drizzle-orm/pg-core";
+import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, uniqueIndex, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -795,7 +795,9 @@ export const salaryRuns = drmSchema.table("salary_runs", {
   periodYear: integer("period_year").notNull(),
   branch: text("branch"),
   department: text("department"),
-  status: text("status").notNull().default("DRAFT"), // DRAFT | FINALIZED | APPROVED | LOCKED
+  // Patch 2 Stage 4 — DRAFT | GENERATED | APPROVED | FINALIZED | CANCELLED.
+  // Legacy "LOCKED" is treated as locked/uneditable for backward compatibility.
+  status: text("status").notNull().default("DRAFT"),
   notes: text("notes"),
   employeeCount: integer("employee_count").notNull().default(0),
   totalGross: decimal("total_gross", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -804,6 +806,13 @@ export const salaryRuns = drmSchema.table("salary_runs", {
   createdByUserId: uuid("created_by_user_id").references(() => users.id),
   approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
   approvedAt: timestamp("approved_at"),
+  // Patch 2 Stage 4 — lifecycle actor/audit columns (mirrors ensureSalarySchema).
+  generatedByUserId: uuid("generated_by_user_id").references(() => users.id),
+  generatedAt: timestamp("generated_at"),
+  finalizedByUserId: uuid("finalized_by_user_id").references(() => users.id),
+  finalizedAt: timestamp("finalized_at"),
+  remarks: text("remarks"),
+  deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (t) => [
@@ -827,10 +836,26 @@ export const salaryRunItems = drmSchema.table("salary_run_items", {
   otherDeductions: decimal("other_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
   overtimeAmount: decimal("overtime_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   netSalary: decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Patch 2 Stage 4 — richer payroll breakdown (mirrors ensureSalarySchema).
+  basicSalary: decimal("basic_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  leaveDays: decimal("leave_days", { precision: 6, scale: 2 }).notNull().default("0"),
+  unpaidLeaveDays: decimal("unpaid_leave_days", { precision: 6, scale: 2 }).notNull().default("0"),
+  lateMinutes: integer("late_minutes").notNull().default(0),
+  overtimeMinutes: integer("overtime_minutes").notNull().default(0),
+  penaltyAmount: decimal("penalty_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  loanDeduction: decimal("loan_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
+  bonusAmount: decimal("bonus_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  allowanceAmount: decimal("allowance_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalDeductions: decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
+  payableSalary: decimal("payable_salary", { precision: 12, scale: 2 }).notNull().default("0"),
+  paymentStatus: text("payment_status").notNull().default("UNPAID"), // UNPAID | PAID
+  calculationSnapshot: jsonb("calculation_snapshot"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("idx_salary_run_items_run").on(t.runId),
   index("idx_salary_run_items_user").on(t.userId),
+  uniqueIndex("uq_salary_run_items_run_user").on(t.runId, t.userId),
+  index("idx_salary_run_items_payment").on(t.paymentStatus),
 ]);
 
 // Attendance Edit Requests — audited before/after edits to attendance records.

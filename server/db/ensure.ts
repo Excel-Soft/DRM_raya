@@ -51,6 +51,62 @@ async function ensureAttendanceEditSchema(client: {
   );
 }
 
+/**
+ * Patch 2 Stage 4 — additive, idempotent payroll columns on the existing
+ * drm.salary_runs / drm.salary_run_items tables (mirrors shared/schema.ts).
+ * `db:push` is broken repo-wide (pre-existing FK mismatch), so schema changes are
+ * applied at runtime here. The tables already exist (created in Stage 3); this
+ * only ADDs the richer per-line payroll columns + run lifecycle columns plus a
+ * unique guard so one employee cannot appear twice within the same run.
+ */
+async function ensureSalarySchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  // salary_runs — lifecycle / actor columns.
+  const runCols = [
+    `generated_by_user_id uuid REFERENCES drm.users(id)`,
+    `generated_at timestamp`,
+    `finalized_by_user_id uuid REFERENCES drm.users(id)`,
+    `finalized_at timestamp`,
+    `remarks text`,
+    `deleted_at timestamp`,
+  ];
+  for (const col of runCols) {
+    await client.query(`ALTER TABLE drm.salary_runs ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+
+  // salary_run_items — richer per-employee payroll breakdown. All numeric columns
+  // default 0 so existing/Stage-3 rows remain valid; payment_status defaults UNPAID.
+  const itemCols = [
+    `basic_salary numeric(12,2) NOT NULL DEFAULT 0`,
+    `leave_days numeric(6,2) NOT NULL DEFAULT 0`,
+    `unpaid_leave_days numeric(6,2) NOT NULL DEFAULT 0`,
+    `late_minutes integer NOT NULL DEFAULT 0`,
+    `overtime_minutes integer NOT NULL DEFAULT 0`,
+    `penalty_amount numeric(12,2) NOT NULL DEFAULT 0`,
+    `loan_deduction numeric(12,2) NOT NULL DEFAULT 0`,
+    `bonus_amount numeric(12,2) NOT NULL DEFAULT 0`,
+    `allowance_amount numeric(12,2) NOT NULL DEFAULT 0`,
+    `total_deductions numeric(12,2) NOT NULL DEFAULT 0`,
+    `payable_salary numeric(12,2) NOT NULL DEFAULT 0`,
+    `payment_status text NOT NULL DEFAULT 'UNPAID'`,
+    `calculation_snapshot jsonb`,
+  ];
+  for (const col of itemCols) {
+    await client.query(`ALTER TABLE drm.salary_run_items ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+
+  // One employee can only appear once per run (within-run de-dup). Cross-run
+  // "one FINALIZED per employee/month/year" is enforced transactionally in the
+  // service layer (advisory lock + existence check), not by a constraint here.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_salary_run_items_run_user ON drm.salary_run_items (run_id, user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_salary_run_items_payment ON drm.salary_run_items (payment_status)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -77,6 +133,7 @@ export async function ensureDbOnce(): Promise<void> {
         // await ensureGmReportsSchema();
         await ensurePenaltiesSchema(client);
         await ensureAttendanceEditSchema(client);
+        await ensureSalarySchema(client);
         return;
       } catch (err) {
         lastErr = err;
