@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { buildReportQueryParams } from "@/lib/reportApi";
 
 export default function ReportsDiagnose() {
   const [selectedPerson, setSelectedPerson] = useState<string>("");
@@ -31,19 +32,25 @@ export default function ReportsDiagnose() {
     }
   });
 
-  const { data: reportData, isLoading } = useQuery<any>({
+  const { data: reportData, isLoading, isError, refetch, isFetching } = useQuery<any>({
     queryKey: ["/api/reports/bv", fetchParams],
     queryFn: async () => {
       if (!fetchParams) return null;
-      const params = new URLSearchParams();
-      if (fetchParams.from) params.set("from", fetchParams.from);
-      if (fetchParams.to) params.set("to", fetchParams.to);
-      if (fetchParams.userId && fetchParams.userId !== "all") params.set("userId", fetchParams.userId);
-      
-      const res = await apiRequest("GET", `/api/reports/bv?${params}`);
-      return res.json();
+      const query = buildReportQueryParams({
+        from: fetchParams.from,
+        to: fetchParams.to,
+        userId:
+          fetchParams.userId && fetchParams.userId !== "all"
+            ? fetchParams.userId
+            : undefined,
+      });
+      return apiRequestJson<{ details?: any[] }>(
+        "GET",
+        `/api/reports/bv${query ? `?${query}` : ""}`,
+      );
     },
-    enabled: !!fetchParams
+    enabled: !!fetchParams,
+    retry: false,
   });
 
   const handleView = () => {
@@ -182,9 +189,16 @@ export default function ReportsDiagnose() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
-                {isLoading ? (
+                {isLoading || isFetching ? (
                   <tr>
                     <td colSpan={8} className="py-8 text-center text-slate-500">Loading data...</td>
+                  </tr>
+                ) : isError ? (
+                  <tr>
+                    <td colSpan={8} className="py-10 text-center text-rose-600 text-sm">
+                      Failed to load the report.{" "}
+                      <button onClick={() => refetch()} className="underline font-semibold ml-1">Retry</button>
+                    </td>
                   </tr>
                 ) : displayedData.length === 0 ? (
                   <tr>
