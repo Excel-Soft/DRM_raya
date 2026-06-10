@@ -16,6 +16,7 @@ import { registerLeaveRoutes } from "./leave-routes";
 import { registerOvertimeRoutes } from "./overtime-routes";
 import { registerLoanRoutes } from "./loan-routes";
 import { registerReportsRoutes } from "./reports-routes";
+import { registerDiagnosisReportRoutes } from "./diagnosis-report-routes";
 import { registerTodoRoutes } from "./todo-routes";
 // Manager routes removed
 import { registerAccountRoutes } from "./account-routes";
@@ -303,6 +304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // reports router so they win over its /reports/:type parameterized route.
   registerStage3ReportsRoutes(app);
 
+  registerDiagnosisReportRoutes(app);
   registerReportsRoutes(app);
   registerAccountRoutes(app);
   registerQuickEntriesRoutes(app);
