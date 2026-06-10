@@ -795,9 +795,7 @@ export const salaryRuns = drmSchema.table("salary_runs", {
   periodYear: integer("period_year").notNull(),
   branch: text("branch"),
   department: text("department"),
-  // Patch 2 Stage 4 — DRAFT | GENERATED | APPROVED | FINALIZED | CANCELLED.
-  // Legacy "LOCKED" is treated as locked/uneditable for backward compatibility.
-  status: text("status").notNull().default("DRAFT"),
+  status: text("status").notNull().default("DRAFT"), // DRAFT | FINALIZED | APPROVED | LOCKED
   notes: text("notes"),
   employeeCount: integer("employee_count").notNull().default(0),
   totalGross: decimal("total_gross", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -806,10 +804,10 @@ export const salaryRuns = drmSchema.table("salary_runs", {
   createdByUserId: uuid("created_by_user_id").references(() => users.id),
   approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
   approvedAt: timestamp("approved_at"),
-  // Patch 2 Stage 4 — lifecycle actor/audit columns (mirrors ensureSalarySchema).
-  generatedByUserId: uuid("generated_by_user_id").references(() => users.id),
+  // Patch 2 Stage 4 — lifecycle actors, remarks, soft-delete (additive).
+  generatedBy: uuid("generated_by").references(() => users.id),
   generatedAt: timestamp("generated_at"),
-  finalizedByUserId: uuid("finalized_by_user_id").references(() => users.id),
+  finalizedBy: uuid("finalized_by").references(() => users.id),
   finalizedAt: timestamp("finalized_at"),
   remarks: text("remarks"),
   deletedAt: timestamp("deleted_at"),
@@ -818,6 +816,8 @@ export const salaryRuns = drmSchema.table("salary_runs", {
 }, (t) => [
   index("idx_salary_runs_period").on(t.periodYear, t.periodMonth),
   index("idx_salary_runs_status").on(t.status),
+  index("idx_salary_runs_generated_by").on(t.generatedBy),
+  index("idx_salary_runs_deleted_at").on(t.deletedAt),
 ]);
 
 // Salary Run Items — per-employee line items within a run.
@@ -836,11 +836,13 @@ export const salaryRunItems = drmSchema.table("salary_run_items", {
   otherDeductions: decimal("other_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
   overtimeAmount: decimal("overtime_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   netSalary: decimal("net_salary", { precision: 12, scale: 2 }).notNull().default("0"),
-  // Patch 2 Stage 4 — richer payroll breakdown (mirrors ensureSalarySchema).
+  // Patch 2 Stage 4 — full payroll component/deduction breakdown (additive).
   basicSalary: decimal("basic_salary", { precision: 12, scale: 2 }).notNull().default("0"),
-  leaveDays: decimal("leave_days", { precision: 6, scale: 2 }).notNull().default("0"),
-  unpaidLeaveDays: decimal("unpaid_leave_days", { precision: 6, scale: 2 }).notNull().default("0"),
+  leaveDays: integer("leave_days").notNull().default(0),
+  unpaidLeaveDays: integer("unpaid_leave_days").notNull().default(0),
+  unpaidLeaveDeduction: decimal("unpaid_leave_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   lateMinutes: integer("late_minutes").notNull().default(0),
+  lateDeduction: decimal("late_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
   overtimeMinutes: integer("overtime_minutes").notNull().default(0),
   penaltyAmount: decimal("penalty_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   loanDeduction: decimal("loan_deduction", { precision: 12, scale: 2 }).notNull().default("0"),
@@ -848,14 +850,15 @@ export const salaryRunItems = drmSchema.table("salary_run_items", {
   allowanceAmount: decimal("allowance_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   totalDeductions: decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
   payableSalary: decimal("payable_salary", { precision: 12, scale: 2 }).notNull().default("0"),
-  paymentStatus: text("payment_status").notNull().default("UNPAID"), // UNPAID | PAID
+  paymentStatus: text("payment_status").notNull().default("UNPAID"),
+  remarks: text("remarks"),
   calculationSnapshot: jsonb("calculation_snapshot"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("idx_salary_run_items_run").on(t.runId),
   index("idx_salary_run_items_user").on(t.userId),
   uniqueIndex("uq_salary_run_items_run_user").on(t.runId, t.userId),
-  index("idx_salary_run_items_payment").on(t.paymentStatus),
+  index("idx_salary_run_items_payment_status").on(t.paymentStatus),
 ]);
 
 // Attendance Edit Requests — audited before/after edits to attendance records.
@@ -2648,38 +2651,6 @@ export const insertServiceFollowupSchema = createInsertSchema(serviceFollowups).
 export const insertServiceComplaintSchema = createInsertSchema(serviceComplaints).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceDropoutSchema = createInsertSchema(serviceDropouts).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertServiceRenewalSchema = createInsertSchema(serviceRenewals).omit({ id: true, createdAt: true, updatedAt: true });
-
-// ---------------------------------------------------------------------------
-// Patch 2 Stage 6 — Diagnosis Report (drm.diagnosis_reports)
-// Dedicated source for the Diagnosis Report — deliberately NOT reusing BV data.
-// The physical table is also created at runtime by ensureDiagnosisSchema()
-// because db:push is broken repo-wide.
-// ---------------------------------------------------------------------------
-export const diagnosisReports = drmSchema.table("diagnosis_reports", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").references(() => customers.id),
-  companyName: text("company_name"),
-  personName: text("person_name"),
-  diagnosisType: text("diagnosis_type"),
-  diagnosisStatus: text("diagnosis_status").notNull().default("OPEN"),
-  diagnosisDate: date("diagnosis_date").notNull(),
-  assignedTo: uuid("assigned_to").references(() => users.id),
-  branch: text("branch"),
-  department: text("department"),
-  notes: text("notes"),
-  createdBy: uuid("created_by").references(() => users.id),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-  deletedAt: timestamp("deleted_at"),
-}, (t) => ({
-  statusIdx: index("idx_diagnosis_reports_status").on(t.diagnosisStatus),
-  dateIdx: index("idx_diagnosis_reports_date").on(t.diagnosisDate),
-  assignedIdx: index("idx_diagnosis_reports_assigned").on(t.assignedTo),
-}));
-
-export const insertDiagnosisReportSchema = createInsertSchema(diagnosisReports).omit({ id: true, createdAt: true, updatedAt: true });
-export type DiagnosisReport = typeof diagnosisReports.$inferSelect;
-export type InsertDiagnosisReport = z.infer<typeof insertDiagnosisReportSchema>;
 
 export type ServiceActivity = typeof serviceActivities.$inferSelect;
 export type InsertServiceActivity = z.infer<typeof insertServiceActivitySchema>;
