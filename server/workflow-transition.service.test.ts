@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   validateTransition,
   validateExtensionRequestInput,
+  resolveWorkflowRouting,
   WorkflowTransitionError,
   type TransitionContext,
 } from "./services/workflow-transition.service";
@@ -191,5 +192,107 @@ describe("validateExtensionRequestInput", () => {
   it("checks minutes before reason (minutes error wins when both are bad)", () => {
     const err = validateExtensionRequestInput({ requestedTimeMinutes: 0, reason: "" });
     expect(err?.code).toBe("EXTENSION_MINUTES_INVALID");
+  });
+});
+
+describe("resolveWorkflowRouting", () => {
+  it("uses an explicit departmentType verbatim (structured signal wins, no text guess)", () => {
+    for (const dept of ["DND", "PRODUCT_POSTING", "SOFTWARE"] as const) {
+      const r = resolveWorkflowRouting({ departmentType: dept });
+      expect(r.departmentType).toBe(dept);
+      expect(r.derivedFromText).toBe(false);
+    }
+  });
+
+  it("normalizes departmentType case/whitespace before matching", () => {
+    const r = resolveWorkflowRouting({ departmentType: "  dnd  " });
+    expect(r.departmentType).toBe("DND");
+    expect(r.derivedFromText).toBe(false);
+  });
+
+  it("lets an explicit departmentType override conflicting name hints", () => {
+    // Name screams DND, but the structured column says PRODUCT_POSTING and wins.
+    const r = resolveWorkflowRouting({
+      departmentType: "PRODUCT_POSTING",
+      projectName: "Alibaba minisite listing",
+    });
+    expect(r.departmentType).toBe("PRODUCT_POSTING");
+    expect(r.derivedFromText).toBe(false);
+  });
+
+  it("resolves workflowType 'software' to SOFTWARE structurally (no text derivation)", () => {
+    const r = resolveWorkflowRouting({
+      workflowType: "software",
+      projectName: "Alibaba minisite listing", // DND hints must be ignored here
+    });
+    expect(r.departmentType).toBe("SOFTWARE");
+    expect(r.workflowType).toBe("software");
+    expect(r.derivedFromText).toBe(false);
+    expect(r.managerDashboardUrl).toBe("/dashboard/l-manager");
+    expect(r.executiveDashboardUrl).toBe("/dashboard/l-executive");
+  });
+
+  it("derives DND from project name hints when no structured signal exists", () => {
+    for (const name of ["client minisite build", "Mini Site refresh", "product listing", "Alibaba store"]) {
+      const r = resolveWorkflowRouting({ projectName: name });
+      expect(r.departmentType).toBe("DND");
+      expect(r.derivedFromText).toBe(true);
+      expect(r.managerDashboardUrl).toBe("/dd/manager");
+      expect(r.executiveDashboardUrl).toBe("/dd/executive");
+    }
+  });
+
+  it("derives DND from the invoice project name as well", () => {
+    const r = resolveWorkflowRouting({ invoiceProjectName: "Alibaba listing setup" });
+    expect(r.departmentType).toBe("DND");
+    expect(r.derivedFromText).toBe(true);
+  });
+
+  it("falls back to PRODUCT_POSTING when no signal and no DND hints", () => {
+    const r = resolveWorkflowRouting({ projectName: "generic catalog work" });
+    expect(r.departmentType).toBe("PRODUCT_POSTING");
+    expect(r.workflowType).toBe("product-posting");
+    expect(r.derivedFromText).toBe(true);
+    expect(r.managerDashboardUrl).toBe("/product-posting/manager");
+    expect(r.executiveDashboardUrl).toBe("/product-posting/executive");
+  });
+
+  it("falls back to PRODUCT_POSTING with derivedFromText when given no inputs at all", () => {
+    const r = resolveWorkflowRouting({});
+    expect(r.departmentType).toBe("PRODUCT_POSTING");
+    expect(r.derivedFromText).toBe(true);
+  });
+
+  it("derivedFromText is true ONLY on the text fallback path", () => {
+    expect(resolveWorkflowRouting({ departmentType: "SOFTWARE" }).derivedFromText).toBe(false);
+    expect(resolveWorkflowRouting({ workflowType: "software" }).derivedFromText).toBe(false);
+    expect(resolveWorkflowRouting({ projectName: "anything" }).derivedFromText).toBe(true);
+  });
+
+  it("ignores blank/whitespace departmentType and falls through to text derivation", () => {
+    const r = resolveWorkflowRouting({ departmentType: "   ", projectName: "minisite" });
+    expect(r.departmentType).toBe("DND");
+    expect(r.derivedFromText).toBe(true);
+  });
+
+  it("ignores an unrecognized departmentType value and falls through to text derivation", () => {
+    const r = resolveWorkflowRouting({ departmentType: "MARKETING", projectName: "plain project" });
+    expect(r.departmentType).toBe("PRODUCT_POSTING");
+    expect(r.derivedFromText).toBe(true);
+  });
+
+  it("prefers an explicit product-posting workflowType over its derived value", () => {
+    const r = resolveWorkflowRouting({ workflowType: "product-posting", projectName: "minisite" });
+    // DND is a product-posting subtype, so text still splits the department,
+    // but the explicit workflowType is preserved.
+    expect(r.departmentType).toBe("DND");
+    expect(r.workflowType).toBe("product-posting");
+    expect(r.derivedFromText).toBe(true);
+  });
+
+  it("computes serviceType from invoice name, then project name, then department", () => {
+    expect(resolveWorkflowRouting({ departmentType: "DND", invoiceProjectName: "Inv-1", projectName: "Proj-1" }).serviceType).toBe("Inv-1");
+    expect(resolveWorkflowRouting({ departmentType: "DND", projectName: "Proj-1" }).serviceType).toBe("Proj-1");
+    expect(resolveWorkflowRouting({ departmentType: "DND" }).serviceType).toBe("DND");
   });
 });
