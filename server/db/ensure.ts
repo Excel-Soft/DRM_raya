@@ -192,6 +192,44 @@ async function ensureDiagnosisSchema(client: {
   );
 }
 
+/**
+ * Task 31 — authoritative source table for approved per-employee bonuses.
+ * `db:push` is broken repo-wide (pre-existing FK mismatch), so the table is
+ * created idempotently at runtime here (mirrors `employeeBonuses` in
+ * shared/schema.ts). Fixed allowances come from existing `drm.users` allowance
+ * columns and outstanding loan instalments from `drm.loan_requests`, so no new
+ * tables are needed for those.
+ */
+async function ensureBonusesSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.employee_bonuses (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id uuid NOT NULL REFERENCES drm.users(id),
+       period_month integer NOT NULL,
+       period_year integer NOT NULL,
+       amount numeric(12,2) NOT NULL DEFAULT 0,
+       reason text,
+       status text NOT NULL DEFAULT 'PENDING',
+       approved_by_user_id uuid REFERENCES drm.users(id),
+       approved_at timestamp,
+       created_by_user_id uuid REFERENCES drm.users(id),
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_employee_bonuses_user ON drm.employee_bonuses (user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_employee_bonuses_period ON drm.employee_bonuses (period_year, period_month)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_employee_bonuses_status ON drm.employee_bonuses (status)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -220,6 +258,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureAttendanceEditSchema(client);
         await ensureSalarySchema(client);
         await ensureDiagnosisSchema(client);
+        await ensureBonusesSchema(client);
         return;
       } catch (err) {
         lastErr = err;
