@@ -54,15 +54,32 @@ payableSalary        = max(0, netSalary)
 Every line stores a `calculation_snapshot` (inputs, outputs, assumptions,
 timestamp) so the figure can always be explained later.
 
+### Real sources for allowance, bonus, loan (Task 31)
+
+These now default to authoritative records and are no longer hand-entered, while
+a per-line **manual adjustment still overrides** them:
+
+- `allowanceAmount` — sum of the fixed `drm.users` allowance columns
+  (`daily_allowance + mobile_allowance + admin_allowance + conveyance_allowance`,
+  parsed from text). The `users` table is the source; no duplicate table added.
+- `bonusAmount` — sum of `APPROVED` rows in the new `drm.employee_bonuses`
+  source table whose `period_month`/`period_year` match the pay period.
+- `loanDeduction` — sum of outstanding instalments on active loans in the
+  existing `drm.loan_requests`: `status = 'HODApproved'` (the lifecycle's active
+  state) with `remaining_amount > 0`, taking `LEAST(installment_amount,
+  remaining_amount)` per loan so the final instalment never over-deducts.
+
+The salary line snapshot records each `*Source` value plus an `*Overridden` flag
+so a figure can always be traced to its source (or to the manual override).
+
 ### Honest zeros (no fabricated values)
 
-These have no source table in this DB and default to 0; they are only ever set
-via **manual adjustments**, never invented:
+These still have no source table in this DB and default to 0; they are only ever
+set via **manual adjustments**, never invented:
 
-- `allowanceAmount`, `bonusAmount` — manual.
 - `overtimeAmount` — manual (overtime *minutes* are real, but there is no
   overtime-rate policy, so the payable amount is 0 unless entered).
-- `loanDeduction` — manual (no loan ledger wired in).
+- `otherDeductions` — manual (catch-all, no source).
 - `lateMinutes` / `lateDeduction` — 0 (no late-minutes source column and no
   late-penalty policy); `lateMinutes` is shown as informational only.
 
@@ -143,8 +160,12 @@ early-return paths.
 
 - `payment_status` defaults `UNPAID` and is fully reportable/filterable, but
   there is no mark-as-paid mutation in this stage (deferred).
-- `allowance`/`bonus`/`loan`/`overtimeAmount` are manual because the DB has no
-  authoritative source tables for them yet.
+- `allowance`/`bonus`/`loan` now read from real records (see "Real sources"
+  above), defaulting to source with a per-line manual override still available.
+  `overtimeAmount` remains manual (no overtime-rate policy).
+- `drm.employee_bonuses` is wired into payroll as a read source; there is no
+  CRUD UI for creating/approving bonus rows in this stage (rows are managed
+  directly, e.g. via SQL/admin tooling).
 
 ## Verification
 

@@ -786,6 +786,28 @@ export const loanRequests = drmSchema.table("loan_requests", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Employee Bonuses — authoritative source for approved per-employee bonuses.
+// Salary preview pulls APPROVED rows matching the pay period into bonusAmount
+// (still overridable by a manual adjustment on the salary line).
+export const employeeBonuses = drmSchema.table("employee_bonuses", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  periodMonth: integer("period_month").notNull(), // 1-12, the pay period it belongs to
+  periodYear: integer("period_year").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  reason: text("reason"),
+  status: text("status").notNull().default("PENDING"), // PENDING | APPROVED | REJECTED
+  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedAt: timestamp("approved_at"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_employee_bonuses_user").on(t.userId),
+  index("idx_employee_bonuses_period").on(t.periodYear, t.periodMonth),
+  index("idx_employee_bonuses_status").on(t.status),
+]);
+
 // ===== Stage 3: Salary & Attendance-Edit Tables =====
 
 // Salary Runs — one row per generated payroll run (period + scope).

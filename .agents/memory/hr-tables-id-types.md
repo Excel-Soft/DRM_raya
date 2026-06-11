@@ -28,14 +28,26 @@ key as text; only penalties uses a uuid employee_id.
 - penalties: `approval_status = 'APPROVED'`, void via `status` (ACTIVE/VOIDED),
   has `deleted_at`; money totals exclude VOIDED.
 
-## Payroll honest-zeros (no source tables)
+## Payroll sources (allowance/bonus/loan now wired) + remaining zeros
 
-`users.basic_salary` is TEXT (parse it). The DB has **no** authoritative source
-for allowance, bonus, loan, overtime *rate*, or late-minutes. The salary
-workflow keeps these at 0 and only sets them via explicit manual adjustments —
-never fabricated. `overtime_records` gives real overtime *minutes* but there is
-no rate, so `overtimeAmount` stays manual. `perDaySalary = basicSalary/30`.
+`users.basic_salary` is TEXT (parse it); `perDaySalary = basicSalary/30`.
 
-**Why:** Stage-4 spec forbids mock/fake values; a fabricated allowance would be
-dishonest payroll. **How to apply:** if asked to "fill in" these fields, add a
-real source table first; don't invent numbers.
+Wired to real sources (each still overridable by a per-line manual adjustment):
+- **allowance** = sum of TEXT `users` allowance cols
+  (`daily/mobile/admin/conveyance_allowance`); the users table IS the source, no
+  separate table.
+- **bonus** = `SUM(amount)` of `drm.employee_bonuses` where `status='APPROVED'`
+  and `period_month/period_year` match the pay period (new table; user_id uuid).
+- **loanDeduction** = `SUM(LEAST(installment_amount, remaining_amount))` from
+  `drm.loan_requests` where `status='HODApproved'` (the loan lifecycle's active
+  state — see loan-routes pay-installment guard) and `remaining_amount>0`.
+
+Still honest-zero (no source): `overtimeAmount` (real minutes, no rate),
+`otherDeductions`, `lateMinutes/lateDeduction`.
+
+**Manual-override pattern:** `parseOptionalMoney` returns undefined for
+empty/missing (use source), null for invalid (400), number for explicit
+override; the POST loop only sets fields that are present so unset ones fall back
+to source. **Why:** spec forbids fabricated values, but real records should drive
+payroll. **How to apply:** to add another auto field, add a source query + map
+and default `field = m.x !== undefined ? m.x : source`.

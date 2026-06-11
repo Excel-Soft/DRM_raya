@@ -131,6 +131,18 @@ function parseManualMoney(v: unknown): number | null {
   return round2(n);
 }
 
+// Like parseManualMoney but distinguishes "not provided" from 0 so a salary line
+// can fall back to its real source value when no override is supplied.
+//   undefined -> no override (use the source default)
+//   null      -> invalid (route should 400)
+//   number    -> explicit override (including an explicit 0)
+function parseOptionalMoney(v: unknown): number | null | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, "").trim());
+  if (!Number.isFinite(n) || n < 0) return null;
+  return round2(n);
+}
+
 function periodBounds(month: number, year: number) {
   const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
   const end = new Date(year, month, 0, 23, 59, 59, 999); // last day of month
@@ -166,13 +178,16 @@ function overlapDays(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): number
 //   absenceDeduction       = daysAbsent * perDaySalary
 //   lateDeduction          = 0  (no late-penalty policy; lateMinutes informational)
 //   penaltyAmount          = SUM approved, non-voided penalties in period
-//   loanDeduction          = 0  (no loan tables; manual field)
+//   allowanceAmount        = SUM of fixed users.* allowance columns (real source)
+//   bonusAmount            = SUM approved drm.employee_bonuses for the period
+//   loanDeduction          = SUM outstanding instalments on active loan_requests
 //   overtimeAmount         = 0  (no overtime rate; minutes informational, manual)
 //   totalDeductions        = unpaidLeave + absence + late + penalty + loan + other
 //   netSalary              = gross - totalDeductions
 //   payableSalary          = max(0, netSalary)
-// Values without a real source (allowance/bonus/loan/overtimeAmount/other) are
-// 0 by default and only set via manual adjustments — never fabricated.
+// allowance/bonus/loan now default to their real source records; a per-line
+// manual adjustment still overrides them. overtimeAmount/otherDeductions have no
+// source and stay 0 unless entered manually — never fabricated.
 // ---------------------------------------------------------------------------
 
 interface ManualAdj {
@@ -298,7 +313,9 @@ async function computePreview(
 
   const usersRes = await pool.query(
     `SELECT u.id, COALESCE(u.full_name, u.name, u.username) AS name,
-            u.department, u.branch, u.basic_salary
+            u.department, u.branch, u.basic_salary,
+            u.daily_allowance, u.mobile_allowance,
+            u.admin_allowance, u.conveyance_allowance
        FROM drm.users u
       WHERE ${where.join(" AND ")}
       ORDER BY name ASC`,
@@ -363,6 +380,31 @@ async function computePreview(
   const penMap = new Map<string, number>();
   for (const r of penRes.rows) penMap.set(String(r.employee_id), Number(r.total || 0));
 
+  // Approved bonuses for the pay period (drm.employee_bonuses; user_id is uuid).
+  const bonusRes = await pool.query(
+    `SELECT user_id, COALESCE(SUM(amount),0) AS total
+       FROM drm.employee_bonuses
+      WHERE status = 'APPROVED'
+        AND period_month = $1 AND period_year = $2
+      GROUP BY user_id`,
+    [month, year],
+  );
+  const bonusMap = new Map<string, number>();
+  for (const r of bonusRes.rows) bonusMap.set(String(r.user_id), Number(r.total || 0));
+
+  // Outstanding loan instalments from active loans (loan_requests.user_id is
+  // varchar = users.id::text). A loan is active once HOD-approved with a balance
+  // remaining; the month's deduction is the instalment, capped at the balance.
+  const loanRes = await pool.query(
+    `SELECT user_id,
+            COALESCE(SUM(LEAST(installment_amount, remaining_amount)),0) AS total
+       FROM drm.loan_requests
+      WHERE status = 'HODApproved' AND remaining_amount > 0
+      GROUP BY user_id`,
+  );
+  const loanMap = new Map<string, number>();
+  for (const r of loanRes.rows) loanMap.set(String(r.user_id), Number(r.total || 0));
+
   return usersRes.rows.map((u: any) => {
     const id = String(u.id);
     const basicSalary = round2(toNum(u.basic_salary));
@@ -372,6 +414,15 @@ async function computePreview(
     const overtimeMinutes = otMap.get(id) || 0;
     const penaltyAmount = round2(penMap.get(id) || 0);
 
+    // Real source values for the three now-authoritative fields.
+    const allowanceSource = round2(
+      toNum(u.daily_allowance) + toNum(u.mobile_allowance) +
+      toNum(u.admin_allowance) + toNum(u.conveyance_allowance),
+    );
+    const bonusSource = round2(bonusMap.get(id) || 0);
+    const loanSource = round2(loanMap.get(id) || 0);
+
+    // Source value is the default; a supplied manual adjustment overrides it.
     const m = manual[id] || {};
     const {
       allowanceAmount, bonusAmount, overtimeAmount, loanDeduction, otherDeductions,
@@ -382,10 +433,11 @@ async function computePreview(
       daysAbsent: att.absent,
       unpaidLeaveDays: lv.unpaid,
       penaltyAmount,
-      allowanceAmount: m.allowanceAmount,
-      bonusAmount: m.bonusAmount,
-      overtimeAmount: m.overtimeAmount,
-      loanDeduction: m.loanDeduction,
+      // Source value is the default; a supplied manual adjustment overrides it.
+      allowanceAmount: m.allowanceAmount !== undefined ? m.allowanceAmount : allowanceSource,
+      bonusAmount: m.bonusAmount !== undefined ? m.bonusAmount : bonusSource,
+      overtimeAmount: m.overtimeAmount, // no rate policy -> manual only
+      loanDeduction: m.loanDeduction !== undefined ? m.loanDeduction : loanSource,
       otherDeductions: m.otherDeductions,
     });
 
@@ -434,8 +486,15 @@ async function computePreview(
           perDayBasis: "basicSalary/30",
           lateDeduction: "0 (no late-penalty policy)",
           overtimeAmount: "0 (no overtime-rate policy; minutes informational)",
-          loanDeduction: "manual (no loan tables)",
-          allowanceBonus: "manual (no source tables)",
+          allowance: "users fixed allowance columns (manual override allowed)",
+          bonus: "approved employee_bonuses for the period (manual override allowed)",
+          loanDeduction: "outstanding instalment on active loan_requests (manual override allowed)",
+        },
+        sources: {
+          allowanceSource, bonusSource, loanSource,
+          allowanceOverridden: m.allowanceAmount !== undefined,
+          bonusOverridden: m.bonusAmount !== undefined,
+          loanOverridden: m.loanDeduction !== undefined,
         },
         computedAt: new Date().toISOString(),
       },
@@ -563,9 +622,9 @@ export function registerSalaryRoutes(app: Express) {
         ];
         const parsed: ManualAdj = {};
         for (const f of fields) {
-          const v = parseManualMoney((adj as any)?.[f]);
+          const v = parseOptionalMoney((adj as any)?.[f]);
           if (v === null) { return res.status(400).json({ error: `Invalid numeric value for ${f}` }); }
-          (parsed as any)[f] = v;
+          if (v !== undefined) (parsed as any)[f] = v; // omit -> source default is used
         }
         if ((adj as any)?.remarks != null) parsed.remarks = String((adj as any).remarks).slice(0, 1000);
         manual[uid] = parsed;
