@@ -531,6 +531,89 @@ describe("salary workflow — route-level integration (DB-backed)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// 5. Highest-risk money paths against a live DB (Task #35):
+//      a) the duplicate-FINALIZED guard on BOTH the create path
+//         (POST /api/salary/runs) and the finalize path
+//         (PATCH /api/salary/runs/:id/status), and
+//      b) parent-run total recomputation after a line edit
+//         (PATCH /api/salary/run-items/:id).
+//    These were previously only verified by the pure transition table; here we
+//    seed real rows and drive the real routes through supertest.
+// ---------------------------------------------------------------------------
+
+describe("salary money-path safety (DB-backed, Task #35)", () => {
+  const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  it("once an employee is FINALIZED in a period, a second CREATE 409s and a second FINALIZE 409s", async () => {
+    if (!dbAvailable || !app) return;
+    const month = 7, year = 2099;
+
+    // First run for the employee in this period — take it all the way to FINALIZED.
+    const first = await seedRun({
+      status: "APPROVED", month, year, department: DEPT_A,
+      employee: empUser, employeeName: "Test Employee",
+    });
+    let res = await request(app)
+      .patch(`/api/salary/runs/${first.runId}/status`)
+      .set(auth(adminUser.token))
+      .send({ status: "FINALIZED" });
+    expect(res.status).toBe(200);
+    expect(res.body.run.status).toBe("FINALIZED");
+
+    // Create-path guard: POST a new run scoped to the same employee + period.
+    const createRes = await request(app)
+      .post("/api/salary/runs")
+      .set(auth(adminUser.token))
+      .send({ month, year, mode: "DRAFT", employeeId: empUser.id });
+    expect(createRes.status).toBe(409);
+    expect(createRes.body.employees).toContain("Test Employee");
+
+    // Finalize-path guard: an independently-seeded APPROVED run for the same
+    // employee + period cannot be finalized while the first one is finalized.
+    const second = await seedRun({
+      status: "APPROVED", month, year, department: DEPT_A,
+      employee: empUser, employeeName: "Test Employee",
+    });
+    res = await request(app)
+      .patch(`/api/salary/runs/${second.runId}/status`)
+      .set(auth(adminUser.token))
+      .send({ status: "FINALIZED" });
+    expect(res.status).toBe(409);
+    expect(res.body.employees).toContain("Test Employee");
+  });
+
+  it("recomputes the parent run's total_gross/total_deductions/total_net from its lines after a line edit", async () => {
+    if (!dbAvailable || !app) return;
+    const month = 8, year = 2099;
+    // seedRun creates one GENERATED line: basic 30000, gross 30000, deductions 0, net 30000.
+    const { runId, itemId } = await seedRun({
+      status: "GENERATED", month, year, department: DEPT_A,
+      employee: empUser, employeeName: "Test Employee",
+    });
+
+    // Edit the editable manual fields: +5000 bonus (gross), +1000 loan (deduction).
+    const editRes = await request(app)
+      .patch(`/api/salary/run-items/${itemId}`)
+      .set(auth(adminUser.token))
+      .send({ bonusAmount: 5000, loanDeduction: 1000 });
+    expect(editRes.status).toBe(200);
+    // Line: gross 30000+5000=35000, deductions 0+1000=1000, net 34000.
+    expect(Number(editRes.body.item.gross_salary)).toBe(35000);
+    expect(Number(editRes.body.item.total_deductions)).toBe(1000);
+    expect(Number(editRes.body.item.net_salary)).toBe(34000);
+
+    // Parent run totals must be recomputed from the (single) line, not stale.
+    const runRes = await request(app)
+      .get(`/api/salary/runs/${runId}`)
+      .set(auth(adminUser.token));
+    expect(runRes.status).toBe(200);
+    expect(Number(runRes.body.run.total_gross)).toBe(35000);
+    expect(Number(runRes.body.run.total_deductions)).toBe(1000);
+    expect(Number(runRes.body.run.total_net)).toBe(34000);
+  });
+});
+
 describe("salary route wiring (behind the auth gate)", () => {
   const UUID = "00000000-0000-0000-0000-000000000000";
 
