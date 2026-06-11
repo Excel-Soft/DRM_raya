@@ -316,6 +316,11 @@ export function registerDiagnosisReportRoutes(app: Express) {
       );
       res.status(201).json({ success: true, id: result.rows[0]?.id });
     } catch (err) {
+      // FK violation (e.g. a uuid-valid but nonexistent customerId/assignedTo on a
+      // DB that enforces the references) is an honest client error, not a 500.
+      if ((err as any)?.code === "23503") {
+        return res.status(400).json({ error: "Unknown customer or assignee reference." });
+      }
       console.error("[diagnose] create failed", err);
       res.status(500).json({ error: "Failed to create diagnosis record." });
     }
@@ -406,6 +411,9 @@ export function registerDiagnosisReportRoutes(app: Express) {
       await pool.query(`UPDATE drm.diagnosis_reports SET ${sets.join(", ")} WHERE id = ${idP}::uuid`, params);
       res.json({ success: true });
     } catch (err) {
+      if ((err as any)?.code === "23503") {
+        return res.status(400).json({ error: "Unknown customer or assignee reference." });
+      }
       console.error("[diagnose] update failed", err);
       res.status(500).json({ error: "Failed to update diagnosis record." });
     }
