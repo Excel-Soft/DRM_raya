@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -61,6 +61,13 @@ function canExport() {
     || r.includes("account") || /\bhr\b/.test(r) || r.includes("hr_") || r === "hr" || r.includes("human_resource");
 }
 
+// Accounts/admin only — matches the server's "mark_paid" action (full + accounts classes).
+function canMarkPaid() {
+  const r = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
+  return r.includes("super_admin") || r.includes("administrator") || r === "admin" || r.includes("super_hod")
+    || r.includes("account");
+}
+
 function fmt(v: unknown) {
   const n = Number(v ?? 0);
   return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
@@ -68,7 +75,9 @@ function fmt(v: unknown) {
 
 export default function SalaryReport() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const exportAllowed = useMemo(canExport, []);
+  const markPaidAllowed = useMemo(canMarkPaid, []);
 
   const [month, setMonth] = useState("all");
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -120,6 +129,21 @@ export default function SalaryReport() {
   const total = report.data?.total ?? 0;
   const totals = report.data?.totals;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const markPaid = useMutation({
+    mutationFn: async ({ id, paymentStatus }: { id: string; paymentStatus: "PAID" | "UNPAID" }) =>
+      apiRequestJson("PATCH", `/api/salary/run-items/${id}/payment`, { paymentStatus }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/salary"] });
+      toast({ title: vars.paymentStatus === "PAID" ? "Marked as paid" : "Marked as unpaid" });
+    },
+    onError: (err: any) => {
+      const msg = /403/.test(String(err?.message)) ? "You are not authorized to mark salaries as paid."
+        : /409/.test(String(err?.message)) ? "Only finalized salaries can be marked paid."
+        : "Could not update payment status.";
+      toast({ title: "Update failed", description: msg, variant: "destructive" });
+    },
+  });
 
   async function handleExport() {
     try {
@@ -269,9 +293,28 @@ export default function SalaryReport() {
                         <TableCell className="py-2 px-2 text-[#00733e] font-bold">{fmt(r.payable_salary)}</TableCell>
                         <TableCell className="py-2 px-2"><StatusBadge status={(r.run_status || "DRAFT").toUpperCase()} /></TableCell>
                         <TableCell className="py-2 px-2">
-                          <span className={`px-2 py-0.5 rounded-sm text-[11px] font-semibold ${r.payment_status === "PAID" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-600"}`}>
-                            {(r.payment_status || "UNPAID").toUpperCase()}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-sm text-[11px] font-semibold ${(r.payment_status || "").toUpperCase() === "PAID" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                              {(r.payment_status || "UNPAID").toUpperCase()}
+                            </span>
+                            {markPaidAllowed && (r.run_status || "").toUpperCase() === "FINALIZED" && (
+                              (r.payment_status || "UNPAID").toUpperCase() === "PAID" ? (
+                                <Button variant="outline"
+                                  className="h-7 px-2 rounded-sm text-[11px] border-slate-200"
+                                  disabled={markPaid.isPending}
+                                  onClick={() => markPaid.mutate({ id: r.id, paymentStatus: "UNPAID" })}>
+                                  Mark unpaid
+                                </Button>
+                              ) : (
+                                <Button
+                                  className="h-7 px-2 rounded-sm text-[11px] bg-[#00a65a] hover:bg-[#008d4c] text-white"
+                                  disabled={markPaid.isPending}
+                                  onClick={() => markPaid.mutate({ id: r.id, paymentStatus: "PAID" })}>
+                                  Mark paid
+                                </Button>
+                              )
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))

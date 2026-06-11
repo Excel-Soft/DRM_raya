@@ -21,17 +21,18 @@ export type SalaryAction =
   | "approve"
   | "finalize"
   | "edit"
-  | "cancel";
+  | "cancel"
+  | "mark_paid";
 
 export type SalaryClass = "full" | "accounts" | "hr" | "hod" | "manager" | "executive";
 
 // What each class may do. `full` (admin/super_hod) may do everything.
 export const CLASS_ACTIONS: Record<SalaryClass, Set<SalaryAction>> = {
   full: new Set<SalaryAction>([
-    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel",
+    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel", "mark_paid",
   ]),
   accounts: new Set<SalaryAction>([
-    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel",
+    "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel", "mark_paid",
   ]),
   hr: new Set<SalaryAction>([
     "preview", "generate", "view", "export", "approve", "edit", "cancel",
@@ -898,6 +899,72 @@ export function registerSalaryRoutes(app: Express) {
       res.status(500).json({ error: "Failed to edit salary line" });
     } finally {
       client.release();
+    }
+  });
+
+  // PATCH /api/salary/run-items/:id/payment — mark a FINALIZED salary line
+  // PAID/UNPAID (accounts/admin only). Audited as salary.mark_paid.
+  app.patch("/api/salary/run-items/:id/payment", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!can(req, "mark_paid")) return deny(res, "mark salary as paid");
+
+      const paymentStatus = String(req.body?.paymentStatus || "").toUpperCase();
+      if (paymentStatus !== "PAID" && paymentStatus !== "UNPAID") {
+        return res.status(400).json({ error: "paymentStatus must be PAID or UNPAID" });
+      }
+
+      const itemRes = await pool.query(`SELECT * FROM drm.salary_run_items WHERE id = $1`, [req.params.id]);
+      if (itemRes.rows.length === 0) return res.status(404).json({ error: "Salary line not found" });
+      const item = itemRes.rows[0];
+
+      const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [item.run_id]);
+      if (runRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
+      const run = runRes.rows[0];
+      const runStatus = String(run.status || "DRAFT").toUpperCase();
+      if (runStatus !== "FINALIZED") {
+        return res.status(409).json({ error: "Only FINALIZED salary lines can be marked paid or unpaid" });
+      }
+
+      // Row-scoping. mark_paid is currently only granted to all-scope classes,
+      // but enforce scope anyway so future role grants stay safe.
+      const scope = await resolveScope(req);
+      if (scope.kind === "department") {
+        if (!scope.department || item.department !== scope.department) {
+          return res.status(403).json({ error: "Not authorized for this salary line" });
+        }
+      } else if (scope.kind === "self") {
+        if (String(item.user_id) !== String(scope.userId)) {
+          return res.status(403).json({ error: "Not authorized for this salary line" });
+        }
+      }
+
+      const reason = (req.body?.reason as string) || undefined;
+      const previous = String(item.payment_status || "UNPAID").toUpperCase();
+      if (previous === paymentStatus) {
+        return res.json({ item });
+      }
+
+      const updated = await pool.query(
+        `UPDATE drm.salary_run_items SET payment_status = $1 WHERE id = $2 RETURNING *`,
+        [paymentStatus, req.params.id],
+      );
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: "salary.mark_paid",
+        module: "salary",
+        entityType: "salary_run_item",
+        entityId: req.params.id,
+        before: { paymentStatus: previous },
+        after: { paymentStatus },
+        reason,
+        req,
+      });
+      res.json({ item: updated.rows[0] });
+    } catch (err) {
+      console.error("Error updating salary payment status:", err);
+      res.status(500).json({ error: "Failed to update salary payment status" });
     }
   });
 
