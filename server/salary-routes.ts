@@ -13,7 +13,7 @@ import { recordAuditLog } from "./services/activity-service";
 // on top by resolveScope().
 // ---------------------------------------------------------------------------
 
-type SalaryAction =
+export type SalaryAction =
   | "preview"
   | "generate"
   | "view"
@@ -23,10 +23,10 @@ type SalaryAction =
   | "edit"
   | "cancel";
 
-type SalaryClass = "full" | "accounts" | "hr" | "hod" | "manager" | "executive";
+export type SalaryClass = "full" | "accounts" | "hr" | "hod" | "manager" | "executive";
 
 // What each class may do. `full` (admin/super_hod) may do everything.
-const CLASS_ACTIONS: Record<SalaryClass, Set<SalaryAction>> = {
+export const CLASS_ACTIONS: Record<SalaryClass, Set<SalaryAction>> = {
   full: new Set<SalaryAction>([
     "preview", "generate", "view", "export", "approve", "finalize", "edit", "cancel",
   ]),
@@ -46,8 +46,11 @@ function callerRole(req: Request): string {
   return String(u?.activeRoleId ?? u?.roleId ?? u?.role ?? "");
 }
 
-function salaryClass(req: Request): SalaryClass {
-  const role = normalizeRole(callerRole(req));
+// Pure role -> class resolver (no req dependency) so the permission matrix can
+// be unit-tested directly. Input is the raw role string; normalizeRole collapses
+// the many spellings to canonical keys.
+export function salaryClassForRole(rawRole: string): SalaryClass {
+  const role = normalizeRole(rawRole);
   if (role === "admin" || role === "super_hod") return "full";
   if (role === "account_manager") return "accounts";
   if (role === "hr" || role === "hr_manager") return "hr";
@@ -56,8 +59,17 @@ function salaryClass(req: Request): SalaryClass {
   return "executive";
 }
 
+// Pure capability check for a class + action (unit-testable).
+export function classCan(cls: SalaryClass, action: SalaryAction): boolean {
+  return CLASS_ACTIONS[cls].has(action);
+}
+
+function salaryClass(req: Request): SalaryClass {
+  return salaryClassForRole(callerRole(req));
+}
+
 function can(req: Request, action: SalaryAction): boolean {
-  return CLASS_ACTIONS[salaryClass(req)].has(action);
+  return classCan(salaryClass(req), action);
 }
 
 function deny(res: Response, action: string) {
@@ -169,6 +181,75 @@ interface ManualAdj {
   loanDeduction?: number;
   otherDeductions?: number;
   remarks?: string | null;
+}
+
+// Pure per-employee payroll math, extracted from computePreview so the formulas
+// (gross/deductions/net/payable) can be unit-tested without a database. Inputs
+// that lack a real source (allowance/bonus/overtimeAmount/loan/other) default to
+// 0 — never fabricated. The math here is the single source of truth; both the
+// preview and the persisted run lines flow through it.
+export interface SalaryLineInput {
+  basicSalary: number | string | null | undefined;
+  daysAbsent?: number;
+  unpaidLeaveDays?: number;
+  penaltyAmount?: number | string | null;
+  allowanceAmount?: number | string | null;
+  bonusAmount?: number | string | null;
+  overtimeAmount?: number | string | null;
+  loanDeduction?: number | string | null;
+  otherDeductions?: number | string | null;
+}
+
+export interface SalaryLineOutput {
+  basicSalary: number;
+  perDaySalary: number;
+  daysAbsent: number;
+  unpaidLeaveDays: number;
+  penaltyAmount: number;
+  allowanceAmount: number;
+  bonusAmount: number;
+  overtimeAmount: number;
+  loanDeduction: number;
+  otherDeductions: number;
+  lateDeduction: number;
+  unpaidLeaveDeduction: number;
+  absenceDeduction: number;
+  grossSalary: number;
+  totalDeductions: number;
+  netSalary: number;
+  payableSalary: number;
+}
+
+export function computeSalaryLine(input: SalaryLineInput): SalaryLineOutput {
+  const basicSalary = round2(toNum(input.basicSalary));
+  const perDaySalary = round2(basicSalary / 30);
+  const daysAbsent = toNum(input.daysAbsent);
+  const unpaidLeaveDays = toNum(input.unpaidLeaveDays);
+  const penaltyAmount = round2(toNum(input.penaltyAmount));
+
+  const allowanceAmount = round2(toNum(input.allowanceAmount));
+  const bonusAmount = round2(toNum(input.bonusAmount));
+  const overtimeAmount = round2(toNum(input.overtimeAmount)); // no rate policy -> manual only
+  const loanDeduction = round2(toNum(input.loanDeduction));
+  const otherDeductions = round2(toNum(input.otherDeductions));
+
+  const lateDeduction = 0; // no late-penalty policy
+
+  const unpaidLeaveDeduction = round2(unpaidLeaveDays * perDaySalary);
+  const absenceDeduction = round2(daysAbsent * perDaySalary);
+  const grossSalary = round2(basicSalary + allowanceAmount + bonusAmount + overtimeAmount);
+  const totalDeductions = round2(
+    unpaidLeaveDeduction + absenceDeduction + lateDeduction + penaltyAmount + loanDeduction + otherDeductions,
+  );
+  const netSalary = round2(grossSalary - totalDeductions);
+  const payableSalary = round2(Math.max(0, netSalary));
+
+  return {
+    basicSalary, perDaySalary, daysAbsent, unpaidLeaveDays, penaltyAmount,
+    allowanceAmount, bonusAmount, overtimeAmount, loanDeduction, otherDeductions,
+    lateDeduction, unpaidLeaveDeduction, absenceDeduction,
+    grossSalary, totalDeductions, netSalary, payableSalary,
+  };
 }
 
 interface PreviewItem {
@@ -291,23 +372,23 @@ async function computePreview(
     const penaltyAmount = round2(penMap.get(id) || 0);
 
     const m = manual[id] || {};
-    const allowanceAmount = round2(toNum(m.allowanceAmount));
-    const bonusAmount = round2(toNum(m.bonusAmount));
-    const overtimeAmount = round2(toNum(m.overtimeAmount)); // no rate policy -> manual only
-    const loanDeduction = round2(toNum(m.loanDeduction));
-    const otherDeductions = round2(toNum(m.otherDeductions));
+    const {
+      allowanceAmount, bonusAmount, overtimeAmount, loanDeduction, otherDeductions,
+      lateDeduction, unpaidLeaveDeduction, absenceDeduction,
+      grossSalary, totalDeductions, netSalary, payableSalary,
+    } = computeSalaryLine({
+      basicSalary,
+      daysAbsent: att.absent,
+      unpaidLeaveDays: lv.unpaid,
+      penaltyAmount,
+      allowanceAmount: m.allowanceAmount,
+      bonusAmount: m.bonusAmount,
+      overtimeAmount: m.overtimeAmount,
+      loanDeduction: m.loanDeduction,
+      otherDeductions: m.otherDeductions,
+    });
 
     const lateMinutes = 0; // no late-minutes source column
-    const lateDeduction = 0; // no late-penalty policy
-
-    const unpaidLeaveDeduction = round2(lv.unpaid * perDaySalary);
-    const absenceDeduction = round2(att.absent * perDaySalary);
-    const grossSalary = round2(basicSalary + allowanceAmount + bonusAmount + overtimeAmount);
-    const totalDeductions = round2(
-      unpaidLeaveDeduction + absenceDeduction + lateDeduction + penaltyAmount + loanDeduction + otherDeductions,
-    );
-    const netSalary = round2(grossSalary - totalDeductions);
-    const payableSalary = round2(Math.max(0, netSalary));
 
     return {
       userId: id,
@@ -399,8 +480,8 @@ async function finalizedConflicts(
   return r.rows.map((x: any) => x.employee_name).filter(Boolean);
 }
 
-const LOCKED_STATUSES = new Set(["FINALIZED", "LOCKED"]);
-const ALLOWED_NEXT: Record<string, string[]> = {
+export const LOCKED_STATUSES = new Set(["FINALIZED", "LOCKED"]);
+export const ALLOWED_NEXT: Record<string, string[]> = {
   DRAFT: ["GENERATED", "CANCELLED"],
   GENERATED: ["APPROVED", "CANCELLED"],
   APPROVED: ["FINALIZED", "CANCELLED"],
@@ -408,7 +489,7 @@ const ALLOWED_NEXT: Record<string, string[]> = {
   LOCKED: [],
   CANCELLED: [],
 };
-const STATUS_ACTION: Record<string, SalaryAction> = {
+export const STATUS_ACTION: Record<string, SalaryAction> = {
   GENERATED: "generate",
   APPROVED: "approve",
   FINALIZED: "finalize",
