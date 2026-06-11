@@ -95,7 +95,7 @@ async function getGmColumns(): Promise<Set<string>> {
   }
   return _gmColsCache;
 }
-async function gmApprovedClause(): Promise<string> {
+export async function gmApprovedClause(): Promise<string> {
   const cols = await getGmColumns();
   const parts: string[] = [];
   if (cols.has("status")) parts.push(`lower(coalesce(status::text,'')) in ('approved','completed')`);
