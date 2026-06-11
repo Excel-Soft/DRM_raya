@@ -37,7 +37,7 @@ import { isManagerialRole } from "./utils/role-utils";
 import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
 import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
 import { ActivityLogService } from "./services/activity-service";
-import { getBvReportData } from "./services/bv-report.service";
+import { getBvReportData, type BvReportFilters } from "./services/bv-report.service";
 import {
   getDayTargetReport,
   buildDayTargetCsv,
@@ -183,8 +183,8 @@ interface ReportMetrics {
   totalTasks: number;
   valueOfServiceSold: number;
   successRate: number | null;
-  followUpsCompleted: number;
-  missedLeads: number;
+  followUpsCompleted: number | null;
+  missedLeads: number | null;
 }
 
 interface ReportData {
@@ -294,6 +294,63 @@ async function resolveBvScope(req: any): Promise<string[] | null> {
   return allowedIds;
 }
 
+const BV_STATUSES = ["Draft", "Submitted", "Approved", "Rejected"] as const;
+
+/**
+ * Parse BV report query filters. Fails closed: an out-of-range status, or a
+ * legacy/unsupported filter (package/method), is a 400 — never silently ignored.
+ */
+function parseBvFilters(
+  req: any,
+): { ok: true; filters: BvReportFilters } | { ok: false; error: string } {
+  const q = req.query;
+  for (const key of ["package", "method"]) {
+    if (typeof q[key] === "string" && q[key].trim() !== "") {
+      return { ok: false, error: `Unsupported filter: ${key}` };
+    }
+  }
+  const filters: BvReportFilters = {};
+  if (typeof q.status === "string" && q.status !== "" && q.status !== "all") {
+    if (!(BV_STATUSES as readonly string[]).includes(q.status)) {
+      return { ok: false, error: `Invalid status: ${q.status}` };
+    }
+    filters.status = q.status;
+  }
+  if (typeof q.company === "string" && q.company.trim() !== "") {
+    filters.company = q.company.trim();
+  }
+  if (typeof q.branch === "string" && q.branch.trim() !== "" && q.branch !== "all") {
+    filters.branch = q.branch.trim();
+  }
+  return { ok: true, filters };
+}
+
+/** Pagination params for the BV list (clamped 1..500). Export ignores these. */
+function parseBvPaging(req: any): { page?: number; limit?: number } {
+  const out: { page?: number; limit?: number } = {};
+  const rawLimit = req.query.limit;
+  if (typeof rawLimit === "string" && rawLimit !== "") {
+    const n = Number(rawLimit);
+    if (Number.isFinite(n)) out.limit = Math.min(500, Math.max(1, Math.floor(n)));
+  }
+  const rawPage = req.query.page;
+  if (typeof rawPage === "string" && rawPage !== "") {
+    const n = Number(rawPage);
+    if (Number.isFinite(n)) out.page = Math.max(1, Math.floor(n));
+  }
+  return out;
+}
+
+/** Date params accepting startDate/endDate aliases (from/to take precedence). */
+function bvDateParams(req: any): { from?: string; to?: string } {
+  const q = req.query;
+  const from =
+    typeof q.from === "string" ? q.from : typeof q.startDate === "string" ? q.startDate : undefined;
+  const to =
+    typeof q.to === "string" ? q.to : typeof q.endDate === "string" ? q.endDate : undefined;
+  return { from, to };
+}
+
 router.post("/bv-reports", requireReportPermission("bv_report", "create"), async (req, res) => {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   try {
@@ -370,7 +427,7 @@ router.get("/bv-reports/:id", requireReportPermission("bv_report", "view"), asyn
   }
 });
 
-router.put("/bv-reports/:id", requireReportPermission("bv_report", "edit"), async (req, res) => {
+const bvUpdateHandler = async (req: any, res: any) => {
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     const parsed = bvUpdateSchema.parse(req.body);
@@ -407,7 +464,10 @@ router.put("/bv-reports/:id", requireReportPermission("bv_report", "edit"), asyn
     console.error("Failed to update BV report", error);
     return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to update BV report"));
   }
-});
+};
+router.put("/bv-reports/:id", requireReportPermission("bv_report", "edit"), bvUpdateHandler);
+// Patch 2 Stage 7 — PATCH is an alias for PUT (identical edit semantics + guards).
+router.patch("/bv-reports/:id", requireReportPermission("bv_report", "edit"), bvUpdateHandler);
 
 router.post("/bv-reports/:id/approve", requireReportPermission("bv_report", "approve"), async (req, res) => {
   try {
@@ -419,7 +479,9 @@ router.post("/bv-reports/:id/approve", requireReportPermission("bv_report", "app
         .status(409)
         .json(errorEnvelope("INVALID_TRANSITION", "Only Submitted BV reports can be approved."));
     }
-    const updated = await bvReportsRepository.setStatus(req.params.id, "Approved");
+    const updated = await bvReportsRepository.setStatus(req.params.id, "Approved", {
+      actorId: req.user.userId,
+    });
     await ActivityLogService.log({
       userId: req.user.userId,
       action: "bv_report.approve",
@@ -436,6 +498,12 @@ router.post("/bv-reports/:id/approve", requireReportPermission("bv_report", "app
 router.post("/bv-reports/:id/reject", requireReportPermission("bv_report", "approve"), async (req, res) => {
   try {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+    if (!reason) {
+      return res
+        .status(400)
+        .json(errorEnvelope("VALIDATION_ERROR", "A non-empty rejection reason is required."));
+    }
     const current = await bvReportsRepository.findById(null, req.params.id);
     if (!current) return sendError(res, notFound("Not found"));
     if (current.status !== "Submitted") {
@@ -443,12 +511,16 @@ router.post("/bv-reports/:id/reject", requireReportPermission("bv_report", "appr
         .status(409)
         .json(errorEnvelope("INVALID_TRANSITION", "Only Submitted BV reports can be rejected."));
     }
-    const updated = await bvReportsRepository.setStatus(req.params.id, "Rejected");
+    const updated = await bvReportsRepository.setStatus(req.params.id, "Rejected", {
+      actorId: req.user.userId,
+      reason,
+    });
     await ActivityLogService.log({
       userId: req.user.userId,
       action: "bv_report.reject",
       resourceType: "bv_report",
       resourceId: req.params.id,
+      details: JSON.stringify({ reason }),
     });
     return res.json({ success: true, data: updated });
   } catch (error) {
@@ -867,8 +939,8 @@ function buildReportCsv(report: ReportData) {
   lines.push(`Total Tasks,${report.metrics.totalTasks}`);
   lines.push(`Value Sold,${report.metrics.valueOfServiceSold}`);
   lines.push(`Success Rate,${report.metrics.successRate == null ? "N/A" : `${report.metrics.successRate}%`}`);
-  lines.push(`Follow-ups Done,${report.metrics.followUpsCompleted}`);
-  lines.push(`Missed Leads,${report.metrics.missedLeads}`);
+  lines.push(`Follow-ups Done,${report.metrics.followUpsCompleted == null ? "N/A" : report.metrics.followUpsCompleted}`);
+  lines.push(`Missed Leads,${report.metrics.missedLeads == null ? "N/A" : report.metrics.missedLeads}`);
 
   lines.push("");
   lines.push("Date,Count,Value");
@@ -1120,17 +1192,23 @@ router.get(
 router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-    const from = typeof req.query.from === "string" ? req.query.from : undefined;
-    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    const { from, to } = bvDateParams(req);
     let parsedRange;
     try {
       parsedRange = parseDateRange(from, to);
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "Invalid date range" });
     }
+    const filterResult = parseBvFilters(req);
+    if (!filterResult.ok) {
+      return res.status(400).json({ error: filterResult.error });
+    }
     const { fromDate, toDate } = parsedRange;
     const filterUserIds = await resolveBvScope(req);
-    const report = await getBvReportData(filterUserIds, fromDate, toDate);
+    const report = await getBvReportData(filterUserIds, fromDate, toDate, {
+      ...filterResult.filters,
+      ...parseBvPaging(req),
+    });
     res.json(report);
   } catch (error) {
     console.error("Error fetching BV report:", error);
@@ -1142,18 +1220,30 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
   try {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     const format = (req.query.format as string) || "csv";
-    const from = typeof req.query.from === "string" ? req.query.from : undefined;
-    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    const { from, to } = bvDateParams(req);
     let parsedRange;
     try {
       parsedRange = parseDateRange(from, to);
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "Invalid date range" });
     }
+    const filterResult = parseBvFilters(req);
+    if (!filterResult.ok) {
+      return res.status(400).json({ error: filterResult.error });
+    }
     const { fromDate, toDate } = parsedRange;
     const filterUserIds = await resolveBvScope(req);
-    const report = await getBvReportData(filterUserIds, fromDate, toDate);
-    const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}`;
+    // Export reflects the same filters as the list but is never paginated, so the
+    // exported row count always equals report.pagination.total / reportCount.
+    const report = await getBvReportData(filterUserIds, fromDate, toDate, filterResult.filters);
+    const userPart =
+      typeof req.query.userId === "string" && req.query.userId && req.query.userId !== "all"
+        ? `_user-${req.query.userId.slice(0, 8)}`
+        : "_user-all";
+    const statusPart = filterResult.filters.status
+      ? `_${filterResult.filters.status.toLowerCase()}`
+      : "";
+    const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}${userPart}${statusPart}`;
 
     if (format === "csv") {
       const csvContent = buildReportCsv(report);

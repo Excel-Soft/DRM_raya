@@ -103,6 +103,15 @@ export async function ensureBvReportsSchema() {
     await client.query(`create index if not exists idx_bv_reports_assigned on bv_reports (assigned_to);`);
     await client.query(`create index if not exists idx_bv_reports_status on bv_reports (status);`);
     await client.query(`create index if not exists idx_bv_reports_report_date on bv_reports (report_date);`);
+    // Patch 2 Stage 7 — approval workflow metadata (idempotent; db:push is broken).
+    await client.query(`
+      alter table bv_reports
+        add column if not exists approved_by uuid references users(id),
+        add column if not exists approved_at timestamptz,
+        add column if not exists rejected_by uuid references users(id),
+        add column if not exists rejected_at timestamptz,
+        add column if not exists rejection_reason text;
+    `);
     await client.query("commit");
     ensuredBv = true;
   } catch (err) {
@@ -133,6 +142,11 @@ const RETURNING_COLUMNS = `
          follow_ups_done as "followUpsDone",
          missed_leads    as "missedLeads",
          meta,
+         approved_by      as "approvedBy",
+         approved_at      as "approvedAt",
+         rejected_by      as "rejectedBy",
+         rejected_at      as "rejectedAt",
+         rejection_reason as "rejectionReason",
          created_at as "createdAt",
          updated_at as "updatedAt"`;
 
@@ -396,15 +410,36 @@ export const bvReportsRepository = {
   },
 
   /** Transition a report's status (approve/reject). Unscoped by design — the
-   * route guards who may call it and validates the source status first. */
-  async setStatus(id: string, status: string): Promise<BvReport | null> {
+   * route guards who may call it and validates the source status first.
+   *
+   * Patch 2 Stage 7 — records who acted and when. An "Approved" transition
+   * stamps approved_by/approved_at; a "Rejected" transition stamps
+   * rejected_by/rejected_at and persists the (route-validated) rejection reason. */
+  async setStatus(
+    id: string,
+    status: string,
+    opts: { actorId?: string; reason?: string } = {},
+  ): Promise<BvReport | null> {
     await ensureBvReportsSchema();
+    const sets: string[] = [`status = $2`, `updated_at = now()`];
+    const params: any[] = [id, status];
+    if (status === "Approved") {
+      params.push(opts.actorId ?? null);
+      sets.push(`approved_by = $${params.length}`);
+      sets.push(`approved_at = now()`);
+    } else if (status === "Rejected") {
+      params.push(opts.actorId ?? null);
+      sets.push(`rejected_by = $${params.length}`);
+      sets.push(`rejected_at = now()`);
+      params.push(opts.reason ?? null);
+      sets.push(`rejection_reason = $${params.length}`);
+    }
     const res = await pool.query<BvReport>(
       `update drm.bv_reports
-          set status = $2, updated_at = now()
+          set ${sets.join(", ")}
         where id = $1
         returning ${RETURNING_COLUMNS}`,
-      [id, status],
+      params,
     );
     return res.rows[0] ?? null;
   },

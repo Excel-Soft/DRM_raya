@@ -2002,6 +2002,13 @@ export const bvReports = drmSchema.table("bv_reports", {
   followUpsDone: integer("follow_ups_done").notNull().default(0),
   missedLeads: integer("missed_leads").notNull().default(0),
   meta: jsonb("meta"),
+  // Patch 2 Stage 7 — approval workflow metadata. Populated by the
+  // approve/reject routes (rejection always carries a reason).
+  approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedAt: timestamp("approved_at"),
+  rejectedBy: varchar("rejected_by").references(() => users.id, { onDelete: "set null" }),
+  rejectedAt: timestamp("rejected_at"),
+  rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
