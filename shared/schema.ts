@@ -851,6 +851,8 @@ export const salaryRunItems = drmSchema.table("salary_run_items", {
   totalDeductions: decimal("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
   payableSalary: decimal("payable_salary", { precision: 12, scale: 2 }).notNull().default("0"),
   paymentStatus: text("payment_status").notNull().default("UNPAID"),
+  paidByUserId: uuid("paid_by_user_id").references(() => users.id),
+  paidAt: timestamp("paid_at"),
   remarks: text("remarks"),
   calculationSnapshot: jsonb("calculation_snapshot"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
