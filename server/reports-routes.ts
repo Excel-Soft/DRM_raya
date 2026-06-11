@@ -38,6 +38,11 @@ import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound
 import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
 import { ActivityLogService } from "./services/activity-service";
 import { getBvReportData } from "./services/bv-report.service";
+import {
+  getDayTargetReport,
+  buildDayTargetCsv,
+  type DayTargetQuery,
+} from "./services/day-target.service";
 
 const router = Router();
 
@@ -941,21 +946,171 @@ function buildReportCsv(report: ReportData) {
   return lines.join("\n");
 }
 
-// Patch 2 Stage 1 — Day Activities (day-target) report.
-// The data source for this report is not wired yet. Rather than fabricating rows
-// (the previous frontend mock) or returning a fake-empty success, the route is
-// gated by the report-permission matrix and responds honestly with 501
-// NOT_IMPLEMENTED so the UI surfaces a real error state. Registered BEFORE the
-// catch-all GET /reports/:type so it wins routing.
+// Patch 2 Stage 5 — Daily Target Report (real data source).
+// Replaces the former 501 stub. Reports each in-scope employee's assigned target,
+// real approved-GM achievement, and live activity counts over a date window. No
+// fabricated rows or metrics: missing targets are surfaced honestly as null +
+// missingData. Gated by the report-permission matrix + row-scope. Registered
+// BEFORE the /reports/:type catch-alls so it always wins routing for "day-target".
+
+// Parse + validate query params. Dates are REQUIRED (the report is meaningless
+// without a window). Returns a typed error message on any validation failure.
+function parseDayTargetParams(
+  req: any,
+): { value: Omit<DayTargetQuery, "filterUserIds"> } | { error: string } {
+  const startDate = (req.query.startDate ?? req.query.from) as string | undefined;
+  const endDate = (req.query.endDate ?? req.query.to) as string | undefined;
+  if (!startDate || !endDate) return { error: "Start date and end date are both required." };
+  const s = new Date(startDate);
+  const e = new Date(endDate);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime()))
+    return { error: "Enter a valid start date and end date." };
+  if (s.getTime() > e.getTime()) return { error: "Start date must be on or before the end date." };
+
+  const fromDate = new Date(s);
+  fromDate.setHours(0, 0, 0, 0);
+  const toDate = new Date(e);
+  toDate.setHours(23, 59, 59, 999);
+
+  let page = parseInt(String(req.query.page ?? "1"), 10);
+  let limit = parseInt(String(req.query.limit ?? "25"), 10);
+  if (!Number.isFinite(page) || page < 1) page = 1;
+  if (!Number.isFinite(limit) || limit < 1) limit = 25;
+  if (limit > 200) limit = 200;
+
+  const str = (v: any) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+  return {
+    value: {
+      fromDate,
+      toDate,
+      startDateStr: String(startDate).slice(0, 10),
+      endDateStr: String(endDate).slice(0, 10),
+      userId: req.query.userId && req.query.userId !== "all" ? String(req.query.userId) : null,
+      ourTeam: req.query.ourTeam === "true" || req.query.ourTeam === true,
+      department: str(req.query.department),
+      role: str(req.query.role),
+      targetType: str(req.query.targetType),
+      page,
+      limit,
+    },
+  };
+}
+
+// Row-scope for the daily target report. Mirrors resolveBvScope but fixes two
+// holes the architect flagged: (1) account_manager has allowedIds === null (global
+// in getDepartmentFilterUserIds) so a userId filter must return [userId], never the
+// empty sentinel; (2) hr/hr_manager are granted view in the matrix but are not
+// managerial — they get all-users here so the grant is meaningful. ourTeam only
+// ever narrows, never widens, since the result is always bounded by `allowed`.
+async function resolveDayTargetScope(req: any): Promise<string[] | null> {
+  const user = req.user;
+  const role = normalizeRole(user.activeRoleId ?? user.roleId);
+  const queryUserId =
+    typeof req.query.userId === "string" && req.query.userId !== "all" && req.query.userId !== ""
+      ? req.query.userId
+      : null;
+  const ourTeam = req.query.ourTeam === "true" || req.query.ourTeam === true;
+
+  const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(role);
+  const isHrViewer = ["hr", "hr_manager"].includes(role);
+
+  let allowed: string[] | null;
+  if (isGlobalAdmin || isHrViewer) {
+    allowed = null; // all users
+  } else if (!isManagerialRole(role)) {
+    allowed = [String(user.userId)]; // executive: self only
+  } else {
+    allowed = await getDepartmentFilterUserIds(req); // team; account_manager → null (global)
+  }
+
+  if (queryUserId) {
+    if (allowed === null) return [queryUserId];
+    return allowed.includes(queryUserId)
+      ? [queryUserId]
+      : ["00000000-0000-0000-0000-000000000000"]; // not in scope → empty result
+  }
+  if (allowed === null) return null; // global admin / hr → all users
+  if (ourTeam) return allowed; // manager → explicit team
+  return [String(user.userId)]; // manager/executive default → self
+}
+
 router.get(
   "/reports/day-target",
   requireReportPermission("day_target", "view"),
-  (_req, res) => {
-    return sendApiError(res, {
-      status: 501,
-      code: "NOT_IMPLEMENTED",
-      message: "The Day Activities (day-target) report data source is not wired yet.",
-    });
+  async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      const parsed = parseDayTargetParams(req);
+      if ("error" in parsed) {
+        return res.status(400).json(errorEnvelope("VALIDATION_ERROR", parsed.error));
+      }
+      const filterUserIds = await resolveDayTargetScope(req);
+      const report = await getDayTargetReport({ ...parsed.value, filterUserIds });
+      return res.json(report);
+    } catch (error) {
+      console.error("Error fetching day-target report:", error);
+      return res
+        .status(500)
+        .json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch the daily target report"));
+    }
+  },
+);
+
+router.get(
+  "/reports/day-target/export",
+  requireReportPermission("day_target", "export"),
+  async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, unauthorized("Not authenticated"));
+      const parsed = parseDayTargetParams(req);
+      if ("error" in parsed) {
+        return res.status(400).json(errorEnvelope("VALIDATION_ERROR", parsed.error));
+      }
+      const filterUserIds = await resolveDayTargetScope(req);
+      // Export the full filtered result set (not just one page), honoring scope.
+      const report = await getDayTargetReport({
+        ...parsed.value,
+        filterUserIds,
+        page: 1,
+        limit: 1_000_000,
+      });
+      const format = (typeof req.query.format === "string" ? req.query.format : "csv").toLowerCase();
+      const suffix = `day_target_${report.filters.startDate}_${report.filters.endDate}`;
+
+      if (format === "json") {
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Content-Disposition", `attachment; filename="${suffix}.json"`);
+        await ActivityLogService.log({
+          userId: req.user.userId,
+          action: "day_target.export",
+          resourceType: "report",
+          resourceId: "day_target",
+          details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: report.rows.length }),
+        });
+        return res.send(JSON.stringify(report, null, 2));
+      }
+
+      if (format !== "csv") {
+        return res.status(400).json(errorEnvelope("VALIDATION_ERROR", "Unsupported export format. Use csv or json."));
+      }
+
+      const csv = buildDayTargetCsv(report);
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${suffix}.csv"`);
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "day_target.export",
+        resourceType: "report",
+        resourceId: "day_target",
+        details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: report.rows.length }),
+      });
+      return res.send(csv);
+    } catch (error) {
+      console.error("Error exporting day-target report:", error);
+      return res
+        .status(500)
+        .json(errorEnvelope("INTERNAL_ERROR", "Failed to export the daily target report"));
+    }
   },
 );
 

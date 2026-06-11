@@ -7,6 +7,7 @@
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
 - [Workflow route write ordering](workflow-route-write-ordering.md) — related-record writes must go inside applyWithinTx; payload/duplicate validation must be fail-fast route checks before the transition (no DB write on rejection).
 - [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
+- [Report row-scope edge cases](report-row-scope-edge-cases.md) — account_manager's allowedIds is null (=all), and hr/hr_manager are view-granted but non-managerial; scope each explicitly or rows go empty.
 - [ensure*Schema single-txn rollback trap](ensure-schema-txn-rollback.md) — boot migration aborts on a varchar/uuid clash (add-column-if-not-exists is a no-op on existing cols), rolls back the whole txn, leaves old types, 500s every repo call.
 - [x-acting-role is not an authority](x-acting-role-not-authz.md) — client-sent header; never use for authz. Derive roles only from the JWT (req.user); ORing the header in only escalates.
 - [Penalty void lifecycle](penalty-void-lifecycle.md) — penalties carry status (ACTIVE/VOIDED) separate from approval_status; coalesce(status,'ACTIVE'), void excluded from money totals but stays visible.
