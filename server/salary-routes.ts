@@ -945,10 +945,19 @@ export function registerSalaryRoutes(app: Express) {
         return res.json({ item });
       }
 
-      const updated = await pool.query(
-        `UPDATE drm.salary_run_items SET payment_status = $1 WHERE id = $2 RETURNING *`,
-        [paymentStatus, req.params.id],
-      );
+      const updated = paymentStatus === "PAID"
+        ? await pool.query(
+            `UPDATE drm.salary_run_items
+               SET payment_status = $1, paid_by_user_id = $2, paid_at = now()
+             WHERE id = $3 RETURNING *`,
+            [paymentStatus, req.user.userId, req.params.id],
+          )
+        : await pool.query(
+            `UPDATE drm.salary_run_items
+               SET payment_status = $1, paid_by_user_id = NULL, paid_at = NULL
+             WHERE id = $2 RETURNING *`,
+            [paymentStatus, req.params.id],
+          );
 
       await recordAuditLog({
         actorUserId: req.user.userId,
@@ -1012,6 +1021,8 @@ const REPORT_COLUMNS = `
   sri.allowance_amount, sri.bonus_amount, sri.gross_salary,
   sri.absence_deduction, sri.penalty_amount, sri.loan_deduction, sri.other_deductions,
   sri.total_deductions, sri.net_salary, sri.payable_salary, sri.payment_status, sri.remarks,
+  sri.paid_by_user_id, sri.paid_at,
+  COALESCE(pu.full_name, pu.name, pu.username) AS paid_by_name,
   sr.id AS run_id, sr.period_month, sr.period_year, sr.status AS run_status,
   sr.generated_by, sr.created_by_user_id, sr.approved_at, sr.finalized_at`;
 
@@ -1028,7 +1039,7 @@ function registerSalaryReportRoutes(app: Express) {
       let pageSize = Number(req.query.pageSize ?? 50); if (!Number.isInteger(pageSize) || pageSize < 1) pageSize = 50; if (pageSize > 200) pageSize = 200;
       const offset = (page - 1) * pageSize;
 
-      const base = `FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id ${where}`;
+      const base = `FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id LEFT JOIN drm.users pu ON pu.id = sri.paid_by_user_id ${where}`;
       const countRes = await pool.query(`SELECT COUNT(*)::int AS total ${base}`, params);
       const total = countRes.rows[0]?.total ?? 0;
       const totalsRes = await pool.query(
@@ -1064,6 +1075,7 @@ function registerSalaryReportRoutes(app: Express) {
       const rowsRes = await pool.query(
         `SELECT ${REPORT_COLUMNS}
            FROM drm.salary_run_items sri JOIN drm.salary_runs sr ON sr.id = sri.run_id
+           LEFT JOIN drm.users pu ON pu.id = sri.paid_by_user_id
            ${where} ORDER BY sr.period_year DESC, sr.period_month DESC, sri.employee_name ASC LIMIT 10000`,
         params,
       );
@@ -1073,7 +1085,7 @@ function registerSalaryReportRoutes(app: Express) {
         "Present", "Absent", "Leave Days", "Unpaid Leave Days", "Allowance", "Bonus",
         "Overtime Mins", "Overtime Amt", "Gross", "Absence Ded", "Unpaid Leave Ded",
         "Penalty", "Loan", "Other Ded", "Total Deductions", "Net", "Payable",
-        "Salary Status", "Payment Status",
+        "Salary Status", "Payment Status", "Paid By", "Paid At",
       ];
       const csvCell = (v: unknown) => {
         if (v === null || v === undefined) return "";
@@ -1089,6 +1101,7 @@ function registerSalaryReportRoutes(app: Express) {
           r.overtime_amount, r.gross_salary, r.absence_deduction, r.unpaid_leave_deduction,
           r.penalty_amount, r.loan_deduction, r.other_deductions, r.total_deductions,
           r.net_salary, r.payable_salary, r.run_status, r.payment_status,
+          r.paid_by_name, r.paid_at,
         ].map(csvCell).join(","));
       }
 

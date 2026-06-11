@@ -124,6 +124,12 @@ async function ensureSalarySchema(client: {
     `ALTER TABLE drm.salary_run_items ADD COLUMN IF NOT EXISTS payment_status text NOT NULL DEFAULT 'UNPAID'`,
   );
   await client.query(
+    `ALTER TABLE drm.salary_run_items ADD COLUMN IF NOT EXISTS paid_by_user_id uuid REFERENCES drm.users(id)`,
+  );
+  await client.query(
+    `ALTER TABLE drm.salary_run_items ADD COLUMN IF NOT EXISTS paid_at timestamp`,
+  );
+  await client.query(
     `ALTER TABLE drm.salary_run_items ADD COLUMN IF NOT EXISTS remarks text`,
   );
   await client.query(

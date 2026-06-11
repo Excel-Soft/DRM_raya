@@ -33,6 +33,8 @@ type ReportRow = {
   net_salary: string | null;
   payable_salary: string | null;
   payment_status: string | null;
+  paid_by_name: string | null;
+  paid_at: string | null;
   run_status: string | null;
   period_month: number;
   period_year: number;
@@ -71,6 +73,12 @@ function canMarkPaid() {
 function fmt(v: unknown) {
   const n = Number(v ?? 0);
   return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
+}
+
+function fmtDate(v: string | null) {
+  if (!v) return "";
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 export default function SalaryReport() {
@@ -294,9 +302,17 @@ export default function SalaryReport() {
                         <TableCell className="py-2 px-2"><StatusBadge status={(r.run_status || "DRAFT").toUpperCase()} /></TableCell>
                         <TableCell className="py-2 px-2">
                           <div className="flex items-center gap-2">
-                            <span className={`px-2 py-0.5 rounded-sm text-[11px] font-semibold ${(r.payment_status || "").toUpperCase() === "PAID" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-600"}`}>
+                            <span
+                              className={`px-2 py-0.5 rounded-sm text-[11px] font-semibold ${(r.payment_status || "").toUpperCase() === "PAID" ? "bg-green-50 text-green-700" : "bg-slate-100 text-slate-600"}`}
+                              title={(r.payment_status || "").toUpperCase() === "PAID" && r.paid_by_name ? `Paid by ${r.paid_by_name}${r.paid_at ? ` on ${fmtDate(r.paid_at)}` : ""}` : undefined}
+                            >
                               {(r.payment_status || "UNPAID").toUpperCase()}
                             </span>
+                            {(r.payment_status || "").toUpperCase() === "PAID" && r.paid_by_name && (
+                              <span className="text-[10.5px] text-[#777] leading-tight">
+                                by {r.paid_by_name}{r.paid_at ? ` · ${fmtDate(r.paid_at)}` : ""}
+                              </span>
+                            )}
                             {markPaidAllowed && (r.run_status || "").toUpperCase() === "FINALIZED" && (
                               (r.payment_status || "UNPAID").toUpperCase() === "PAID" ? (
                                 <Button variant="outline"
