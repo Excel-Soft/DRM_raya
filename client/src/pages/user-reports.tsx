@@ -73,11 +73,13 @@ type ReportType = "loan" | "vas" | "gm" | "bv";
 interface ReportMetrics {
   totalTasks: number;
   valueOfServiceSold: number;
-  // Patch 2 Stage 7: BV success rate is the average over the report rows and is
-  // `null` (not 0/100) when there are no rows — render it honestly.
+  // Patch 2 Stage 7: BV success rate is the approved/total ratio and is `null`
+  // (not 0/100) when there are no rows — render it honestly.
   successRate: number | null;
-  followUpsCompleted: number;
-  missedLeads: number;
+  // BV follow-ups/missed-leads have no auditable aggregate source, so they are
+  // `null` at the headline level (per-report values remain visible per row).
+  followUpsCompleted: number | null;
+  missedLeads: number | null;
 }
 
 interface ChartDataPoint {
@@ -1608,6 +1610,7 @@ function ReportTab({
         from: dateRange.from,
         to: dateRange.to,
         format,
+        userId: selectedUser,
       });
       const response = await fetch(`/api/reports/${type}/export?${params}`, {
         headers: {
