@@ -145,6 +145,47 @@ async function ensureSalarySchema(client: {
   );
 }
 
+/**
+ * Patch 2 Stage 6 — Diagnosis Report source table.
+ * `db:push` is broken repo-wide (pre-existing FK mismatch), so the table is created
+ * at runtime here (mirrors shared/schema.ts `diagnosisReports`). Fully idempotent
+ * (`CREATE TABLE / INDEX IF NOT EXISTS`) — a no-op where it already exists, so it can
+ * never abort the shared boot transaction. Column types match drm.users / drm.customers
+ * (all uuid) so the FK references carry no type-clash rollback risk.
+ */
+async function ensureDiagnosisSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.diagnosis_reports (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       customer_id uuid REFERENCES drm.customers(id),
+       company_name text,
+       person_name text,
+       diagnosis_type text,
+       diagnosis_status text NOT NULL DEFAULT 'OPEN',
+       diagnosis_date date NOT NULL,
+       assigned_to uuid REFERENCES drm.users(id),
+       branch text,
+       department text,
+       notes text,
+       created_by uuid REFERENCES drm.users(id),
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now(),
+       deleted_at timestamp
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_diagnosis_reports_assigned ON drm.diagnosis_reports (assigned_to)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_diagnosis_reports_date ON drm.diagnosis_reports (diagnosis_date)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_diagnosis_reports_status ON drm.diagnosis_reports (diagnosis_status)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -172,6 +213,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensurePenaltiesSchema(client);
         await ensureAttendanceEditSchema(client);
         await ensureSalarySchema(client);
+        await ensureDiagnosisSchema(client);
         return;
       } catch (err) {
         lastErr = err;

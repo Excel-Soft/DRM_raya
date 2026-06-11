@@ -59,7 +59,9 @@ client-supplied `x-acting-role` header. Row scope:
 ### Honest failures (400 not 500)
 All uuid filters (`customerId`, `userId`) and `status` are validated before they
 touch a typed column, and an inverted date range is rejected — each returns a 400
-with a clear message instead of a Postgres 22P02 500.
+with a clear message instead of a Postgres 22P02 500. On create/edit, a foreign-key
+violation (23503 — a uuid-valid but nonexistent `customerId` / `assignedTo` on a DB
+that enforces the references) is also returned as a 400, not a 500.
 
 ### Response shape
 ```
@@ -95,17 +97,36 @@ Rewritten end to end:
 - No dedicated diagnosis *creation* UI was in scope; `POST` exists for QA and future
   entry.
 
+## Durability fix (this stage)
+The routes shipped querying `drm.diagnosis_reports`, but the table was **only**
+present in the live dev DB — it was missing from `shared/schema.ts` and from
+`server/db/ensure.ts`, so a fresh/production DB would 500 on every diagnosis route.
+This stage closes that gap (no behavior change for the existing dev DB, where the
+idempotent `CREATE TABLE IF NOT EXISTS` is a no-op):
+- `shared/schema.ts`: `diagnosisReports` table + `insertDiagnosisReportSchema` +
+  `DiagnosisReport` / `InsertDiagnosisReport` types (after `communicationLogs`) — the
+  source of truth.
+- `server/db/ensure.ts`: idempotent `ensureDiagnosisSchema(client)` wired into
+  `ensureDbOnce()` after `ensureSalarySchema(client)`. Recreates the table + the three
+  indexes on any fresh environment. (FK refs to `drm.users` / `drm.customers` are all
+  uuid→uuid, so no type-clash rollback risk in the shared boot transaction.)
+
 ## Verification
-- `npx tsc --noEmit`: **57** errors — unchanged baseline, **zero** in the new/edited
-  files.
-- Live smoke tests against the running server (JWT minted with the app's own secret):
-  1. admin `GET` empty list → `scope: "all"`, zeroed summary.
+- `npx tsc --noEmit`: **56** errors total (pre-existing baseline) — **zero** in the
+  new/edited files (`shared/schema.ts`, `server/db/ensure.ts`,
+  `server/diagnosis-report-routes.ts`, `client/src/pages/reports-diagnose.tsx`).
+- App restarted cleanly (boot ran `ensureDiagnosisSchema`); live table verified intact
+  afterward — `diagnosis_reports` with PK + `idx_diagnosis_reports_assigned` / `_date` /
+  `_status`.
+- Live smoke tests against the running server on `localhost:5000` (JWTs minted with the
+  app's own secret) — **10 / 10 passing**:
+  1. admin `GET` → `200`, `scope: "all"`, `{ rows, summary, pagination }` shape.
   2. admin `POST` create → `201 { success, id }`.
-  3. admin `GET` → row with joined `assignedToName` / `createdByName` / company.
+  3. admin `GET` → row with joined `assignedToName` / `createdByName`.
   4. admin `PATCH` status → `RESOLVED` → `{ success: true }`.
-  5. `?status=RESOLVED` → summary `RESOLVED: 1`; `?status=OPEN` → 0 rows.
+  5. `?status=RESOLVED` includes the row; `?status=OPEN` excludes it.
   6. `?customerId=not-a-uuid` → **400**; inverted date range → **400**.
-  7. admin `GET /export` → CSV with correct headers + `YYYY-MM-DD` date.
+  7. admin `GET /export` → `200` CSV with correct headers + the filtered row.
   8. executive `GET` → `scope: "own"`, sees only their assigned row.
   9. executive `GET /export` → **403**.
   10. no token → **401**.
