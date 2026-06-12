@@ -45,6 +45,15 @@ Wired to real sources (each still overridable by a per-line manual adjustment):
 Still honest-zero (no source): `overtimeAmount` (real minutes, no rate),
 `otherDeductions`, `lateMinutes/lateDeduction`.
 
+**Bonus management gate (decision):** employee-bonus CRUD (create/edit/approve/
+reject/delete) is gated by `canBonus()` to the full (admin/super_hod), accounts,
+and HR salary classes only — i.e. the same set as the salary "edit" capability,
+NOT the broader "approve" set (which also includes HOD). Lifecycle is PENDING ->
+APPROVED/REJECTED; only PENDING rows are editable/deletable; approve/reject set
+`approved_by_user_id`+`approved_at`. **Why:** task scope was "HR add and approve";
+keeping one gate avoids HOD/manager touching bonuses. **How to apply:** reuse
+`canBonus(req)`, not `can(req,"approve")`, for any new bonus action.
+
 **Manual-override pattern:** `parseOptionalMoney` returns undefined for
 empty/missing (use source), null for invalid (400), number for explicit
 override; the POST loop only sets fields that are present so unset ones fall back

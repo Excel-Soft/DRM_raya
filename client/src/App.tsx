@@ -158,6 +158,7 @@ const GmReportNew = lazy(() => import("@/pages/gm-report-new"));
 const LoanReportEdit = lazy(() => import("@/pages/loan-report-edit"));
 const SalaryCreate = lazy(() => import("@/pages/salary-create"));
 const SalaryReport = lazy(() => import("@/pages/salary-report"));
+const SalaryBonuses = lazy(() => import("@/pages/salary-bonuses"));
 const AbReport = lazy(() => import("@/pages/ab-report"));
 const ReportsRawAttendance = lazy(() => import("@/pages/reports-raw-attendance"));
 const EditAtt = lazy(() => import("@/pages/reports-edit-att"));
@@ -357,6 +358,7 @@ function Router() {
       <Route path="/reports/attendance" component={AttendanceReport} />
       <Route path="/reports/raw-attendance" component={ReportsRawAttendance} />
       <Route path="/reports/salary-create" component={SalaryCreate} />
+      <Route path="/reports/salary-bonuses" component={SalaryBonuses} />
       <Route path="/reports/salary" component={SalaryReport} />
       <Route path="/reports/reception" component={ReceptionReport} />
       <Route path="/reports/event" component={EventReport} />
