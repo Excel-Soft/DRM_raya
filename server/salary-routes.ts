@@ -131,6 +131,14 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+// Proxy-aware client IP, mirroring the extraction recordAuditLog uses, so audit
+// rows written inside a transaction carry the same context as the helper would.
+function auditIp(req: Request): string | undefined {
+  const xf = req.headers["x-forwarded-for"];
+  if (typeof xf === "string" && xf.length > 0) return xf.split(",")[0].trim();
+  return req.ip || (req.socket && req.socket.remoteAddress) || undefined;
+}
+
 // Validate a manual money input: must be a finite number >= 0. Returns the
 // parsed number, or null when invalid (so the route can 400 honestly).
 function parseManualMoney(v: unknown): number | null {
@@ -1050,6 +1058,8 @@ export function registerSalaryRoutes(app: Express) {
   // scope, and FINALIZED-only guards as the per-line endpoint; each changed
   // line is audited as salary.mark_paid just like the single-line action.
   app.patch("/api/salary/runs/:id/payment", async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    let began = false;
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       if (!can(req, "mark_paid")) return deny(res, "mark salary as paid");
@@ -1059,7 +1069,7 @@ export function registerSalaryRoutes(app: Express) {
         return res.status(400).json({ error: "paymentStatus must be PAID or UNPAID" });
       }
 
-      const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+      const runRes = await client.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
       if (runRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
       const run = runRes.rows[0];
       const runStatus = String(run.status || "DRAFT").toUpperCase();
@@ -1080,7 +1090,7 @@ export function registerSalaryRoutes(app: Express) {
         params.push(scope.userId); where.push(`user_id = $${params.length}`);
       }
 
-      const itemsRes = await pool.query(
+      const itemsRes = await client.query(
         `SELECT * FROM drm.salary_run_items WHERE ${where.join(" AND ")}`, params,
       );
       if (scope.kind !== "all" && itemsRes.rows.length === 0) {
@@ -1092,29 +1102,41 @@ export function registerSalaryRoutes(app: Express) {
         (it: any) => String(it.payment_status || "UNPAID").toUpperCase() !== paymentStatus,
       );
 
+      // All-or-nothing: every line update and its audit row land in one
+      // transaction so a mid-run failure can't leave the run half-paid (and
+      // leaves no orphan audit rows behind). Audit rows are written through the
+      // same client (not recordAuditLog, which uses a separate connection) so
+      // they roll back together with the line updates.
+      await client.query("BEGIN"); began = true;
       for (const it of toUpdate) {
         const previous = String(it.payment_status || "UNPAID").toUpperCase();
-        await pool.query(
+        await client.query(
           `UPDATE drm.salary_run_items SET payment_status = $1 WHERE id = $2`,
           [paymentStatus, it.id],
         );
-        await recordAuditLog({
-          actorUserId: req.user.userId,
-          action: "salary.mark_paid",
+        const details = JSON.stringify({
           module: "salary",
-          entityType: "salary_run_item",
-          entityId: it.id,
           before: { paymentStatus: previous },
           after: { paymentStatus },
-          reason,
-          req,
+          ...(reason !== undefined ? { reason } : {}),
+          ...(auditIp(req) !== undefined ? { ip: auditIp(req) } : {}),
+          ...(req.headers["user-agent"] ? { userAgent: req.headers["user-agent"] } : {}),
         });
+        await client.query(
+          `INSERT INTO drm.activity_logs (user_id, action, resource_type, resource_id, details)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [req.user.userId, "salary.mark_paid", "salary_run_item", String(it.id), details],
+        );
       }
+      await client.query("COMMIT"); began = false;
 
       res.json({ runId: req.params.id, paymentStatus, updated: toUpdate.length, total: itemsRes.rows.length });
     } catch (err) {
+      if (began) await client.query("ROLLBACK").catch(() => {});
       console.error("Error bulk updating salary payment status:", err);
       res.status(500).json({ error: "Failed to bulk update salary payment status" });
+    } finally {
+      client.release();
     }
   });
 
