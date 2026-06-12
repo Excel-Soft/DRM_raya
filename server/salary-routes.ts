@@ -73,6 +73,15 @@ function can(req: Request, action: SalaryAction): boolean {
   return classCan(salaryClass(req), action);
 }
 
+// Employee-bonus management is restricted to the same classes that may edit
+// salary lines: admin/super_hod (full), accounts, and HR. HOD/manager/executive
+// classes may not create, edit, approve, or reject bonuses. Kept as a single
+// gate so create/edit/approve/reject/delete all share one consistent rule.
+function canBonus(req: Request): boolean {
+  const cls = salaryClass(req);
+  return cls === "full" || cls === "accounts" || cls === "hr";
+}
+
 function deny(res: Response, action: string) {
   return res.status(403).json({ error: `You are not authorized to ${action} salary.` });
 }
@@ -1106,6 +1115,242 @@ export function registerSalaryRoutes(app: Express) {
     } catch (err) {
       console.error("Error bulk updating salary payment status:", err);
       res.status(500).json({ error: "Failed to bulk update salary payment status" });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Employee bonuses (drm.employee_bonuses) — the authoritative source the
+  // salary preview reads APPROVED rows from. CRUD here lets HR/accounts populate
+  // and approve bonuses without raw SQL. Lifecycle: PENDING -> APPROVED/REJECTED
+  // with approver + timestamp recorded; only PENDING rows are editable/deletable.
+  // -------------------------------------------------------------------------
+
+  // GET /api/salary/bonuses — list bonuses (filters: month, year, status, employeeId).
+  app.get("/api/salary/bonuses", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canBonus(req)) return deny(res, "manage bonuses for");
+
+      const where: string[] = [];
+      const params: any[] = [];
+      if (req.query.month) { params.push(Number(req.query.month)); where.push(`b.period_month = $${params.length}`); }
+      if (req.query.year) { params.push(Number(req.query.year)); where.push(`b.period_year = $${params.length}`); }
+      if (req.query.status) { params.push(String(req.query.status).toUpperCase()); where.push(`b.status = $${params.length}`); }
+      if (req.query.employeeId) { params.push(String(req.query.employeeId)); where.push(`b.user_id = $${params.length}`); }
+      const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+      const rows = await pool.query(
+        `SELECT b.*,
+                COALESCE(eu.full_name, eu.name, eu.username) AS employee_name,
+                eu.department AS employee_department, eu.branch AS employee_branch,
+                COALESCE(au.full_name, au.name, au.username) AS approved_by_name,
+                COALESCE(cu.full_name, cu.name, cu.username) AS created_by_name
+           FROM drm.employee_bonuses b
+           LEFT JOIN drm.users eu ON eu.id = b.user_id
+           LEFT JOIN drm.users au ON au.id = b.approved_by_user_id
+           LEFT JOIN drm.users cu ON cu.id = b.created_by_user_id
+           ${whereSql}
+          ORDER BY b.created_at DESC`,
+        params,
+      );
+      res.json({ bonuses: rows.rows });
+    } catch (err) {
+      console.error("Error listing employee bonuses:", err);
+      res.status(500).json({ error: "Failed to list employee bonuses" });
+    }
+  });
+
+  // POST /api/salary/bonuses — create a PENDING bonus.
+  app.post("/api/salary/bonuses", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canBonus(req)) return deny(res, "create bonuses for");
+
+      const userId = String(req.body?.userId ?? req.body?.employeeId ?? "").trim();
+      if (!userId) return res.status(400).json({ error: "employee (userId) is required" });
+      const period = parsePeriod(req);
+      if (!period) return res.status(400).json({ error: "Valid month (1-12) and year are required" });
+      const amount = parseManualMoney(req.body?.amount);
+      if (amount === null) return res.status(400).json({ error: "amount must be a number >= 0" });
+      const reason = req.body?.reason != null ? String(req.body.reason).slice(0, 1000) : null;
+
+      const userRes = await pool.query(`SELECT id FROM drm.users WHERE id = $1`, [userId]);
+      if (userRes.rows.length === 0) return res.status(404).json({ error: "Employee not found" });
+
+      const inserted = await pool.query(
+        `INSERT INTO drm.employee_bonuses
+           (user_id, period_month, period_year, amount, reason, status, created_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,'PENDING',$6)
+         RETURNING *`,
+        [userId, period.month, period.year, amount, reason, req.user.userId],
+      );
+      const bonus = inserted.rows[0];
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: "salary.bonus.create",
+        module: "salary",
+        entityType: "employee_bonus",
+        entityId: bonus.id,
+        nextStatus: "PENDING",
+        after: { userId, period, amount, reason },
+        reason: reason ?? undefined,
+        req,
+      });
+      res.status(201).json({ bonus });
+    } catch (err) {
+      console.error("Error creating employee bonus:", err);
+      res.status(500).json({ error: "Failed to create employee bonus" });
+    }
+  });
+
+  // PATCH /api/salary/bonuses/:id — edit a PENDING bonus (amount/reason/period/employee).
+  app.patch("/api/salary/bonuses/:id", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canBonus(req)) return deny(res, "edit bonuses for");
+
+      const existingRes = await pool.query(`SELECT * FROM drm.employee_bonuses WHERE id = $1`, [req.params.id]);
+      if (existingRes.rows.length === 0) return res.status(404).json({ error: "Bonus not found" });
+      const existing = existingRes.rows[0];
+      if (String(existing.status).toUpperCase() !== "PENDING") {
+        return res.status(409).json({ error: "Only PENDING bonuses can be edited" });
+      }
+
+      const sets: string[] = [];
+      const params: any[] = [];
+      const after: Record<string, unknown> = {};
+
+      if (req.body?.userId !== undefined || req.body?.employeeId !== undefined) {
+        const userId = String(req.body?.userId ?? req.body?.employeeId ?? "").trim();
+        if (!userId) return res.status(400).json({ error: "employee (userId) cannot be empty" });
+        const userRes = await pool.query(`SELECT id FROM drm.users WHERE id = $1`, [userId]);
+        if (userRes.rows.length === 0) return res.status(404).json({ error: "Employee not found" });
+        params.push(userId); sets.push(`user_id = $${params.length}`); after.userId = userId;
+      }
+      if (req.body?.month !== undefined || req.body?.year !== undefined) {
+        const month = Number(req.body?.month ?? existing.period_month);
+        const year = Number(req.body?.year ?? existing.period_year);
+        if (!Number.isInteger(month) || month < 1 || month > 12) return res.status(400).json({ error: "Valid month (1-12) is required" });
+        if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: "Valid year is required" });
+        params.push(month); sets.push(`period_month = $${params.length}`);
+        params.push(year); sets.push(`period_year = $${params.length}`);
+        after.period = { month, year };
+      }
+      if (req.body?.amount !== undefined) {
+        const amount = parseManualMoney(req.body.amount);
+        if (amount === null) return res.status(400).json({ error: "amount must be a number >= 0" });
+        params.push(amount); sets.push(`amount = $${params.length}`); after.amount = amount;
+      }
+      if (req.body?.reason !== undefined) {
+        const reason = req.body.reason != null ? String(req.body.reason).slice(0, 1000) : null;
+        params.push(reason); sets.push(`reason = $${params.length}`); after.reason = reason;
+      }
+
+      if (sets.length === 0) return res.status(400).json({ error: "No editable fields supplied" });
+      sets.push("updated_at = now()");
+      params.push(req.params.id);
+      const updated = await pool.query(
+        `UPDATE drm.employee_bonuses SET ${sets.join(", ")} WHERE id = $${params.length} RETURNING *`,
+        params,
+      );
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: "salary.bonus.edit",
+        module: "salary",
+        entityType: "employee_bonus",
+        entityId: req.params.id,
+        before: {
+          userId: existing.user_id, period: { month: existing.period_month, year: existing.period_year },
+          amount: toNum(existing.amount), reason: existing.reason,
+        },
+        after,
+        req,
+      });
+      res.json({ bonus: updated.rows[0] });
+    } catch (err) {
+      console.error("Error editing employee bonus:", err);
+      res.status(500).json({ error: "Failed to edit employee bonus" });
+    }
+  });
+
+  // PATCH /api/salary/bonuses/:id/status — approve or reject a PENDING bonus.
+  app.patch("/api/salary/bonuses/:id/status", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canBonus(req)) return deny(res, "approve bonuses for");
+
+      const status = String(req.body?.status || "").toUpperCase();
+      if (status !== "APPROVED" && status !== "REJECTED") {
+        return res.status(400).json({ error: "status must be APPROVED or REJECTED" });
+      }
+      const reason = req.body?.reason != null ? String(req.body.reason).slice(0, 1000) : undefined;
+
+      const existingRes = await pool.query(`SELECT * FROM drm.employee_bonuses WHERE id = $1`, [req.params.id]);
+      if (existingRes.rows.length === 0) return res.status(404).json({ error: "Bonus not found" });
+      const existing = existingRes.rows[0];
+      const current = String(existing.status).toUpperCase();
+      if (current !== "PENDING") {
+        return res.status(409).json({ error: `Cannot ${status.toLowerCase()} a ${current} bonus` });
+      }
+
+      const updated = await pool.query(
+        `UPDATE drm.employee_bonuses
+            SET status = $1, approved_by_user_id = $2, approved_at = now(), updated_at = now()
+          WHERE id = $3 RETURNING *`,
+        [status, req.user.userId, req.params.id],
+      );
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: status === "APPROVED" ? "salary.bonus.approve" : "salary.bonus.reject",
+        module: "salary",
+        entityType: "employee_bonus",
+        entityId: req.params.id,
+        previousStatus: current,
+        nextStatus: status,
+        reason,
+        req,
+      });
+      res.json({ bonus: updated.rows[0] });
+    } catch (err) {
+      console.error("Error updating employee bonus status:", err);
+      res.status(500).json({ error: "Failed to update employee bonus status" });
+    }
+  });
+
+  // DELETE /api/salary/bonuses/:id — remove a PENDING bonus.
+  app.delete("/api/salary/bonuses/:id", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!canBonus(req)) return deny(res, "delete bonuses for");
+
+      const existingRes = await pool.query(`SELECT * FROM drm.employee_bonuses WHERE id = $1`, [req.params.id]);
+      if (existingRes.rows.length === 0) return res.status(404).json({ error: "Bonus not found" });
+      const existing = existingRes.rows[0];
+      if (String(existing.status).toUpperCase() !== "PENDING") {
+        return res.status(409).json({ error: "Only PENDING bonuses can be deleted" });
+      }
+
+      await pool.query(`DELETE FROM drm.employee_bonuses WHERE id = $1`, [req.params.id]);
+
+      await recordAuditLog({
+        actorUserId: req.user.userId,
+        action: "salary.bonus.delete",
+        module: "salary",
+        entityType: "employee_bonus",
+        entityId: req.params.id,
+        before: {
+          userId: existing.user_id, period: { month: existing.period_month, year: existing.period_year },
+          amount: toNum(existing.amount), reason: existing.reason,
+        },
+        req,
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error deleting employee bonus:", err);
+      res.status(500).json({ error: "Failed to delete employee bonus" });
     }
   });
 

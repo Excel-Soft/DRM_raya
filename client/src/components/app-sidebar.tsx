@@ -251,6 +251,7 @@ const menuItems: MenuItem[] = [
       { title: "Bv Pending RC Only", url: "/reports/bv-pending-rc", icon: FileText },
       { title: "Loan Report", url: "/reports/loan", icon: FileText },
       { title: "Salary Create", url: "/reports/salary-create", icon: FileText },
+      { title: "Employee Bonuses", url: "/reports/salary-bonuses", icon: FileText },
       { title: "Salary Report", url: "/reports/salary", icon: FileText },
       { title: "Attendance Report", url: "/reports/attendance", icon: FileText },
       { title: "Vas Report", url: "/reports/vas", icon: List },

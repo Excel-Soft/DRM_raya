@@ -238,6 +238,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/reports/raw-attendance", component: "ReportsRawAttendance", title: "Raw Attendance", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/bv-pending-rc", component: "ReportsBvPendingRc", title: "BV Pending RC Only", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/salary-create", component: "SalaryCreate", title: "Salary Create", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
+  { path: "/reports/salary-bonuses", component: "SalaryBonuses", title: "Employee Bonuses", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/salary", component: "SalaryReport", title: "Salary Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/attendance", component: "AttendanceReport", title: "Attendance Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/bv-pending-ecnc", component: "ReportsBvPendingEcnc", title: "BV Pending EC/NC Only", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
