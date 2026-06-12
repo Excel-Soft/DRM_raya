@@ -27,15 +27,19 @@ const RECEPTION_GLOBAL_ROLES = [
   "reception_manager",
 ];
 
+// The reception report accepts the receptionist filter under either `userId`
+// (legacy/UI) or `receptionistId` (Stage 8 spec). Returns the raw value or null
+// for "all"/empty.
+function rawReceptionUserId(req: Request): string | null {
+  const v = req.query.userId ?? req.query.receptionistId;
+  if (typeof v !== "string" || v === "" || v === "all") return null;
+  return String(v);
+}
+
 async function resolveReceptionScope(req: Request): Promise<string[] | null> {
   const user = req.user as any;
   const role = normalizeRole(user.activeRoleId ?? user.roleId ?? user.role);
-  const queryUserId =
-    typeof req.query.userId === "string" &&
-    req.query.userId !== "all" &&
-    req.query.userId !== ""
-      ? String(req.query.userId)
-      : null;
+  const queryUserId = rawReceptionUserId(req);
 
   let allowed: string[] | null;
   if (RECEPTION_GLOBAL_ROLES.includes(role)) {
@@ -61,8 +65,8 @@ async function resolveReceptionScope(req: Request): Promise<string[] | null> {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function receptionUserIdError(req: Request): string | null {
-  const raw = req.query.userId;
-  if (typeof raw !== "string" || raw === "" || raw === "all") return null;
+  const raw = rawReceptionUserId(req);
+  if (raw === null) return null;
   return UUID_RE.test(raw) ? null : "userId must be a valid UUID";
 }
 
@@ -81,6 +85,20 @@ function buildReceptionFilters(
 
   if (start) { params.push(start); where.push(`m.meeting_date >= $${params.length}`); }
   if (end) { params.push(end); where.push(`m.meeting_date <= $${params.length}`); }
+
+  // month=YYYY-MM is a convenience date-range filter over meeting_date. Reject a
+  // malformed value with a 400 rather than silently ignoring it.
+  if (req.query.month) {
+    const m = String(req.query.month);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(m)) {
+      return { error: "month must be in YYYY-MM format", clause: "", params: [] };
+    }
+    const [y, mo] = m.split("-").map(Number);
+    const monthStart = new Date(Date.UTC(y, mo - 1, 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(y, mo, 0, 23, 59, 59, 999));
+    params.push(monthStart); where.push(`m.meeting_date >= $${params.length}`);
+    params.push(monthEnd); where.push(`m.meeting_date <= $${params.length}`);
+  }
 
   if (req.query.status) {
     const status = String(req.query.status);
@@ -102,6 +120,13 @@ function buildReceptionFilters(
   if (req.query.customer) {
     params.push(`%${String(req.query.customer).trim()}%`);
     where.push(`m.person_name ILIKE $${params.length}`);
+  }
+  // branch is not stored on a meeting; it comes from the receptionist (the row's
+  // created_by user, joined as `ru`). Case-insensitive substring match, matching
+  // the company/customer free-text filter behavior.
+  if (req.query.branch) {
+    params.push(`%${String(req.query.branch).trim()}%`);
+    where.push(`ru.branch ILIKE $${params.length}`);
   }
 
   // Row-level scope (own / team / all). null === unrestricted.
@@ -351,6 +376,7 @@ export function registerStage3ReportsRoutes(app: Express) {
           `SELECT COUNT(*)::int AS total
            FROM drm.meetings m
            LEFT JOIN drm.customers c ON c.id = m.company_id
+           LEFT JOIN drm.users ru ON ru.id = m.created_by
            ${clause}`,
           params,
         );
@@ -365,6 +391,7 @@ export function registerStage3ReportsRoutes(app: Express) {
                   c.company_name AS company_name
            FROM drm.meetings m
            LEFT JOIN drm.customers c ON c.id = m.company_id
+           LEFT JOIN drm.users ru ON ru.id = m.created_by
            ${clause}
            ORDER BY m.meeting_date DESC
            LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
@@ -400,6 +427,7 @@ export function registerStage3ReportsRoutes(app: Express) {
                   c.company_name AS company_name
            FROM drm.meetings m
            LEFT JOIN drm.customers c ON c.id = m.company_id
+           LEFT JOIN drm.users ru ON ru.id = m.created_by
            ${clause}
            ORDER BY m.meeting_date DESC
            LIMIT 5000`,

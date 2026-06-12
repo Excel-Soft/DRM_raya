@@ -77,16 +77,20 @@ const STATUS_OPTIONS = ["expected", "in_progress", "ended"] as const;
 function buildReceptionParams(applied: {
   startDate: string;
   endDate: string;
+  month: string;
   status: string;
   user: string;
   company: string;
+  branch: string;
 }): URLSearchParams {
   const params = new URLSearchParams();
   if (applied.user && applied.user !== "all") params.set("userId", applied.user);
   if (applied.status && applied.status !== "all") params.set("status", applied.status);
   if (applied.startDate) params.set("startDate", applied.startDate);
   if (applied.endDate) params.set("endDate", applied.endDate);
+  if (applied.month) params.set("month", applied.month);
   if (applied.company.trim()) params.set("company", applied.company.trim());
+  if (applied.branch.trim()) params.set("branch", applied.branch.trim());
   return params;
 }
 
@@ -94,17 +98,21 @@ export default function ReceptionReport() {
   const { toast } = useToast();
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [month, setMonth] = useState("");
   const [status, setStatus] = useState("all");
   const [user, setUser] = useState("all");
   const [company, setCompany] = useState("");
+  const [branch, setBranch] = useState("");
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [applied, setApplied] = useState<{
     startDate: string;
     endDate: string;
+    month: string;
     status: string;
     user: string;
     company: string;
+    branch: string;
   } | null>(null);
 
   const { data: users = [] } = useQuery<any[]>({
@@ -125,7 +133,7 @@ export default function ReceptionReport() {
 
   const handleView = () => {
     setPage(1);
-    setApplied({ startDate, endDate, status, user, company });
+    setApplied({ startDate, endDate, month, status, user, company, branch });
   };
 
   const handleExport = async () => {
@@ -238,6 +246,17 @@ export default function ReceptionReport() {
                 />
               </div>
 
+              {/* Month */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-[13px] font-bold text-[#555]">Month</Label>
+                <Input
+                  type="month"
+                  value={month}
+                  onChange={(e) => setMonth(e.target.value)}
+                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                />
+              </div>
+
               {/* Company */}
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555]">Company</Label>
@@ -246,6 +265,18 @@ export default function ReceptionReport() {
                   value={company}
                   placeholder="Filter by company..."
                   onChange={(e) => setCompany(e.target.value)}
+                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                />
+              </div>
+
+              {/* Branch */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-[13px] font-bold text-[#555]">Branch</Label>
+                <Input
+                  type="text"
+                  value={branch}
+                  placeholder="Filter by branch..."
+                  onChange={(e) => setBranch(e.target.value)}
                   className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
                 />
               </div>

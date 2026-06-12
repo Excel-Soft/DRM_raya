@@ -7,6 +7,7 @@
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
 - [Workflow route write ordering](workflow-route-write-ordering.md) — related-record writes must go inside applyWithinTx; payload/duplicate validation must be fail-fast route checks before the transition (no DB write on rejection).
 - [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
+- [Reception/Event report column boundaries](reception-event-report-columns.md) — spec fields with no source column (branch/visitorCount/paymentAmount, event duty/team) are omitted not faked; branch comes from receptionist users.branch.
 - [Report row-scoping convention](report-scope-narrowing.md) — userId only NARROWS within role scope (never widens); out-of-scope → zero-UUID sentinel (empty); malformed → 400; share one filter+scope builder for list+export.
 - [Report table durability](report-table-durability.md) — a table can exist in the dev DB but be absent from schema.ts/ensure.ts (fresh/prod 500s); verify vs information_schema, don't trust a changelog's "added" claim.
 - [Report row-scope edge cases](report-row-scope-edge-cases.md) — account_manager's allowedIds is null (=all), and hr/hr_manager are view-granted but non-managerial; scope each explicitly or rows go empty.
