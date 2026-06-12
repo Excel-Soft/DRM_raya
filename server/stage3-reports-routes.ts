@@ -1,8 +1,119 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireReportPermission } from "./middleware/report-permission";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { getDepartmentFilterUserIds } from "./dashboard-routes";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
+
+// Real persisted meeting_status enum values (shared/schema.ts meetingStatusEnum).
+// The reception report whitelists these so an unknown value yields a 400 instead
+// of a raw 22P02 enum error (status is compared as text for the same reason).
+const RECEPTION_STATUSES = ["expected", "in_progress", "ended"] as const;
+
+// Reception row-level scope. Mirrors resolveDayTargetScope (reports-routes.ts):
+//   - global roles (admin/super_hod/hod/account_manager/reception_manager) see all,
+//   - a non-managerial caller (reception / reception_executive) sees only their own
+//     reception rows (created_by OR user_id = self),
+//   - any other manager is bounded to their department/team via getDepartmentFilterUserIds.
+// A `userId` query param only ever NARROWS within the caller's scope; an id outside
+// the scope resolves to a zero-UUID sentinel so the result is empty (never widened).
+const RECEPTION_GLOBAL_ROLES = [
+  "admin",
+  "super_admin",
+  "super_hod",
+  "hod",
+  "account_manager",
+  "reception_manager",
+];
+
+async function resolveReceptionScope(req: Request): Promise<string[] | null> {
+  const user = req.user as any;
+  const role = normalizeRole(user.activeRoleId ?? user.roleId ?? user.role);
+  const queryUserId =
+    typeof req.query.userId === "string" &&
+    req.query.userId !== "all" &&
+    req.query.userId !== ""
+      ? String(req.query.userId)
+      : null;
+
+  let allowed: string[] | null;
+  if (RECEPTION_GLOBAL_ROLES.includes(role)) {
+    allowed = null; // all reception records
+  } else if (!isManagerialRole(role)) {
+    allowed = [String(user.userId)]; // reception executive: own records only
+  } else {
+    allowed = await getDepartmentFilterUserIds(req); // other managers: their team (null => global)
+  }
+
+  if (queryUserId) {
+    if (allowed === null) return [queryUserId];
+    return allowed.includes(queryUserId)
+      ? [queryUserId]
+      : ["00000000-0000-0000-0000-000000000000"]; // out of scope → empty result
+  }
+  return allowed;
+}
+
+// The reception report accepts an optional `userId` to narrow within scope. Reject
+// a malformed value with a 400 (honest input rejection) rather than letting it
+// reach ANY($n::uuid[]) and surface as a raw 22P02 → 500.
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function receptionUserIdError(req: Request): string | null {
+  const raw = req.query.userId;
+  if (typeof raw !== "string" || raw === "" || raw === "all") return null;
+  return UUID_RE.test(raw) ? null : "userId must be a valid UUID";
+}
+
+/**
+ * Shared WHERE clause for the reception report (list + CSV export), so both honor
+ * identical filters AND identical row-scope. Returns an `error` string for a 400
+ * on an unknown status. `m.status` is compared as text to avoid a raw 22P02.
+ */
+function buildReceptionFilters(
+  req: Request,
+  scope: string[] | null,
+): { error?: string; clause: string; params: any[] } {
+  const { start, end } = parseDateRange(req);
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (start) { params.push(start); where.push(`m.meeting_date >= $${params.length}`); }
+  if (end) { params.push(end); where.push(`m.meeting_date <= $${params.length}`); }
+
+  if (req.query.status) {
+    const status = String(req.query.status);
+    if (!RECEPTION_STATUSES.includes(status as any)) {
+      return {
+        error: `status must be one of ${RECEPTION_STATUSES.join(", ")}`,
+        clause: "",
+        params: [],
+      };
+    }
+    params.push(status);
+    where.push(`m.status::text = $${params.length}`);
+  }
+
+  if (req.query.company) {
+    params.push(`%${String(req.query.company).trim()}%`);
+    where.push(`c.company_name ILIKE $${params.length}`);
+  }
+  if (req.query.customer) {
+    params.push(`%${String(req.query.customer).trim()}%`);
+    where.push(`m.person_name ILIKE $${params.length}`);
+  }
+
+  // Row-level scope (own / team / all). null === unrestricted.
+  if (scope !== null) {
+    params.push(scope);
+    where.push(
+      `(m.created_by = ANY($${params.length}::uuid[]) OR m.user_id = ANY($${params.length}::uuid[]))`,
+    );
+  }
+
+  return { clause: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+}
 
 /**
  * Builds the shared WHERE clause for the raw-attendance report (used by both the
@@ -176,8 +287,14 @@ export function registerStage3ReportsRoutes(app: Express) {
     }
   });
 
-  // GET /api/reports/event - meetings/events in a date range.
-  app.get("/api/reports/event", async (req: Request, res: Response) => {
+  // GET /api/reports/event - LEGACY meetings-based feed (NOT consumed by the
+  // events report page, which reads GET /api/events/report from server/events-routes.ts
+  // against the real drm.events store). Guarded with the same event_report view
+  // permission so it is not an unauthenticated hole.
+  app.get(
+    "/api/reports/event",
+    requireReportPermission("event_report", "view"),
+    async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { start, end } = parseDateRange(req);
@@ -214,47 +331,110 @@ export function registerStage3ReportsRoutes(app: Express) {
   // GET /api/reports/reception - reception meetings log.
   // Reception meetings live in drm.meetings (see server/reception-routes.ts which
   // queries the same table). Returns real rows or an empty set — never fabricated.
-  // Filters: dateFrom/dateTo (or startDate/endDate), status, userId. Paginated.
-  app.get("/api/reports/reception", async (req: Request, res: Response) => {
-    try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { start, end } = parseDateRange(req);
-      const { page, pageSize, offset } = parsePaging(req);
+  // Filters: dateFrom/dateTo (or startDate/endDate), status (expected/in_progress/
+  // ended), company, customer, userId. Row-scoped (see resolveReceptionScope) and
+  // gated by the reception_report view permission. Paginated.
+  app.get(
+    "/api/reports/reception",
+    requireReportPermission("reception_report", "view"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const userIdError = receptionUserIdError(req);
+        if (userIdError) return res.status(400).json({ error: userIdError });
+        const { page, pageSize, offset } = parsePaging(req);
+        const scope = await resolveReceptionScope(req);
+        const { error, clause, params } = buildReceptionFilters(req, scope);
+        if (error) return res.status(400).json({ error });
 
-      const where: string[] = [];
-      const params: any[] = [];
-      if (start) { params.push(start); where.push(`m.meeting_date >= $${params.length}`); }
-      if (end) { params.push(end); where.push(`m.meeting_date <= $${params.length}`); }
-      if (req.query.status) { params.push(String(req.query.status)); where.push(`m.status = $${params.length}`); }
-      // A reception "user" can be the staff member who logged the meeting (created_by)
-      // or the user the meeting was with (user_id).
-      if (req.query.userId) {
-        params.push(String(req.query.userId));
-        where.push(`(m.created_by = $${params.length} OR m.user_id = $${params.length})`);
+        const countRes = await pool.query(
+          `SELECT COUNT(*)::int AS total
+           FROM drm.meetings m
+           LEFT JOIN drm.customers c ON c.id = m.company_id
+           ${clause}`,
+          params,
+        );
+        const total = countRes.rows[0]?.total ?? 0;
+
+        const listParams = params.slice();
+        listParams.push(pageSize, offset);
+        const rowsRes = await pool.query(
+          `SELECT m.id, m.meeting_type, m.person_name, m.status,
+                  m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
+                  m.total_duration_seconds, m.created_at,
+                  c.company_name AS company_name
+           FROM drm.meetings m
+           LEFT JOIN drm.customers c ON c.id = m.company_id
+           ${clause}
+           ORDER BY m.meeting_date DESC
+           LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+          listParams,
+        );
+        res.json({ data: rowsRes.rows, total, page, pageSize });
+      } catch (err) {
+        console.error("Error in reception report:", err);
+        res.status(500).json({ error: "Failed to load reception report" });
       }
-      const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    },
+  );
 
-      const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM drm.meetings m ${clause}`, params);
-      const total = countRes.rows[0]?.total ?? 0;
+  // GET /api/reports/reception/export - CSV of the reception report honoring the
+  // SAME filters and row-scope as the list (up to 5000 rows). Requires the
+  // reception_report export permission.
+  app.get(
+    "/api/reports/reception/export",
+    requireReportPermission("reception_report", "export"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const userIdError = receptionUserIdError(req);
+        if (userIdError) return res.status(400).json({ error: userIdError });
+        const scope = await resolveReceptionScope(req);
+        const { error, clause, params } = buildReceptionFilters(req, scope);
+        if (error) return res.status(400).json({ error });
 
-      const rowsRes = await pool.query(
-        `SELECT m.id, m.meeting_type, m.person_name, m.status,
-                m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
-                m.total_duration_seconds, m.created_at,
-                c.company_name AS company_name
-         FROM drm.meetings m
-         LEFT JOIN drm.customers c ON c.id = m.company_id
-         ${clause}
-         ORDER BY m.meeting_date DESC
-         LIMIT ${pageSize} OFFSET ${offset}`,
-        params,
-      );
-      res.json({ data: rowsRes.rows, total, page, pageSize });
-    } catch (err) {
-      console.error("Error in reception report:", err);
-      res.status(500).json({ error: "Failed to load reception report" });
-    }
-  });
+        const rowsRes = await pool.query(
+          `SELECT m.id, m.meeting_type, m.person_name, m.status,
+                  m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
+                  m.total_duration_seconds, m.created_at,
+                  c.company_name AS company_name
+           FROM drm.meetings m
+           LEFT JOIN drm.customers c ON c.id = m.company_id
+           ${clause}
+           ORDER BY m.meeting_date DESC
+           LIMIT 5000`,
+          params,
+        );
+
+        const header = [
+          "Date", "Company", "Person", "Meeting Type",
+          "Scheduled Time", "Start", "End", "Duration (s)", "Status", "Created At",
+        ];
+        const lines = [header.join(",")];
+        for (const r of rowsRes.rows) {
+          lines.push([
+            csvCell(r.meeting_date),
+            csvCell(r.company_name),
+            csvCell(r.person_name),
+            csvCell(r.meeting_type),
+            csvCell(r.scheduled_time),
+            csvCell(r.start_time),
+            csvCell(r.end_time),
+            csvCell(r.total_duration_seconds),
+            csvCell(r.status),
+            csvCell(r.created_at),
+          ].join(","));
+        }
+
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", `attachment; filename="reception_report.csv"`);
+        res.send(lines.join("\n"));
+      } catch (err) {
+        console.error("Error exporting reception report:", err);
+        res.status(500).json({ error: "Failed to export reception report" });
+      }
+    },
+  );
 
   // GET /api/reports/raw-attendance - real, attendance-sourced report.
   // No biometric table exists, so rows come from drm.attendance (source:"attendance").

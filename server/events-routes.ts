@@ -21,6 +21,7 @@ import { pool } from "./db";
 import { ActivityLogService } from "./services/activity-service";
 import { isManagerialRole } from "./utils/role-utils";
 import { NotificationService } from "./services/notification-service";
+import { requireReportPermission } from "./middleware/report-permission";
 
 // Fire-and-forget duty-assignment notification (uses the shared notification
 // abstraction). Never throws into the request path.
@@ -280,14 +281,20 @@ async function getEventRaw(
 export async function registerEventsRoutes(app: Express) {
   await ensureEventsTables();
 
-  // GET /api/events/report — registered BEFORE /api/events/:id so it is not
-  // captured by the :id route.
-  app.get("/api/events/report", async (req: Request, res: Response) => {
+  // GET /api/events/report — the canonical events report (reads the real
+  // drm.events store). Registered BEFORE /api/events/:id so it is not captured by
+  // the :id route. Gated by the event_report view permission.
+  app.get(
+    "/api/events/report",
+    requireReportPermission("event_report", "view"),
+    async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
       const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-      const pageSize = Math.max(1, Number(req.query.pageSize ?? 25) || 25);
+      // Clamp pageSize to a sane upper bound so a caller cannot request the whole
+      // table in one page.
+      const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize ?? 25) || 25));
       const offset = (page - 1) * pageSize;
 
       const where: string[] = ["e.deleted_at IS NULL"];
@@ -305,12 +312,20 @@ export async function registerEventsRoutes(app: Express) {
         params.push(String(req.query.type));
         where.push(`e.event_type = $${params.length}`);
       }
+      if (req.query.eventName) {
+        params.push(`%${String(req.query.eventName).trim()}%`);
+        where.push(`e.name ILIKE $${params.length}`);
+      }
       if (req.query.status) {
         const st = normalizeStatus(req.query.status);
-        if (st) {
-          params.push(st);
-          where.push(`e.status = $${params.length}`);
+        if (!st) {
+          return res.status(400).json({
+            error: "BadRequest",
+            message: `status must be one of ${EVENT_STATUSES.join(", ")}`,
+          });
         }
+        params.push(st);
+        where.push(`e.status = $${params.length}`);
       }
       if (req.query.venue) {
         params.push(`%${String(req.query.venue).trim()}%`);

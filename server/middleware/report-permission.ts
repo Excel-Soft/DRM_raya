@@ -74,7 +74,11 @@ const REPORT_PERMISSION_MATRIX: Record<
     export: ["account_manager", "hod"],
   },
   reception_report: {
-    view: ["reception_manager", "reception", "account_manager", "hod"],
+    // "reception_executive" is listed explicitly because normalizeRole maps
+    // "Reception Executive" → reception_executive (NOT matched by the plain
+    // "reception" entry). Row-scope (resolveReceptionScope) then limits an
+    // executive to their own reception rows even though they may view.
+    view: ["reception_manager", "reception", "reception_executive", "account_manager", "hod"],
     export: ["reception_manager", "account_manager"],
   },
   edit_attendance: {

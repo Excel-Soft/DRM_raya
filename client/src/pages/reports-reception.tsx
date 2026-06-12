@@ -4,7 +4,8 @@
 // to meeting fields. Renders real-or-empty data only.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequestJson } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,19 +69,42 @@ function fmtDuration(seconds: number | null): string {
   return `${h}h ${m}m ${s}s`;
 }
 
-const STATUS_OPTIONS = ["scheduled", "in_progress", "completed", "cancelled"] as const;
+// Real persisted drm.meetings status values (meeting_status enum).
+const STATUS_OPTIONS = ["expected", "in_progress", "ended"] as const;
+
+// Builds the shared query string (filters only, no paging) used by both the list
+// query and the CSV export so the export always matches the on-screen filters.
+function buildReceptionParams(applied: {
+  startDate: string;
+  endDate: string;
+  status: string;
+  user: string;
+  company: string;
+}): URLSearchParams {
+  const params = new URLSearchParams();
+  if (applied.user && applied.user !== "all") params.set("userId", applied.user);
+  if (applied.status && applied.status !== "all") params.set("status", applied.status);
+  if (applied.startDate) params.set("startDate", applied.startDate);
+  if (applied.endDate) params.set("endDate", applied.endDate);
+  if (applied.company.trim()) params.set("company", applied.company.trim());
+  return params;
+}
 
 export default function ReceptionReport() {
+  const { toast } = useToast();
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [status, setStatus] = useState("all");
   const [user, setUser] = useState("all");
+  const [company, setCompany] = useState("");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
   const [applied, setApplied] = useState<{
     startDate: string;
     endDate: string;
     status: string;
     user: string;
+    company: string;
   } | null>(null);
 
   const { data: users = [] } = useQuery<any[]>({
@@ -92,18 +116,51 @@ export default function ReceptionReport() {
     queryKey: ["/api/reports/reception", applied, page],
     enabled: !!applied,
     queryFn: async () => {
-      const params = new URLSearchParams({ page: String(page), pageSize: "50" });
-      if (applied?.user && applied.user !== "all") params.set("userId", applied.user);
-      if (applied?.status && applied.status !== "all") params.set("status", applied.status);
-      if (applied?.startDate) params.set("startDate", applied.startDate);
-      if (applied?.endDate) params.set("endDate", applied.endDate);
+      const params = buildReceptionParams(applied!);
+      params.set("page", String(page));
+      params.set("pageSize", "50");
       return apiRequestJson("GET", `/api/reports/reception?${params.toString()}`);
     },
   });
 
   const handleView = () => {
     setPage(1);
-    setApplied({ startDate, endDate, status, user });
+    setApplied({ startDate, endDate, status, user, company });
+  };
+
+  const handleExport = async () => {
+    if (!applied) return;
+    setExporting(true);
+    try {
+      const params = buildReceptionParams(applied);
+      const res = await apiRequest("GET", `/api/reports/reception/export?${params.toString()}`);
+      if (!res.ok) {
+        const msg =
+          res.status === 403
+            ? "You are not authorized to export the reception report."
+            : "Could not export the reception report. Please try again.";
+        toast({ title: "Export failed", description: msg, variant: "destructive" });
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "reception_report.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Export started", description: "Your CSV download has begun." });
+    } catch {
+      toast({
+        title: "Export failed",
+        description: "Could not export the reception report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
   };
 
   const rows = report.data?.data ?? [];
@@ -180,14 +237,34 @@ export default function ReceptionReport() {
                   className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
                 />
               </div>
+
+              {/* Company */}
+              <div className="flex flex-col gap-2">
+                <Label className="text-[13px] font-bold text-[#555]">Company</Label>
+                <Input
+                  type="text"
+                  value={company}
+                  placeholder="Filter by company..."
+                  onChange={(e) => setCompany(e.target.value)}
+                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                />
+              </div>
             </div>
 
-            <div className="mt-6">
+            <div className="mt-6 flex items-center gap-3">
               <Button
                 onClick={handleView}
                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-semibold rounded-sm"
               >
                 View
+              </Button>
+              <Button
+                onClick={handleExport}
+                disabled={!applied || exporting}
+                variant="outline"
+                className="px-6 h-9 font-semibold rounded-sm border-slate-300 text-[#555]"
+              >
+                {exporting ? "Exporting..." : "Export CSV"}
               </Button>
             </div>
           </CardContent>
