@@ -40,13 +40,13 @@ interface SeededUser {
   email: string;
 }
 
-async function seedUser(role: string): Promise<SeededUser> {
+async function seedUser(role: string, branch = "Lahore Gulburg"): Promise<SeededUser> {
   const username = `__s8_${role}_${SUFFIX}_${createdUserIds.length}`;
   const email = `${username}@example.invalid`;
   const r = await pool.query(
-    `INSERT INTO drm.users (username, email, role_id, role, is_active)
-     VALUES ($1, $2, $3, $3, true) RETURNING id`,
-    [username, email, role],
+    `INSERT INTO drm.users (username, email, role_id, role, branch, is_active)
+     VALUES ($1, $2, $3, $3, $4, true) RETURNING id`,
+    [username, email, role, branch],
   );
   const id = String(r.rows[0].id);
   createdUserIds.push(id);
@@ -56,7 +56,7 @@ async function seedUser(role: string): Promise<SeededUser> {
     roleId: role,
     roles: [role],
     activeRoleId: role,
-    branch: "Lahore Gulburg",
+    branch,
     country: "Pakistan",
   });
   return { id, token, email };
@@ -112,8 +112,8 @@ beforeAll(async () => {
   await registerRoutes(app);
 
   adminUser = await seedUser("admin");
-  execUser = await seedUser("reception_executive");
-  otherUser = await seedUser("sales_executive");
+  execUser = await seedUser("reception_executive"); // branch: Lahore Gulburg
+  otherUser = await seedUser("sales_executive", "Karachi"); // distinct branch
 
   // Reception rows: one owned by the executive, one owned by another user.
   await seedMeeting({ personName: OWN_MARKER, meetingType: "Walk-in", status: "expected", createdBy: execUser.id });
@@ -271,6 +271,79 @@ describe("Stage 8 — reception report scope + filters", () => {
     if (!dbAvailable || !app) return;
     const res = await request(app)
       .get("/api/reports/reception?userId=not-a-uuid")
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Stage 8 — reception month/branch/receptionistId filters", () => {
+  it("filters by month (YYYY-MM) over meeting_date", async () => {
+    if (!dbAvailable || !app) return;
+    const currentMonth = new Date().toISOString().slice(0, 7); // seeded rows use now()
+    const res = await request(app)
+      .get(`/api/reports/reception?month=${currentMonth}&pageSize=200`)
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: any) => r.person_name);
+    expect(names).toContain(OWN_MARKER);
+  });
+
+  it("returns no seeded rows for a month with no activity", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get("/api/reports/reception?month=2000-01&pageSize=200")
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: any) => r.person_name);
+    expect(names).not.toContain(OWN_MARKER);
+    expect(names).not.toContain(OTHER_MARKER);
+  });
+
+  it("rejects a malformed month with 400 (not a silent ignore)", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get("/api/reports/reception?month=2026-13")
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(400);
+  });
+
+  it("filters by branch via the receptionist's user.branch", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get("/api/reports/reception?branch=Lahore%20Gulburg&pageSize=200")
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: any) => r.person_name);
+    expect(names).toContain(OWN_MARKER); // exec is in Lahore Gulburg
+    expect(names).not.toContain(OTHER_MARKER); // other user is in Karachi
+  });
+
+  it("matches branch by case-insensitive substring", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get("/api/reports/reception?branch=lahore&pageSize=200")
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: any) => r.person_name);
+    expect(names).toContain(OWN_MARKER); // partial "lahore" matches "Lahore Gulburg"
+    expect(names).not.toContain(OTHER_MARKER);
+  });
+
+  it("accepts receptionistId as an alias for userId", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get(`/api/reports/reception?receptionistId=${execUser.id}&pageSize=200`)
+      .set(auth(adminUser.token));
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: any) => r.person_name);
+    expect(names).toContain(OWN_MARKER);
+    expect(names).not.toContain(OTHER_MARKER);
+  });
+
+  it("rejects a malformed receptionistId with 400", async () => {
+    if (!dbAvailable || !app) return;
+    const res = await request(app)
+      .get("/api/reports/reception?receptionistId=not-a-uuid")
       .set(auth(adminUser.token));
     expect(res.status).toBe(400);
   });
