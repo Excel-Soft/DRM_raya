@@ -359,7 +359,10 @@ export default function SalaryReport() {
                   {report.isLoading ? (
                     <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : report.isError ? (
-                    <TableRow><TableCell colSpan={19} className="text-center text-[#d9534f] py-8">Could not load the salary report. You may not have permission to view payroll.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={19} className="text-center py-8">
+                      <div className="text-[#d9534f] mb-2">Could not load the salary report. You may not have permission to view payroll.</div>
+                      <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                    </TableCell></TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">No salary records match these filters.</TableCell></TableRow>
                   ) : (

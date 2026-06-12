@@ -338,8 +338,9 @@ export default function ReceptionReport() {
                     </TableRow>
                   ) : report.isError ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-[#d9534f] py-8">
-                        Could not load the reception report. Please try again.
+                      <TableCell colSpan={8} className="text-center py-8">
+                        <div className="text-[#d9534f] mb-2">Could not load the reception report. Please try again.</div>
+                        <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (

@@ -11,6 +11,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -107,6 +111,9 @@ export default function SalaryCreate() {
   const [employeeId, setEmployeeId] = useState("all");
   const [search, setSearch] = useState("");
   const [adjustments, setAdjustments] = useState<Record<string, Partial<Record<ManualKey, string>>>>({});
+  // Confirmation dialog for terminal run actions (Finalize / Cancel).
+  const [pendingAction, setPendingAction] = useState<{ id: string; status: "FINALIZED" | "CANCELLED"; period: string } | null>(null);
+  const [actionReason, setActionReason] = useState("");
 
   const years = Array.from({ length: 6 }, (_, i) => String(now.getFullYear() - i));
 
@@ -179,8 +186,11 @@ export default function SalaryCreate() {
   });
 
   const setStatus = useMutation({
-    mutationFn: async (vars: { id: string; status: string }) =>
-      apiRequestJson("PATCH", `/api/salary/runs/${vars.id}/status`, { status: vars.status }),
+    mutationFn: async (vars: { id: string; status: string; reason?: string }) =>
+      apiRequestJson("PATCH", `/api/salary/runs/${vars.id}/status`, {
+        status: vars.status,
+        ...(vars.reason && vars.reason.trim() ? { reason: vars.reason.trim() } : {}),
+      }),
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/salary/runs"] });
       toast({ title: `Run ${vars.status.toLowerCase()}`, description: "Status updated." });
@@ -342,7 +352,10 @@ export default function SalaryCreate() {
                   {preview.isLoading ? (
                     <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : preview.isError ? (
-                    <TableRow><TableCell colSpan={17} className="text-center text-[#d9534f] py-8">Could not load the salary preview.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={17} className="text-center py-8">
+                      <div className="text-[#d9534f] mb-2">Could not load the salary preview.</div>
+                      <Button size="sm" variant="outline" onClick={() => preview.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                    </TableCell></TableRow>
                   ) : filtered.length === 0 ? (
                     <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">No employees found for the selected period/scope.</TableCell></TableRow>
                   ) : (
@@ -406,7 +419,10 @@ export default function SalaryCreate() {
                   {runsQuery.isLoading ? (
                     <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : runsQuery.isError ? (
-                    <TableRow><TableCell colSpan={9} className="text-center text-[#d9534f] py-8">Could not load salary runs.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="text-center py-8">
+                      <div className="text-[#d9534f] mb-2">Could not load salary runs.</div>
+                      <Button size="sm" variant="outline" onClick={() => runsQuery.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                    </TableCell></TableRow>
                   ) : runs.length === 0 ? (
                     <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No salary runs yet.</TableCell></TableRow>
                   ) : (
@@ -432,10 +448,10 @@ export default function SalaryCreate() {
                                 <ActionBtn label="Approve" color="#3c8dbc" onClick={() => setStatus.mutate({ id: r.id, status: "APPROVED" })} disabled={setStatus.isPending} />
                               )}
                               {status === "APPROVED" && flags.canFinalize && (
-                                <ActionBtn label="Finalize" color="#00a65a" onClick={() => setStatus.mutate({ id: r.id, status: "FINALIZED" })} disabled={setStatus.isPending} />
+                                <ActionBtn label="Finalize" color="#00a65a" onClick={() => { setActionReason(""); setPendingAction({ id: r.id, status: "FINALIZED", period: `${MONTHS[r.period_month - 1]} ${r.period_year}` }); }} disabled={setStatus.isPending} />
                               )}
                               {!locked && flags.canCancel && (
-                                <ActionBtn label="Cancel" color="#d9534f" onClick={() => setStatus.mutate({ id: r.id, status: "CANCELLED" })} disabled={setStatus.isPending} />
+                                <ActionBtn label="Cancel" color="#d9534f" onClick={() => { setActionReason(""); setPendingAction({ id: r.id, status: "CANCELLED", period: `${MONTHS[r.period_month - 1]} ${r.period_year}` }); }} disabled={setStatus.isPending} />
                               )}
                               {locked && <span className="text-[11px] text-slate-400">—</span>}
                             </div>
@@ -450,6 +466,47 @@ export default function SalaryCreate() {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={!!pendingAction} onOpenChange={(open) => { if (!open) { setPendingAction(null); setActionReason(""); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingAction?.status === "FINALIZED" ? "Finalize this salary run?" : "Cancel this salary run?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAction?.status === "FINALIZED" ? (
+                <>Finalizing locks the run for <span className="font-semibold">{pendingAction?.period}</span>. A finalized run cannot be edited or re-generated.</>
+              ) : (
+                <>Cancelling the run for <span className="font-semibold">{pendingAction?.period}</span> is permanent and cannot be undone.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-bold text-[#555]">Reason (optional)</Label>
+            <textarea
+              value={actionReason}
+              onChange={(e) => setActionReason(e.target.value)}
+              rows={3}
+              placeholder="Add a note for the audit log…"
+              className="w-full rounded-sm border border-slate-300 p-2 text-sm focus:outline-none focus:ring-1 focus:ring-slate-400"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={setStatus.isPending}>Back</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={setStatus.isPending}
+              onClick={() => {
+                if (!pendingAction) return;
+                setStatus.mutate(
+                  { id: pendingAction.id, status: pendingAction.status, reason: actionReason },
+                  { onSettled: () => { setPendingAction(null); setActionReason(""); } },
+                );
+              }}>
+              {pendingAction?.status === "FINALIZED" ? "Finalize run" : "Cancel run"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
