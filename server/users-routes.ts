@@ -26,6 +26,55 @@ function safeUserAudit(data: Record<string, any>): Record<string, any> {
     return rest;
 }
 
+function round2(n: number): number {
+    return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// Allowance / basic-salary money fields stored on drm.users as text. Keep these
+// in sync with the migration in users.repository.ts and the parser in
+// server/salary-routes.ts.
+const MONEY_FIELDS = [
+    { key: "basicSalary", label: "Basic salary" },
+    { key: "dailyAllowance", label: "Daily allowance" },
+    { key: "mobileAllowance", label: "Mobile allowance" },
+    { key: "adminAllowance", label: "Admin allowance" },
+    { key: "conveyanceAllowance", label: "Conveyance allowance" },
+] as const;
+
+// Normalize a money input (allowance / basic salary) to a canonical numeric
+// string. Blanks become "0"; thousands separators and currency labels are
+// stripped (e.g. "1,000 pkr" -> "1000"). Returns null when the value contains no
+// parseable non-negative number, so the route can reject it honestly instead of
+// silently storing text that later parses to 0 and understates payroll.
+function normalizeMoneyInput(v: unknown): string | null {
+    if (v === null || v === undefined) return "0";
+    const s = String(v).trim();
+    if (s === "") return "0";
+    const cleaned = s.replace(/,/g, "");
+    const m = cleaned.match(/[0-9]+(?:\.[0-9]+)?/);
+    if (!m) return null;
+    const n = Number(m[0]);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return String(round2(n));
+}
+
+// Validate + normalize the money fields on a create/update payload in place.
+// When `requireAll` is true (create), missing fields default to "0"; otherwise
+// (patch) only provided fields are touched. Returns an error message string on
+// the first invalid field, or null when all fields are valid.
+function normalizeMoneyFields(data: Record<string, any>, requireAll: boolean): string | null {
+    for (const f of MONEY_FIELDS) {
+        const raw = data[f.key];
+        if (raw === undefined && !requireAll) continue;
+        const norm = normalizeMoneyInput(raw);
+        if (norm === null) {
+            return `${f.label} must be a valid non-negative amount`;
+        }
+        data[f.key] = norm;
+    }
+    return null;
+}
+
 const createUserSchema = z.object({
     // Legacy fields (for backward compatibility)
     fullName: z.string().optional(),
@@ -140,6 +189,12 @@ router.get("/", async (req: Request, res: Response) => {
 router.post("/", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const data = createUserSchema.parse(req.body);
+
+        const moneyError = normalizeMoneyFields(data, true);
+        if (moneyError) {
+            return sendError(res, badRequest(moneyError));
+        }
+
         console.log(`[USER_MGMT] Attempting to create user: ${data.email}`);
 
         const existing = await pool.query("select id from drm.users where email = $1 limit 1", [data.email]);
@@ -304,6 +359,11 @@ router.patch("/:id", requireUserAdmin, async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
         const data = updateUserSchema.parse(req.body);
+
+        const moneyError = normalizeMoneyFields(data, false);
+        if (moneyError) {
+            return sendError(res, badRequest(moneyError));
+        }
 
         let query = "update drm.users set updated_at = now()";
         const values: any[] = [];

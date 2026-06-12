@@ -21,3 +21,4 @@
 - [Project department routing](project-department-routing.md) — projects.department_type set once at workflow creation & read after; resolveWorkflowRouting treats software as structural, only DND-vs-PP split guesses from names.
 - [HR table id types + payroll honest-zeros](hr-tables-id-types.md) — attendance/leave/overtime user_id are varchar (cast users.id::text); penalties.employee_id is uuid; allowance/bonus/loan/OT-amount have no source, stay manual/0.
 - [pg client double-release pitfall](pg-client-double-release.md) — with try/finally release, never also call client.release() on early-return paths; double-release destabilizes the pool (blocking review bug).
+- [users money columns are normalized text](users-money-columns.md) — drm.users basic_salary+allowance cols stay text but are normalized numeric-parseable on write (users-routes) and boot (ensureUsersSchema); keep JS + SQL in lockstep.
