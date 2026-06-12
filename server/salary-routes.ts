@@ -1376,6 +1376,54 @@ export function registerSalaryRoutes(app: Express) {
     }
   });
 
+  // GET /api/salary/runs/:id/payment-summary — scoped paid/unpaid line counts
+  // for a FINALIZED run, so the UI can warn how many lines a bulk mark
+  // paid/unpaid would change across the whole run (not just the visible page).
+  // Reuses the same can("mark_paid"), scope and FINALIZED-only guards as the
+  // bulk endpoint so the count reflects exactly what that action would touch.
+  app.get("/api/salary/runs/:id/payment-summary", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!can(req, "mark_paid")) return deny(res, "mark salary as paid");
+
+      const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+      if (runRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
+      const run = runRes.rows[0];
+      const runStatus = String(run.status || "DRAFT").toUpperCase();
+      if (runStatus !== "FINALIZED") {
+        return res.status(409).json({ error: "Only FINALIZED salary runs can be marked paid or unpaid" });
+      }
+
+      const scope = await resolveScope(req);
+      const where: string[] = ["run_id = $1"];
+      const params: any[] = [req.params.id];
+      if (scope.kind === "department") {
+        if (!scope.department) return res.status(403).json({ error: "Not authorized for this run" });
+        params.push(scope.department); where.push(`department = $${params.length}`);
+      } else if (scope.kind === "self") {
+        params.push(scope.userId); where.push(`user_id = $${params.length}`);
+      }
+
+      const itemsRes = await pool.query(
+        `SELECT payment_status FROM drm.salary_run_items WHERE ${where.join(" AND ")}`, params,
+      );
+      if (scope.kind !== "all" && itemsRes.rows.length === 0) {
+        return res.status(403).json({ error: "Not authorized for this run" });
+      }
+
+      let paid = 0;
+      let unpaid = 0;
+      for (const it of itemsRes.rows) {
+        if (String(it.payment_status || "UNPAID").toUpperCase() === "PAID") paid += 1;
+        else unpaid += 1;
+      }
+      res.json({ runId: req.params.id, paid, unpaid, total: itemsRes.rows.length });
+    } catch (err) {
+      console.error("Error fetching salary run payment summary:", err);
+      res.status(500).json({ error: "Failed to fetch salary run payment summary" });
+    }
+  });
+
   registerSalaryReportRoutes(app);
 }
 
