@@ -320,8 +320,9 @@ export default function EventReport() {
                     </TableRow>
                   ) : query.isError ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-[#d9534f] py-8">
-                        Could not load the events report. Please try again.
+                      <TableCell colSpan={9} className="text-center py-8">
+                        <div className="text-[#d9534f] mb-2">Could not load the events report. Please try again.</div>
+                        <Button size="sm" variant="outline" onClick={() => query.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (
