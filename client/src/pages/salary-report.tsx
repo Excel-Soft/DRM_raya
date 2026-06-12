@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 
 type ReportRow = {
   id: string;
+  run_id: string;
   employee_name: string | null;
   department: string | null;
   branch: string | null;
@@ -153,6 +154,40 @@ export default function SalaryReport() {
     },
   });
 
+  const markRunPaid = useMutation({
+    mutationFn: async ({ runId, paymentStatus }: { runId: string; paymentStatus: "PAID" | "UNPAID" }) =>
+      apiRequestJson<{ updated: number; total: number }>("PATCH", `/api/salary/runs/${runId}/payment`, { paymentStatus }),
+    onSuccess: (data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/salary"] });
+      const verb = vars.paymentStatus === "PAID" ? "paid" : "unpaid";
+      toast({
+        title: vars.paymentStatus === "PAID" ? "Run marked as paid" : "Run marked as unpaid",
+        description: `${data?.updated ?? 0} of ${data?.total ?? 0} line(s) set to ${verb}.`,
+      });
+    },
+    onError: (err: any) => {
+      const msg = /403/.test(String(err?.message)) ? "You are not authorized to mark salaries as paid."
+        : /409/.test(String(err?.message)) ? "Only finalized runs can be marked paid."
+        : "Could not update payment status.";
+      toast({ title: "Bulk update failed", description: msg, variant: "destructive" });
+    },
+  });
+
+  // Distinct FINALIZED runs in the current view, with paid/unpaid counts, so
+  // accounts can mark a whole run paid/unpaid in one action.
+  const finalizedRuns = useMemo(() => {
+    const map = new Map<string, { runId: string; period: string; paid: number; unpaid: number }>();
+    for (const r of rows) {
+      if ((r.run_status || "").toUpperCase() !== "FINALIZED" || !r.run_id) continue;
+      const period = `${MONTHS[r.period_month - 1]?.slice(0, 3) ?? r.period_month} ${r.period_year}`;
+      const entry = map.get(r.run_id) ?? { runId: r.run_id, period, paid: 0, unpaid: 0 };
+      if ((r.payment_status || "UNPAID").toUpperCase() === "PAID") entry.paid += 1;
+      else entry.unpaid += 1;
+      map.set(r.run_id, entry);
+    }
+    return Array.from(map.values());
+  }, [rows]);
+
   async function handleExport() {
     try {
       const res = await fetch(`/api/reports/salary/export?${filterParams.toString()}`, {
@@ -259,6 +294,37 @@ export default function SalaryReport() {
                   className="h-9 w-[170px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </Filter>
             </div>
+
+            {/* Bulk per-run payment actions (accounts/admin, FINALIZED only) */}
+            {markPaidAllowed && finalizedRuns.length > 0 && (
+              <div className="space-y-2">
+                {finalizedRuns.map((run) => (
+                  <div key={run.runId}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-slate-200 bg-[#f8fafc] px-3 py-2">
+                    <div className="text-[12.5px] text-[#555]">
+                      <span className="font-semibold">Finalized run — {run.period}</span>
+                      <span className="ml-2 text-slate-500">
+                        {run.paid} paid / {run.unpaid} unpaid (this page)
+                      </span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        className="h-8 px-3 rounded-sm text-[12px] bg-[#00a65a] hover:bg-[#008d4c] text-white"
+                        disabled={markRunPaid.isPending || run.unpaid === 0}
+                        onClick={() => markRunPaid.mutate({ runId: run.runId, paymentStatus: "PAID" })}>
+                        Mark all as paid
+                      </Button>
+                      <Button variant="outline"
+                        className="h-8 px-3 rounded-sm text-[12px] border-slate-200"
+                        disabled={markRunPaid.isPending || run.paid === 0}
+                        onClick={() => markRunPaid.mutate({ runId: run.runId, paymentStatus: "UNPAID" })}>
+                        Mark all as unpaid
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Table */}
             <div className="overflow-x-auto border border-slate-100">

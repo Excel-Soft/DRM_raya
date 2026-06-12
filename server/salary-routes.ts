@@ -1036,6 +1036,79 @@ export function registerSalaryRoutes(app: Express) {
     }
   });
 
+  // PATCH /api/salary/runs/:id/payment — bulk mark every line of a FINALIZED
+  // run PAID/UNPAID (accounts/admin only). Reuses the same can("mark_paid"),
+  // scope, and FINALIZED-only guards as the per-line endpoint; each changed
+  // line is audited as salary.mark_paid just like the single-line action.
+  app.patch("/api/salary/runs/:id/payment", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!can(req, "mark_paid")) return deny(res, "mark salary as paid");
+
+      const paymentStatus = String(req.body?.paymentStatus || "").toUpperCase();
+      if (paymentStatus !== "PAID" && paymentStatus !== "UNPAID") {
+        return res.status(400).json({ error: "paymentStatus must be PAID or UNPAID" });
+      }
+
+      const runRes = await pool.query(`SELECT * FROM drm.salary_runs WHERE id = $1 AND deleted_at IS NULL`, [req.params.id]);
+      if (runRes.rows.length === 0) return res.status(404).json({ error: "Salary run not found" });
+      const run = runRes.rows[0];
+      const runStatus = String(run.status || "DRAFT").toUpperCase();
+      if (runStatus !== "FINALIZED") {
+        return res.status(409).json({ error: "Only FINALIZED salary runs can be marked paid or unpaid" });
+      }
+
+      // Row-scoping. mark_paid is currently only granted to all-scope classes,
+      // but enforce scope anyway so future role grants stay safe. Only the lines
+      // the caller is allowed to act on are affected.
+      const scope = await resolveScope(req);
+      const where: string[] = ["run_id = $1"];
+      const params: any[] = [req.params.id];
+      if (scope.kind === "department") {
+        if (!scope.department) return res.status(403).json({ error: "Not authorized for this run" });
+        params.push(scope.department); where.push(`department = $${params.length}`);
+      } else if (scope.kind === "self") {
+        params.push(scope.userId); where.push(`user_id = $${params.length}`);
+      }
+
+      const itemsRes = await pool.query(
+        `SELECT * FROM drm.salary_run_items WHERE ${where.join(" AND ")}`, params,
+      );
+      if (scope.kind !== "all" && itemsRes.rows.length === 0) {
+        return res.status(403).json({ error: "Not authorized for this run" });
+      }
+
+      const reason = (req.body?.reason as string) || undefined;
+      const toUpdate = itemsRes.rows.filter(
+        (it: any) => String(it.payment_status || "UNPAID").toUpperCase() !== paymentStatus,
+      );
+
+      for (const it of toUpdate) {
+        const previous = String(it.payment_status || "UNPAID").toUpperCase();
+        await pool.query(
+          `UPDATE drm.salary_run_items SET payment_status = $1 WHERE id = $2`,
+          [paymentStatus, it.id],
+        );
+        await recordAuditLog({
+          actorUserId: req.user.userId,
+          action: "salary.mark_paid",
+          module: "salary",
+          entityType: "salary_run_item",
+          entityId: it.id,
+          before: { paymentStatus: previous },
+          after: { paymentStatus },
+          reason,
+          req,
+        });
+      }
+
+      res.json({ runId: req.params.id, paymentStatus, updated: toUpdate.length, total: itemsRes.rows.length });
+    } catch (err) {
+      console.error("Error bulk updating salary payment status:", err);
+      res.status(500).json({ error: "Failed to bulk update salary payment status" });
+    }
+  });
+
   registerSalaryReportRoutes(app);
 }
 
