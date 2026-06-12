@@ -11,6 +11,10 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 
 type ReportRow = {
@@ -99,6 +103,19 @@ export default function SalaryReport() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 50;
+
+  const [pendingRunAction, setPendingRunAction] = useState<
+    { runId: string; period: string; paymentStatus: "PAID" | "UNPAID" } | null
+  >(null);
+
+  const runSummary = useQuery<{ runId: string; paid: number; unpaid: number; total: number }>({
+    queryKey: ["/api/salary/runs", pendingRunAction?.runId, "payment-summary"],
+    queryFn: async () => apiRequestJson("GET", `/api/salary/runs/${pendingRunAction!.runId}/payment-summary`),
+    enabled: !!pendingRunAction,
+  });
+  const affectedCount = pendingRunAction
+    ? (pendingRunAction.paymentStatus === "PAID" ? runSummary.data?.unpaid : runSummary.data?.paid)
+    : undefined;
 
   const years = Array.from({ length: 6 }, (_, i) => String(now.getFullYear() - i));
 
@@ -311,13 +328,13 @@ export default function SalaryReport() {
                       <Button
                         className="h-8 px-3 rounded-sm text-[12px] bg-[#00a65a] hover:bg-[#008d4c] text-white"
                         disabled={markRunPaid.isPending || run.unpaid === 0}
-                        onClick={() => markRunPaid.mutate({ runId: run.runId, paymentStatus: "PAID" })}>
+                        onClick={() => setPendingRunAction({ runId: run.runId, period: run.period, paymentStatus: "PAID" })}>
                         Mark all as paid
                       </Button>
                       <Button variant="outline"
                         className="h-8 px-3 rounded-sm text-[12px] border-slate-200"
                         disabled={markRunPaid.isPending || run.paid === 0}
-                        onClick={() => markRunPaid.mutate({ runId: run.runId, paymentStatus: "UNPAID" })}>
+                        onClick={() => setPendingRunAction({ runId: run.runId, period: run.period, paymentStatus: "UNPAID" })}>
                         Mark all as unpaid
                       </Button>
                     </div>
@@ -430,6 +447,47 @@ export default function SalaryReport() {
           </CardContent>
         </Card>
       </div>
+
+      <AlertDialog open={!!pendingRunAction} onOpenChange={(open) => { if (!open) setPendingRunAction(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingRunAction?.paymentStatus === "PAID" ? "Mark entire run as paid?" : "Mark entire run as unpaid?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRunAction && (
+                runSummary.isLoading ? (
+                  <>Checking how many lines this will affect…</>
+                ) : runSummary.isError ? (
+                  <>Could not load the line count for this run. You can still proceed, but please double-check the run before confirming.</>
+                ) : (
+                  <>
+                    This will set <span className="font-semibold">{affectedCount ?? 0}</span>{" "}
+                    {pendingRunAction.paymentStatus === "PAID" ? "unpaid" : "paid"} line(s) in the
+                    finalized run for <span className="font-semibold">{pendingRunAction.period}</span> to{" "}
+                    <span className="font-semibold">{pendingRunAction.paymentStatus === "PAID" ? "paid" : "unpaid"}</span> at once.
+                    This affects the whole payroll run and cannot be undone in one step.
+                  </>
+                )
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={markRunPaid.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={markRunPaid.isPending || runSummary.isLoading}
+              onClick={() => {
+                if (!pendingRunAction) return;
+                markRunPaid.mutate(
+                  { runId: pendingRunAction.runId, paymentStatus: pendingRunAction.paymentStatus },
+                  { onSettled: () => setPendingRunAction(null) },
+                );
+              }}>
+              {pendingRunAction?.paymentStatus === "PAID" ? "Mark all as paid" : "Mark all as unpaid"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
