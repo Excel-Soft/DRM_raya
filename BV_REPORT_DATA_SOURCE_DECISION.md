@@ -42,12 +42,30 @@ stored data.
    (`project-report.service.ts`). Treating it as read-only avoids disturbing
    financial reconciliation and respects the "run the imported app as-is" mandate.
 
-## Honesty rule for metrics
+## Metrics formulas & honesty rule
 
-Metrics are computed from real stored rows. A metric that cannot be derived —
-specifically an **average `successRate` over zero rows** — is returned as `null`
-and listed in `missingMetrics`, never fabricated as `0` or `100`. The UI renders
-such a value as `—` (and `"N/A"` in CSV export).
+Metrics are computed honestly from the real, **filtered** row set — never hardcoded:
+
+| Metric | Formula |
+|--------|---------|
+| `totalTasks` | COUNT of BV report records in the filtered set (semantically "Total Reports"; the key name is kept for shared `ReportData`/CSV compatibility) |
+| `valueOfServiceSold` (alias `valueSold`) | SUM of `value_sold` |
+| `successRate` | `approvedCount / totalCount * 100`, or **`null`** when there are zero rows |
+| `followUpsCompleted` | **`null`** — no auditable aggregate source |
+| `missedLeads` | **`null`** — no auditable aggregate source |
+
+Any metric that cannot be derived is returned as `null`, named in
+`missingMetrics`, **and explained in `missingMetricReasons`** — never fabricated
+as `0`/`100`. The UI renders such a value as `—` (and `"N/A"` in CSV export).
+
+### Missing-metric limitations (followUpsCompleted / missedLeads)
+
+These two have **no reliable relation to roll up** into a headline. The only
+values available are the per-report *self-reported* `follow_ups_done` /
+`missed_leads` columns. Summing self-reported numbers into a headline KPI would
+be misleading, and there is no auditable follow-up/lead source to derive them
+from, so both are returned as `null` + a `missingMetricReasons` entry. The
+per-report values stay visible per row (`rows`/`details`) for transparency.
 
 ## Permissions & audit
 
@@ -56,8 +74,34 @@ such a value as `—` (and `"N/A"` in CSV export).
   self, manager → department members, global admin → unscoped).
 - Status is server-authoritative: only approver roles may set
   `Approved`/`Rejected`; only a `Submitted` row may transition (else **409**).
+- **Approval metadata is persisted.** Approving stamps `approved_by`/`approved_at`;
+  rejecting stamps `rejected_by`/`rejected_at` and stores `rejection_reason`.
+  A reject **requires a non-empty `reason`** in the body (else **400**).
 - Every create / update / approve / reject / export is recorded via
-  `ActivityLogService`.
+  `ActivityLogService` (the reject audit also records the reason).
+
+## Filters, pagination & export
+
+`GET /api/reports/bv` (and the export) accept:
+
+| Param | Behaviour |
+|-------|-----------|
+| `from` / `to` (aliases `startDate` / `endDate`) | date range on `report_date`; `from`/`to` win when both forms are present |
+| `status` | must be one of `Draft`/`Submitted`/`Approved`/`Rejected` (else **400**); `all` clears it |
+| `company` | case-insensitive `ILIKE` on `coalesce(r.company_name, c.company_name)` |
+| `branch` | exact match on the author's `users.branch` |
+| `userId` | row-scope narrowing (handled by `resolveBvScope`; `all` = no narrowing) |
+| `page` / `limit` | list only; `limit` clamped to `1..500`; `rows` is the paginated slice |
+| `package` / `method` | **unsupported** — supplying a non-empty value returns **400** (fails closed rather than silently ignoring) |
+
+Metrics and `pagination.total` are **always computed over the full filtered
+set**, never the paginated slice. `roleScope` is **N/A**: scope is derived from
+the caller's role + `userId`, not a client-supplied parameter.
+
+**Export** applies the same filters and row-scope as the list but is **never
+paginated**, so the exported row count always equals `pagination.total`
+(`reportCount`). The export filename includes the date range, the selected user
+(`_user-<id8>` or `_user-all`), and the status filter when set.
 
 ## Schema note
 

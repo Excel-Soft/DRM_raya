@@ -23,17 +23,28 @@ than values derived from stored data.
 
 ## What changed
 
-### Canonical read + metrics — `server/services/bv-report.service.ts` (new)
-- `getBvReportData(filterUserIds, fromDate, toDate)` reads **exclusively** from
-  `drm.bv_reports`, joined to `drm.customers` (company-name fallback) and
-  `drm.users` (author + assignee display names).
+### Canonical read + metrics — `server/services/bv-report.service.ts`
+- `getBvReportData(filterUserIds, fromDate, toDate, filters?)` reads
+  **exclusively** from `drm.bv_reports`, joined to `drm.customers` (company-name
+  fallback) and `drm.users` (author + assignee display names; author `branch`).
 - Date-range filter on `report_date`; optional row-scope
-  `(user_id = ANY OR assigned_to = ANY)` when `filterUserIds` is provided.
-- Metrics are computed from real stored rows:
-  - `totalTasks`, `valueOfServiceSold`, `followUpsCompleted`, `missedLeads` = sums.
-  - `successRate` = average over rows, or **`null`** with `missingMetrics:["successRate"]`
-    when there are **zero** rows. No fabricated `0`/`100` placeholders.
-  - `reportCount` and per-day `chartData` are included.
+  `(user_id = ANY OR assigned_to = ANY)` when `filterUserIds` is provided; plus
+  optional `status`, `company` (ILIKE on `coalesce(company_name, c.company_name)`),
+  and `branch` (author `users.branch`) filters.
+- Metrics are computed honestly over the **full filtered set** (never the page):
+  - `totalTasks` = **COUNT** of report records (semantically "Total Reports").
+  - `valueOfServiceSold` (alias `valueSold`) = SUM of `value_sold`.
+  - `successRate` = `approvedCount / totalCount * 100`, or **`null`** with
+    `missingMetrics:["successRate"]` when there are **zero** rows. No fabricated
+    `0`/`100` placeholders.
+  - `followUpsCompleted` / `missedLeads` = **`null`** (no auditable aggregate
+    source) — named in `missingMetrics` and explained in `missingMetricReasons`.
+    The per-report self-reported values stay visible per row.
+  - `reportCount`, per-day `chartData`, and `pagination {page,limit,total,totalPages}`
+    are included.
+- **Additive shape (no renames):** all prior keys retained; added `valueSold`,
+  `missingMetricReasons`, `pagination`, and `rows` (the paginated slice;
+  `details` remains the full filtered set, which the metrics/CSV use).
 
 ### Routing — `server/reports-routes.ts`
 - Registered **specific** `GET /reports/bv` and `GET /reports/bv/export` routes
@@ -44,8 +55,15 @@ than values derived from stored data.
 - Both routes guarded by `requireReportPermission("bv_report", "view" | "export")`
   and scoped (executive → self, manager → department user-ids, global admin →
   unscoped). Export writes a `bv_report.export` audit entry (csv/json).
+- Both routes parse query filters via `parseBvFilters` (fails closed: an
+  out-of-range `status` or a supplied `package`/`method` is a **400**) and accept
+  `startDate`/`endDate` as aliases for `from`/`to`. The list also paginates via
+  `parseBvPaging` (`limit` clamped `1..500`); the **export never paginates**, so
+  the exported row count equals `pagination.total`. The export **filename**
+  includes the date range, selected user (`_user-<id8>`/`_user-all`), and status.
 - CSV `bv` branch split out from the GM branch with its own columns; a `null`
-  `successRate` renders as `"N/A"` rather than crashing.
+  `successRate`/`followUpsCompleted`/`missedLeads` renders as `"N/A"` rather than
+  crashing (the shared `ReportMetrics` type now allows `null`).
 
 ### CRUD + approval workflow — `server/reports-routes.ts`
 - `POST /bv-reports` (create) and `PUT /bv-reports/:id` (edit) guarded by
@@ -53,13 +71,25 @@ than values derived from stored data.
   approver role, and rows already `Approved`/`Rejected` are locked for non-approvers.
 - New `POST /bv-reports/:id/approve` and `POST /bv-reports/:id/reject` (approve
   guard): only a `Submitted` row may transition; any other source status returns
-  **409**.
+  **409**. Approve stamps `approved_by`/`approved_at`; **reject requires a
+  non-empty `reason`** (else **400**) and stamps `rejected_by`/`rejected_at` +
+  `rejection_reason`.
+- `PUT /bv-reports/:id` and a new **`PATCH /bv-reports/:id` alias** share one
+  handler (identical edit semantics + guards).
 - Every create / update / approve / reject / export is audited via
-  `ActivityLogService.log` (best-effort, never throws on the mutation path).
+  `ActivityLogService.log` (best-effort, never throws on the mutation path); the
+  reject audit also records the reason.
 
 ### Repository — `server/repositories/bv-reports.repository.ts`
-- `list(filterUserIds)`, `findById(filterUserIds | null, id)`, and `setStatus(id, status)`
-  support manager team-visibility and unscoped approver lookups.
+- `list(filterUserIds)`, `findById(filterUserIds | null, id)`, and
+  `setStatus(id, status, {actorId?, reason?})` support manager team-visibility,
+  unscoped approver lookups, and approval-metadata stamping. `setStatus` writes
+  `approved_by`/`approved_at` on an Approve and `rejected_by`/`rejected_at`/
+  `rejection_reason` on a Reject.
+- `ensureBvReportsSchema()` idempotently adds the five approval columns
+  (`approved_by`, `approved_at`, `rejected_by`, `rejected_at`, `rejection_reason`)
+  via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (repo-wide `db:push` is broken),
+  and `RETURNING_COLUMNS` now includes them. Mirrored in `shared/schema.ts`.
 - **Migration fix (boot blocker):** `ensureBvReportsSchema()` upgrades the legacy
   `bv_reports` id columns to `uuid`. A legacy import had `assigned_to` as
   `varchar`, so the `add column if not exists assigned_to uuid` was a no-op and
@@ -73,14 +103,18 @@ than values derived from stored data.
   data risk.)
 
 ### Frontend
-- `client/src/pages/user-reports.tsx`: `ReportMetrics.successRate` is now
-  `number | null` (renders `—` when null); `BvReportTable` reshaped to real
-  `bv_reports` columns (#/Date/Title/Company/Author/Status/TotalTasks/ValueSold/
-  SuccessRate/Follow-ups/MissedLeads); the Type filter became a Status filter
-  (All/Draft/Submitted/Approved/Rejected); search covers company/title/author.
+- `client/src/pages/user-reports.tsx`: `ReportMetrics.successRate`,
+  `followUpsCompleted`, and `missedLeads` are now `number | null` (render `—`
+  when null); the report **export now sends the selected `userId`** so the export
+  is scoped and filename-tagged to the chosen user (the list query already sent
+  it). `BvReportTable` shows real `bv_reports` columns (#/Date/Title/Company/
+  Author/Status/TotalTasks/ValueSold/SuccessRate/Follow-ups/MissedLeads); the
+  per-row "Total Tasks" column keeps its name (it is the report's self-reported
+  field, distinct from the new COUNT headline). No aggregate metric card is
+  rendered on this screen, so there was no "Total Reports" card to relabel.
 - `client/src/pages/bv-report-new.tsx`: Status is a `Select` (was free-text);
   non-approvers are restricted to `Draft`/`Submitted` (server remains
-  authoritative).
+  authoritative). Verified to use its own per-report form fields (unchanged).
 
 ---
 
@@ -89,23 +123,28 @@ than values derived from stored data.
 - `npm run check` (`tsc --noEmit`): **56** errors total — all pre-existing
   baseline errors in unrelated files (loan/vas/gm/refund, project-assignments,
   etc.); **0** new errors in any file touched by this stage.
-- `npm run dev`: server boots clean; `ensureBvReportsSchema()` now completes and
-  `drm.bv_reports.{id,user_id,customer_id,assigned_to}` are all `uuid`.
+- `npm run dev`: server boots clean; `ensureBvReportsSchema()` completes, adding
+  the five approval columns (`approved_by/at`, `rejected_by/at`,
+  `rejection_reason`) and keeping `{id,user_id,customer_id,assigned_to}` as `uuid`.
+- `npm test` (`vitest run`): **104** tests pass (no regressions).
 
-### Smoke tests (all 10 passed, authenticated as a minted admin JWT; non-approver = `sales_executive`)
+### Smoke tests (all 10 passed; admin = minted `admin` JWT, non-approver = minted `sales_executive` JWT)
+
+These mirror the spec's end-to-end checks. Temporary rows were created via the
+real API and deleted afterward; no manual DB edits.
 
 | # | Check | Result |
 |---|-------|--------|
-| 1 | `GET /reports/bv` returns canonical shape (metrics + missingMetrics + reportCount + details) | PASS |
-| 2 | `POST /bv-reports` creates a Draft report | PASS |
-| 3 | Created report appears in `GET /reports/bv` (single source) | PASS |
-| 4 | `GET /reports/bv/export?format=csv` returns reshaped CSV header | PASS |
-| 5 | `GET /reports/bv/export?format=json` returns `type:"bv"` JSON | PASS |
-| 6 | Empty window → `successRate: null` + `missingMetrics:["successRate"]` (no fabrication) | PASS |
-| 7 | `POST /bv-reports/:id/approve` moves `Submitted → Approved` | PASS |
-| 8 | Re-approving an `Approved` report → **409** | PASS |
-| 9 | `POST /bv-reports/:id/reject` moves `Submitted → Rejected` | PASS |
-| 10 | Non-approver cannot set `Approved` (403 on create) **and** approve route is forbidden (403) | PASS |
+| 1 | `POST /bv-reports` (as non-approver) creates a report → `201` | PASS |
+| 2 | The created report appears in `GET /reports/bv` | PASS |
+| 3 | It surfaces with no DB intervention — single canonical source (`/reports/bv`) | PASS |
+| 4 | Non-approver creating `status:"Approved"` is rejected → **403** | PASS |
+| 5 | Non-approver hitting `POST /bv-reports/:id/approve` → **403** | PASS |
+| 6 | `POST /bv-reports/:id/reject` with blank/missing reason → **400** | PASS |
+| 7 | Metrics are real, not hardcoded: `totalTasks` = COUNT, `successRate` = approved-ratio, `followUpsCompleted`/`missedLeads` = `null` + `missingMetricReasons` | PASS |
+| 8 | `userId` filter narrows both metrics and rows (`execTotal ≤ allTotal`) | PASS |
+| 9 | Export carries the user filter — filename tagged `_user-<id8>` | PASS |
+| 10 | Export is not paginated — exported rows == filtered `pagination.total` (even with list `limit=1`) | PASS |
 
 ---
 
