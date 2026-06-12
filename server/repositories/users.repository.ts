@@ -75,10 +75,37 @@ async function ensureUsersSchema() {
     );
   `;
 
+  // Normalize the text-typed money columns (basic salary + fixed allowances) to
+  // canonical numeric strings so payroll can't be skewed by malformed text like
+  // "1,000 pkr" (which would otherwise parse to 0). Blanks/garbage -> "0", and
+  // thousands separators / currency labels are stripped, preserving the numeric
+  // value. Idempotent: only rows whose value isn't already canonical are touched.
+  // Keep in sync with normalizeMoneyInput() in server/users-routes.ts.
+  const moneyCols = [
+    "basic_salary",
+    "daily_allowance",
+    "mobile_allowance",
+    "admin_allowance",
+    "conveyance_allowance",
+  ];
+  const normExpr = (c: string) =>
+    `coalesce(substring(replace(coalesce(${c}, ''), ',', '') from '([0-9]+(?:\\.[0-9]+)?)'), '0')`;
+  const setClause = moneyCols.map((c) => `${c} = ${normExpr(c)}`).join(",\n      ");
+  const whereClause = moneyCols
+    .map((c) => `${c} is distinct from ${normExpr(c)}`)
+    .join("\n      or ");
+  const normalizeMoneySql = `update drm.users set\n      ${setClause}\n    where ${whereClause};`;
+
   try {
     await pool.query(alterSql);
   } catch (err) {
     console.error("Failed to ensure users schema (continuing):", err);
+  }
+
+  try {
+    await pool.query(normalizeMoneySql);
+  } catch (err) {
+    console.error("Failed to normalize users money columns (continuing):", err);
   }
 }
 
