@@ -215,8 +215,8 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
         projectId: targetProjectId,
         ownerUserId: managerUserId,
         assignedToUserId: assigneeId,
-        title: title || `Product Posting - ${project.name}`,
-        description: description || project.description || `Assigned for product posting workflow of ${project.name}`,
+        title: title || `Software - ${project.name}`,
+        description: description || project.description || `Assigned for software workflow of ${project.name}`,
         status: "ToDo" as any,
         notes: JSON.stringify({ duration: assignedDurationMinutes, links: links || "" }),
         dueDate: assignedDurationMinutes ? new Date(Date.now() + Number(assignedDurationMinutes) * 60 * 1000) : null,
@@ -253,7 +253,7 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
       action: "TASK_ASSIGNED",
       resourceType: "SoftwareWorkflow",
       resourceId: projectId,
-      details: `Assigned product posting task to executive with ${Number(assignedDurationMinutes) || 0} minutes`,
+      details: `Assigned software task to executive with ${Number(assignedDurationMinutes) || 0} minutes`,
     });
 
     await NotificationService.notify({

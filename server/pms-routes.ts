@@ -472,8 +472,80 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only the project owner or a manager can edit" });
       }
 
-      // Don't allow changing the owner
-      const { ownerUserId, ...updateData } = req.body;
+      // Workflow-sensitive fields must NEVER be mutated through this generic
+      // metadata-edit endpoint — they are owned by the centralized
+      // WorkflowTransitionService (server/services/workflow-transition.service.ts).
+      // Allowing them here would let an owner/manager skip the state machine
+      // (e.g. force `status` to a later phase, re-point `invoiceId`, or change
+      // `ownerUserId`). Fail closed: reject any attempt that touches them.
+      const WORKFLOW_SENSITIVE_FIELDS = [
+        "status",
+        "currentPhase",
+        "current_phase",
+        "phase",
+        "departmentType",
+        "department_type",
+        "invoiceId",
+        "invoice_id",
+        "ownerUserId",
+        "owner_user_id",
+        // Workflow actor ids (manager / executive / QA / verification) — never
+        // assignable through a generic metadata edit.
+        "assignedToUserId",
+        "assigned_to_user_id",
+        "managerUserId",
+        "manager_user_id",
+        "qaUserId",
+        "qa_user_id",
+        "qaManagerUserId",
+        "qa_manager_user_id",
+        "verificationUserId",
+        "verification_user_id",
+        "verificationManagerUserId",
+        "verification_manager_user_id",
+        "executiveUserId",
+        "executive_user_id",
+        "isDeleted",
+        "is_deleted",
+        "id",
+        "createdAt",
+        "created_at",
+        "updatedAt",
+        "updated_at",
+      ];
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const attemptedSensitive = WORKFLOW_SENSITIVE_FIELDS.filter((f) =>
+        Object.prototype.hasOwnProperty.call(body, f),
+      );
+      if (attemptedSensitive.length > 0) {
+        return res.status(400).json({
+          error:
+            "These fields cannot be changed via project edit; they are managed by the workflow.",
+          fields: attemptedSensitive,
+        });
+      }
+
+      // Fail-closed allowlist of editable project metadata. Keys must match the
+      // Drizzle column names (camelCase); anything else is ignored.
+      const EDITABLE_PROJECT_FIELDS = [
+        "name",
+        "description",
+        "workSpace",
+        "customerId",
+        "startDate",
+        "endDate",
+        "notes",
+      ] as const;
+      const updateData: Record<string, unknown> = {};
+      for (const field of EDITABLE_PROJECT_FIELDS) {
+        if (Object.prototype.hasOwnProperty.call(body, field)) {
+          updateData[field] = body[field];
+        }
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: "No editable fields provided" });
+      }
 
       const updated = await projectsRepository.update(req.params.id, updateData);
 
