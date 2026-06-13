@@ -124,14 +124,18 @@ export class NotificationService {
         }
         try {
             await pool.query(
-                `INSERT INTO drm.notifications (id, user_id, message, type, read_status, link, target_url, created_at, updated_at)
-                 VALUES (gen_random_uuid(), $1, $2, $3, 'UNREAD', $4, $5, NOW(), NOW())`,
+                `INSERT INTO drm.notifications (id, user_id, message, type, read_status, link, target_url, module, entity_type, entity_id, priority, created_at, updated_at)
+                 VALUES (gen_random_uuid(), $1, $2, $3, 'UNREAD', $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
                 [
                     data.userId,
                     data.message,
                     data.type || "INFO",
                     data.link || data.targetUrl || null,
                     data.targetUrl || null,
+                    data.module || null,
+                    data.entityType || null,
+                    data.entityId || null,
+                    data.priority || "normal",
                 ],
             );
             return true;
