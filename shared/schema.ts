@@ -2425,6 +2425,13 @@ export const notifications = drmSchema.table("notifications", {
   readStatus: text("read_status").notNull().default("UNREAD"),
   link: text("link"),
   targetUrl: text("target_url"),
+  // Patch 3 Stage 2 — additive routing/context metadata (idempotent runtime
+  // migration in server/db/ensure.ts). entity_id is text because entity ids vary
+  // (uuid customers, varchar opportunities, etc.) across modules.
+  module: text("module"),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  priority: text("priority").notNull().default("normal"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -230,6 +230,30 @@ async function ensureBonusesSchema(client: {
   );
 }
 
+/**
+ * Patch 3 Stage 2 — additive, idempotent notification routing/context columns on
+ * drm.notifications (mirrors shared/schema.ts). `db:push` is broken repo-wide
+ * (pre-existing FK mismatch), so schema changes are applied at runtime here.
+ * These let NotificationService persist module/entity/priority instead of
+ * dropping them. All additive + nullable/defaulted — safe on a populated table.
+ */
+async function ensureNotificationsSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.notifications ADD COLUMN IF NOT EXISTS module text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.notifications ADD COLUMN IF NOT EXISTS entity_type text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.notifications ADD COLUMN IF NOT EXISTS entity_id text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.notifications ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal'`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -259,6 +283,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureSalarySchema(client);
         await ensureDiagnosisSchema(client);
         await ensureBonusesSchema(client);
+        await ensureNotificationsSchema(client);
         return;
       } catch (err) {
         lastErr = err;

@@ -28,7 +28,9 @@ export type ReportKey =
   | "day_target"
   | "diagnosis_report"
   | "bv_report"
-  | "penalty_report";
+  | "penalty_report"
+  | "project_report"
+  | "link_report";
 
 export type ReportAction =
   | "view"
@@ -122,6 +124,17 @@ const REPORT_PERMISSION_MATRIX: Record<
     create: ["dd_manager", "service_manager"],
     approve: ["hod", "account_manager"],
     delete: ["account_manager"],
+  },
+  // project_report / link_report mirror the managerial+HOD gating already
+  // enforced inline in project-report-routes.ts / team-report-link-report-routes.ts
+  // (executives get 403). Kept conservative; row-scope stays in the handlers.
+  project_report: {
+    view: ["hod", "sales_manager", "dd_manager", "service_manager", "account_manager"],
+    export: ["hod", "account_manager"],
+  },
+  link_report: {
+    view: ["hod", "sales_manager", "dd_manager", "service_manager", "account_manager"],
+    export: ["hod", "account_manager"],
   },
 };
 
