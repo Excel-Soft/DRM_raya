@@ -3,6 +3,7 @@ import { leaveRequestRepository } from "./repositories/leave-request.repository"
 import { z } from "zod";
 import { pool } from "./db";
 import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
 import { ActivityLogService } from "./services/activity-service";
 import { sendApiError, sendError, ApiError } from "./utils/api-error";
 import { ValidationService } from "./services/validation.service";
@@ -245,7 +246,7 @@ export function registerLeaveRoutes(app: Express) {
   });
 
   // PATCH /api/leave/:id/approve - Approve a leave request (for managers)
-  app.patch("/api/leave/:id/approve", async (req, res) => {
+  app.patch("/api/leave/:id/approve", requireActionPermission("leave.approve", { allowRole: isManagerialRole, message: "You are not authorized to approve leave requests." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -289,7 +290,7 @@ export function registerLeaveRoutes(app: Express) {
   });
 
   // PATCH /api/leave/:id/reject - Reject a leave request (for managers)
-  app.patch("/api/leave/:id/reject", async (req, res) => {
+  app.patch("/api/leave/:id/reject", requireActionPermission("leave.reject", { allowRole: isManagerialRole, message: "You are not authorized to reject leave requests." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
