@@ -87,6 +87,23 @@ invoiceRouter.get("/queue/account", requireRole("account_manager", "admin"), asy
 });
 
 // ---------------------------------------------------------------------------
+// Collection export (actor-scoped — same scope as GET /). Registered before the
+// parameterized /:id/* routes so this literal path is unambiguous.
+// ---------------------------------------------------------------------------
+
+// GET /api/invoices/export — actor-scoped collection export
+invoiceRouter.get("/export", async (req, res) => {
+  try {
+    requireAuth(req);
+    const data = await InvoiceWorkflowService.exportList(actorFrom(req));
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error("[Invoices export-list]", error);
+    sendError(res, error);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // History + export
 // ---------------------------------------------------------------------------
 
