@@ -30,12 +30,17 @@ export const INVOICE_STATUS = {
 
 export type InvoiceStatus = (typeof INVOICE_STATUS)[keyof typeof INVOICE_STATUS];
 
-/** Statuses that still occupy the pipeline (used for duplicate detection). */
+/**
+ * Statuses that still occupy the pipeline (used for duplicate detection).
+ * PAID is included: a completed billing event must still block a second active
+ * invoice for the same customer + service + source (override-with-reason aside).
+ */
 const ACTIVE_STATUSES: InvoiceStatus[] = [
   INVOICE_STATUS.DRAFT,
   INVOICE_STATUS.PENDING_HOD,
   INVOICE_STATUS.PENDING_ACCOUNT,
   INVOICE_STATUS.APPROVED,
+  INVOICE_STATUS.PAID,
 ];
 
 /** Legal transition map: current status -> set of allowed next statuses. */
@@ -567,6 +572,13 @@ export class InvoiceWorkflowService {
         "paymentTerms",
         "notes",
       ];
+      // Separation of duties: once an invoice is awaiting HOD approval, a
+      // reviewing HOD / manager (anyone who is not the sales owner or an admin)
+      // may NOT change the financial amount or currency during approval. The
+      // sales owner can still correct figures; an admin retains full correction.
+      if (invoice.status === INVOICE_STATUS.PENDING_HOD && !isOwner && !admin) {
+        allowed = allowed.filter((f) => f !== "amount" && f !== "currency");
+      }
     } else if (invoice.status === INVOICE_STATUS.PENDING_ACCOUNT) {
       allowed = admin
         ? ["amount", "currency", "paymentTerms", "notes"]
@@ -679,6 +691,16 @@ export class InvoiceWorkflowService {
     const history = await this.history(id);
     const projectId = await this.findProjectLink(id);
     return { invoice, history, projectId, exportedAt: new Date().toISOString() };
+  }
+
+  /**
+   * Actor-scoped collection export. Returns exactly the same set of invoices the
+   * caller can see via list() (sales execs see only their own) — it never widens
+   * access — wrapped with an export timestamp.
+   */
+  static async exportList(actor: Actor) {
+    const invoices = await this.list(actor);
+    return { invoices, count: invoices.length, exportedAt: new Date().toISOString() };
   }
 
   static async findProjectLink(invoiceId: string): Promise<string | null> {
