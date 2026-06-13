@@ -141,3 +141,40 @@ free-text name matching when those are absent — flagging that with
 > free-text project/invoice names (`derivedFromText: true`) should be
 > back-filled with structured routing columns so routing no longer depends on
 > string heuristics.
+
+## Allowed-actions projection (advisory)
+
+`getAllowedWorkflowActions({ fromPhase, actorRole?, actorRoles? })` is a **pure,
+read-only** projection of `WORKFLOW_TRANSITIONS`. Given the current phase and the
+actor's role(s) it returns the actions that role could legally *initiate* from
+that phase, using the **same** action/legal-state + role semantics as
+`validateTransition` (admin always passes; a `null` role-set on a rule means no
+restriction at this layer; when no role context is supplied no role-filtering is
+applied). It performs **no** DB writes and never throws.
+
+It is **advisory only**. It does not apply ownership or content (reason/evidence)
+rules — those still run at write time. The authoritative guard remains
+`validateTransition` / `assertWorkflowTransition` on every mutation path; the
+projection exists so a future UI can disable obviously-invalid action buttons
+without duplicating the table.
+
+> **Deferred (this stage):** wiring this helper to an endpoint and gating the
+> workflow UI buttons against it is intentionally **not** done yet — the existing
+> dashboards render their action buttons inline across many screens and retrofitting
+> server-driven gating is a UI rewrite. The helper ships now so that work can build
+> on it without re-deriving the state machine.
+
+## Source-of-truth file paths
+
+| Concern                              | Path                                                  |
+| ------------------------------------ | ----------------------------------------------------- |
+| State machine + guards + projection  | `server/services/workflow-transition.service.ts`      |
+| Workflow notifications               | `server/services/notification-service.ts`             |
+| Per-entity workflow timeline (UI)    | `client/src/components/workflow-timeline.tsx`          |
+| Software workflow routes             | `server/routes/software-workflow-routes.ts`           |
+| Product Posting / D&D workflow routes| `server/routes/product-posting-workflow-routes.ts`    |
+| Invoice workflow service             | `server/services/invoice-workflow.service.ts`         |
+
+The `workflow-timeline.tsx` component lives directly under `client/src/components/`
+(it is intentionally **not** moved into a `workflow/` subdirectory — doing so would
+break its existing imports for no functional gain).

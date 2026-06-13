@@ -169,11 +169,10 @@ export default function SoftwareManagerDashboard() {
     { key: "team-balance", label: "Team Balance Leave" },
   ];
 
-  const pmsSettingRows = [
-    { no: "01", company: "Web Excels", person: "M. Shahbaz", project: "CRM Revamp", status: "Pending", docUpload: "Uploaded", depApproved: "Waiting", action: "View" },
-    { no: "02", company: "Skillkot Traders", person: "Bilal Ahmed", project: "ERP Sync", status: "Running", docUpload: "Uploaded", depApproved: "Approved", action: "Open" },
-    { no: "03", company: "Alpha Supplies", person: "Hamza Ali", project: "Portal Upgrade", status: "Data Verify", docUpload: "Pending", depApproved: "Waiting", action: "Review" },
-  ];
+  // Stage 4 (spec J): fabricated PMS rows removed — no mock workflow state.
+  // Renders an empty table until wired to a live PMS endpoint (deferred — see
+  // PATCH3_STAGE4_WORKFLOW_TRANSITION_CHANGELOG.md).
+  const pmsSettingRows: any[] = [];
 
   const filteredPmsRows = pmsSettingRows.filter((row) =>
     [row.no, row.company, row.person, row.project, row.status, row.docUpload, row.depApproved, row.action]
@@ -183,13 +182,8 @@ export default function SoftwareManagerDashboard() {
   );
 
   const pmsHeaders = ["No#", "Company", "Person", "Project", "Status", "Doc Upload", "Dep Approved", "Action"];
-  const [taskCreateRows, setTaskCreateRows] = useState([
-    { id: "1", no: 1, name: "Excels Tech USA Website", time: "2:60", detail: "This task which i assigned to fahad to comeplete the functionality of the USA Website", repeatDaily: "No" },
-    { id: "2", no: 2, name: "ERP Sale", time: "16:0", detail: "Test", repeatDaily: "No" },
-    { id: "3", no: 3, name: "Website Backend Development", time: "10:0", detail: "", repeatDaily: "No" },
-    { id: "4", no: 4, name: "Chatsystem Features", time: "8:0", detail: "Late messages replies of relivent team members Dashboard updates on both-ends Late replies record by each team members", repeatDaily: "No" },
-    { id: "5", no: 5, name: "Development", time: "8:0", detail: "", repeatDaily: "No" },
-  ]);
+  // Stage 4 (spec J): fabricated seed task rows removed — no mock workflow state.
+  const [taskCreateRows, setTaskCreateRows] = useState<any[]>([]);
 
   const filteredTaskCreateRows = taskCreateRows.filter((row) =>
     [row.name, row.time, row.detail, row.repeatDaily].join(" ").toLowerCase().includes(taskSearch.toLowerCase()),
@@ -296,56 +290,17 @@ export default function SoftwareManagerDashboard() {
     },
   ];
 
-  const pendingProjectRows = [
-    {
-      id: "9399",
-      project: "Alibaba Minisite",
-      company: "MOZLAN SPORTS",
-      status: "Start Work",
-      hod: "Approved",
-      dep: "Approved",
-      date: "01 Jan 2026",
-    },
-    {
-      id: "3618",
-      project: "Alibaba Minisite",
-      company: "SANZAF ENTERPRISES",
-      status: "Start Work",
-      hod: "Approved",
-      dep: "Approved",
-      date: "25 Apr 2024",
-    },
-    {
-      id: "703",
-      project: "Domain Registration",
-      company: "DADDY D PRO",
-      status: "verify Data",
-      hod: "Approved",
-      dep: "Waiting",
-      date: "15 Jul 2024",
-    },
-  ];
+  // Stage 4 (spec J): fabricated pending-project rows removed — no mock workflow
+  // state. Renders an empty table until wired to the live software manager queue
+  // (deferred — see PATCH3_STAGE4_WORKFLOW_TRANSITION_CHANGELOG.md).
+  const pendingProjectRows: any[] = [];
 
-  const projectTaskRows = [
-    { id: "9911", project: "Alibaba Minisite", company: "MELSFIT SPORTS", date: "12 Mar 2026", status: "Pending", taskTime: "2:0", spentTime: "0:0:0" },
-    { id: "9586", project: "Alibaba Minisite", company: "BRONO SPORTS WEARS", date: "16 Mar 2026", status: "Pending", taskTime: "2:0", spentTime: "0:0:0" },
-    { id: "9939", project: "Dynamic Website", company: "SOCKER TEAMSPORT", date: "09 Mar 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
-    { id: "9939-2", project: "Dynamic Website", company: "SOCKER TEAMSPORT", date: "09 Mar 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
-    { id: "9399", project: "Alibaba Minisite", company: "MOZLAN SPORTS", date: "03 Apr 2026", status: "Pending", taskTime: "8:0", spentTime: "0:0:0" },
-  ];
+  // Stage 4 (spec J): fabricated project-task rows removed — no mock workflow state.
+  const projectTaskRows: any[] = [];
 
-  const projectReportRows = [
-    { no: "1", id: "PKNAZM201216", name: "NAZMA GROUP OF IND", package: "Verified Supplier", status: "New", person: "Abdul Qadir", create: "31-12-2025", gmPay: "09-02-2026", gmDoc: "0", bvDate: "30-11--0001", invoice: "14-04-2026", receipt: "15-04-2026", method: "Free", project: "Alibaba Product Posting / 500", create2: "15-04-2026", data: "15-04-2026", hod: "08-01-2026", dep: "0", fifteenP: "0-0", assign: "0", finish: "15", remaining: "15" },
-    { no: "2", id: "PKLamd2575", name: "Lamda Industries", package: "", status: "", person: "Muhammad Nadeem Zulfiqar", create: "24-03-2021", gmPay: "0", gmDoc: "0", bvDate: "01-01-1970", invoice: "15-04-2026", receipt: "15-04-2026", method: "cash", project: "Domain Registration", create2: "15-04-2026", data: "15-04-2026", hod: "Approved", dep: "0", fifteenP: "0", assign: "0", finish: "0", remaining: "0" },
-    { no: "3", id: "PKLamd2575", name: "Lamda Industries", package: "", status: "", person: "Muhammad Nadeem Zulfiqar", create: "24-03-2021", gmPay: "0", gmDoc: "0", bvDate: "01-01-1970", invoice: "15-04-2026", receipt: "15-04-2026", method: "cash", project: "Cloud Vps Professional", create2: "15-04-2026", data: "15-04-2026", hod: "Approved", dep: "0", fifteenP: "0", assign: "0", finish: "3", remaining: "3" },
-    { no: "4", id: "PKSAIR3085", name: "SAIR GARMENTS INDUSTRY", package: "Basic Plus", status: "Renewal", person: "Mehreena Moeed", create: "13-04-2021", gmPay: "30-07-2025", gmDoc: "0", bvDate: "11-08-2025", invoice: "14-04-2026", receipt: "15-04-2026", method: "Free", project: "Listing Page", create2: "15-04-2026", data: "15-04-2026", hod: "05-08-2024", dep: "0", fifteenP: "0", assign: "0", finish: "2", remaining: "2" },
-    { no: "5", id: "PKVELA213702", name: "VELANO HIDES", package: "Basic", status: "New", person: "Abu Baker Saeed Upal", create: "27-03-2026", gmPay: "31-03-2026", gmDoc: "0", bvDate: "30-11--0001", invoice: "14-04-2026", receipt: "15-04-2026", method: "Free", project: "Listing Page", create2: "15-04-2026", data: "15-04-2026", hod: "30-03-2026", dep: "0", fifteenP: "0-0", assign: "0", finish: "2", remaining: "2" },
-    { no: "6", id: "PKHOLY215564", name: "HOLYWOON", package: "Basic Plus", status: "New", person: "Rehman Faisal", create: "13-04-2026", gmPay: "15-04-2026", gmDoc: "0", bvDate: "30-11--0001", invoice: "15-04-2026", receipt: "0", method: "Free", project: "Alibaba Product Posting / 62", create2: "15-04-2026", data: "15-04-2026", hod: "15-04-2026", dep: "0", fifteenP: "0", assign: "0", finish: "15", remaining: "15" },
-    { no: "7", id: "PKHOLY215564", name: "HOLYWOON", package: "Basic Plus", status: "New", person: "Rehman Faisal", create: "13-04-2026", gmPay: "15-04-2026", gmDoc: "0", bvDate: "30-11--0001", invoice: "15-04-2026", receipt: "0", method: "Free", project: "Alibaba Minisite", create2: "15-04-2026", data: "15-04-2026", hod: "15-04-2026", dep: "0", fifteenP: "0", assign: "0", finish: "5", remaining: "5" },
-    { no: "8", id: "GBON619", name: "GBON INTERNATIONAL", package: "", status: "", person: "Amina Shahzadi", create: "28-10-2020", gmPay: "0", gmDoc: "0", bvDate: "28-12-2021", invoice: "15-04-2026", receipt: "15-04-2026", method: "Bank Transfar", project: "Dynamic Website", create2: "15-04-2026", data: "15-04-2026", hod: "01-01-1970", dep: "0", fifteenP: "0", assign: "0", finish: "0", remaining: "0" },
-    { no: "9", id: "PKGond23407", name: "Gondal Knitting", package: "Verified Supplier", status: "New", person: "Rohina Munir", create: "28-01-2023", gmPay: "31-07-2025", gmDoc: "0", bvDate: "17-10-2025", invoice: "15-04-2026", receipt: "15-04-2026", method: "Bank Transfar", project: "Alibaba Product Posting / 322", create2: "15-04-2026", data: "15-04-2026", hod: "09-07-2025", dep: "0", fifteenP: "0-0", assign: "0", finish: "15", remaining: "15" },
-    { no: "10", id: "PKGond23407", name: "Gondal Knitting", package: "Verified Supplier", status: "New", person: "Rohina Munir", create: "28-01-2023", gmPay: "31-07-2025", gmDoc: "0", bvDate: "17-10-2025", invoice: "15-04-2026", receipt: "15-04-2026", method: "Bank Transfar", project: "VAT", create2: "15-04-2026", data: "15-04-2026", hod: "09-07-2025", dep: "0", fifteenP: "0-0", assign: "0", finish: "30", remaining: "30" },
-  ];
+  // Stage 4 (spec J): fabricated project-report rows removed — no mock workflow
+  // state (also removes the legacy "Alibaba Product Posting" strings).
+  const projectReportRows: any[] = [];
 
   const filteredProjectReportRows = projectReportRows.filter((row) => {
     const matchesSearch = [row.project, row.method, row.hod, row.name, row.id, row.person, row.package].join(" ").toLowerCase().includes(projectReportSearch.toLowerCase());
@@ -355,20 +310,8 @@ export default function SoftwareManagerDashboard() {
     return matchesSearch && matchesCompany && matchesStart && matchesEnd;
   });
 
-  const departmentProjectRows = [
-    {
-      no: "1",
-      company: "Webexcels",
-      package: "Basic Plus",
-      status: "New",
-      project: "Website",
-      amount: "50000",
-      method: "Cash",
-      createdAt: "2021-07-13 17:08:25",
-      department: "Software Department",
-      city: "Sialkot",
-    },
-  ];
+  // Stage 4 (spec J): fabricated department-project rows removed — no mock workflow state.
+  const departmentProjectRows: any[] = [];
 
   const filteredDepartmentProjectRows = departmentProjectRows.filter((row) => {
     const matchesDepartment = !depDepartment || row.department === depDepartment;
@@ -533,10 +476,8 @@ export default function SoftwareManagerDashboard() {
     URL.revokeObjectURL(url);
   };
 
-  const performanceRows = [
-    { company: "trusmile surgical", amount: "10000", method: "364", date: "2021-07-13 17:08:25", user: "M. Shahbaz" },
-    { company: "trusmile surgical", amount: "10000", method: "364", date: "2021-07-13 17:08:25", user: "M. Shahbaz" },
-  ];
+  // Stage 4 (spec J): fabricated performance rows removed — no mock workflow state.
+  const performanceRows: any[] = [];
 
   const filteredPerformanceRows = performanceRows.filter((row) => {
     const matchesUser = !performanceUser || row.user === performanceUser;
@@ -578,32 +519,8 @@ export default function SoftwareManagerDashboard() {
     "Cash Status",
   ];
 
-  const projectListRows = [
-    {
-      no: "1",
-      create: "2026-04-15",
-      action: "View",
-      company: "Webexcels",
-      person: "M. Shahbaz",
-      city: "Sialkot",
-      project: "Website",
-      itemStatus: "Pending",
-      finish: "0",
-      qa: "Pending",
-      verification: "Waiting",
-      method: "Cash",
-      department: "Software",
-      status: "Running",
-      itemTime: "2",
-      projectTime: "15",
-      links: "0",
-      upload: "0",
-      task: "1",
-      package: "Basic Plus",
-      type: "New",
-      cashStatus: "Pending",
-    },
-  ];
+  // Stage 4 (spec J): fabricated project-list rows removed — no mock workflow state.
+  const projectListRows: any[] = [];
 
   const filteredProjectListRows = projectListRows.filter((row) =>
     Object.values(row).join(" ").toLowerCase().includes(projectListSearch.toLowerCase()),
@@ -1605,6 +1522,16 @@ export default function SoftwareManagerDashboard() {
                       <TableCell className="px-4 py-5 text-[14px] text-slate-500 dark:text-zinc-400"></TableCell>
                     </TableRow>
                   ))}
+                  {pendingProjectRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-16 text-center">
+                        <div className="flex flex-col items-center gap-1 text-slate-400">
+                          <Activity className="w-5 h-5 opacity-40" />
+                          <span className="text-[11px] italic">No pending projects</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -1694,6 +1621,16 @@ export default function SoftwareManagerDashboard() {
                       </TableCell>
                     </TableRow>
                   ))}
+                  {projectTaskRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-16 text-center">
+                        <div className="flex flex-col items-center gap-1 text-slate-400">
+                          <Activity className="w-5 h-5 opacity-40" />
+                          <span className="text-[11px] italic">No project tasks</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </div>

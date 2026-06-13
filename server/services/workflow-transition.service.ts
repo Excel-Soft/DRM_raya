@@ -364,6 +364,64 @@ export function assertWorkflowTransition(ctx: TransitionContext): void {
   validateTransition(ctx);
 }
 
+export interface AllowedActionsContext {
+  /** Current workflow phase the entity is in. */
+  fromPhase: string;
+  /** Single active role (mirrors `req.user.activeRole`). */
+  actorRole?: string | null;
+  /** Full role set the actor holds (mirrors `req.user.roles`). */
+  actorRoles?: readonly string[] | null;
+}
+
+export interface AllowedAction {
+  action: string;
+  to: readonly WorkflowPhase[];
+  requireReason: boolean;
+  requireEvidence: boolean;
+}
+
+/**
+ * Pure, read-only projection of the state machine. Given the current phase and
+ * the actor's role(s), returns the workflow actions that role could legally
+ * initiate from that phase, using the SAME role semantics as
+ * `validateTransition` (admin always passes; a `null` role-set means the action
+ * is unrestricted at this layer; when no role context is supplied, no
+ * role-filtering is applied). Performs NO database writes and never throws.
+ *
+ * This is intended for surfacing allowed actions to clients (e.g. to disable
+ * invalid action buttons). It is advisory only — the authoritative guard remains
+ * `validateTransition`/`assertWorkflowTransition` on every write path. Ownership
+ * and content (reason/evidence) rules are NOT applied here; callers that need
+ * those should still rely on the write-time guard.
+ */
+export function getAllowedWorkflowActions(ctx: AllowedActionsContext): AllowedAction[] {
+  const rawRoles: string[] = [];
+  if (ctx.actorRole) rawRoles.push(String(ctx.actorRole));
+  if (ctx.actorRoles) rawRoles.push(...ctx.actorRoles.map((r) => String(r)));
+  const roleSet = new Set(
+    rawRoles.map((r) => String(normalizeRole(r))).filter((r) => r.trim() !== ""),
+  );
+  const isAdmin = roleSet.has("admin");
+  const hasRoleContext = roleSet.size > 0;
+
+  const result: AllowedAction[] = [];
+  for (const rule of WORKFLOW_TRANSITIONS) {
+    if (!rule.from.includes(ctx.fromPhase as WorkflowPhase)) continue;
+    if (rule.roles && !isAdmin && hasRoleContext) {
+      const allowed = new Set(rule.roles.map((r) => String(normalizeRole(r))));
+      const permitted = Array.from(roleSet).some((r) => allowed.has(r));
+      if (!permitted) continue;
+    }
+    result.push({
+      action: rule.action,
+      to: rule.to,
+      requireReason: !!rule.requireReason,
+      requireEvidence: !!rule.requireEvidence,
+    });
+  }
+  return result;
+}
+
 /**
  * Map a thrown error onto an Express response. Returns `true` when the error was
  * a `WorkflowTransitionError` (and a response was sent), so route catch blocks
