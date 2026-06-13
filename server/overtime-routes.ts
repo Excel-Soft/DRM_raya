@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { overtimeRepository } from "./repositories/overtime.repository";
 import { insertOvertimeRecordSchema } from "@shared/schema";
 import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
 import { ActivityLogService } from "./services/activity-service";
 
 // Resolve the caller's effective (active) role from the auth payload.
@@ -225,7 +226,7 @@ export function registerOvertimeRoutes(app: Express) {
   });
 
   // PATCH /api/overtime/:id/approve - Approve an overtime record (for managers)
-  app.patch("/api/overtime/:id/approve", async (req, res) => {
+  app.patch("/api/overtime/:id/approve", requireActionPermission("overtime.approve", { allowRole: isManagerialRole, message: "You are not authorized to approve overtime records." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -269,7 +270,7 @@ export function registerOvertimeRoutes(app: Express) {
   });
 
   // PATCH /api/overtime/:id/reject - Reject an overtime record (for managers)
-  app.patch("/api/overtime/:id/reject", async (req, res) => {
+  app.patch("/api/overtime/:id/reject", requireActionPermission("overtime.reject", { allowRole: isManagerialRole, message: "You are not authorized to reject overtime records." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });

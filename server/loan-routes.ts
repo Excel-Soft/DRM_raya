@@ -5,6 +5,7 @@ import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
 import { ActivityLogService } from "./services/activity-service";
 
 // Resolve the caller's effective (active) role from the auth payload.
@@ -211,7 +212,7 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // PATCH /api/loans/:id/manager-approve - Manager approves a loan request
-  app.patch("/api/loans/:id/manager-approve", async (req, res) => {
+  app.patch("/api/loans/:id/manager-approve", requireActionPermission("loan.managerApprove", { allowRole: isManagerialRole, message: "You are not authorized to approve loan requests." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -255,7 +256,7 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // PATCH /api/loans/:id/hod-approve - HOD approves a loan request
-  app.patch("/api/loans/:id/hod-approve", async (req, res) => {
+  app.patch("/api/loans/:id/hod-approve", requireActionPermission("loan.hodApprove", { allowRole: isHodAllowed, message: "You are not authorized to perform HOD approval." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -299,7 +300,7 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // PATCH /api/loans/:id/reject - Reject a loan request
-  app.patch("/api/loans/:id/reject", async (req, res) => {
+  app.patch("/api/loans/:id/reject", requireActionPermission("loan.reject", { allowRole: isManagerialRole, message: "You are not authorized to reject loan requests." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -345,7 +346,7 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // PATCH /api/loans/:id/complete - Mark loan as completed
-  app.patch("/api/loans/:id/complete", async (req, res) => {
+  app.patch("/api/loans/:id/complete", requireActionPermission("loan.complete", { allowRole: isManagerialRole, message: "You are not authorized to complete loans." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -371,7 +372,7 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // PATCH /api/loans/:id/pay-installment - Record an installment payment
-  app.patch("/api/loans/:id/pay-installment", async (req, res) => {
+  app.patch("/api/loans/:id/pay-installment", requireActionPermission("loan.payInstallment", { allowRole: isManagerialRole, message: "You are not authorized to record loan payments." }), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });

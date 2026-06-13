@@ -128,7 +128,7 @@ export default function OvertimeSubmissionPage() {
     queryKey: isManager ? ["/api/overtime/all"] : ["/api/overtime"],
     queryFn: async () => {
       const url = isManager ? "/api/overtime/all" : "/api/overtime";
-      const res = await fetch(url, { credentials: "include" });
+      const res = await apiRequest("GET", url);
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     }
@@ -186,7 +186,7 @@ export default function OvertimeSubmissionPage() {
 
   const approveMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/overtime/${id}/approve`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const res = await apiRequest("PATCH", `/api/overtime/${id}/approve`, {});
       if (!res.ok) throw new Error("Failed to approve");
       return res.json();
     },
@@ -199,7 +199,7 @@ export default function OvertimeSubmissionPage() {
 
   const rejectMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/overtime/${id}/reject`, { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "Rejected by manager" }) });
+      const res = await apiRequest("PATCH", `/api/overtime/${id}/reject`, { reason: "Rejected by manager" });
       if (!res.ok) throw new Error("Failed to reject");
       return res.json();
     },
