@@ -191,7 +191,7 @@ export default function AddPenaltyPage() {
       p.set("page", String(page));
       p.set("limit", String(limit));
       if (search.trim()) p.set("search", search.trim());
-      if (statusFilter !== "all") p.set("status", statusFilter);
+      if (statusFilter !== "all") p.set("approvalStatus", statusFilter);
       const res = await apiRequest("GET", `/api/penalties?${p.toString()}`);
       if (!res.ok) throw new Error("Failed to load penalties");
       return res.json();
