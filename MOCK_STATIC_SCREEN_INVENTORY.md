@@ -13,7 +13,7 @@ These render fabricated data to the user as if it were live:
 | `client/src/pages/drm/pms-setting.tsx` | `MOCK_ACTIVITIES` | Hardcoded activity list rendered in the table; row count and CSV/export all derive from the mock array. No API call. |
 | `client/src/pages/reports-bv-pending-rc.tsx` | `MOCK_DATA` | Hardcoded report rows; "Total Records" and filters operate on the mock array. No API call. |
 | `client/src/pages/service-pool-dashboard.tsx` | `mockData` | Hardcoded rows mapped directly into the table. |
-| `client/src/components/performance-graph.tsx` | `mockData` | Chart series is a hardcoded array fed straight into the `LineChart`. |
+| `client/src/components/performance-graph.tsx` | `mockData` | Chart series is a hardcoded array fed into `LineChart`. **Verified Patch 3 Stage 11: not production-routed** — the only importer is `client/src/components/examples/PerformanceGraph.tsx` (a non-routed example). Left as-is (demo example, not a live screen). |
 | `client/src/pages/create-target.tsx` | `dummyData` | Hardcoded sample dataset. |
 
 ## B. Sample data used only for export (not display) — lower priority
@@ -23,7 +23,7 @@ table is data-driven or empty. Still worth replacing with the real export source
 | File | Symbol | Behavior |
 | :-- | :-- | :-- |
 | `client/src/pages/service-private-pool.tsx` | `mockData` | Built inside export handlers (tab-dependent) for CSV/TSV download; guarded by length checks. |
-| `client/src/pages/service-commission-verifications.tsx` | `mockData` (`[]`) | Intentionally empty (`// Currently empty matching screenshot, but ready for data`); export handlers short-circuit when empty. |
+| `client/src/pages/service-commission-verifications.tsx` | — | **Resolved (Patch 3 Stage 11).** Previously rendered a hardcoded `108962` total and `alert()`-based Copy/Excel/PDF over an empty `mockData` array, and was reachable from the Service Manager dashboard (not "unrouted" as earlier docs stated). Now an honest empty state: fabricated total removed, mock export/copy actions removed, explicit "no data source connected" notice. |
 
 ## C. localStorage usage in pages (review for source-of-truth)
 Pages that read/write `localStorage` for workflow/UI state. Most are UI
@@ -38,7 +38,7 @@ not necessarily mock, but flagged for UX consistency review):
 - `it-manager-dashboard.tsx`, `marketing-manager-dashboard.tsx`,
   `hod-dashboard.tsx`, `software-manager-dashboard.tsx`,
   `product-posting-dashboard.tsx`
-- Service pages: `service-commission-verifications.tsx`, `service-a-customer.tsx`,
+- Service pages: `service-a-customer.tsx`,
   `service-b-customer.tsx`, `service-b-plus-customer.tsx`,
   `service-b-minus-customer.tsx`, `service-monthly-followup.tsx`,
   `service-due-vas-payment.tsx`, `service-not-follow-customer.tsx`,

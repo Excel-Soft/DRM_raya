@@ -1,7 +1,12 @@
-// DEPRECATED / NOT ROUTED: This page is not registered in App.tsx and is not
-// rendered anywhere in the app. It is retained as a static scaffold only. It uses
-// placeholder data and is intentionally left untouched (no live data source).
-// Do not wire it to real APIs without first adding a route and product sign-off.
+// Service Commission Verifications — reachable from the Service Manager dashboard
+// (service-manager-dashboard.tsx → activeView "commission-verifications", opened
+// from the "Commission Verifications" menu item).
+//
+// HONEST EMPTY STATE (Patch 3 Stage 11, Task A): no backend data source is wired
+// for this screen yet, so it renders an explicit empty state. It must NOT display
+// fabricated totals or rows, and must NOT offer copy/export of mock/empty data.
+// When a real commission-verification API exists, wire it via `apiRequest` and a
+// server-side, role-scoped, filter-respecting export (see EXPORT_STANDARD.md).
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useState } from "react";
@@ -26,37 +31,9 @@ export default function ServiceCommissionVerifications() {
         action: { label: "Action", visible: true },
     });
 
-    const mockData: any[] = []; // Currently empty matching screenshot, but ready for data
-
-    const handleCopy = () => {
-        if (mockData.length === 0) {
-            alert("No data available to copy.");
-            return;
-        }
-        const headers = Object.values(cols).filter(c => c.visible).map(c => c.label).join('\t');
-        const text = headers + '\n' + mockData.map(d => Object.values(d).join('\t')).join('\n');
-        navigator.clipboard.writeText(text);
-        alert("Copied to clipboard");
-    };
-
-    const handleExcel = () => {
-        if (mockData.length === 0) {
-            alert("No data available to export to Excel.");
-            return;
-        }
-        const headers = Object.values(cols).filter(c => c.visible).map(c => c.label).join(',');
-        const csvContent = "data:text/csv;charset=utf-8," + headers + '\n' + mockData.map(e => Object.values(e).join(",")).join("\n");
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "commission_data.csv");
-        document.body.appendChild(link);
-        link.click();
-    };
-
-    const handlePDF = () => {
-        window.print();
-    };
+    // No backend data source is wired yet — render an honest empty state; never
+    // fabricate rows or totals here.
+    const visibleColCount = Object.values(cols).filter((c) => c.visible).length;
 
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen dark:bg-zinc-950">
@@ -90,16 +67,18 @@ export default function ServiceCommissionVerifications() {
                     </button>
                 </div>
 
+                {/* Empty-state notice — honest: no data source wired yet */}
+                <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] font-medium text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300">
+                    No commission-verification data source is connected yet. This screen shows an empty state — no rows or totals are fabricated, and export is disabled until a real API is wired.
+                </div>
+
                 {/* Toolbar Row */}
                 <div className="flex flex-col md:flex-row items-center justify-between mb-4 gap-4">
-                    {/* Action Buttons */}
+                    {/* Column visibility only — no Copy/Excel/PDF over empty/mock data */}
                     <div className="flex bg-[#64748b] text-white rounded text-[13px] font-medium shadow-sm flex-wrap">
-                        <button onClick={handleCopy} className="px-4 py-2 hover:bg-[#475569] border-r border-[#475569] transition-colors rounded-l dark:border-zinc-800">Copy</button>
-                        <button onClick={handleExcel} className="px-4 py-2 hover:bg-[#475569] border-r border-[#475569] transition-colors dark:border-zinc-800">Excel</button>
-                        <button onClick={handlePDF} className="px-4 py-2 hover:bg-[#475569] border-r border-[#475569] transition-colors dark:border-zinc-800">PDF</button>
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <button className="px-4 py-2 hover:bg-[#475569] transition-colors rounded-r text-left outline-none">Column visibility</button>
+                                <button className="px-4 py-2 hover:bg-[#475569] transition-colors rounded text-left outline-none">Column visibility</button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="start" className="w-[200px] max-h-[300px] overflow-y-auto">
                                 {Object.entries(cols).map(([key, col]) => (
@@ -148,24 +127,12 @@ export default function ServiceCommissionVerifications() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {/* Empty Data Row */}
+                            {/* Honest empty state — no fabricated data or totals */}
                             <TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
-                                <TableCell colSpan={Object.values(cols).filter(c => c.visible).length} className="text-center py-4 text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+                                <TableCell colSpan={Math.max(1, visibleColCount)} className="text-center py-4 text-[13px] text-slate-500 font-medium dark:text-zinc-400">
                                     No data available in table
                                 </TableCell>
                             </TableRow>
-
-                            {/* Totals Row */}
-                            {Object.values(cols).filter(c => c.visible).length > 0 && (
-                                <TableRow className="hover:bg-transparent bg-slate-50 border-b border-slate-100 dark:bg-zinc-900 dark:border-zinc-800">
-                                    <TableCell colSpan={Math.max(1, Object.values(cols).filter(c => c.visible).length - 2)} className="py-3 font-bold text-[13px] text-[#475569] dark:text-zinc-400">
-                                        Total
-                                    </TableCell>
-                                    <TableCell colSpan={2} className="py-3 font-bold text-[13px] text-[#475569] dark:text-zinc-400">
-                                        108962
-                                    </TableCell>
-                                </TableRow>
-                            )}
                         </TableBody>
                     </Table>
                 </div>

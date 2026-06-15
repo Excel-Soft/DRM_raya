@@ -20,7 +20,7 @@ export options, intended roles, and current data status.
 | Service Pool — Customer List / Tracing | `/service/pool` | `pages/service-pool-dashboard.tsx` | `GET /api/sales/service-pool/list` (repo `service-pool.repository.ts`, `drm.service_pool_entries` + `drm.customers` + `drm.users`) | Search (company / account / DRM id), pagination (page/pageSize) | — | Manager-scoped (server applies `userIds` scope) | Live |
 | Service Private Pool — Followup List | `/service/private-pool` | `pages/service-private-pool.tsx` (`FollowupListView`) | No backend source yet (tabs render counts of 0) | Column visibility, search box | Copy / Excel (CSV) / PDF via `lib/export-utils.ts` | Service users | Empty state (no source) |
 | Service Private Pool — Customer Attribute / profile | `/service/private-pool` | `pages/service-private-pool.tsx` (`CustomerAttributeView`) | `GET /api/sales/leads/:id/profile` | — | — | Service users | Live |
-| Service Commission Verifications | (none) | `pages/service-commission-verifications.tsx` | Placeholder scaffold | Column visibility | — | — | Not routed |
+| Service Commission Verifications | Service Manager dashboard → "Commission Verifications" view | `pages/service-commission-verifications.tsx` (rendered by `service-manager-dashboard.tsx`) | No backend source wired yet | Column visibility, search box | — (no export — must not export mock/empty data) | Service Manager (dashboard view) | Empty state (no source) |
 
 ### Service backend reference (already implemented, consumed by service screens/APIs)
 - Complaints: CRUD + assign + resolve + close + reopen (`service-core-routes.ts`).
