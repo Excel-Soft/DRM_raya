@@ -1,11 +1,13 @@
-// Events report — switched from drm.meetings to the persisted drm.events store.
-// Reads GET /api/events/report (filters: dateFrom, dateTo, type, status, venue,
-// speaker) which returns { data, total, page, pageSize, totals: { attendance,
-// cost } }. Rows render real-or-empty data only; CSV export operates over the
-// fetched rows and includes a totals row.
+// Events report — reads GET /api/reports/event (Stage 8 canonical endpoint, shared
+// with /api/events/report) which returns rows from the REAL drm.events store as
+// { data, total, page, pageSize, totals: { attendance, cost } }. Filters: dateFrom,
+// dateTo, type, status, venue, speaker. Rows render real-or-empty data only. CSV
+// export is delegated to the server (GET /api/reports/event/export) so it honors the
+// same filters AND the event_report export permission (no export outside role scope).
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequestJson } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,13 +38,19 @@ type EventSpeaker = {
 type EventReportRow = {
   id: string;
   name: string | null;
+  eventName: string | null;
   eventType: string | null;
   eventDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
   venue: string | null;
   attendeeCount: number | null;
   amount: number | null;
   status: string | null;
   speakers: EventSpeaker[];
+  speakerCount: number | null;
+  dutyCount: number | null;
+  createdByName: string | null;
 };
 
 type EventReportResponse = {
@@ -60,6 +68,11 @@ function fmtDate(value: string | null): string {
   return d.toISOString().slice(0, 10);
 }
 
+function fmtTime(value: string | null): string {
+  if (!value) return "-";
+  return value;
+}
+
 function fmtAmount(value: number | null): string {
   if (value === null || value === undefined || isNaN(Number(value))) return "-";
   return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -75,13 +88,28 @@ function speakerNames(speakers: EventSpeaker[]): string {
 
 const STATUS_OPTIONS = ["Draft", "Completed", "Cancelled"] as const;
 
-function csvCell(value: string | number | null): string {
-  const s = value === null || value === undefined ? "" : String(value);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
+// Builds the shared filter query string (no paging) used by both the list query and
+// the server-side CSV export so the export always matches the on-screen filters.
+function buildEventParams(applied: {
+  dateFrom: string;
+  dateTo: string;
+  type: string;
+  status: string;
+  venue: string;
+  speaker: string;
+}): URLSearchParams {
+  const params = new URLSearchParams();
+  if (applied.dateFrom) params.set("dateFrom", applied.dateFrom);
+  if (applied.dateTo) params.set("dateTo", applied.dateTo);
+  if (applied.type) params.set("type", applied.type);
+  if (applied.status && applied.status !== "all") params.set("status", applied.status);
+  if (applied.venue) params.set("venue", applied.venue);
+  if (applied.speaker) params.set("speaker", applied.speaker);
+  return params;
 }
 
 export default function EventReport() {
+  const { toast } = useToast();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [type, setType] = useState("");
@@ -90,6 +118,7 @@ export default function EventReport() {
   const [speaker, setSpeaker] = useState("");
   const [entries, setEntries] = useState("10");
   const [tableSearch, setTableSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [applied, setApplied] = useState<{
     dateFrom: string;
@@ -101,17 +130,13 @@ export default function EventReport() {
   } | null>(null);
 
   const query = useQuery<EventReportResponse>({
-    queryKey: ["/api/events/report", applied],
+    queryKey: ["/api/reports/event", applied],
     enabled: !!applied,
     queryFn: async () => {
-      const params = new URLSearchParams({ page: "1", pageSize: "200" });
-      if (applied?.dateFrom) params.set("dateFrom", applied.dateFrom);
-      if (applied?.dateTo) params.set("dateTo", applied.dateTo);
-      if (applied?.type) params.set("type", applied.type);
-      if (applied?.status && applied.status !== "all") params.set("status", applied.status);
-      if (applied?.venue) params.set("venue", applied.venue);
-      if (applied?.speaker) params.set("speaker", applied.speaker);
-      return apiRequestJson("GET", `/api/events/report?${params.toString()}`);
+      const params = buildEventParams(applied!);
+      params.set("page", "1");
+      params.set("pageSize", "200");
+      return apiRequestJson("GET", `/api/reports/event?${params.toString()}`);
     },
   });
 
@@ -125,40 +150,45 @@ export default function EventReport() {
   const search = tableSearch.trim().toLowerCase();
   const filtered = search
     ? allRows.filter((r) =>
-        [r.name, r.eventType, r.venue, r.status, speakerNames(r.speakers)]
+        [r.eventName ?? r.name, r.eventType, r.venue, r.status, r.createdByName, speakerNames(r.speakers)]
           .some((v) => (v || "").toLowerCase().includes(search)),
       )
     : allRows;
   const rows = filtered.slice(0, pageSize);
 
-  const exportCsv = () => {
-    const header = ["#", "Event Name", "Type", "Event Date", "Venue", "Speakers", "Attendance", "Amount", "Status"];
-    const body = filtered.map((r, idx) => [
-      idx + 1,
-      r.name ?? "",
-      r.eventType ?? "",
-      fmtDate(r.eventDate),
-      r.venue ?? "",
-      speakerNames(r.speakers),
-      r.attendeeCount ?? 0,
-      r.amount ?? 0,
-      r.status ?? "",
-    ]);
-    const totalAttendance = filtered.reduce((sum, r) => sum + (Number(r.attendeeCount) || 0), 0);
-    const totalCost = filtered.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-    const totalsRow = ["", "TOTALS", "", "", "", "", totalAttendance, totalCost, ""];
-    const lines = [header, ...body, totalsRow]
-      .map((cols) => cols.map(csvCell).join(","))
-      .join("\n");
-    const blob = new Blob([lines], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `events-report-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleExport = async () => {
+    if (!applied) return;
+    setExporting(true);
+    try {
+      const params = buildEventParams(applied);
+      const res = await apiRequest("GET", `/api/reports/event/export?${params.toString()}`);
+      if (!res.ok) {
+        const msg =
+          res.status === 403
+            ? "You are not authorized to export the events report."
+            : "Could not export the events report. Please try again.";
+        toast({ title: "Export failed", description: msg, variant: "destructive" });
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `events-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast({ title: "Export started", description: "Your CSV download has begun." });
+    } catch {
+      toast({
+        title: "Export failed",
+        description: "Could not export the events report. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -252,13 +282,13 @@ export default function EventReport() {
             <div className="flex items-center justify-between">
               <h2 className="text-[15px] font-bold text-[#555]">Event List</h2>
               <Button
-                onClick={exportCsv}
-                disabled={filtered.length === 0}
+                onClick={handleExport}
+                disabled={!applied || exporting}
                 variant="outline"
                 className="h-8 px-4 text-xs font-semibold border-slate-300 text-[#555]"
               >
                 <Download className="w-3.5 h-3.5 mr-2" />
-                Export CSV
+                {exporting ? "Exporting..." : "Export CSV"}
               </Button>
             </div>
 
@@ -298,36 +328,40 @@ export default function EventReport() {
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Event Name</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Type</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Event Date</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Start</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">End</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Venue</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Speakers</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Duties</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Attendance</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Amount</TableHead>
                     <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Status</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Created By</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white">
                   {!applied ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                         Click 'View' to load the events report.
                       </TableCell>
                     </TableRow>
                   ) : query.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                         Loading...
                       </TableCell>
                     </TableRow>
                   ) : query.isError ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8">
+                      <TableCell colSpan={13} className="text-center py-8">
                         <div className="text-[#d9534f] mb-2">Could not load the events report. Please try again.</div>
                         <Button size="sm" variant="outline" onClick={() => query.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
                         No events found.
                       </TableCell>
                     </TableRow>
@@ -335,14 +369,18 @@ export default function EventReport() {
                     rows.map((item, idx) => (
                       <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
                         <TableCell className="py-4 px-3 text-[#555]">{idx + 1}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.name || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555]">{item.eventName || item.name || "-"}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555]">{item.eventType || "-"}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555]">{fmtDate(item.eventDate)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555]">{fmtTime(item.startTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555]">{fmtTime(item.endTime)}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555]">{item.venue || "-"}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555]">{speakerNames(item.speakers)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] text-right">{item.dutyCount ?? 0}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555] text-right">{item.attendeeCount ?? 0}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555] text-right">{fmtAmount(item.amount)}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555]">{item.status || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555]">{item.createdByName || "-"}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -350,10 +388,10 @@ export default function EventReport() {
                 {applied && !query.isLoading && !query.isError && filtered.length > 0 && (
                   <tfoot>
                     <TableRow className="border-t-2 border-slate-200 bg-[#f1f5f3] font-bold">
-                      <TableCell colSpan={6} className="py-3 px-3 text-[#333] text-right">TOTALS</TableCell>
+                      <TableCell colSpan={9} className="py-3 px-3 text-[#333] text-right">TOTALS</TableCell>
                       <TableCell className="py-3 px-3 text-[#333] text-right">{totals.attendance}</TableCell>
                       <TableCell className="py-3 px-3 text-[#333] text-right">{fmtAmount(totals.cost)}</TableCell>
-                      <TableCell className="py-3 px-3" />
+                      <TableCell colSpan={2} className="py-3 px-3" />
                     </TableRow>
                   </tfoot>
                 )}

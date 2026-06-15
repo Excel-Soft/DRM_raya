@@ -176,6 +176,17 @@ export async function ensureEventsTables(): Promise<void> {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_duties_event_id ON drm.event_duties (event_id)`);
 }
 
+// Idempotent one-time table-setup guard. ensureEventsTables() uses CREATE TABLE IF
+// NOT EXISTS, but the shared report handlers can be reached via the stage3
+// /api/reports/event alias (registered before registerEventsRoutes runs, and in
+// isolated tests). Calling this from the handlers guarantees the events tables
+// exist before the first query.
+let eventsTablesReady: Promise<void> | null = null;
+function ensureEventsTablesOnce(): Promise<void> {
+  if (!eventsTablesReady) eventsTablesReady = ensureEventsTables();
+  return eventsTablesReady;
+}
+
 function mapEvent(r: any) {
   return {
     id: r.id,
@@ -267,6 +278,218 @@ const SPEAKERS_SUBQUERY = `
   ), '[]'::json) AS speakers
 `;
 
+// Per-event aggregate counts for the report row, from the real child tables.
+const EVENT_REPORT_COUNTS = `
+  (SELECT count(*)::int FROM drm.event_speakers sc WHERE sc.event_id = e.id) AS speaker_count,
+  (SELECT count(*)::int FROM drm.event_duties dc WHERE dc.event_id = e.id) AS duty_count
+`;
+
+// SELECT for the events report: the event row, the creator's name, child-table
+// counts, and the speakers json array. Reads ONLY drm.events + its child tables.
+const EVENT_REPORT_SELECT = `
+  SELECT e.*, cu.name AS created_by_name, ${EVENT_REPORT_COUNTS}, ${SPEAKERS_SUBQUERY}
+  FROM drm.events e
+  LEFT JOIN drm.users cu ON cu.id = e.created_by
+`;
+
+// Build the WHERE clause + params shared by the events report list and export.
+// Every filter maps to a REAL drm.events column / child table. assignedUserId,
+// team and branch are intentionally NOT filtered: drm.events has no such columns,
+// so those spec fields are surfaced as null rather than fabricated.
+function buildEventReportFilters(req: Request): { error?: string; where: string[]; params: any[] } {
+  const where: string[] = ["e.deleted_at IS NULL"];
+  const params: any[] = [];
+  if (req.query.eventId) {
+    params.push(String(req.query.eventId));
+    where.push(`e.id::text = $${params.length}`);
+  }
+  const dateFrom = req.query.dateFrom ?? req.query.startDate;
+  const dateTo = req.query.dateTo ?? req.query.endDate;
+  if (dateFrom && isValidDate(String(dateFrom))) {
+    params.push(String(dateFrom));
+    where.push(`e.event_date >= $${params.length}`);
+  }
+  if (dateTo && isValidDate(String(dateTo))) {
+    params.push(String(dateTo));
+    where.push(`e.event_date <= $${params.length}`);
+  }
+  if (req.query.type) {
+    params.push(String(req.query.type));
+    where.push(`e.event_type = $${params.length}`);
+  }
+  if (req.query.eventName) {
+    params.push(`%${String(req.query.eventName).trim()}%`);
+    where.push(`e.name ILIKE $${params.length}`);
+  }
+  if (req.query.status) {
+    const st = normalizeStatus(req.query.status);
+    if (!st) return { error: `status must be one of ${EVENT_STATUSES.join(", ")}`, where, params };
+    params.push(st);
+    where.push(`e.status = $${params.length}`);
+  }
+  if (req.query.venue) {
+    params.push(`%${String(req.query.venue).trim()}%`);
+    where.push(`e.venue ILIKE $${params.length}`);
+  }
+  if (req.query.speaker) {
+    params.push(`%${String(req.query.speaker).trim()}%`);
+    where.push(
+      `EXISTS (SELECT 1 FROM drm.event_speakers s WHERE s.event_id = e.id AND s.speaker_name ILIKE $${params.length})`,
+    );
+  }
+  return { where, params };
+}
+
+// Map a joined drm.events row to the Stage 8 event report shape. Existing
+// /api/events/report fields (name, speakers, ...) are preserved for backward
+// compatibility; the spec fields are added additively. assignedUserName and team
+// have no source column on drm.events and are returned null — never fabricated.
+function mapEventReportRow(r: any) {
+  const ev = mapEvent(r);
+  const speakerCount =
+    r.speaker_count === null || r.speaker_count === undefined
+      ? (Array.isArray(ev.speakers) ? ev.speakers.length : 0)
+      : Number(r.speaker_count);
+  const dutyCount =
+    r.duty_count === null || r.duty_count === undefined ? 0 : Number(r.duty_count);
+  return {
+    id: ev.id,
+    name: ev.name,
+    eventName: ev.name,
+    eventType: ev.eventType,
+    eventDate: ev.eventDate,
+    startTime: ev.startTime,
+    endTime: ev.endTime,
+    venue: ev.venue,
+    attendeeCount: ev.attendeeCount,
+    amount: ev.amount,
+    status: ev.status,
+    speakers: ev.speakers,
+    speakerCount,
+    dutyCount,
+    createdByName: ev.createdByName,
+    assignedUserName: null,
+    team: null,
+  };
+}
+
+function eventCsvCell(value: unknown): string {
+  const s = value === null || value === undefined ? "" : String(value);
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+// Shared handler for the events report. Registered at BOTH /api/events/report
+// (legacy/back-compat) and /api/reports/event (Stage 8 spec endpoint, registered in
+// stage3-reports-routes.ts BEFORE the /reports/:type catch-all). Reads the real
+// drm.events store only — real rows or an honest empty set, never fabricated.
+export async function eventsReportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    await ensureEventsTablesOnce();
+
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+    // Clamp pageSize to a sane upper bound so a caller cannot request the whole
+    // table in one page. Accepts pageSize or the spec's `limit` alias.
+    const pageSize = Math.min(
+      200,
+      Math.max(1, Number(req.query.pageSize ?? req.query.limit ?? 25) || 25),
+    );
+    const offset = (page - 1) * pageSize;
+
+    const { error, where, params } = buildEventReportFilters(req);
+    if (error) return res.status(400).json({ error: "BadRequest", message: error });
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+
+    const aggResult = await pool.query(
+      `SELECT count(*)::int AS total,
+              COALESCE(sum(e.attendee_count), 0)::int AS attendance,
+              COALESCE(sum(e.amount), 0)::numeric AS cost
+       FROM drm.events e ${whereSql}`,
+      params,
+    );
+    const total = aggResult.rows[0]?.total ?? 0;
+    const attendance = aggResult.rows[0]?.attendance ?? 0;
+    const cost = Number(aggResult.rows[0]?.cost ?? 0);
+
+    const listParams = params.slice();
+    listParams.push(pageSize);
+    listParams.push(offset);
+    const { rows } = await pool.query(
+      `${EVENT_REPORT_SELECT}
+       ${whereSql}
+       ORDER BY e.event_date DESC, e.created_at DESC
+       LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
+      listParams,
+    );
+
+    const data = rows.map(mapEventReportRow);
+    res.json({ data, total, page, pageSize, totals: { attendance, cost } });
+  } catch (err) {
+    console.error("[events] report error", err);
+    res.status(500).json({ error: "InternalError", message: "Failed to build events report" });
+  }
+}
+
+// CSV export of the events report honoring the SAME filters and source as the list
+// (capped at 5000 rows). Gated separately by the event_report export permission, so
+// a viewer who cannot export is rejected before any data leaves the server.
+export async function eventsReportExportHandler(req: Request, res: Response) {
+  try {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    await ensureEventsTablesOnce();
+
+    const { error, where, params } = buildEventReportFilters(req);
+    if (error) return res.status(400).json({ error: "BadRequest", message: error });
+    const whereSql = `WHERE ${where.join(" AND ")}`;
+
+    const { rows } = await pool.query(
+      `${EVENT_REPORT_SELECT}
+       ${whereSql}
+       ORDER BY e.event_date DESC, e.created_at DESC
+       LIMIT 5000`,
+      params,
+    );
+
+    const header = [
+      "#", "Event Name", "Type", "Event Date", "Start", "End", "Venue",
+      "Speakers", "Speaker Count", "Duty Count", "Attendance", "Amount",
+      "Status", "Created By",
+    ];
+    const lines = [header.join(",")];
+    rows.map(mapEventReportRow).forEach((r, idx) => {
+      const speakerNames = Array.isArray(r.speakers)
+        ? r.speakers.map((s: any) => (s.speakerName || "").trim()).filter(Boolean).join("; ")
+        : "";
+      lines.push(
+        [
+          idx + 1,
+          r.eventName ?? "",
+          r.eventType ?? "",
+          r.eventDate ?? "",
+          r.startTime ?? "",
+          r.endTime ?? "",
+          r.venue ?? "",
+          speakerNames,
+          r.speakerCount ?? 0,
+          r.dutyCount ?? 0,
+          r.attendeeCount ?? 0,
+          r.amount ?? 0,
+          r.status ?? "",
+          r.createdByName ?? "",
+        ].map(eventCsvCell).join(","),
+      );
+    });
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="events_report.csv"`);
+    res.send(lines.join("\n"));
+  } catch (err) {
+    console.error("[events] report export error", err);
+    res.status(500).json({ error: "InternalError", message: "Failed to export events report" });
+  }
+}
+
 async function getEventRaw(
   id: string,
 ): Promise<{ id: string; deletedAt: any } | null> {
@@ -279,111 +502,23 @@ async function getEventRaw(
 }
 
 export async function registerEventsRoutes(app: Express) {
-  await ensureEventsTables();
+  await ensureEventsTablesOnce();
 
   // GET /api/events/report — the canonical events report (reads the real
   // drm.events store). Registered BEFORE /api/events/:id so it is not captured by
-  // the :id route. Gated by the event_report view permission.
+  // the :id route. Shares eventsReportHandler with the Stage 8 /api/reports/event
+  // endpoint (registered in stage3-reports-routes.ts). Gated by the event_report
+  // view permission; the CSV export is gated separately by the export permission.
   app.get(
     "/api/events/report",
     requireReportPermission("event_report", "view"),
-    async (req: Request, res: Response) => {
-    try {
-      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-
-      const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-      // Clamp pageSize to a sane upper bound so a caller cannot request the whole
-      // table in one page.
-      const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize ?? 25) || 25));
-      const offset = (page - 1) * pageSize;
-
-      const where: string[] = ["e.deleted_at IS NULL"];
-      const params: any[] = [];
-
-      if (req.query.dateFrom && isValidDate(String(req.query.dateFrom))) {
-        params.push(String(req.query.dateFrom));
-        where.push(`e.event_date >= $${params.length}`);
-      }
-      if (req.query.dateTo && isValidDate(String(req.query.dateTo))) {
-        params.push(String(req.query.dateTo));
-        where.push(`e.event_date <= $${params.length}`);
-      }
-      if (req.query.type) {
-        params.push(String(req.query.type));
-        where.push(`e.event_type = $${params.length}`);
-      }
-      if (req.query.eventName) {
-        params.push(`%${String(req.query.eventName).trim()}%`);
-        where.push(`e.name ILIKE $${params.length}`);
-      }
-      if (req.query.status) {
-        const st = normalizeStatus(req.query.status);
-        if (!st) {
-          return res.status(400).json({
-            error: "BadRequest",
-            message: `status must be one of ${EVENT_STATUSES.join(", ")}`,
-          });
-        }
-        params.push(st);
-        where.push(`e.status = $${params.length}`);
-      }
-      if (req.query.venue) {
-        params.push(`%${String(req.query.venue).trim()}%`);
-        where.push(`e.venue ILIKE $${params.length}`);
-      }
-      if (req.query.speaker) {
-        params.push(`%${String(req.query.speaker).trim()}%`);
-        where.push(
-          `EXISTS (SELECT 1 FROM drm.event_speakers s WHERE s.event_id = e.id AND s.speaker_name ILIKE $${params.length})`,
-        );
-      }
-
-      const whereSql = `WHERE ${where.join(" AND ")}`;
-
-      const aggResult = await pool.query(
-        `SELECT count(*)::int AS total,
-                COALESCE(sum(e.attendee_count), 0)::int AS attendance,
-                COALESCE(sum(e.amount), 0)::numeric AS cost
-         FROM drm.events e ${whereSql}`,
-        params,
-      );
-      const total = aggResult.rows[0]?.total ?? 0;
-      const attendance = aggResult.rows[0]?.attendance ?? 0;
-      const cost = Number(aggResult.rows[0]?.cost ?? 0);
-
-      const listParams = params.slice();
-      listParams.push(pageSize);
-      listParams.push(offset);
-      const { rows } = await pool.query(
-        `SELECT e.*, ${SPEAKERS_SUBQUERY}
-         FROM drm.events e
-         ${whereSql}
-         ORDER BY e.event_date DESC, e.created_at DESC
-         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
-        listParams,
-      );
-
-      const data = rows.map((r) => {
-        const ev = mapEvent(r);
-        return {
-          id: ev.id,
-          name: ev.name,
-          eventType: ev.eventType,
-          eventDate: ev.eventDate,
-          venue: ev.venue,
-          attendeeCount: ev.attendeeCount,
-          amount: ev.amount,
-          status: ev.status,
-          speakers: ev.speakers,
-        };
-      });
-
-      res.json({ data, total, page, pageSize, totals: { attendance, cost } });
-    } catch (err) {
-      console.error("[events] report error", err);
-      res.status(500).json({ error: "InternalError", message: "Failed to build events report" });
-    }
-  });
+    eventsReportHandler,
+  );
+  app.get(
+    "/api/events/report/export",
+    requireReportPermission("event_report", "export"),
+    eventsReportExportHandler,
+  );
 
   // GET /api/events — paginated, filtered list; each row includes speakers[]
   app.get("/api/events", async (req: Request, res: Response) => {
