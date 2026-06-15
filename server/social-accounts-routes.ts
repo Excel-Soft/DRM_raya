@@ -15,6 +15,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -24,6 +25,16 @@ function getUserId(req: Request): string | undefined {
 }
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+}
+// Best-effort audit trail (never throws — ActivityLogService swallows failures).
+async function audit(req: Request, action: string, resourceId: unknown, details?: Record<string, unknown>) {
+  await ActivityLogService.log({
+    userId: getUserId(req),
+    action,
+    resourceType: "drm_social_account",
+    resourceId: String(resourceId ?? ""),
+    details: details && Object.keys(details).length > 0 ? JSON.stringify(details) : undefined,
+  });
 }
 function isFullAccess(role: string): boolean {
   return FULL_ACCESS_ROLES.includes(role);
@@ -277,6 +288,7 @@ export async function registerSocialAccountsRoutes(app: Express) {
         ],
       );
       const created = await getRowById(String(rows[0].id));
+      await audit(req, "drm.social_account.create", rows[0]?.id, { platform, status });
       res.status(201).json({ success: true, data: created });
     } catch (err) {
       console.error("[social-accounts] create error", err);
@@ -335,6 +347,9 @@ export async function registerSocialAccountsRoutes(app: Express) {
         params,
       );
       const updated = await getRowById(id);
+      await audit(req, "drm.social_account.update", id, {
+        changed: sets.filter((s) => !s.startsWith("updated_at")).map((s) => s.split(" = ")[0]),
+      });
       res.json({ success: true, data: updated });
     } catch (err) {
       console.error("[social-accounts] update error", err);
@@ -362,6 +377,7 @@ export async function registerSocialAccountsRoutes(app: Express) {
         [String(getUserId(req)), id],
       );
       const updated = await getRowById(id);
+      await audit(req, "drm.social_account.verify", id, { verified: true });
       res.json({ success: true, data: updated });
     } catch (err) {
       console.error("[social-accounts] verify error", err);
@@ -386,6 +402,7 @@ export async function registerSocialAccountsRoutes(app: Express) {
         `update drm.social_accounts set deleted_at = now(), updated_at = now() where id = $1`,
         [id],
       );
+      await audit(req, "drm.social_account.delete", id, { softDeleted: true });
       res.json({ success: true });
     } catch (err) {
       console.error("[social-accounts] delete error", err);

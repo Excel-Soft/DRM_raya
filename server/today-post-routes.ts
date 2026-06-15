@@ -15,6 +15,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -24,6 +25,16 @@ function getUserId(req: Request): string | undefined {
 }
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+}
+// Best-effort audit trail (never throws — ActivityLogService swallows failures).
+async function audit(req: Request, action: string, resourceId: unknown, details?: Record<string, unknown>) {
+  await ActivityLogService.log({
+    userId: getUserId(req),
+    action,
+    resourceType: "drm_today_post",
+    resourceId: String(resourceId ?? ""),
+    details: details && Object.keys(details).length > 0 ? JSON.stringify(details) : undefined,
+  });
 }
 function isFullAccess(role: string): boolean {
   return FULL_ACCESS_ROLES.includes(role);
@@ -290,6 +301,7 @@ export async function registerTodayPostRoutes(app: Express) {
            where tp.id = $1`,
         [rows[0].id],
       );
+      await audit(req, "drm.today_post.create", rows[0]?.id, { platform, status });
       res.status(201).json({ success: true, post: created.rows[0] });
     } catch (err) {
       console.error("[today-post] create error", err);
@@ -366,6 +378,9 @@ export async function registerTodayPostRoutes(app: Express) {
            where tp.id = $1`,
         [id],
       );
+      await audit(req, "drm.today_post.update", id, {
+        changed: sets.filter((s) => !s.startsWith("updated_at")).map((s) => s.split(" = ")[0]),
+      });
       res.json({ success: true, post: updated.rows[0] });
     } catch (err) {
       console.error("[today-post] update error", err);
@@ -399,6 +414,7 @@ export async function registerTodayPostRoutes(app: Express) {
            where tp.id = $1`,
         [id],
       );
+      await audit(req, "drm.today_post.complete", id, { status: "completed" });
       res.json({ success: true, post: updated.rows[0] });
     } catch (err) {
       console.error("[today-post] complete error", err);
