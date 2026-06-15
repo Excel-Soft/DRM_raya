@@ -118,3 +118,55 @@ specific migration fix).
 - `bv_entries`-based reconciliation is unaffected.
 - Future BV work should extend `bv_reports`; do **not** reintroduce `bv_entries`
   as a BV Report source.
+
+---
+
+## Stage 9 addendum (Patch 3, 2026-06-15)
+
+Stage 9 re-verified the decision above end-to-end and locked it down with an
+automated suite (`server/stage9-bv-report.test.ts`). No application source changed;
+the addendum records the evidence behind two judgement calls so future work does not
+silently "fix" them by fabricating data.
+
+### `follow_ups` evaluated as a metric source — and rejected
+
+`followUpsCompleted` / `missedLeads` stay **`null` + a `missingMetricReasons`
+entry**. Before re-affirming this, `drm.follow_ups` was explicitly evaluated as a
+possible aggregate source and rejected on three independent grounds:
+
+1. **No structural relation.** `drm.follow_ups` has **no foreign key / link column to
+   `drm.bv_reports`** (no `bv_report_id`). The only way to associate a follow-up with
+   a BV *report* is indirectly via `user_id` + a date window — which is a CRM
+   follow-up count, not a property of a BV report. Rolling it into a BV-report headline
+   would silently change the metric's meaning.
+2. **No data to aggregate.** The table is currently **empty**, so any computed
+   aggregate would be `0` for every scope — a fabricated zero, which the honesty rule
+   and the Stage 9 spec explicitly forbid ("do not fake zero if the relation does not
+   exist").
+3. **Self-reported alternative is per-row only.** The per-report `follow_ups_done` /
+   `missed_leads` columns are self-reported and stay visible per row (`rows`/`details`)
+   for transparency; summing self-reported numbers into a headline KPI would be
+   misleading.
+
+Conclusion: there is **no reliable relation to roll up**, so `null` + reason is the
+spec-mandated outcome, not an under-delivery. If a real, auditable, FK-linked
+follow-up source is added later, revisit this and compute the metric honestly.
+
+### Documented UI deviations (intentional, no rewrite)
+
+These are imported-app behaviours left as-is under the "run the app as-is / minimal
+changes" preference. Neither is a data-leak — the server is authoritative in both
+cases.
+
+- **BV "Select User" picker is read-only / self.** The client does not let a manager
+  pick another user from the BV tab; `userId` is still sent (self) and the server
+  row-scopes authoritatively via `resolveBvScope` (executive → self, managerial →
+  department, global admin → unscoped). A user can never widen their scope by editing
+  the request — the server clamps it.
+- **On-screen status sub-filter is client-side.** The BV table filters the displayed
+  rows by status in the browser; this value is **not** forwarded to `GET
+  /api/reports/bv` or to the export. At the default `status=all` the export therefore
+  matches the on-screen dataset. The server export *does* honour a `status` query
+  param when one is supplied, so the capability exists server-side; only the client
+  wiring is omitted. Documented rather than refactoring the shared report-tab
+  component tree (which all report types share).
