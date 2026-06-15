@@ -58,6 +58,7 @@ import OfficeExpenses from "@/pages/office-expenses";
 import ChartOfAccounts from "@/pages/chart-of-accounts";
 import OfficeAccountHead from "@/pages/office-account-head";
 import OfficeVasPage from "@/pages/office-vas";
+import Approvals from "@/pages/approvals";
 import ChequeSystem from "@/pages/cheque-system";
 import BusinessCustomers from "@/pages/business-customers";
 import GmPoolAddGm from "@/pages/gm-pool-add-gm";
@@ -313,6 +314,7 @@ function Router() {
       <Route path="/pms/running-projects" component={PmsRunningProjects} />
       <Route path="/pms/completed-projects" component={PmsCompletedProjects} />
       <Route path="/pms/approvals" component={PmsPendingApprovals} />
+      <Route path="/approvals" component={Approvals} />
       <Route path="/pms/task-history" component={PmsTaskHistory} />
       <Route path="/pms/project-report" component={PmsProjectReport} />
       {/* Alias → canonical /pms/project-report (Stage 2) */}

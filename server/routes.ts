@@ -84,6 +84,8 @@ import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-ro
 import { registerProjectReportRoutes } from "./project-report-routes";
 import { communicationRouter } from "./routes/communication-routes";
 import { CommunicationService } from "./services/communication.service";
+import { approvalRouter } from "./routes/approval-routes";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -364,6 +366,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // runtime table/enums exist before serving (db:push is broken repo-wide).
   await CommunicationService.ensureSchema();
   app.use("/api/communications", communicationRouter);
+
+  // Patch 3 Stage 5 — unified approvals (read-only aggregator) + cross-department
+  // status ledger. Ensure the runtime table exists before serving (db:push is
+  // broken repo-wide). The dashboard only reads here; writes go to each module's
+  // own approve/reject endpoints via the item `actions` metadata.
+  await CrossDepartmentStatusService.ensureSchema();
+  app.use("/api/approvals", approvalRouter);
   registerPostingDataRoutes(app);
   registerLeadsImportRoutes(app);
   registerCrmDuplicatesRoutes(app);

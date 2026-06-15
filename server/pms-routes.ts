@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { authMiddleware } from "./auth.middleware";
 import { projectsRepository } from "./repositories/projects.repository";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 import { tasksRepository } from "./repositories/tasks.repository";
 import { isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
@@ -442,6 +443,18 @@ function getPeriodRange(periodRaw: string) {
       console.log(`[PMS] Creating project: ${validated.name} for user ${validated.ownerUserId}`);
       const project = await projectsRepository.create(validated);
       console.log(`[PMS] Project created successfully: ${project.id}`);
+
+      // Cross-department handoff: a project routed to an execution department.
+      // Records the ledger row and notifies that department's managers (resolved
+      // to real user UUIDs). Best-effort — never blocks project creation.
+      await CrossDepartmentStatusService.onProjectCreated({
+        projectId: project.id,
+        invoiceId: (project as any).invoiceId ?? (validated as any).invoiceId ?? null,
+        departmentType: (project as any).departmentType ?? (validated as any).departmentType ?? null,
+        projectName: project.name,
+        actorUserId: req.user.userId,
+        req,
+      });
 
       res.status(201).json(project);
     } catch (error) {
