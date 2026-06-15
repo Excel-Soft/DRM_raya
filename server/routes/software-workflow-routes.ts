@@ -24,6 +24,7 @@ import {
 } from "../services/software-workflow.service";
 import { mapWorkflowError } from "../services/workflow-transition.service";
 import { ActivityLogService } from "../services/activity-service";
+import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
 import { NotificationService } from "../services/notification-service";
 
 function isValidHttpUrl(value: string): boolean {
@@ -449,6 +450,20 @@ softwareWorkflowRouter.post("/tasks/:taskId/manager-complete", requireRole("soft
       targetUrl: "/qa/manager",
     });
 
+    // Cross-department handoff → QA: record the ledger row only. The module's
+    // own inline notify above already delivers to the real qa_manager users
+    // (the legacy NotificationService resolves the role string to UUIDs), so
+    // notify:false here avoids a duplicate notification. Best-effort, never throws.
+    await CrossDepartmentStatusService.onWorkflowManagerCompleted({
+      module: "software",
+      workflowId: workflow.id,
+      projectId: workflow.projectId,
+      taskId,
+      actorUserId,
+      notify: false,
+      req,
+    });
+
     res.json({ success: true, data: workflow });
   } catch (error: any) {
     if (mapWorkflowError(res, error)) return;
@@ -497,6 +512,20 @@ softwareWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_manager"
         type: "INFO",
         targetUrl: "/verification/manager",
       });
+
+      // Cross-department handoff → Verification: record the ledger row only.
+      // The inline notify above already reaches the real verification_manager
+      // users, so notify:false avoids a duplicate. Best-effort, never throws.
+      await CrossDepartmentStatusService.onWorkflowQaCompleted({
+        module: "software",
+        workflowId: updated.id,
+        projectId: updated.projectId,
+        taskId,
+        actorUserId,
+        notify: false,
+        req,
+      });
+
       return res.json({ success: true, data: updated });
     }
 
@@ -601,6 +630,19 @@ softwareWorkflowRouter.post("/tasks/:taskId/verification-review", requireRole("v
       } catch (notifyErr) {
         console.error("[SOFTWARE_VERIFICATION_COMPLETE] notification failed (non-fatal):", notifyErr);
       }
+
+      // Cross-department close-out. The module already notifies the real
+      // executive + owning manager above, so notify:false here — record the
+      // ledger row only. Best-effort, never throws.
+      await CrossDepartmentStatusService.onWorkflowVerificationCompleted({
+        module: "software",
+        workflowId: updated.id,
+        projectId: updated.projectId,
+        taskId,
+        actorUserId,
+        notify: false,
+        req,
+      });
 
       return res.json({ success: true, data: updated });
     }

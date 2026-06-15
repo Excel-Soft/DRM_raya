@@ -3,6 +3,7 @@ import { requireRole } from "../auth.middleware";
 import { ValidationService } from "../services/validation.service";
 import { sendError, ApiError } from "../utils/api-error";
 import { InvoiceWorkflowService, type Actor } from "../services/invoice-workflow.service";
+import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
 import {
   workflowCreateInvoiceSchema,
   workflowDecisionSchema,
@@ -140,6 +141,12 @@ invoiceRouter.post("/:id/submit-hod", async (req, res) => {
   try {
     requireAuth(req);
     const updated = await InvoiceWorkflowService.submitToHod(actorFrom(req), req.params.id, req);
+    await CrossDepartmentStatusService.onInvoiceSubmittedToHod({
+      invoiceId: req.params.id,
+      toStatus: (updated as any)?.status ?? "PENDING_HOD",
+      actorUserId: actorFrom(req).userId,
+      req,
+    });
     res.json({ success: true, data: updated });
   } catch (error) {
     console.error("[Invoices submit-hod]", error);
@@ -152,6 +159,12 @@ invoiceRouter.post("/:id/hod-approve", requireRole("hod", "super_hod", "admin"),
   try {
     requireAuth(req);
     const updated = await InvoiceWorkflowService.hodDecision(actorFrom(req), req.params.id, "APPROVE", undefined, req);
+    await CrossDepartmentStatusService.onInvoiceHodApproved({
+      invoiceId: req.params.id,
+      toStatus: (updated as any)?.status ?? "PENDING_ACCOUNT",
+      actorUserId: actorFrom(req).userId,
+      req,
+    });
     res.json({ success: true, data: updated });
   } catch (error) {
     console.error("[Invoices hod-approve]", error);
@@ -168,6 +181,13 @@ invoiceRouter.post("/:id/hod-reject", requireRole("hod", "super_hod", "admin"), 
       reason: req.body?.reason,
     });
     const updated = await InvoiceWorkflowService.hodDecision(actorFrom(req), req.params.id, "REJECT", reason, req);
+    await CrossDepartmentStatusService.onInvoiceRejected({
+      invoiceId: req.params.id,
+      stage: "HOD",
+      salesExecId: (updated as any)?.salesExecId ?? null,
+      actorUserId: actorFrom(req).userId,
+      req,
+    });
     res.json({ success: true, data: updated });
   } catch (error) {
     console.error("[Invoices hod-reject]", error);
@@ -180,6 +200,13 @@ invoiceRouter.post("/:id/account-approve", requireRole("account_manager", "admin
   try {
     requireAuth(req);
     const result = await InvoiceWorkflowService.accountDecision(actorFrom(req), req.params.id, "APPROVE", undefined, req);
+    await CrossDepartmentStatusService.onInvoiceAccountApproved({
+      invoiceId: req.params.id,
+      projectId: result.projectId,
+      toStatus: (result.invoice as any)?.status ?? "APPROVED",
+      actorUserId: actorFrom(req).userId,
+      req,
+    });
     res.json({ success: true, data: result.invoice, projectId: result.projectId });
   } catch (error) {
     console.error("[Invoices account-approve]", error);
@@ -196,6 +223,13 @@ invoiceRouter.post("/:id/account-reject", requireRole("account_manager", "admin"
       reason: req.body?.reason,
     });
     const result = await InvoiceWorkflowService.accountDecision(actorFrom(req), req.params.id, "REJECT", reason, req);
+    await CrossDepartmentStatusService.onInvoiceRejected({
+      invoiceId: req.params.id,
+      stage: "Account",
+      salesExecId: (result.invoice as any)?.salesExecId ?? null,
+      actorUserId: actorFrom(req).userId,
+      req,
+    });
     res.json({ success: true, data: result.invoice });
   } catch (error) {
     console.error("[Invoices account-reject]", error);
@@ -261,12 +295,47 @@ invoiceRouter.put("/:id/approve", requireRole("hod", "super_hod", "account_manag
     }
 
     // Route to the correct stage handler based on the invoice's current stage.
+    // Fire the same cross-department hooks as the dedicated endpoints; record()
+    // is idempotent on event_key, so taking this alias never double-records.
     if (invoice.status === "PENDING_HOD") {
       const updated = await InvoiceWorkflowService.hodDecision(actor, id, action as any, reason, req);
+      if (action === "REJECT") {
+        await CrossDepartmentStatusService.onInvoiceRejected({
+          invoiceId: id,
+          stage: "HOD",
+          salesExecId: (updated as any)?.salesExecId ?? null,
+          actorUserId: actor.userId,
+          req,
+        });
+      } else {
+        await CrossDepartmentStatusService.onInvoiceHodApproved({
+          invoiceId: id,
+          toStatus: (updated as any)?.status ?? "PENDING_ACCOUNT",
+          actorUserId: actor.userId,
+          req,
+        });
+      }
       return res.json({ success: true, data: updated });
     }
     if (invoice.status === "PENDING_ACCOUNT") {
       const result = await InvoiceWorkflowService.accountDecision(actor, id, action as any, reason, req);
+      if (action === "REJECT") {
+        await CrossDepartmentStatusService.onInvoiceRejected({
+          invoiceId: id,
+          stage: "Account",
+          salesExecId: (result.invoice as any)?.salesExecId ?? null,
+          actorUserId: actor.userId,
+          req,
+        });
+      } else {
+        await CrossDepartmentStatusService.onInvoiceAccountApproved({
+          invoiceId: id,
+          projectId: result.projectId,
+          toStatus: (result.invoice as any)?.status ?? "APPROVED",
+          actorUserId: actor.userId,
+          req,
+        });
+      }
       return res.json({ success: true, data: result.invoice, projectId: result.projectId });
     }
     throw new ApiError(400, "BAD_REQUEST", `Invoice is not at an approvable stage (status: ${invoice.status})`);

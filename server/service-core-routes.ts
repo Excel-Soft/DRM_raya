@@ -12,6 +12,7 @@ import { serviceReportsRepository, type ServiceListOptions } from "./repositorie
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { isManagerialRole } from "./utils/role-utils";
 import { CommunicationService } from "./services/communication.service";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 
 // --- Stage 7 best-effort communication logging helpers ---------------------
 const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -161,6 +162,18 @@ export function registerServiceCoreRoutes(app: Express) {
           status: "COMPLETED",
           relatedFollowupId: String(created.id),
         }, { userId: req.user.userId }, req);
+      }
+      if (created?.id) {
+        // Cross-department handoff: a new complaint needs attention. Notifies the
+        // assignee (if any) else service managers, resolved to real user UUIDs,
+        // and records the ledger row. Best-effort — never blocks the response.
+        await CrossDepartmentStatusService.onServiceComplaintRaised({
+          complaintId: String(created.id),
+          assignedTo: (created as any).assignedTo ?? null,
+          actorUserId: req.user.userId,
+          notify: true,
+          req,
+        });
       }
       res.json(result[0] || { success: true });
     } catch (err) {

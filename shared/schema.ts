@@ -2447,6 +2447,54 @@ export const activityLogs = drmSchema.table("activity_logs", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// ===== Patch 3 Stage 5 — Cross-department status synchronization ledger =====
+// Append-only ledger of cross-department workflow hand-offs (HOD→Account,
+// Account→PMS, Manager→QA→Verification, etc.). It records WHAT moved and WHO is
+// now responsible — it never owns or sets business status (the module tables
+// remain authoritative). entity ids are TEXT because they vary across modules
+// (uuid invoices/projects vs varchar leave/loan ids). Created at runtime via
+// CrossDepartmentStatusService.ensureSchema() (db:push is broken repo-wide), and
+// mirrored here so Drizzle/types stay in sync.
+export const crossDepartmentStatusHistory = drmSchema.table("cross_department_status_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Idempotency key: `${module}:${entityId}:${action}:${toStatus}` — a repeated
+  // hook for the same transition is a no-op instead of a duplicate row.
+  eventKey: text("event_key").notNull().unique(),
+  sourceModule: text("source_module").notNull(),
+  sourceDepartment: text("source_department"),
+  targetModule: text("target_module"),
+  targetDepartment: text("target_department"),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  relatedEntityType: text("related_entity_type"),
+  relatedEntityId: text("related_entity_id"),
+  action: text("action").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status").notNull(),
+  actorUserId: uuid("actor_user_id").references(() => users.id),
+  // Real (UUID) user ids responsible at the next stage. Never role strings.
+  targetUserIds: jsonb("target_user_ids").notNull().default(sql`'[]'::jsonb`),
+  // Whether THIS hook sent the notifications (false when the originating module
+  // already notifies inline, so we record the hand-off without double-sending).
+  notified: boolean("notified").notNull().default(false),
+  notifiedCount: integer("notified_count").notNull().default(0),
+  // Nullable: the audit service writes to drm.activity_logs but does not return
+  // an id, so this stays null unless a future caller can supply it.
+  auditLogId: uuid("audit_log_id"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_cross_dept_status_entity").on(t.entityType, t.entityId),
+  index("idx_cross_dept_status_created").on(t.createdAt),
+]);
+
+export const insertCrossDepartmentStatusHistorySchema = createInsertSchema(crossDepartmentStatusHistory).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertCrossDepartmentStatusHistory = z.infer<typeof insertCrossDepartmentStatusHistorySchema>;
+export type CrossDepartmentStatusHistory = typeof crossDepartmentStatusHistory.$inferSelect;
+
 export const portfolios = drmSchema.table("portfolios", {
   id: uuid("id").primaryKey().defaultRandom(),
   keyword: text("keyword"),
