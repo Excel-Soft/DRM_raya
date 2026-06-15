@@ -66,8 +66,8 @@ reference) with a security-focused go/no-go list. Tick each before publishing.
 
 ## Verify before publish
 ```bash
-npm run check    # 57 baseline, 0 new
-npm test         # 14 passing
+npm run check    # 56 baseline, 0 new
+npm test         # 154 passing (10 files)
 npm run build    # passes
 npm start        # NODE_ENV=production smoke on the built bundle
 ```
@@ -80,9 +80,27 @@ npm start        # NODE_ENV=production smoke on the built bundle
 
 ## Stage 10 — UI / QA / UAT additions
 - [x] **No mock screens in production navigation.** Routed mock pages were
-      converted to real APIs or honest empty states in Stage 9; non-routed
-      scaffolds (`service-commission-verifications.tsx`, `performance-graph.tsx`)
-      remain unrouted. See `REPORT_CATALOG.md` / `MOCK_STATIC_SCREEN_INVENTORY.md`.
+      converted to real APIs or honest empty states in Stage 9. `performance-graph.tsx`
+      is not production-routed (example-only). See `REPORT_CATALOG.md` /
+      `MOCK_STATIC_SCREEN_INVENTORY.md`.
+
+## Stage 11 — Reports / Exports / QA / UAT additions
+- [x] **Service Commission Verifications corrected.** This screen is reachable
+      from the Service Manager dashboard (earlier docs wrongly called it
+      "unrouted"). It previously showed a hardcoded `108962` total and
+      `alert()`-based Copy/Excel/PDF over empty mock data. Converted to an honest
+      empty state: no fabricated total, no mock/empty export. (Patch 3 Stage 11, Task A.)
+- [x] **`/api/debug/fakhar` dormant.** `server/debug-routes.ts` defines
+      `setupDebugRoutes()` but it is **never mounted** (no caller in `server/`), so
+      the debug endpoint is not reachable in any environment. If it is ever wired,
+      gate it behind non-production + admin or remove it.
+- [x] **Report exports verified.** Server export endpoints (raw-attendance,
+      salary, day-target, diagnose, reception) re-apply list filters + role/row
+      scope and are permission-gated; the event export is a client CSV of
+      already-visible scoped rows. No export emits mock/hidden data. See
+      `REPORT_CATALOG.md` / `EXPORT_STANDARD.md` / `PATCH3_PERMISSION_QA_MATRIX.md`.
+- [ ] **`npm run check` / `npm run build` pass** before publish (Stage 11 §
+      `PATCH3_FINAL_IMPLEMENTATION_REPORT.md`): 56 baseline tsc errors, 0 new; build succeeds.
 - [x] **Audit log viewer gated.** `GET /api/audit-logs` is restricted to
       `admin` / `super_admin` / `super_hod` and is read-only over
       `drm.activity_logs` (no schema change). Filters are parameterized.
