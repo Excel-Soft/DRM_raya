@@ -38,6 +38,8 @@ type ReceptionRow = {
   total_duration_seconds: number | null;
   created_at: string | null;
   company_name: string | null;
+  receptionist_id: string | null;
+  receptionist_name: string | null;
 };
 
 type ReceptionResponse = {
@@ -315,6 +317,7 @@ export default function ReceptionReport() {
                   <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6]">
                     <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Company</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Person</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Receptionist</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Meeting Type</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Date</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Start</TableHead>
@@ -326,26 +329,26 @@ export default function ReceptionReport() {
                 <TableBody className="bg-white">
                   {!applied ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                         Set your filters and click View to load the reception report.
                       </TableCell>
                     </TableRow>
                   ) : report.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                         Loading...
                       </TableCell>
                     </TableRow>
                   ) : report.isError ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8">
+                      <TableCell colSpan={9} className="text-center py-8">
                         <div className="text-[#d9534f] mb-2">Could not load the reception report. Please try again.</div>
                         <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
                         No reception records found.
                       </TableCell>
                     </TableRow>
@@ -354,6 +357,7 @@ export default function ReceptionReport() {
                       <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
                         <TableCell className="py-3 px-4 text-[#555]">{item.company_name || "-"}</TableCell>
                         <TableCell className="py-3 px-4 text-[#555]">{item.person_name || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555]">{item.receptionist_name || "-"}</TableCell>
                         <TableCell className="py-3 px-4 text-[#555]">{item.meeting_type || "-"}</TableCell>
                         <TableCell className="py-3 px-4 text-[#555]">{fmtDate(item.meeting_date)}</TableCell>
                         <TableCell className="py-3 px-4 text-[#555]">{fmtTime(item.start_time)}</TableCell>

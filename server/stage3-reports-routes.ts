@@ -3,6 +3,7 @@ import { pool } from "./db";
 import { requireReportPermission } from "./middleware/report-permission";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
+import { eventsReportHandler, eventsReportExportHandler } from "./events-routes";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
 
@@ -312,46 +313,23 @@ export function registerStage3ReportsRoutes(app: Express) {
     }
   });
 
-  // GET /api/reports/event - LEGACY meetings-based feed (NOT consumed by the
-  // events report page, which reads GET /api/events/report from server/events-routes.ts
-  // against the real drm.events store). Guarded with the same event_report view
-  // permission so it is not an unauthenticated hole.
+  // GET /api/reports/event — Stage 8 canonical events report. Delegates to the
+  // shared eventsReportHandler (server/events-routes.ts), which reads the REAL
+  // drm.events store (also served at /api/events/report). Registered HERE, before
+  // the /reports/:type catch-all in reports-routes.ts, so this path resolves to the
+  // real events handler instead of the generic catch-all. This replaces the former
+  // meetings-based feed (wrong source). Gated by the event_report view permission;
+  // the CSV export is gated separately by the export permission.
   app.get(
     "/api/reports/event",
     requireReportPermission("event_report", "view"),
-    async (req: Request, res: Response) => {
-    try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { start, end } = parseDateRange(req);
-      const { page, pageSize, offset } = parsePaging(req);
-
-      const where: string[] = [];
-      const params: any[] = [];
-      if (start) { params.push(start); where.push(`m.meeting_date >= $${params.length}`); }
-      if (end) { params.push(end); where.push(`m.meeting_date <= $${params.length}`); }
-      if (req.query.eventType) { params.push(`%${String(req.query.eventType)}%`); where.push(`m.meeting_type ILIKE $${params.length}`); }
-      const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-      const countRes = await pool.query(`SELECT COUNT(*)::int AS total FROM drm.meetings m ${clause}`, params);
-      const total = countRes.rows[0]?.total ?? 0;
-
-      const rowsRes = await pool.query(
-        `SELECT m.id, m.meeting_type, m.person_name, m.status,
-                m.start_time, m.end_time, m.total_duration_seconds, m.meeting_date,
-                c.company_name AS company_name
-         FROM drm.meetings m
-         LEFT JOIN drm.customers c ON c.id = m.company_id
-         ${clause}
-         ORDER BY m.meeting_date DESC
-         LIMIT ${pageSize} OFFSET ${offset}`,
-        params,
-      );
-      res.json({ rows: rowsRes.rows, total, page, pageSize });
-    } catch (err) {
-      console.error("Error in event report:", err);
-      res.status(500).json({ error: "Failed to load event report" });
-    }
-  });
+    eventsReportHandler,
+  );
+  app.get(
+    "/api/reports/event/export",
+    requireReportPermission("event_report", "export"),
+    eventsReportExportHandler,
+  );
 
   // GET /api/reports/reception - reception meetings log.
   // Reception meetings live in drm.meetings (see server/reception-routes.ts which
@@ -388,6 +366,7 @@ export function registerStage3ReportsRoutes(app: Express) {
           `SELECT m.id, m.meeting_type, m.person_name, m.status,
                   m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
                   m.total_duration_seconds, m.created_at,
+                  m.created_by AS receptionist_id, ru.name AS receptionist_name,
                   c.company_name AS company_name
            FROM drm.meetings m
            LEFT JOIN drm.customers c ON c.id = m.company_id
@@ -424,6 +403,7 @@ export function registerStage3ReportsRoutes(app: Express) {
           `SELECT m.id, m.meeting_type, m.person_name, m.status,
                   m.meeting_date, m.scheduled_time, m.start_time, m.end_time,
                   m.total_duration_seconds, m.created_at,
+                  m.created_by AS receptionist_id, ru.name AS receptionist_name,
                   c.company_name AS company_name
            FROM drm.meetings m
            LEFT JOIN drm.customers c ON c.id = m.company_id
@@ -435,7 +415,7 @@ export function registerStage3ReportsRoutes(app: Express) {
         );
 
         const header = [
-          "Date", "Company", "Person", "Meeting Type",
+          "Date", "Company", "Person", "Receptionist", "Meeting Type",
           "Scheduled Time", "Start", "End", "Duration (s)", "Status", "Created At",
         ];
         const lines = [header.join(",")];
@@ -444,6 +424,7 @@ export function registerStage3ReportsRoutes(app: Express) {
             csvCell(r.meeting_date),
             csvCell(r.company_name),
             csvCell(r.person_name),
+            csvCell(r.receptionist_name),
             csvCell(r.meeting_type),
             csvCell(r.scheduled_time),
             csvCell(r.start_time),
