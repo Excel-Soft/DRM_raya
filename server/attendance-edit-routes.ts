@@ -86,6 +86,20 @@ async function applyEditToAttendance(
     );
     if (r.rows.length === 0) throw httpError(409, "Linked attendance record no longer exists");
     row = r.rows[0];
+    // Bind the located row to the request's employee AND date. Defense-in-depth
+    // against a crafted/legacy request whose attendance_id points at a DIFFERENT
+    // employee, or at a different (possibly salary-locked) month, than the one the
+    // salary-lock check was evaluated against (isMonthLocked uses edit.user_id +
+    // edit.attendance_date). The comparison is done in SQL (date::date) to be
+    // timezone-safe.
+    const bind = await client.query(
+      `SELECT 1 FROM drm.attendance
+        WHERE id = $1 AND user_id = $2 AND date::date = $3::date`,
+      [edit.attendance_id, edit.user_id, edit.attendance_date],
+    );
+    if (bind.rows.length === 0) {
+      throw httpError(409, "Linked attendance record no longer matches the request's employee/date");
+    }
   } else {
     const r = await client.query(
       `SELECT id, user_id, date, check_in, check_out, status, working_hours, notes
@@ -210,6 +224,31 @@ async function createEdit(req: Request, res: Response) {
       return res.status(400).json({ error: `status must be one of ${VALID_STATUSES.join(", ")}` });
     }
 
+    // Resolve the target employee + date. When an attendanceId is supplied the
+    // request MUST be bound to that row's REAL employee/date — never the
+    // client-supplied values — so a crafted request cannot display one employee
+    // while pointing at a different (possibly salary-locked) employee's row.
+    let targetUserId = String(userId);
+    let targetDate = new Date(attendanceDate);
+    if (attendanceId) {
+      const att = await pool.query(
+        `SELECT id, user_id, date FROM drm.attendance WHERE id = $1`,
+        [attendanceId],
+      );
+      if (att.rows.length === 0) {
+        return res.status(400).json({ error: "attendanceId does not reference an existing attendance record" });
+      }
+      targetUserId = String(att.rows[0].user_id);
+      targetDate = new Date(att.rows[0].date);
+    }
+
+    // Authorization: non-managerial callers may only request edits to their OWN
+    // attendance. Managerial roles may request on behalf of employees.
+    const managerial = isManagerialRole(req.user.roleId);
+    if (!managerial && targetUserId !== String(req.user.userId)) {
+      return res.status(403).json({ error: "You can only request edits to your own attendance." });
+    }
+
     const result = await pool.query(
       `INSERT INTO drm.attendance_edit_requests
          (attendance_id, user_id, attendance_date, field, before_value, after_value, reason, status, requested_by_user_id)
@@ -217,8 +256,8 @@ async function createEdit(req: Request, res: Response) {
        RETURNING *`,
       [
         attendanceId || null,
-        userId,
-        new Date(attendanceDate),
+        targetUserId,
+        targetDate,
         String(field),
         beforeValue ?? null,
         afterValue ?? null,
