@@ -72,7 +72,14 @@ export interface ListFilters {
   search?: string;
   employeeId?: string;
   department?: string;
+  // Exact penalty-head filter (one of PENALTY_HEADS).
+  penaltyHead?: string;
+  // Branch filter — resolved against the employee's users.branch.
+  branch?: string;
+  // Approval-status filter (PENDING/APPROVED/REJECTED/CANCELLED).
   approvalStatus?: string;
+  // Lifecycle-status filter (ACTIVE/VOIDED), distinct from approvalStatus.
+  status?: string;
   startDate?: string;
   endDate?: string;
   // When set, restrict to penalties whose employee_id is in this list (access scope).
@@ -94,9 +101,21 @@ export async function listPenalties(filters: ListFilters) {
     where.push(`p.department = $${i++}`);
     params.push(filters.department);
   }
+  if (filters.penaltyHead) {
+    where.push(`p.penalty_head = $${i++}`);
+    params.push(filters.penaltyHead);
+  }
+  if (filters.branch) {
+    where.push(`e.branch = $${i++}`);
+    params.push(filters.branch);
+  }
   if (filters.approvalStatus) {
     where.push(`p.approval_status = $${i++}`);
     params.push(filters.approvalStatus.toUpperCase());
+  }
+  if (filters.status) {
+    where.push(`coalesce(p.status, 'ACTIVE') = $${i++}`);
+    params.push(filters.status.toUpperCase());
   }
   if (filters.startDate) {
     where.push(`p.penalty_date >= $${i++}`);

@@ -201,16 +201,40 @@ export function registerPenaltyRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const allowed = await getAllowedEmployeeIds(req);
+      // Disambiguate approval vs lifecycle status. `approvalStatus` is the
+      // canonical approval filter; `status` is the lifecycle filter
+      // (ACTIVE/VOIDED). For backward compatibility the dashboard historically
+      // sent the approval filter as `?status=`, so an approval-vocab value in
+      // `status` is still routed to the approval filter when approvalStatus is
+      // absent.
+      const APPROVAL_VOCAB = ["PENDING", "APPROVED", "REJECTED", "CANCELLED"];
+      let approvalStatus = req.query.approvalStatus ? String(req.query.approvalStatus).toUpperCase() : undefined;
+      const statusParam = req.query.status ? String(req.query.status).toUpperCase() : undefined;
+      let lifecycleStatus: string | undefined;
+      if (statusParam) {
+        if (!approvalStatus && APPROVAL_VOCAB.includes(statusParam)) {
+          approvalStatus = statusParam;
+        } else if (["ACTIVE", "VOIDED"].includes(statusParam)) {
+          lifecycleStatus = statusParam;
+        }
+      }
+      const mine = String(req.query.mine ?? "") === "true";
+      const createdBy = mine
+        ? String(getUserId(req))
+        : (req.query.createdBy ? String(req.query.createdBy) : undefined);
       const result = await listPenalties({
         page: Number(req.query.page ?? 1) || 1,
         limit: Number(req.query.limit ?? 10) || 10,
         search: req.query.search ? String(req.query.search) : undefined,
         employeeId: req.query.employeeId ? String(req.query.employeeId) : undefined,
         department: req.query.department ? String(req.query.department) : undefined,
-        approvalStatus: req.query.status ? String(req.query.status) : undefined,
+        penaltyHead: req.query.penaltyHead ? String(req.query.penaltyHead) : undefined,
+        branch: req.query.branch ? String(req.query.branch) : undefined,
+        approvalStatus,
+        status: lifecycleStatus,
         startDate: req.query.startDate ? String(req.query.startDate) : undefined,
         endDate: req.query.endDate ? String(req.query.endDate) : undefined,
-        createdBy: String(req.query.mine ?? "") === "true" ? String(getUserId(req)) : undefined,
+        createdBy,
         allowedEmployeeIds: allowed,
       });
       res.json(result);
