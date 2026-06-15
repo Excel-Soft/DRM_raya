@@ -14,6 +14,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -23,6 +24,16 @@ function getUserId(req: Request): string | undefined {
 }
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+}
+// Best-effort audit trail (never throws — ActivityLogService swallows failures).
+async function audit(req: Request, action: string, resourceId: unknown, details?: Record<string, unknown>) {
+  await ActivityLogService.log({
+    userId: getUserId(req),
+    action,
+    resourceType: "drm_promotion",
+    resourceId: String(resourceId ?? ""),
+    details: details && Object.keys(details).length > 0 ? JSON.stringify(details) : undefined,
+  });
 }
 function isFullAccess(role: string): boolean {
   return FULL_ACCESS_ROLES.includes(role);
@@ -252,6 +263,7 @@ export async function registerPromotionRoutes(app: Express) {
           getUserId(req) ?? null,
         ],
       );
+      await audit(req, "drm.promotion.create", rows[0]?.id, { title });
       res.status(201).json({ success: true, promotion: mapRow(rows[0]) });
     } catch (err) {
       console.error("[promotion] create error", err);
@@ -309,6 +321,9 @@ export async function registerPromotionRoutes(app: Express) {
         `UPDATE drm.promotions SET ${sets.join(", ")} WHERE id::text = $${params.length}::text RETURNING *`,
         params,
       );
+      await audit(req, "drm.promotion.update", id, {
+        changed: sets.filter((s) => !s.startsWith("updated_at")).map((s) => s.split(" = ")[0]),
+      });
       res.json({ success: true, promotion: mapRow(rows[0]) });
     } catch (err) {
       console.error("[promotion] update error", err);
@@ -337,6 +352,7 @@ export async function registerPromotionRoutes(app: Express) {
          WHERE id::text = $2::text RETURNING *`,
         [getUserId(req) ?? null, id],
       );
+      await audit(req, "drm.promotion.approve", id, { status: "approved" });
       res.json({ success: true, promotion: mapRow(rows[0]) });
     } catch (err) {
       console.error("[promotion] approve error", err);
@@ -366,6 +382,7 @@ export async function registerPromotionRoutes(app: Express) {
          WHERE id::text = $3::text RETURNING *`,
         [getUserId(req) ?? null, reason, id],
       );
+      await audit(req, "drm.promotion.reject", id, { status: "rejected", reason });
       res.json({ success: true, promotion: mapRow(rows[0]) });
     } catch (err) {
       console.error("[promotion] reject error", err);
@@ -387,6 +404,7 @@ export async function registerPromotionRoutes(app: Express) {
         `UPDATE drm.promotions SET deleted_at = now(), updated_at = now() WHERE id::text = $1::text`,
         [id],
       );
+      await audit(req, "drm.promotion.delete", id, { softDeleted: true });
       res.json({ success: true });
     } catch (err) {
       console.error("[promotion] delete error", err);

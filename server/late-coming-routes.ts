@@ -16,6 +16,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -25,6 +26,16 @@ function getUserId(req: Request): string | undefined {
 }
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+}
+// Best-effort audit trail (never throws — ActivityLogService swallows failures).
+async function audit(req: Request, action: string, resourceId: unknown, details?: Record<string, unknown>) {
+  await ActivityLogService.log({
+    userId: getUserId(req),
+    action,
+    resourceType: "drm_late_coming",
+    resourceId: String(resourceId ?? ""),
+    details: details && Object.keys(details).length > 0 ? JSON.stringify(details) : undefined,
+  });
 }
 function isFullAccess(role: string): boolean {
   return FULL_ACCESS_ROLES.includes(role);
@@ -280,6 +291,10 @@ export async function registerLateComingRoutes(app: Express) {
         [r.user_id],
       );
 
+      await audit(req, "drm.late_coming.create", r.id, {
+        targetUserId: String(r.user_id),
+        lateMinutes: Number(r.late_minutes),
+      });
       res.status(201).json({
         success: true,
         entry: {

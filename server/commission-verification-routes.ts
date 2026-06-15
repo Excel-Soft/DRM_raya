@@ -14,6 +14,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -23,6 +24,16 @@ function getUserId(req: Request): string | undefined {
 }
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+}
+// Best-effort audit trail (never throws — ActivityLogService swallows failures).
+async function audit(req: Request, action: string, resourceId: unknown, details?: Record<string, unknown>) {
+  await ActivityLogService.log({
+    userId: getUserId(req),
+    action,
+    resourceType: "drm_commission_verification",
+    resourceId: String(resourceId ?? ""),
+    details: details && Object.keys(details).length > 0 ? JSON.stringify(details) : undefined,
+  });
 }
 function isFullAccess(role: string): boolean {
   return FULL_ACCESS_ROLES.includes(role);
@@ -301,6 +312,7 @@ export async function registerCommissionVerificationRoutes(app: Express) {
          WHERE cv.id = $1`,
         [rows[0].id],
       );
+      await audit(req, "drm.commission_verification.create", rows[0]?.id, { targetUserId: userId, status: "pending" });
       res.status(201).json({ success: true, commissionVerification: created.rows[0] });
     } catch (err) {
       console.error("[commission-verification] create error", err);
@@ -342,6 +354,7 @@ export async function registerCommissionVerificationRoutes(app: Express) {
          WHERE cv.id = $1`,
         [id],
       );
+      await audit(req, "drm.commission_verification.approve", id, { status: "approved" });
       res.json({ success: true, commissionVerification: updated.rows[0] });
     } catch (err) {
       console.error("[commission-verification] approve error", err);
@@ -386,6 +399,7 @@ export async function registerCommissionVerificationRoutes(app: Express) {
          WHERE cv.id = $1`,
         [id],
       );
+      await audit(req, "drm.commission_verification.reject", id, { status: "rejected", reason });
       res.json({ success: true, commissionVerification: updated.rows[0] });
     } catch (err) {
       console.error("[commission-verification] reject error", err);
