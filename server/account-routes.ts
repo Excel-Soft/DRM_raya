@@ -26,13 +26,17 @@ import { projects, projectFinancials, projectApprovals } from "@shared/schema";
 import { projectsRepository } from "./repositories/projects.repository";
 import { projectFinancialsRepository } from "./repositories/project-financials.repository";
 import { projectApprovalsRepository } from "./repositories/project-approvals.repository";
-import { sendError, ApiError } from "./utils/api-error";
+import { sendError, sendApiError, ApiError } from "./utils/api-error";
 import {
   INVOICE_WRITABLE_FIELDS,
   pickWritable,
   assertNonNegativeAmount,
   assertValidCurrency,
+  assertValidExchangeRate,
 } from "./utils/financial-validation";
+import { requireFinancialPermission, FINANCIAL_ACTIONS } from "./middleware/financial-permission";
+import { withPgTransaction } from "./utils/financial-transaction";
+import { AuditLogService } from "./services/audit-log.service";
 
 // Helper to get user ID from request (supports both mock auth and JWT)
 function getUserId(req: Request): string | undefined {
@@ -1177,9 +1181,9 @@ export function registerAccountRoutes(app: Express) {
 
       const result = await query;
       res.json(result);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching ledger entries:", error);
-      res.status(500).json({ error: "Failed to fetch ledger entries", details: error.message, stack: error.stack });
+      sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch ledger entries" });
     }
   });
 
@@ -1196,9 +1200,9 @@ export function registerAccountRoutes(app: Express) {
       const balance = parseFloat(summary.totalCredits) - parseFloat(summary.totalDebits);
 
       res.json({ ...summary, balance: balance.toFixed(2) });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching ledger summary:", error);
-      res.status(500).json({ error: "Failed to fetch ledger summary", details: error.message, stack: error.stack });
+      sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch ledger summary" });
     }
   });
 
@@ -1933,19 +1937,42 @@ export function registerAccountRoutes(app: Express) {
           advancePkr: 0
         }
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching dollar system list:", error);
-      res.status(500).json({ error: "Failed to fetch dollar system details", details: error?.message });
+      sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch dollar system details" });
     }
   });
 
 
   // POST /api/account/dollar-system/transaction - Record new wallet transaction
-  app.post("/api/account/dollar-system/transaction", async (req, res) => {
+  app.post(
+    "/api/account/dollar-system/transaction",
+    requireFinancialPermission(FINANCIAL_ACTIONS.dollarTransaction),
+    async (req, res) => {
     try {
       const { type, amountUsd, amountPkr, rate, company, notes } = req.body;
-      
-      if (!type) return res.status(400).json({ error: "Transaction type is required" });
+
+      // Validate the transaction type against the known, supported set so an
+      // unknown value can never silently fall through to a Standard/Approved row.
+      const ALLOWED_DOLLAR_TX_TYPES = ["SEND", "RECEIVE", "ADVANCE", "BALANCE"];
+      if (!type) {
+        return sendApiError(res, { status: 400, code: "VALIDATION_ERROR", message: "Transaction type is required" });
+      }
+      if (!ALLOWED_DOLLAR_TX_TYPES.includes(type)) {
+        return sendApiError(res, { status: 400, code: "VALIDATION_ERROR", message: "Invalid transaction type. Must be one of: SEND, RECEIVE, ADVANCE, BALANCE." });
+      }
+
+      // Validate monetary inputs (additive — only assert on values actually
+      // provided, so valid calls that omit a field keep their existing behaviour).
+      if (amountUsd !== undefined && amountUsd !== null && amountUsd !== "") {
+        assertNonNegativeAmount(amountUsd, "amountUsd");
+      }
+      if (amountPkr !== undefined && amountPkr !== null && amountPkr !== "") {
+        assertNonNegativeAmount(amountPkr, "amountPkr");
+      }
+      if (rate !== undefined && rate !== null && rate !== "") {
+        assertValidExchangeRate(rate, "rate");
+      }
 
       let gmType = 'GM';
       let entryType = 'Standard';
@@ -1966,7 +1993,10 @@ export function registerAccountRoutes(app: Express) {
         entryType = 'Adjustment';
       }
 
-      const result = await pool.query(`
+      // Persist the wallet entry inside an explicit transaction boundary.
+      // NOTE: the post-response product-posting invoices below are intentionally
+      // best-effort and are NOT part of this transaction (no atomicity claim).
+      const result = await withPgTransaction((client) => client.query(`
         INSERT INTO drm.gm_entries (
           drm_id, company_name, amount, amount_usd, amount_pkr, dollar_rate, 
           entry_type, gm_type, package_type, notes, status, created_by, created_at, updated_at
@@ -1986,17 +2016,37 @@ export function registerAccountRoutes(app: Express) {
         notes || '', 
         'Approved', 
         req.user?.userId || null
-      ]);
+      ]));
 
-      res.json({ success: true, id: result.rows[0].id });
+      const newId = result.rows[0].id;
+
+      await AuditLogService.record({
+        actorUserId: getUserId(req),
+        action: FINANCIAL_ACTIONS.dollarTransaction,
+        module: "office_accounts",
+        entityType: "gm_entry",
+        entityId: String(newId),
+        after: {
+          type,
+          amountUsd: finalAmountUsd,
+          amountPkr: finalAmountPkr,
+          rate: rate || 277,
+          company: company || 'Wallet Operation',
+        },
+        req,
+      });
+
+      res.json({ success: true, id: newId });
       
       // Automatically create 3 zero-amount invoices for the Product Posting Workflow
       if (req.user?.userId) {
         await createProductPostingInvoices(req.user.userId, null, company || 'Wallet Operation');
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error creating transaction:", error);
-      res.status(500).json({ error: "Failed to record transaction", details: error?.message });
+      if (!res.headersSent) {
+        sendError(res, error);
+      }
     }
   });
 // ===== Dollar Buying Routes =====

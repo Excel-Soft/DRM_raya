@@ -755,11 +755,28 @@ export default function ChartOfAccounts() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest("DELETE", `/api/office/account-heads/${id}`, undefined),
+    mutationFn: async (id: string) => {
+      const reason = window.prompt("Enter a reason for deleting this account head (required):")?.trim();
+      if (!reason) {
+        throw new Error("Deletion cancelled: a reason is required.");
+      }
+      const res = await apiRequest("DELETE", `/api/office/account-heads/${id}`, { reason });
+      if (!res.ok) {
+        let msg = "Failed to delete account head";
+        try {
+          const body = await res.json();
+          msg = body?.error?.message || body?.message || body?.error || msg;
+        } catch {}
+        throw new Error(msg);
+      }
+      return res;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/office/account-heads"] });
       toast({ title: "Deleted", description: "Account head deleted" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Not deleted", description: error?.message || "Failed to delete account head", variant: "destructive" });
     },
   });
 
