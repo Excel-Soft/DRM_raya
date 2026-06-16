@@ -212,11 +212,28 @@ export default function OfficeExpenses() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest("DELETE", `/api/office/expenses/${id}`, undefined),
+    mutationFn: async (id: string) => {
+      const reason = window.prompt("Enter a reason for deleting this expense (required):")?.trim();
+      if (!reason) {
+        throw new Error("Deletion cancelled: a reason is required.");
+      }
+      const res = await apiRequest("DELETE", `/api/office/expenses/${id}`, { reason });
+      if (!res.ok) {
+        let msg = "Failed to delete expense";
+        try {
+          const body = await res.json();
+          msg = body?.error?.message || body?.message || body?.error || msg;
+        } catch {}
+        throw new Error(msg);
+      }
+      return res;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/office/expenses"] });
       toast({ title: "Deleted", description: "Expense deleted" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Not deleted", description: error?.message || "Failed to delete expense", variant: "destructive" });
     },
   });
 
