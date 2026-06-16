@@ -6,3 +6,21 @@ id = "XCPB3cxzRG3e3Ql7r7HNV"
 uri = "file://STAGE_0_BASELINE_REPORT.md"
 type = "text"
 title = "Stage 0 Baseline Report"
+
+[[outputs]]
+id = "vt6KRLKIJamPEZQEgcNrn"
+uri = "file://PATCH4_BASELINE_AUDIT.md"
+type = "text"
+title = "Patch 4 — Baseline Audit"
+
+[[outputs]]
+id = "zmuNOV5Lr89Ykk3v3qgOS"
+uri = "file://PATCH4_ISSUE_MATRIX.md"
+type = "text"
+title = "Patch 4 — Issue Matrix"
+
+[[outputs]]
+id = "VhhHoX6dSLgWQkLDMmZnK"
+uri = "file://OFFICE_ACCOUNTS_SUBMODULE_INVENTORY.md"
+type = "text"
+title = "Office Accounts — Sub-Module Inventory"
