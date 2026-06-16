@@ -59,7 +59,6 @@ export const callSessionsRepository = {
       .values({
         userId: data.userId,
         customerId: data.customerId ?? null,
-        leadId: data.leadId ?? null,
         followupId: data.followupId ?? null,
         reservationType: data.reservationType,
         direction: data.direction ?? "outbound",
@@ -114,7 +113,7 @@ export const callSessionsRepository = {
         provider: row.provider,
         providerCallId: row.provider_call_id,
         createdAt: row.created_at ? new Date(row.created_at) : new Date(),
-      } as CallSession;
+      } as unknown as CallSession;
     } finally {
       client.release();
     }

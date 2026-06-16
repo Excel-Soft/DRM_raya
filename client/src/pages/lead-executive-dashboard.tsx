@@ -170,7 +170,7 @@ export default function LeadExecutiveDashboard() {
     });
   };
 
-  const { data: customersData, isLoading: isLoadingCustomers } = useQuery({
+  const { data: customersData, isLoading: isLoadingCustomers } = useQuery<{ customers: any[] }>({
     queryKey: ["/api/customers?pageSize=1000"],
   });
   const allLeads = customersData?.customers || [];
@@ -196,7 +196,7 @@ export default function LeadExecutiveDashboard() {
   const distributedLeadsCount = topSellingLeads.filter((l: any) => l.ownerUserId).length;
   const distributeLeadsCount = topSellingLeads.filter((l: any) => !l.ownerUserId).length;
 
-  const { data: followupsRes, isLoading: isLoadingFollowups } = useQuery({
+  const { data: followupsRes, isLoading: isLoadingFollowups } = useQuery<{ data: { items: any[] } }>({
     queryKey: ["/api/dashboard/followups?pageSize=50"],
   });
   const expectedClients = followupsRes?.data?.items || [];

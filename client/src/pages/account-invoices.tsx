@@ -236,7 +236,7 @@ export default function AccountInvoices() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {paginatedEntries.map((entry, index) => {
+                      {paginatedEntries.map((entry: any, index: number) => {
                           const paymentValue = parseInt(entry.amountPkr || entry.amountUsd || "0");
                           const isRed = index % 3 === 0 || paymentValue >= 25000;
                           return (

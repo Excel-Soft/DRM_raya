@@ -8,7 +8,7 @@ export const projectAssignmentsRepository = {
     return result[0];
   },
 
-  async findByProjectId(projectId: string): Promise<Array<ProjectAssignment & { user: { id: string; name: string; email: string; roleId: string } }>> {
+  async findByProjectId(projectId: string): Promise<Array<ProjectAssignment & { user: { id: string; name: string | null; email: string; roleId: string | null } }>> {
     const result = await db
       .select({
         id: projectAssignments.id,
@@ -81,7 +81,7 @@ export const projectAssignmentsRepository = {
     return result.length > 0;
   },
 
-  async findByMultipleProjectIds(projectIds: string[]): Promise<Record<string, Array<{ id: string; projectId: string; userId: string; role: string; assignedAt: string | null; user: { id: string; name: string; email: string; roleId: string } }>>> {
+  async findByMultipleProjectIds(projectIds: string[]): Promise<Record<string, Array<{ id: string; projectId: string; userId: string; role: string; assignedAt: string | null; user: { id: string; name: string | null; email: string; roleId: string | null } }>>> {
     if (projectIds.length === 0) return {};
 
     const result = await db
@@ -103,7 +103,7 @@ export const projectAssignmentsRepository = {
       .where(inArray(projectAssignments.projectId, projectIds))
       .orderBy(desc(projectAssignments.assignedAt));
 
-    const grouped: Record<string, Array<{ id: string; projectId: string; userId: string; role: string; assignedAt: string | null; user: { id: string; name: string; email: string; roleId: string } }>> = {};
+    const grouped: Record<string, Array<{ id: string; projectId: string; userId: string; role: string; assignedAt: string | null; user: { id: string; name: string | null; email: string; roleId: string | null } }>> = {};
     for (const row of result) {
       if (!grouped[row.projectId]) {
         grouped[row.projectId] = [];

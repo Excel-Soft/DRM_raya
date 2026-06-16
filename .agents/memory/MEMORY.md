@@ -1,4 +1,4 @@
-- [Pre-existing tsc errors](tsc-baseline-errors.md) — repo has a stable set of ~57 pre-existing `tsc --noEmit` errors in unrelated files; don't treat them as your regression.
+- [tsc baseline is zero](tsc-baseline-errors.md) — `npm run check` is now 0 errors (was ~57); treat any new tsc error as your own regression.
 - [ActivityLogService is best-effort](activity-log-best-effort.md) — `ActivityLogService.log()` never throws; safe to await on a mutation's critical path.
 - [Service dashboard honesty & scope clause](service-dashboard-honesty.md) — service dashboards bind real endpoints with 0/empty fallback; scopeSql is a full WHERE, append extra filters with AND not ${scopeSql}.
 - [Lead import duplicate enforcement](lead-import-duplicate-enforcement.md) — duplicate lookup must fail-closed (throw, never return []); commit must return {success:true}; override needs role+reason.

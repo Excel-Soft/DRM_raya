@@ -449,6 +449,7 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
     const [activeHistoryTab, setActiveHistoryTab] = useState("Contact History");
     const [isQuotationTemplateModalOpen, setQuotationTemplateModalOpen] = useState(false);
     const [activeCardModal, setActiveCardModal] = useState<string | null>(null);
+    const [isDuplicateModalOpen, setDuplicateModalOpen] = useState(false);
 
     const { data: profileData, isLoading } = useQuery<any>({
         queryKey: [`/api/sales/leads/${customerId}/profile`],
@@ -470,6 +471,7 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen relative dark:bg-zinc-950">
             <QuotationTemplateModal open={isQuotationTemplateModalOpen} onClose={() => setQuotationTemplateModalOpen(false)} />
             <AttributeActionModal type={activeCardModal} onClose={() => setActiveCardModal(null)} />
+            <DuplicateCompaniesModal open={isDuplicateModalOpen} onClose={() => setDuplicateModalOpen(false)} />
             <button onClick={onBack} className="flex items-center gap-2 mb-4 text-[#475569] font-bold text-[14px] uppercase tracking-tight hover:text-[#059669] transition-colors dark:text-zinc-400">
                 <ArrowLeft className="w-4 h-4 text-[#059669] dark:text-zinc-400" /> BACK TO PRIVATE POOL
             </button>

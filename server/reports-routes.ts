@@ -667,7 +667,7 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
       .from(users)
       .where(inArray(users.id, relatedUserIds));
     usersResult.forEach(u => {
-      userNames[u.id] = u.name;
+      userNames[u.id] = u.name ?? '';
     });
   }
 
@@ -770,7 +770,7 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
   const stdInvoiceConditions = [
     gte(invoices.updatedAt, fromDate),
     lte(invoices.updatedAt, toDate),
-    inArray(invoices.status, ['Paid', 'APPROVED']) // Account approved
+    inArray(invoices.status, ['Paid', 'APPROVED'] as any) // Account approved
   ];
   if (userIds && userIds.length > 0) {
     stdInvoiceConditions.push(inArray(invoices.createdByUserId, userIds));
@@ -853,7 +853,7 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
       or(
         inArray(gmEntries.salesPersonId, userIds),
         inArray(gmEntries.createdBy, userIds)
-      )
+      )!
     );
   }
 
@@ -1726,7 +1726,7 @@ router.get("/reports/refund-entries", async (req, res) => {
     const conditions = [];
 
     if (!isPrivileged) {
-      conditions.push(eq(refundGmEntries.createdBy, user.userId));
+      conditions.push(eq(refundGmEntries.createdByUserId, user.userId));
     }
 
     if (company) {
@@ -1903,7 +1903,7 @@ router.get("/reports/:reportType/export-csv", async (req, res) => {
 
     } else if (reportType === "refund-entries") {
       const conditions = [];
-      if (!isPrivileged) conditions.push(eq(refundGmEntries.createdBy, user.userId));
+      if (!isPrivileged) conditions.push(eq(refundGmEntries.createdByUserId, user.userId));
       if (company) conditions.push(ilike(refundGmEntries.companyName, `%${company}%`));
       if (fromDate) conditions.push(gte(refundGmEntries.createdAt, fromDate));
       if (toDate) conditions.push(lte(refundGmEntries.createdAt, toDate));

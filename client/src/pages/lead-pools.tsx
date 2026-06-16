@@ -260,6 +260,7 @@ export default function LeadPools() {
     grade: "",
     status: "",
     source: "",
+    serviceTypes: [] as string[],
   });
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);

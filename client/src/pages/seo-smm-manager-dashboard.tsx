@@ -255,7 +255,7 @@ export default function SeoSmmManagerDashboard() {
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                currentTableRows.map((row: any, idx) => (
+                                                currentTableRows.map((row: any, idx: number) => (
                                                     <tr key={idx} className="group hover:bg-slate-50/50 transition-colors">
                                                         <td className="px-6 py-5">
                                                             <div className="flex items-center gap-3">

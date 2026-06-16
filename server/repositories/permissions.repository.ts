@@ -39,6 +39,7 @@ export const rolePermissionsRepository = {
         roleId: rolePermissions.roleId,
         permissionId: rolePermissions.permissionId,
         createdAt: rolePermissions.createdAt,
+        updatedAt: rolePermissions.updatedAt,
         permission: permissions,
       })
       .from(rolePermissions)

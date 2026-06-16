@@ -96,7 +96,7 @@ export default function LeadManagerDashboard() {
   };
 
   // --- REAL DATA QUERIES ---
-  const { data: customersData, isLoading: isLoadingCustomers } = useQuery({
+  const { data: customersData, isLoading: isLoadingCustomers } = useQuery<{ customers: any[] }>({
     queryKey: ["/api/customers?pageSize=1000"],
   });
   const allLeads = customersData?.customers || [];
@@ -109,17 +109,17 @@ export default function LeadManagerDashboard() {
     lead.ownerUserId?.toLowerCase().includes(leadSearch.toLowerCase())
   );
   
-  const { data: activitiesData, isLoading: isLoadingActivities } = useQuery({
+  const { data: activitiesData, isLoading: isLoadingActivities } = useQuery<{ data: { rows: any[] } }>({
     queryKey: ["/api/dashboard/activities"],
   });
   const teamActivities = activitiesData?.data?.rows || [];
 
-  const { data: followupsRes, isLoading: isLoadingFollowups } = useQuery({
+  const { data: followupsRes, isLoading: isLoadingFollowups } = useQuery<{ data: { items: any[] } }>({
     queryKey: ["/api/dashboard/followups?pageSize=50"],
   });
   const expectedClients = followupsRes?.data?.items || [];
 
-  const { data: usersData } = useQuery({
+  const { data: usersData } = useQuery<{ users: any[] }>({
     queryKey: ["/api/users"],
   });
   const systemUsers = usersData?.users || [];
