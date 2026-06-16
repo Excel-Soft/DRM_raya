@@ -777,7 +777,7 @@ export default function DollarSystem() {
 
 
 
-            <style jsx>{`
+            <style>{`
                 .no-scrollbar::-webkit-scrollbar { display: none; }
                 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
                 .custom-scrollbar::-webkit-scrollbar { height: 6px; width: 6px; }

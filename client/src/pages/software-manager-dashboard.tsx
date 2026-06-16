@@ -322,7 +322,7 @@ export default function SoftwareManagerDashboard() {
     return matchesDepartment && matchesCity && matchesStatus && matchesStart && matchesEnd;
   });
 
-  const { data: rawOvertimeData = [] } = useQuery({ queryKey: ["/api/admin/overtime"] });
+  const { data: rawOvertimeData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/overtime"] });
   const overtimeRows = rawOvertimeData.map((item: any, idx: number) => ({
     id: item.id,
     no: (idx + 1).toString(),
@@ -395,7 +395,7 @@ export default function SoftwareManagerDashboard() {
   ];
 
   const loanApplicationHeaders = ["No#", "Employee", "Advance", "Detail", "Instalment", "Remaining", "Manager", "Hod", "Date", "Action"];
-  const { data: rawLoanData = [] } = useQuery({ queryKey: ["/api/admin/loans"] });
+  const { data: rawLoanData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/loans"] });
   const loanApplicationRows = rawLoanData.map((item: any, idx: number) => ({
     no: (idx + 1).toString(),
     employee: item.userName || item.userId || "Unknown",
@@ -771,7 +771,7 @@ export default function SoftwareManagerDashboard() {
     "Action",
   ];
 
-  const { data: rawLeaveData = [] } = useQuery({ queryKey: ["/api/admin/leaves"] });
+  const { data: rawLeaveData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/leaves"] });
 
   const { mutate: submitLeaveMutation } = useMutation({
     mutationFn: async (data: any) => {

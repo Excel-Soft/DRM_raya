@@ -400,7 +400,7 @@ export class CustomersRepository {
             updatedAt: row.opportunityUpdatedAt,
           } as Opportunity
           : undefined,
-      }));
+      } as CustomerWithOpportunity));
 
       return { customers: customersWithOpportunities, total: countRes.rows[0]?.count ?? 0 };
     } finally {

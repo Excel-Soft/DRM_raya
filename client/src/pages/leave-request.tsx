@@ -608,10 +608,10 @@ export default function LeaveRequestPage() {
                         leaveRequests.map((request) => (
                           <TableRow key={request.id} data-testid={`row-leave-${request.id}`}>
                             <TableCell className="font-medium max-w-[200px] truncate">
-                              {request.reason || request.purpose || "N/A"}
+                              {(request as any).reason || request.purpose || "N/A"}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{getLeaveTypeLabel(request.type || request.leaveType)}</Badge>
+                              <Badge variant="outline">{getLeaveTypeLabel((request as any).type || request.leaveType)}</Badge>
                             </TableCell>
                             <TableCell>{formatDate(request.fromDate)}</TableCell>
                             <TableCell>{formatDate(request.toDate)}</TableCell>

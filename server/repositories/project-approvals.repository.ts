@@ -99,7 +99,7 @@ export const projectApprovalsRepository = {
 
     const isAdmin = isManagerialRole(userRole);
     if (!isAdmin && scopeUserId) {
-      conditions.push(or(eq(projectApprovals.approverUserId, scopeUserId), eq(projectApprovals.requestedBy, scopeUserId)));
+      conditions.push(or(eq(projectApprovals.approverUserId, scopeUserId), eq(projectApprovals.requestedBy, scopeUserId))!);
     }
 
     const result = await db

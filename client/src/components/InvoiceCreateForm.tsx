@@ -315,8 +315,8 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
                                                                     setItems(prev => prev.map(it => it.id === item.id ? {
                                                                         ...it,
                                                                         productId: p.name,
-                                                                        detail: p.description || p.name || "",
-                                                                        unitPrice: Number(p.price || p.unitPrice || 0),
+                                                                        detail: (p as any).description || p.name || "",
+                                                                        unitPrice: Number((p as any).price || (p as any).unitPrice || 0),
                                                                         quantity: it.quantity > 0 ? it.quantity : 1
                                                                     } : it));
                                                                     setOpenCombobox(prev => ({ ...prev, [item.id]: false }));
