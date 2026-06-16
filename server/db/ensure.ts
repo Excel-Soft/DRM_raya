@@ -254,6 +254,134 @@ async function ensureNotificationsSchema(client: {
   );
 }
 
+/**
+ * Patch 4 Stage 2 — Office Accounts master data: Chart of Accounts (account
+ * heads), General Ledger, and Journal Voucher. `db:push` is broken repo-wide
+ * (pre-existing FK mismatch), so schema changes are applied at runtime here
+ * (mirrors shared/schema.ts). ALL statements are additive + idempotent
+ * (`ADD COLUMN / CREATE TABLE / CREATE INDEX IF NOT EXISTS`) and each runs as a
+ * SEPARATE client.query so a no-op can never abort a sibling statement. New
+ * linkage columns are deliberately plain `varchar` WITHOUT foreign keys: the
+ * referenced ids (account_heads.id is varchar, users.id is uuid) have mixed
+ * types, so a hard FK would risk a type-clash; existence is validated in the
+ * application layer instead.
+ */
+async function ensureOfficeAccountsStage2Schema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  // --- account_heads: chart-of-accounts master fields ---
+  await client.query(
+    `ALTER TABLE drm.account_heads ADD COLUMN IF NOT EXISTS parent_account_id varchar`,
+  );
+  await client.query(
+    `ALTER TABLE drm.account_heads ADD COLUMN IF NOT EXISTS opening_balance numeric(12,2) NOT NULL DEFAULT 0`,
+  );
+  await client.query(
+    `ALTER TABLE drm.account_heads ADD COLUMN IF NOT EXISTS normal_balance text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.account_heads ADD COLUMN IF NOT EXISTS branch text`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_account_heads_parent ON drm.account_heads (parent_account_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_account_heads_active ON drm.account_heads (is_active)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_account_heads_category ON drm.account_heads (category)`,
+  );
+
+  // --- ledger_entries: account-head linkage + posting lifecycle + voucher refs ---
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS account_head_id varchar`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'Posted'`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS voucher_id varchar`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS voucher_line_id varchar`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS reversal_of_id varchar`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS branch text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS remarks text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS posted_at timestamp`,
+  );
+  await client.query(
+    `ALTER TABLE drm.ledger_entries ADD COLUMN IF NOT EXISTS posted_by_user_id varchar`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_ledger_account_head ON drm.ledger_entries (account_head_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_ledger_voucher ON drm.ledger_entries (voucher_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_ledger_status ON drm.ledger_entries (status)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_ledger_reversal_of ON drm.ledger_entries (reversal_of_id)`,
+  );
+
+  // --- journal_vouchers (header) ---
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.journal_vouchers (
+       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+       voucher_no text NOT NULL UNIQUE,
+       voucher_date timestamp NOT NULL DEFAULT now(),
+       status text NOT NULL DEFAULT 'DRAFT',
+       remarks text,
+       branch text,
+       total_debit numeric(12,2) NOT NULL DEFAULT 0,
+       total_credit numeric(12,2) NOT NULL DEFAULT 0,
+       created_by_user_id varchar,
+       posted_at timestamp,
+       posted_by_user_id varchar,
+       cancelled_at timestamp,
+       cancelled_by_user_id varchar,
+       cancel_reason text,
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_journal_vouchers_status ON drm.journal_vouchers (status)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_journal_vouchers_date ON drm.journal_vouchers (voucher_date)`,
+  );
+
+  // --- journal_voucher_lines (detail) ---
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.journal_voucher_lines (
+       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+       voucher_id varchar NOT NULL,
+       account_head_id varchar NOT NULL,
+       debit numeric(12,2) NOT NULL DEFAULT 0,
+       credit numeric(12,2) NOT NULL DEFAULT 0,
+       narration text,
+       line_no integer NOT NULL DEFAULT 0,
+       created_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_jv_lines_voucher ON drm.journal_voucher_lines (voucher_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_jv_lines_account_head ON drm.journal_voucher_lines (account_head_id)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -284,6 +412,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureDiagnosisSchema(client);
         await ensureBonusesSchema(client);
         await ensureNotificationsSchema(client);
+        await ensureOfficeAccountsStage2Schema(client);
         return;
       } catch (err) {
         lastErr = err;

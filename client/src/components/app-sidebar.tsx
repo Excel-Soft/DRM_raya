@@ -63,6 +63,8 @@ import {
   Inbox,
   Edit,
   ScrollText,
+  BookOpen,
+  NotebookPen,
 } from "lucide-react";
 import {
   Sidebar,
@@ -235,8 +237,9 @@ const menuItems: MenuItem[] = [
     title: "Office Account", icon: Wallet, permKey: "Office Account",
     items: [
       { title: "Trial Balance Report", url: "/office/trial-balance-report", icon: FileText },
-      { title: "Old Account Head", url: "/office/old-account-head", icon: History },
       { title: "Chart of Account", url: "/office/chart-of-accounts", icon: BarChart3 },
+      { title: "General Ledger", url: "/office/general-ledger", icon: BookOpen },
+      { title: "Journal Voucher", url: "/office/journal-voucher", icon: NotebookPen },
       // { title: "Account Head", url: "/office/account-head", icon: FileText },
       { title: "Business Customer", url: "/office/business-customers", icon: Building2 },
       { title: "Office Vas", url: "/office/vas", icon: TrendingUp },

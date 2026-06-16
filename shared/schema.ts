@@ -1196,6 +1196,18 @@ export const ledgerEntries = drmSchema.table("ledger_entries", {
   balanceAfter: decimal("balance_after", { precision: 12, scale: 2 }),
   entryDate: timestamp("entry_date").notNull().defaultNow(),
   createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
+  // Patch 4 Stage 2 — account-head linkage + posting lifecycle + voucher refs
+  // (additive). No FK on the linkage columns (mixed varchar/uuid id types);
+  // existence is validated in the application layer.
+  accountHeadId: varchar("account_head_id"),
+  status: text("status").notNull().default("Posted"), // Posted | Reversed | Reversal
+  voucherId: varchar("voucher_id"),
+  voucherLineId: varchar("voucher_line_id"),
+  reversalOfId: varchar("reversal_of_id"),
+  branch: text("branch"),
+  remarks: text("remarks"),
+  postedAt: timestamp("posted_at"),
+  postedByUserId: varchar("posted_by_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -1653,10 +1665,47 @@ export const accountHeads = drmSchema.table("account_heads", {
   category: accountHeadCategoryEnum("category").notNull(),
   type: text("type").notNull(), // e.g., Current Asset, Fixed Asset, etc.
   description: text("description"),
+  // Patch 4 Stage 2 — chart-of-accounts master fields (additive). No FK on
+  // parentAccountId (self-ref varchar); existence/!=self validated in the app.
+  parentAccountId: varchar("parent_account_id"),
+  openingBalance: decimal("opening_balance", { precision: 12, scale: 2 }).notNull().default("0"),
+  normalBalance: text("normal_balance"), // "Debit" | "Credit"
+  branch: text("branch"),
   isActive: integer("is_active").notNull().default(1),
   createdByUserId: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Patch 4 Stage 2 — Journal Voucher header + lines (double-entry source docs).
+export const journalVouchers = drmSchema.table("journal_vouchers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  voucherNo: text("voucher_no").notNull().unique(),
+  voucherDate: timestamp("voucher_date").notNull().defaultNow(),
+  status: text("status").notNull().default("DRAFT"), // DRAFT | POSTED | CANCELLED
+  remarks: text("remarks"),
+  branch: text("branch"),
+  totalDebit: decimal("total_debit", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalCredit: decimal("total_credit", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdByUserId: varchar("created_by_user_id"),
+  postedAt: timestamp("posted_at"),
+  postedByUserId: varchar("posted_by_user_id"),
+  cancelledAt: timestamp("cancelled_at"),
+  cancelledByUserId: varchar("cancelled_by_user_id"),
+  cancelReason: text("cancel_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const journalVoucherLines = drmSchema.table("journal_voucher_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  voucherId: varchar("voucher_id").notNull(),
+  accountHeadId: varchar("account_head_id").notNull(),
+  debit: decimal("debit", { precision: 12, scale: 2 }).notNull().default("0"),
+  credit: decimal("credit", { precision: 12, scale: 2 }).notNull().default("0"),
+  narration: text("narration"),
+  lineNo: integer("line_no").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const officeExpenses = drmSchema.table("office_expenses", {
@@ -1925,6 +1974,26 @@ export const insertAccountHeadSchema = createInsertSchema(accountHeads).omit({
   createdByUserId: true,
 });
 
+export const insertJournalVoucherSchema = createInsertSchema(journalVouchers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  createdByUserId: true,
+  postedAt: true,
+  postedByUserId: true,
+  cancelledAt: true,
+  cancelledByUserId: true,
+  cancelReason: true,
+  totalDebit: true,
+  totalCredit: true,
+});
+
+export const insertJournalVoucherLineSchema = createInsertSchema(journalVoucherLines).omit({
+  id: true,
+  createdAt: true,
+  voucherId: true,
+});
+
 export const insertOfficeExpenseSchema = createInsertSchema(officeExpenses).omit({
   id: true,
   createdAt: true,
@@ -1962,6 +2031,10 @@ export const insertBusinessCustomerSchema = createInsertSchema(businessCustomers
 // Office Account types
 export type InsertAccountHead = z.infer<typeof insertAccountHeadSchema>;
 export type AccountHead = typeof accountHeads.$inferSelect;
+export type InsertJournalVoucher = z.infer<typeof insertJournalVoucherSchema>;
+export type JournalVoucher = typeof journalVouchers.$inferSelect;
+export type InsertJournalVoucherLine = z.infer<typeof insertJournalVoucherLineSchema>;
+export type JournalVoucherLine = typeof journalVoucherLines.$inferSelect;
 
 export type InsertOfficeExpense = z.infer<typeof insertOfficeExpenseSchema>;
 export type OfficeExpense = typeof officeExpenses.$inferSelect;
