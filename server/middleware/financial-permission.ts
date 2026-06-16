@@ -34,7 +34,15 @@ export const FINANCIAL_WRITE_ROLES: string[] = [
  */
 export const FINANCIAL_ACTIONS = {
   accountHeadCreate: "account_head.create",
+  accountHeadUpdate: "account_head.update",
   accountHeadDelete: "account_head.delete",
+  accountHeadExport: "account_head.export",
+  journalVoucherCreate: "journal_voucher.create",
+  journalVoucherPost: "journal_voucher.post",
+  journalVoucherCancel: "journal_voucher.cancel",
+  ledgerPost: "ledger.post",
+  ledgerReverse: "ledger.reverse",
+  ledgerExport: "ledger.export",
   expenseCreate: "expense.create",
   expenseDelete: "expense.delete",
   expenseExport: "expense.export",

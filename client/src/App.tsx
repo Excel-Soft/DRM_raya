@@ -56,6 +56,8 @@ import AccountInvoices from "@/pages/account-invoices";
 import AccountLedger from "@/pages/account-ledger";
 import OfficeExpenses from "@/pages/office-expenses";
 import ChartOfAccounts from "@/pages/chart-of-accounts";
+import GeneralLedger from "@/pages/general-ledger";
+import JournalVoucher from "@/pages/journal-voucher";
 import OfficeAccountHead from "@/pages/office-account-head";
 import OfficeVasPage from "@/pages/office-vas";
 import Approvals from "@/pages/approvals";
@@ -324,9 +326,11 @@ function Router() {
       <Route path="/service/bv-checking" component={ServiceBvChecking} />
       <Route path="/service/public-pool" component={ServicePublicPool} />
       <Route path="/office/trial-balance-report" component={OfficeTrialBalance} />
-      <Route path="/office/old-account-head" component={OfficeOldAccountHead} />
+      <Route path="/office/old-account-head">{() => <Redirect to="/office/chart-of-accounts" />}</Route>
       <Route path="/office/chart-of-accounts" component={ChartOfAccounts} />
-      <Route path="/office/account-head" component={OfficeAccountHead} />
+      <Route path="/office/general-ledger" component={GeneralLedger} />
+      <Route path="/office/journal-voucher" component={JournalVoucher} />
+      <Route path="/office/account-head">{() => <Redirect to="/office/chart-of-accounts" />}</Route>
       <Route path="/service/a-customer" component={ServiceACustomer} />
       <Route path="/service/b-plus-customer" component={ServiceBPlusCustomer} />
       <Route path="/service/b-customer" component={ServiceBCustomer} />
