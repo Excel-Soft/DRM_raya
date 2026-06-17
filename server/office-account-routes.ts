@@ -199,7 +199,7 @@ router.get(
 
 router.post(
   "/account-heads",
-  requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadCreate),
+  requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadCreate, { roles: STAGE2_FINANCIAL_ROLES }),
   async (req: Request, res: Response) => {
     try {
       const userId = getUserId(req);
@@ -315,7 +315,7 @@ router.patch(
 // soft-disabled (is_active = 0) instead so the financial history stays intact.
 router.delete(
   "/account-heads/:id",
-  requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadDelete),
+  requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadDelete, { roles: STAGE2_FINANCIAL_ROLES }),
   async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
@@ -1285,7 +1285,12 @@ router.post(
       const userId = getUserId(req);
 
       const result = await withFinancialTransaction(async (tx) => {
-        const [voucher] = await tx.select().from(journalVouchers).where(eq(journalVouchers.id, id)).limit(1);
+        const [voucher] = await tx
+          .select()
+          .from(journalVouchers)
+          .where(eq(journalVouchers.id, id))
+          .limit(1)
+          .for("update");
         if (!voucher) throw notFound("Journal voucher not found.");
         if (voucher.status !== "DRAFT") {
           throw conflict(`Only draft vouchers can be posted (this one is ${voucher.status}).`);
@@ -1381,7 +1386,12 @@ router.post(
       const { reason } = reasonSchema.parse(req.body);
 
       const result = await withFinancialTransaction(async (tx) => {
-        const [voucher] = await tx.select().from(journalVouchers).where(eq(journalVouchers.id, id)).limit(1);
+        const [voucher] = await tx
+          .select()
+          .from(journalVouchers)
+          .where(eq(journalVouchers.id, id))
+          .limit(1)
+          .for("update");
         if (!voucher) throw notFound("Journal voucher not found.");
         if (voucher.status === "CANCELLED") {
           throw conflict("This voucher is already cancelled.");
@@ -1698,7 +1708,13 @@ router.post(
               eq(ledgerEntries.referenceType, "manual_journal"),
               eq(ledgerEntries.status, "Posted"),
             ),
-          );
+          )
+          .orderBy(asc(ledgerEntries.id))
+          .for("update");
+
+        if (group.length === 0) {
+          throw conflict("This manual journal has already been reversed.");
+        }
 
         const mirrors = await reverseLedgerEntries(tx, group, { userId, reason });
         return { reversedCount: mirrors.length, entries: mirrors, referenceId: entry.referenceId };
