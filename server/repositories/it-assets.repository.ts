@@ -2,6 +2,24 @@ import { db, pool } from "../db";
 import { itServers, itDomains, itBackups, itRegistries, itHostingPackages } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
+// Patch 4 Stage 4 — canonical "Server Names" status set. The DB column stays
+// `text` for backward-compat; we normalize at the boundary. Legacy values
+// ("Active"/"Inactive") uppercase straight into the canonical set.
+export const SERVER_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED", "ARCHIVED"] as const;
+export type ServerStatus = (typeof SERVER_STATUSES)[number];
+
+export function normalizeServerStatus(input: unknown): ServerStatus | null {
+  if (input == null) return null;
+  const s = String(input).trim().toUpperCase();
+  return (SERVER_STATUSES as readonly string[]).includes(s) ? (s as ServerStatus) : null;
+}
+
+export interface ListServersOptions {
+  search?: string;
+  status?: string;
+  includeArchived?: boolean;
+}
+
 let ensured = false;
 async function ensureItSchema() {
   if (ensured) return;
@@ -56,6 +74,13 @@ async function ensureItSchema() {
       backup_date timestamptz not null default now(),
       created_at timestamptz not null default now()
     );
+    -- Patch 4 Stage 4 (additive, non-destructive): soft-delete + audit columns
+    -- for it_servers ("Server Names"). Plain columns, no FK constraints.
+    alter table it_servers add column if not exists notes text;
+    alter table it_servers add column if not exists deleted_at timestamptz;
+    alter table it_servers add column if not exists created_by uuid;
+    alter table it_servers add column if not exists updated_by uuid;
+    alter table it_servers add column if not exists deleted_by uuid;
   `;
   try {
     await pool.query(ddl);
@@ -66,9 +91,61 @@ async function ensureItSchema() {
 }
 
 export const itAssetsRepository = {
-  async listServers() {
+  async listServers(opts: ListServersOptions = {}) {
     await ensureItSchema();
-    return db.select().from(itServers).orderBy(desc(itServers.createdAt));
+    const rows = await db.select().from(itServers).orderBy(desc(itServers.createdAt));
+    const search = (opts.search || "").trim().toLowerCase();
+    const statusFilter = opts.status ? normalizeServerStatus(opts.status) : null;
+    return rows.filter((r) => {
+      if (!opts.includeArchived && r.deletedAt) return false;
+      if (statusFilter && normalizeServerStatus(r.status) !== statusFilter) return false;
+      if (search) {
+        const hay = `${r.name || ""} ${r.ip || ""} ${r.provider || ""}`.toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+  },
+  async getServer(id: string) {
+    await ensureItSchema();
+    const [row] = await db.select().from(itServers).where(eq(itServers.id, id));
+    return row || null;
+  },
+  async findActiveServerByName(name: string, excludeId?: string) {
+    await ensureItSchema();
+    const target = name.trim().toLowerCase();
+    const rows = await db.select().from(itServers);
+    return (
+      rows.find(
+        (r) =>
+          !r.deletedAt &&
+          (r.name || "").trim().toLowerCase() === target &&
+          r.id !== excludeId,
+      ) || null
+    );
+  },
+  async updateServer(id: string, data: any) {
+    await ensureItSchema();
+    const [row] = await db
+      .update(itServers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(itServers.id, id))
+      .returning();
+    return row;
+  },
+  async softDeleteServer(id: string, userId?: string | null) {
+    await ensureItSchema();
+    const [row] = await db
+      .update(itServers)
+      .set({
+        deletedAt: new Date(),
+        deletedBy: userId ?? null,
+        updatedBy: userId ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(itServers.id, id))
+      .returning();
+    return row;
   },
   async listRegistries() {
     await ensureItSchema();

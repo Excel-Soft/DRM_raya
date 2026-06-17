@@ -1855,9 +1855,16 @@ export const insertLedgerEntrySchema = createInsertSchema(ledgerEntries).omit({
 export const itServers = drmSchema.table("it_servers", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  ip: text("ip").notNull(),
+  ip: text("ip").notNull(), // Patch 4 Stage 4 — used as the required "Host / IP" field
   provider: text("provider"),
   status: text("status").notNull().default("Active"),
+  // Patch 4 Stage 4 (additive) — soft delete + audit. Plain columns (no FK) to
+  // avoid db:push FK type-mismatch; existence not enforced at the DB layer.
+  notes: text("notes"),
+  deletedAt: timestamp("deleted_at"),
+  createdBy: uuid("created_by"),
+  updatedBy: uuid("updated_by"),
+  deletedBy: uuid("deleted_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
