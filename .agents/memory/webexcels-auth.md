@@ -27,6 +27,6 @@ description: Durable, non-obvious decisions and gotchas for the WebExcels DRM au
   **Why:** the drizzle baseline snapshot still declares it NOT NULL, so a forward
   migration is required for fresh provisioning — editing the baseline is unsafe.
 
-- **`npm run check` carries a large pre-existing error baseline** (untyped `useQuery`
-  results in client pages; `server/repositories/*`, `server/reports-routes.ts`). Judge
-  regressions by comparing counts, not by presence of errors.
+- **`npm run check` baseline is now zero** (see `tsc-baseline-errors.md`). The old
+  large baseline was fully resolved; treat any `tsc` error as a real regression
+  from your own change, not pre-existing noise.
