@@ -78,6 +78,7 @@ import { registerPromotionRoutes } from "./promotion-routes";
 import { registerTodayPostRoutes } from "./today-post-routes";
 import { registerCommissionVerificationRoutes } from "./commission-verification-routes";
 import { registerSocialAccountsRoutes } from "./social-accounts-routes";
+import { registerSocialMediaRoutes } from "./social-media-routes";
 import { registerLateComingRoutes } from "./late-coming-routes";
 import { registerEventsRoutes } from "./events-routes";
 import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
@@ -394,6 +395,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   await registerTodayPostRoutes(app);
   await registerCommissionVerificationRoutes(app);
   await registerSocialAccountsRoutes(app);
+  // Patch 4 Stage 5 — Social Media Posting lifecycle (posts) + accounts alias.
+  // Registered AFTER social accounts so its FK target table already exists.
+  await registerSocialMediaRoutes(app);
   await registerLateComingRoutes(app);
 
   // Stage 8 Events (persistence/workflow) routes (protected) — mounted after auth +

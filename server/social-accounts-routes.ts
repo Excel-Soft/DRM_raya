@@ -137,7 +137,7 @@ const FROM_JOINS = `
   left join drm.users cb on cb.id = sa.created_by
 `;
 
-async function ensureSocialAccountsTable(): Promise<void> {
+export async function ensureSocialAccountsTable(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS drm.social_accounts (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -178,9 +178,18 @@ async function getRowById(id: string): Promise<any | null> {
 
 export async function registerSocialAccountsRoutes(app: Express) {
   await ensureSocialAccountsTable();
+  registerSocialAccountHandlers(app, "/api/drm/social-accounts");
+}
 
-  // GET /api/drm/social-accounts — paginated, filtered list (scoped to caller)
-  app.get("/api/drm/social-accounts", async (req: Request, res: Response) => {
+/**
+ * Registers the social-account CRUD/verify handlers on the given base path.
+ * Mounted at /api/drm/social-accounts (canonical) and aliased to
+ * /api/social-media/accounts (Patch 4 Stage 5) — identical logic, no duplication
+ * and no HTTP proxying. Caller must have ensured the table exists first.
+ */
+export function registerSocialAccountHandlers(app: Express, base: string) {
+  // GET {base} — paginated, filtered list (scoped to caller)
+  app.get(base, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
@@ -252,8 +261,8 @@ export async function registerSocialAccountsRoutes(app: Express) {
     }
   });
 
-  // POST /api/drm/social-accounts — create
-  app.post("/api/drm/social-accounts", async (req: Request, res: Response) => {
+  // POST {base} — create
+  app.post(base, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const b = req.body ?? {};
@@ -296,8 +305,8 @@ export async function registerSocialAccountsRoutes(app: Express) {
     }
   });
 
-  // PATCH /api/drm/social-accounts/:id — edit (incl. status toggle)
-  app.patch("/api/drm/social-accounts/:id", async (req: Request, res: Response) => {
+  // PATCH {base}/:id — edit (incl. status toggle)
+  app.patch(`${base}/:id`, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const id = String(req.params.id);
@@ -357,8 +366,8 @@ export async function registerSocialAccountsRoutes(app: Express) {
     }
   });
 
-  // PATCH /api/drm/social-accounts/:id/verify — mark verified
-  app.patch("/api/drm/social-accounts/:id/verify", async (req: Request, res: Response) => {
+  // PATCH {base}/:id/verify — mark verified
+  app.patch(`${base}/:id/verify`, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const id = String(req.params.id);
@@ -385,8 +394,8 @@ export async function registerSocialAccountsRoutes(app: Express) {
     }
   });
 
-  // DELETE /api/drm/social-accounts/:id — soft delete
-  app.delete("/api/drm/social-accounts/:id", async (req: Request, res: Response) => {
+  // DELETE {base}/:id — soft delete
+  app.delete(`${base}/:id`, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const id = String(req.params.id);
