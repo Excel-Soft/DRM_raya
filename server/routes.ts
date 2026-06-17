@@ -7,6 +7,7 @@ import authRoutes from "./auth.routes";
 import { registerSalesRoutes } from "./sales-routes";
 import { registerPmsRoutes } from "./pms-routes";
 import { registerSupportRoutes } from "./support-routes";
+import { isSupportModuleEnabled } from "./feature-flags";
 import { registerSettingsRoutes } from "./settings-routes";
 import { registerAttendanceRoutes } from "./attendance-routes";
 import { registerAttendanceEditRoutes } from "./attendance-edit-routes";
@@ -90,6 +91,17 @@ import { CrossDepartmentStatusService } from "./services/cross-department-status
 
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Patch 4 Stage 6 (ISS-02 P2): Support module deactivation gate. Mounted before
+  // the global auth / IP / permission middleware so the entire `/api/support/*`
+  // surface returns 404 (regardless of authentication) when the module is
+  // disabled. Fully reversible via the `SUPPORT_MODULE_ENABLED` env flag.
+  app.use("/api/support", (_req, res, next) => {
+    if (!isSupportModuleEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    next();
+  });
+
   // SECURITY (J): MOCK_AUTH bypasses real JWT authentication. It must never be
   // active in production. If it is enabled in a production build, refuse to start.
   if (process.env.NODE_ENV === "production" && process.env.MOCK_AUTH === "true") {

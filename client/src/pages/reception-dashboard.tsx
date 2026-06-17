@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -479,7 +480,7 @@ export default function ReceptionDashboard() {
                                 { name: 'Over Time', link: '/hr/overtime' },
                                 { name: 'Leave Application', link: '/hr/leave-request' },
                                 { name: 'Attendance', link: '/hr/attendance' },
-                                { name: 'Support Tickets', link: '/support/tickets' },
+                                ...(isSupportModuleEnabled() ? [{ name: 'Support Tickets', link: '/support/tickets' }] : []),
                             ].map((item, idx) => (
                                 <Link key={idx} href={item.link}>
                                     <a className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 border border-slate-100 px-3 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors rounded-[2px] block w-full hover:no-underline dark:border-zinc-800 dark:hover:bg-zinc-800">

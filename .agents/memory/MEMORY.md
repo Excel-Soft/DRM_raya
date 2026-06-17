@@ -33,3 +33,4 @@
 - [users money columns are normalized text](users-money-columns.md) — drm.users basic_salary+allowance cols stay text but are normalized numeric-parseable on write (users-routes) and boot (ensureUsersSchema); keep JS + SQL in lockstep.
 - [requireActionPermission guard](requireActionPermission-guard.md) — its allowRole gets the normalized role and the role predicates re-normalize idempotently, so the guard mirrors inline checks without weakening.
 - [Attendance edit-request binding IDOR](attendance-edit-binding-idor.md) — bind an edit request to the real attendance row's user AND date (SQL date::date); user-only binding still allows a same-employee cross-month salary-lock bypass.
+- [API deactivation gate ordering](api-deactivation-gate-ordering.md) — to return 404 (not 401) for a disabled /api module, mount its gate at top of registerRoutes, before global `app.use("/api", authMiddleware)`.

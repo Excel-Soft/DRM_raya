@@ -33,6 +33,8 @@ import LoanRequest from "@/pages/loan-request";
 import SupportTickets from "@/pages/support-tickets";
 import SupportTicketDetail from "@/pages/support-ticket-detail";
 import ComplaintsPage from "@/pages/complaints";
+import SupportInactive from "@/pages/support-inactive";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import AMinusCustomersPage from "@/pages/a-minus-customers";
 import VasDocumentsPage from "@/pages/vas-documents";
 import TrainingCenter from "@/pages/training-center";
@@ -348,9 +350,9 @@ function Router() {
       <Route path="/drm/online-form" component={OnlineForm} />
       <Route path="/drm/fb-post" component={FbPost} />
       <Route path="/account/gm-entries" component={AccountGmEntries} />
-      <Route path="/support/tickets" component={SupportTickets} />
-      <Route path="/support/tickets/:id" component={SupportTicketDetail} />
-      <Route path="/support/complaints" component={ComplaintsPage} />
+      <Route path="/support/tickets" component={isSupportModuleEnabled() ? SupportTickets : SupportInactive} />
+      <Route path="/support/tickets/:id" component={isSupportModuleEnabled() ? SupportTicketDetail : SupportInactive} />
+      <Route path="/support/complaints" component={isSupportModuleEnabled() ? ComplaintsPage : SupportInactive} />
       <Route path="/sales/customers/a-minus" component={AMinusCustomersPage} />
       <Route path="/office/vas-documents" component={VasDocumentsPage} />
       <Route path="/reports/bv-pending-rc" component={ReportsBvPendingRc} />

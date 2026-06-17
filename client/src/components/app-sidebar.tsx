@@ -87,6 +87,7 @@ import {
 } from "@/components/ui/hover-card";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { useState, useEffect } from "react";
 import type { LucideIcon } from "lucide-react";
 
@@ -574,6 +575,10 @@ export function AppSidebar() {
 
   // ── Filter top-level menu items ─────────────────────────────────────────────
   const filteredItems = menuItems.filter((item) => {
+    // Patch 4 Stage 6 (ISS-02 P2): hide the entire Support section while the
+    // Support module is deactivated for the current phase. Reversible via the
+    // VITE_SUPPORT_MODULE_ENABLED flag.
+    if (item.permKey === "Support" && !isSupportModuleEnabled()) return false;
     // Modify Dashboard URL based on role
     if (item.title === "Dashboard") {
       const activeRoleKey = (userRoleName || "").toLowerCase().replace(/\s+/g, "_");
