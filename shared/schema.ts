@@ -2622,6 +2622,49 @@ export const insertProductPostingDataSchema = createInsertSchema(productPostingD
 export type ProductPostingData = typeof productPostingData.$inferSelect;
 export type InsertProductPostingData = z.infer<typeof insertProductPostingDataSchema>;
 
+// ===== Patch 4 Stage 5 — Social Media Posts (approval + publishing lifecycle) =====
+// The runtime source of truth for this table is ensureSocialMediaPostsTable() in
+// server/social-media-routes.ts (db:push is broken repo-wide, so DDL is applied at
+// boot via CREATE TABLE IF NOT EXISTS). This Drizzle definition documents the shape
+// and provides types. Lifecycle fields are TEXT and validated at the API layer:
+//   approval_status   : DRAFT | PENDING | APPROVED | REJECTED
+//   publishing_status : DRAFT | SCHEDULED | READY | PUBLISHED | FAILED | CANCELLED
+// linked_project_id is TEXT (not uuid) to match the existing project_id columns and
+// avoid the known varchar/uuid mismatch.
+export const socialMediaPosts = drmSchema.table("social_media_posts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  platform: text("platform").notNull(),
+  socialAccountId: uuid("social_account_id"),
+  title: text("title"),
+  content: text("content").notNull(),
+  mediaUrl: text("media_url"),
+  mediaName: text("media_name"),
+  linkedCustomerId: uuid("linked_customer_id"),
+  linkedProjectId: text("linked_project_id"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  publishedAt: timestamp("published_at", { withTimezone: true }),
+  approvalStatus: text("approval_status").notNull().default("DRAFT"),
+  publishingStatus: text("publishing_status").notNull().default("DRAFT"),
+  failureReason: text("failure_reason"),
+  rejectionReason: text("rejection_reason"),
+  cancelReason: text("cancel_reason"),
+  externalRef: text("external_ref"),
+  createdBy: uuid("created_by"),
+  approvedBy: uuid("approved_by"),
+  publishedBy: uuid("published_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+export const insertSocialMediaPostSchema = createInsertSchema(socialMediaPosts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type SocialMediaPost = typeof socialMediaPosts.$inferSelect;
+export type InsertSocialMediaPost = z.infer<typeof insertSocialMediaPostSchema>;
+
 export const restrictedKeywords = drmSchema.table("restricted_keywords", {
   id: uuid("id").primaryKey().defaultRandom(),
   keyword: text("keyword").notNull().unique(),
