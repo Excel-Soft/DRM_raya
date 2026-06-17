@@ -11,6 +11,11 @@ import {
 import { z } from "zod";
 
 export function registerSupportRoutes(app: Express) {
+  // NOTE: Patch 4 Stage 6 (ISS-02 P2) mounts a Support module deactivation gate
+  // in `server/routes.ts` (before global auth) that returns 404 for the entire
+  // `/api/support/*` surface when `SUPPORT_MODULE_ENABLED` is not "true". The
+  // handlers below only run when the module is enabled.
+
   // Auth is enforced globally in `server/routes.ts` (or via MOCK_AUTH when enabled).
   app.use("/api/support", authMiddleware);
 

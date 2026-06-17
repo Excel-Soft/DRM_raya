@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -445,10 +446,12 @@ export function QAManagerWidget() {
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Notice</span>
                                 <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">0</span>
                             </button>
+                            {isSupportModuleEnabled() && (
                             <button onClick={() => setLocation("/support/complaints")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Complaints</span>
                                 <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">51(10200)</span>
                             </button>
+                            )}
                             <button onClick={() => setLocation("/training")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Event</span>
                                 <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">99</span>

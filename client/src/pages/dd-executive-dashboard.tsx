@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -694,7 +695,9 @@ export default function DDExecutiveDashboard() {
                             <CardTitle className="text-[16px] font-bold text-slate-700 tracking-tight dark:text-zinc-400">Important</CardTitle>
                         </CardHeader>
                         <CardContent className="p-4 px-5 space-y-3">
+                            {isSupportModuleEnabled() && (
                             <ImportantRow label="Notice" value={(summaryStats as any)?.important?.notice?.toString() || "0"} onClick={() => setLocation("/support/tickets")} />
+                            )}
                             <ImportantRow label="Portfolio" value={(summaryStats as any)?.important?.portfolio || "0(0)"} isSubValue onClick={() => setLocation("/sales/customers")} />
                             <ImportantRow label="Add Portfolio" value={(summaryStats as any)?.important?.addPortfolio?.toString() || "0"} onClick={() => setLocation("/sales/add-customer")} />
                             <ImportantRow label="Login Time" value={(summaryStats as any)?.important?.loginTime || "--:--"} isTime onClick={() => setLocation("/hr/attendance")} />
