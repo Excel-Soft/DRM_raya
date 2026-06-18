@@ -14,6 +14,10 @@ import AuditLogService from "./audit-log.service";
 export const GM_SALES_AUDIT_ACTIONS = {
   GM_CREATE: "gm.create",
   GM_TYPE_CHANGE: "gm.type_change",
+  GM_TYPE_SET: "gm.type_set",
+  GM_TYPE_CHANGE_DENIED: "gm.type_change_denied",
+  GM_THRESHOLD_VALIDATION_FAILED: "gm.threshold_validation_failed",
+  GM_CREATE_UNAUTHORIZED_ATTEMPT: "gm.create_unauthorized_attempt",
   GM_SUBMIT: "gm.submit",
   GM_APPROVE: "gm.approve",
   GM_REJECT: "gm.reject",

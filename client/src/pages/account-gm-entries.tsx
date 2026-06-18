@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, mutationRequest } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -153,14 +153,14 @@ export default function AccountGmEntries() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: (data: FormValues) => apiRequest("POST", "/api/account/gm-entries", data),
+    mutationFn: async (data: FormValues) => mutationRequest("POST", "/api/account/gm-entries", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
       setDialogOpen(false); form.reset();
       toast({ title: "Success", description: "GM Entry created successfully" });
     },
-    onError: () => toast({ title: "Error", description: "Failed to create GM entry", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to create GM entry", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -214,13 +214,13 @@ export default function AccountGmEntries() {
 
   // ── Approve / Reject mutations (Account Manager action on HOD-approved entries) ──
   const approveMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("PATCH", `/api/account/gm-entries/${id}/approve`, {}),
+    mutationFn: async (id: string) => mutationRequest("PATCH", `/api/account/gm-entries/${id}/approve`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
       queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
       toast({ title: "✅ Approved", description: "GM Entry approved successfully" });
     },
-    onError: () => toast({ title: "Error", description: "Failed to approve entry", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to approve entry", variant: "destructive" }),
   });
 
   const rejectMutation = useMutation({

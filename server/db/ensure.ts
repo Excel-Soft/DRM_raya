@@ -382,6 +382,21 @@ async function ensureOfficeAccountsStage2Schema(client: {
   );
 }
 
+/**
+ * Patch 5 Stage 2 — additive, idempotent GM creation-provenance column on
+ * drm.gm_entries (mirrors shared/schema.ts). `db:push` is broken repo-wide
+ * (pre-existing FK mismatch), so the column is applied at runtime here. It is
+ * nullable + additive, so it is safe on a populated table and never alters any
+ * existing GM behaviour; it only records the creator's active role on new GMs.
+ */
+async function ensureGmEntriesPatch5Schema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.gm_entries ADD COLUMN IF NOT EXISTS created_by_role text`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -413,6 +428,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureBonusesSchema(client);
         await ensureNotificationsSchema(client);
         await ensureOfficeAccountsStage2Schema(client);
+        await ensureGmEntriesPatch5Schema(client);
         return;
       } catch (err) {
         lastErr = err;

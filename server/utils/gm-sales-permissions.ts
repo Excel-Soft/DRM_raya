@@ -18,6 +18,7 @@ import type { Request, Response, NextFunction } from "express";
 import { ROLES, normalizeRole } from "./role-utils";
 import { sendError } from "./api-response";
 import { getConfig } from "../services/gm-sales-config.service";
+import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "../services/gm-sales-audit";
 import type { GmSalesConfig } from "../../shared/gm-sales-constants";
 
 export const GM_SALES_ACTION_KEYS = {
@@ -25,6 +26,7 @@ export const GM_SALES_ACTION_KEYS = {
   GM_CREATE_FULL: "gm.create.full",
   GM_CREATE_PARTIAL: "gm.create.partial",
   GM_CREATE_LOAN: "gm.create.loan",
+  GM_CREATE_ACCOUNT: "gm.create.account",
   GM_EDIT: "gm.edit",
   GM_SUBMIT: "gm.submit",
   GM_APPROVE_HOD: "gm.approve.hod",
@@ -80,17 +82,35 @@ export function resolveAllowedRoles(
 
   switch (actionKey) {
     case GM_SALES_ACTION_KEYS.GM_CREATE:
+      // Coarse entry gate for POST /api/gm: admit anyone allowed to initiate ANY
+      // GM type. The route handler narrows to the resolved type's specific list
+      // once the canonical type is known. Union keeps defaults a no-op.
+      base.push(
+        ...config.fullGmAllowedInitiatorRoles,
+        ...config.partialGmAllowedInitiatorRoles,
+        ...config.loanGmAllowedInitiatorRoles,
+      );
+      if (config.serviceExecutiveCanCreateGM) base.push(ROLES.SERVICE_EXECUTIVE);
+      base.push(...config.gmCreateOverrideRoles);
+      break;
     case GM_SALES_ACTION_KEYS.GM_CREATE_FULL:
       base.push(...config.fullGmAllowedInitiatorRoles);
       if (config.serviceExecutiveCanCreateGM) base.push(ROLES.SERVICE_EXECUTIVE);
+      base.push(...config.gmCreateOverrideRoles);
       break;
     case GM_SALES_ACTION_KEYS.GM_CREATE_PARTIAL:
       base.push(...config.partialGmAllowedInitiatorRoles);
       if (config.serviceExecutiveCanCreateGM) base.push(ROLES.SERVICE_EXECUTIVE);
+      base.push(...config.gmCreateOverrideRoles);
       break;
     case GM_SALES_ACTION_KEYS.GM_CREATE_LOAN:
       base.push(...config.loanGmAllowedInitiatorRoles);
       if (config.serviceExecutiveCanCreateGM) base.push(ROLES.SERVICE_EXECUTIVE);
+      base.push(...config.gmCreateOverrideRoles);
+      break;
+    case GM_SALES_ACTION_KEYS.GM_CREATE_ACCOUNT:
+      base.push(...config.accountGmAllowedInitiatorRoles);
+      base.push(...config.gmCreateOverrideRoles);
       break;
     case GM_SALES_ACTION_KEYS.INVOICE_MANUAL_CREATE:
       base.push(ROLES.SALES_MANAGER, ROLES.ACCOUNT_MANAGER);
@@ -110,6 +130,10 @@ export interface GmSalesPermissionOptions {
   checkOwnership?: (req: Request) => boolean | Promise<boolean>;
   /** Return true if the action is valid in the current record status/stage. */
   checkStatus?: (req: Request) => boolean | Promise<boolean>;
+  /** When true, a role-denied (403) attempt is recorded as an audit event. */
+  auditUnauthorizedAttempt?: boolean;
+  /** Entity type used for the unauthorized-attempt audit (default "gm_entry"). */
+  auditEntityType?: string;
 }
 
 export function requireGmSalesActionPermission(
@@ -139,6 +163,16 @@ export function requireGmSalesActionPermission(
 
     const allowed = resolveAllowedRoles(actionKey, config);
     if (!allowed.includes(role)) {
+      if (options.auditUnauthorizedAttempt) {
+        void recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_CREATE_UNAUTHORIZED_ATTEMPT,
+          entityType: options.auditEntityType ?? "gm_entry",
+          entityId: "n/a",
+          reason: `Role "${role}" is not permitted to perform ${actionKey}`,
+          after: { action: actionKey, role },
+          req,
+        });
+      }
       return sendError(res, 403, "FORBIDDEN", "You do not have permission to perform this action", {
         action: actionKey,
       });

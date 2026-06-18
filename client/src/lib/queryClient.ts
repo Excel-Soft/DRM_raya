@@ -76,6 +76,32 @@ export async function apiRequest(
   return res;
 }
 
+// Extracts a human-readable error message from a parsed JSON body, supporting both
+// the legacy string shape ({ error: "msg" }) and the Patch 5 envelope shape
+// ({ error: { code, message } }). Falls back to a status-based message.
+export function extractApiError(body: any, status: number): string {
+  if (body && typeof body.error === "string") return body.error;
+  if (body && body.error && typeof body.error.message === "string") return body.error.message;
+  if (body && typeof body.message === "string") return body.message;
+  return `Request failed (${status})`;
+}
+
+// Performs an apiRequest, parses the JSON body, and THROWS (with the backend's
+// error message) on any non-2xx response so React Query's onError fires correctly.
+// Use this for mutations that must surface backend validation/authz failures.
+export async function mutationRequest<T = any>(
+  method: string,
+  url: string,
+  data?: unknown | undefined,
+): Promise<T> {
+  const res = await apiRequest(method, url, data);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(extractApiError(body, res.status));
+  }
+  return body as T;
+}
+
 // Performs an apiRequest and parses JSON, throwing on a non-2xx response so that
 // React Query's isError / mutation onError fire correctly. Use this instead of
 // calling res.json() directly when you need errors surfaced honestly.

@@ -305,6 +305,9 @@ export const gmSalesConfigSchema = z
     fullGmAllowedInitiatorRoles: roleArraySchema,
     partialGmAllowedInitiatorRoles: roleArraySchema,
     loanGmAllowedInitiatorRoles: roleArraySchema,
+    accountGmAllowedInitiatorRoles: roleArraySchema,
+    gmCreateOverrideRoles: roleArraySchema,
+    loanGmCreationEnabled: z.boolean(),
   })
   .strict();
 
@@ -326,6 +329,9 @@ export const GM_SALES_CONFIG_DEFAULTS: GmSalesConfig = {
   fullGmAllowedInitiatorRoles: ["sales_executive"],
   partialGmAllowedInitiatorRoles: ["sales_executive"],
   loanGmAllowedInitiatorRoles: ["sales_executive"],
+  accountGmAllowedInitiatorRoles: ["account_manager", "hod", "super_hod", "sales_manager"],
+  gmCreateOverrideRoles: ["admin", "super_hod"],
+  loanGmCreationEnabled: true,
 };
 
 export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> = {
@@ -346,6 +352,12 @@ export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> 
   fullGmAllowedInitiatorRoles: "Roles allowed to initiate a FULL GM.",
   partialGmAllowedInitiatorRoles: "Roles allowed to initiate a PARTIAL GM.",
   loanGmAllowedInitiatorRoles: "Roles allowed to initiate a LOAN GM.",
+  accountGmAllowedInitiatorRoles:
+    "Roles allowed to create a GM entry via the Accounts module endpoint (preserves the account / commission-verification flow).",
+  gmCreateOverrideRoles:
+    "Elevated roles permitted to create GM records as an override; every override creation is audited.",
+  loanGmCreationEnabled:
+    "Whether LOAN GM creation is accepted. When false, LOAN GM submissions are rejected until the loan-terms workflow is enabled.",
 };
 
 export const GM_SALES_CONFIG_KEYS = Object.keys(
