@@ -87,6 +87,7 @@ import { registerProjectReportRoutes } from "./project-report-routes";
 import { communicationRouter } from "./routes/communication-routes";
 import { CommunicationService } from "./services/communication.service";
 import { approvalRouter } from "./routes/approval-routes";
+import { gmSalesWorkflowRouter } from "./routes/gm-sales-workflow-routes";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 
 
@@ -386,6 +387,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // own approve/reject endpoints via the item `actions` metadata.
   await CrossDepartmentStatusService.ensureSchema();
   app.use("/api/approvals", approvalRouter);
+
+  // Patch 5 Stage 1 — GM/Sales workflow config (admin-only). The config table is
+  // created + seeded lazily on first access (db:push is broken repo-wide), so no
+  // boot-time ensure is required here.
+  app.use("/api/gm-sales-workflow", gmSalesWorkflowRouter);
+
   registerPostingDataRoutes(app);
   registerLeadsImportRoutes(app);
   registerCrmDuplicatesRoutes(app);

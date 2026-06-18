@@ -18,6 +18,7 @@ import { recordAuditLog as recordAuditLogImpl, ActivityLogService } from "./acti
 
 export interface AuditLogInput {
   actorUserId?: string;
+  activeRole?: string;
   action: string;
   module?: string;
   entityType: string;
