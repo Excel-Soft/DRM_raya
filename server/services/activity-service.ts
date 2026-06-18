@@ -65,6 +65,7 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
  */
 export async function recordAuditLog(data: {
     actorUserId?: string;
+    activeRole?: string;
     action: string;
     module?: string;
     entityType: string;
@@ -78,6 +79,7 @@ export async function recordAuditLog(data: {
 }): Promise<void> {
     const context = stripUndefined({
         module: data.module,
+        activeRole: data.activeRole,
         previousStatus: data.previousStatus,
         nextStatus: data.nextStatus,
         before: data.before,

@@ -11,6 +11,7 @@ import {
   rejectionReason,
   statusEnum,
 } from "./common.validators";
+import { invoiceTypeSchema } from "../../shared/gm-sales-constants";
 
 /**
  * Invoice domain validators. Mirrors the values in `invoiceStatusEnum`
@@ -178,3 +179,32 @@ export type WorkflowPatch = z.infer<typeof workflowPatchSchema>;
 
 export type CreateInvoice = z.infer<typeof createInvoiceSchema>;
 export type UpdateInvoiceStatus = z.infer<typeof updateInvoiceStatusSchema>;
+
+// ===========================================================================
+// Patch 5 Stage 1 — GM/Sales foundation validators (pure; not wired to routes)
+// ===========================================================================
+
+export const manualInvoicePayloadSchema = z
+  .object({
+    invoiceType: invoiceTypeSchema,
+    customerId: z.string().optional(),
+    companyName: z.string().min(1).optional(),
+    amount: z.coerce.number().nonnegative("amount must be 0 or greater"),
+  })
+  .passthrough();
+
+export const invoiceApprovalReadinessSchema = z
+  .object({
+    status: z.string().min(1, "status is required"),
+    hasLineItems: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const invoicePaymentReadinessSchema = z
+  .object({
+    status: z.string().min(1, "status is required"),
+    amountDue: z.coerce.number().optional(),
+  })
+  .passthrough();
+
+export type ManualInvoicePayload = z.infer<typeof manualInvoicePayloadSchema>;
