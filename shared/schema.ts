@@ -1090,6 +1090,8 @@ export const gmEntries = drmSchema.table("gm_entries", {
   withdrawalActionedAt: timestamp("withdrawal_actioned_at"),
 
   createdBy: varchar("created_by").notNull().references(() => users.id),
+  // Patch 5 Stage 2 — active role of the creator at GM creation (nullable, additive).
+  createdByRole: text("created_by_role"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -15,7 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, extractApiError } from "@/lib/queryClient";
 import { motion } from "framer-motion";
 import {
   FolderKanban,
@@ -2241,7 +2241,11 @@ export default function HodDashboard() {
 
                 // We need to use a custom mutation or just fetch directly here since the existing mutation is rigid
                 apiRequest("POST", url, payload)
-                  .then(async () => {
+                  .then(async (res) => {
+                    if (!res.ok) {
+                      const body = await res.json().catch(() => ({}));
+                      throw new Error(extractApiError(body, res.status));
+                    }
                     const successMessage = isUpdateRequest
                       ? "Updated successfully"
                       : gmApprovalStatus === "Approved"

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, mutationRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -87,8 +87,7 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
                 : role === "super-hod"
                     ? `/api/gm-pool/${id}/super-hod-approve`
                     : `/api/gm-pool/${id}/sales-manager-approve`;
-            const res = await apiRequest("POST", url, { comment });
-            return res.json();
+            return mutationRequest("POST", url, { comment });
         },
         onSuccess: (data) => {
             toast({

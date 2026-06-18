@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { apiRequest, getAuthHeader } from "@/lib/queryClient";
+import { apiRequest, getAuthHeader, mutationRequest } from "@/lib/queryClient";
 import { AlertCircle, Loader2, ChevronsUpDown, Check, Eye, Clock, Mail, MessageCircle, Phone, Printer, History, Pencil, ArrowDownToLine, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -454,10 +454,7 @@ export default function GmPoolAddGm() {
   };
 
   const createMutation = useMutation({
-    mutationFn: async (payload: any) => {
-      const res = await apiRequest("POST", "/api/gm", payload);
-      return res.json();
-    },
+    mutationFn: async (payload: any) => mutationRequest("POST", "/api/gm", payload),
     onSuccess: () => {
       toast({ title: "GM entry created" });
       setForm(defaultFormState);

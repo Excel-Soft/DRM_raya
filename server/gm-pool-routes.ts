@@ -8,6 +8,60 @@ import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
 import crypto from "crypto";
 import { createProductPostingInvoices } from "./utils/invoice-utils";
 import { NotificationService } from "./services/notification-service";
+import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions";
+import { getConfig } from "./services/gm-sales-config.service";
+import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit";
+import {
+  resolveCanonicalGmType,
+  checkLoanGmEnabled,
+  checkGmCreationThreshold,
+  thresholdsConfigured,
+  getInitialGmDbState,
+  recheckGmThresholdAtApproval,
+} from "./services/gm-create-policy.service";
+import { mapGmTypeToDbFlags, GM_TYPES, type GmSalesConfig } from "../shared/gm-sales-constants";
+
+/**
+ * Patch 5 Stage 2 — re-validate a GM's payment amount against the configured
+ * minimum threshold at an approval transition. Short-circuits (no DB read, no
+ * behaviour change) when no thresholds are configured, which is the default.
+ */
+async function enforceApprovalThreshold(
+  id: string,
+  req: unknown,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
+  let cfg: GmSalesConfig;
+  try {
+    cfg = (await getConfig()).config;
+  } catch {
+    return { ok: false, status: 503, body: { error: "Workflow configuration is unavailable", code: "CONFIG_UNAVAILABLE" } };
+  }
+  if (!thresholdsConfigured(cfg)) return { ok: true };
+  const cur = await pool.query(
+    "SELECT is_loan, is_partial_payment, package_type, customer_dollar, amount_usd FROM drm.gm_entries WHERE id = $1",
+    [id],
+  );
+  const e = cur.rows[0];
+  if (!e) return { ok: true };
+  const amt = Number(e.customer_dollar ?? e.amount_usd ?? 0);
+  const recheck = recheckGmThresholdAtApproval({
+    config: cfg,
+    isLoan: e.is_loan,
+    isPartialPayment: e.is_partial_payment,
+    packageType: e.package_type,
+    amountUsd: amt,
+  });
+  if (recheck.ok) return { ok: true };
+  await recordGmSalesAudit({
+    action: GM_SALES_AUDIT_ACTIONS.GM_THRESHOLD_VALIDATION_FAILED,
+    entityType: "gm_entry",
+    entityId: String(id),
+    reason: recheck.message,
+    after: recheck.details,
+    req: req as any,
+  });
+  return { ok: false, status: 400, body: { error: recheck.message, code: recheck.code, details: recheck.details } };
+}
 
 function parsePagination(page?: string, pageSize?: string) {
   const pageNum = Math.max(1, Number(page) || 1);
@@ -282,7 +336,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm", async (req, res) => {
+  router.post("/gm", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_CREATE, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const parsed = createSchema.parse(req.body);
@@ -302,8 +356,94 @@ export function registerGmPoolRoutes(app: Express) {
       const customerDollar = Number((parsed.pkrAmount / parsed.dollarRate).toFixed(2));
       const extraDollarDiscount = Number((finalOrderDollar - customerDollar).toFixed(2));
       const extraDiscountPkr = Number((extraDollarDiscount * parsed.dollarRate).toFixed(2));
-      const isLoan = parsed.loanMode === "loan";
-      const isPartial = parsed.loanMode === "installment";
+      // Patch 5 Stage 2 — resolve canonical GM type (FULL/PARTIAL/LOAN) and enforce
+      // the config-driven loan gate + minimum-payment threshold. Behaviour-preserving
+      // with safe defaults (loan enabled, no thresholds). The derived flags below stay
+      // the source of the DB is_loan/is_partial_payment columns; gm_type remains 'GM'.
+      const typeResult = resolveCanonicalGmType({
+        explicit: (req.body as any)?.canonicalGmType ?? (req.body as any)?.gmType,
+        loanMode: parsed.loanMode,
+      });
+      if (!typeResult.ok || !typeResult.value) {
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_TYPE_CHANGE_DENIED,
+          entityType: "gm_entry",
+          entityId: "n/a",
+          reason: typeResult.message,
+          after: { explicit: (req.body as any)?.canonicalGmType, loanMode: parsed.loanMode },
+          req,
+        });
+        return res.status(400).json({ error: typeResult.message, code: typeResult.code });
+      }
+      const canonicalGmType = typeResult.value;
+      const gmFlags = mapGmTypeToDbFlags(canonicalGmType).value ?? { isLoan: 0, isPartialPayment: 0 };
+      const isLoan = gmFlags.isLoan === 1;
+      const isPartial = gmFlags.isPartialPayment === 1;
+
+      let gmConfig: GmSalesConfig;
+      try {
+        gmConfig = (await getConfig()).config;
+      } catch {
+        return res.status(503).json({ error: "Workflow configuration is unavailable", code: "CONFIG_UNAVAILABLE" });
+      }
+
+      // Patch 5 Stage 2 — type-specific initiator authorization. The route guard
+      // (gm.create) is a coarse union gate; here we enforce the per-type allowed-
+      // initiator config now that the canonical type is known. Default config lists
+      // are identical across types, so this is a no-op unless an admin diverges them.
+      const actingRole = normalizeRole(
+        (req.user as any)?.activeRoleId ?? (req.user as any)?.roleId ?? "",
+      );
+      if (actingRole !== ROLES.ADMIN) {
+        const typeActionKey =
+          canonicalGmType === GM_TYPES.LOAN
+            ? GM_SALES_ACTION_KEYS.GM_CREATE_LOAN
+            : canonicalGmType === GM_TYPES.PARTIAL
+              ? GM_SALES_ACTION_KEYS.GM_CREATE_PARTIAL
+              : GM_SALES_ACTION_KEYS.GM_CREATE_FULL;
+        const allowedForType = resolveAllowedRoles(typeActionKey, gmConfig);
+        if (!allowedForType.includes(actingRole)) {
+          await recordGmSalesAudit({
+            action: GM_SALES_AUDIT_ACTIONS.GM_CREATE_UNAUTHORIZED_ATTEMPT,
+            entityType: "gm_entry",
+            entityId: "n/a",
+            reason: `Role "${actingRole}" is not permitted to create a ${canonicalGmType} GM`,
+            after: { action: typeActionKey, role: actingRole, gmType: canonicalGmType },
+            req,
+          });
+          return res.status(403).json({
+            error: "You do not have permission to create this GM type",
+            code: "FORBIDDEN",
+            details: { gmType: canonicalGmType },
+          });
+        }
+      }
+
+      const loanCheck = checkLoanGmEnabled(gmConfig, canonicalGmType);
+      if (!loanCheck.ok) {
+        return res.status(400).json({ error: loanCheck.message, code: loanCheck.code });
+      }
+
+      const thresholdCheck = checkGmCreationThreshold({
+        config: gmConfig,
+        gmType: canonicalGmType,
+        packageKey: parsed.packageName,
+        amountUsd: customerDollar,
+      });
+      if (!thresholdCheck.ok) {
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_THRESHOLD_VALIDATION_FAILED,
+          entityType: "gm_entry",
+          entityId: "n/a",
+          reason: thresholdCheck.message,
+          after: thresholdCheck.details,
+          req,
+        });
+        return res.status(400).json({ error: thresholdCheck.message, code: thresholdCheck.code, details: thresholdCheck.details });
+      }
+
+      const createdByRole = (req.user as any)?.activeRoleId ?? (req.user as any)?.roleId ?? null;
+      const initialGmState = getInitialGmDbState(canonicalGmType);
       let countryVal = "Other";
       if (parsed.companyId) {
         const cRes = await pool.query("SELECT country FROM drm.customers WHERE id = $1", [parsed.companyId]);
@@ -411,12 +551,13 @@ export function registerGmPoolRoutes(app: Express) {
           created_at,
           updated_at,
           is_deleted,
-          approval_status
+          approval_status,
+          created_by_role
         )
         VALUES (
           gen_random_uuid(),
           'GM',
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now(), false, 'pending_hod'
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now(), false, 'pending_hod', $29
         )
         returning *
       `;
@@ -459,10 +600,42 @@ export function registerGmPoolRoutes(app: Express) {
         JSON.stringify(parsed.installments || []),
         salesPersonName,
         resolvedSalesPersonId,
+        createdByRole,
       ];
 
       const result = await pool.query(insertSql, values);
       const row = result.rows[0];
+
+      const isOverrideCreate = (() => {
+        const r = normalizeRole(createdByRole ?? "");
+        return r === ROLES.ADMIN || gmConfig.gmCreateOverrideRoles.map((x) => normalizeRole(x)).includes(r);
+      })();
+      await recordGmSalesAudit({
+        action: GM_SALES_AUDIT_ACTIONS.GM_CREATE,
+        entityType: "gm_entry",
+        entityId: String(row.id),
+        nextStatus: initialGmState.canonicalStage,
+        after: {
+          canonicalGmType,
+          isLoan,
+          isPartialPayment: isPartial,
+          status: row.status,
+          approvalStatus: row.approval_status,
+          packageType: row.package_type,
+          amountUsd: customerDollar,
+          createdByRole,
+          override: isOverrideCreate,
+        },
+        reason: isOverrideCreate ? "gm_create_override" : undefined,
+        req,
+      });
+      await recordGmSalesAudit({
+        action: GM_SALES_AUDIT_ACTIONS.GM_TYPE_SET,
+        entityType: "gm_entry",
+        entityId: String(row.id),
+        after: { canonicalGmType, source: typeResult.source },
+        req,
+      });
 
       // Automatically create 3 zero-amount invoices for the Product Posting Workflow
       await createProductPostingInvoices(req.user.userId, finalCustomerId, parsed.companyName);
@@ -615,6 +788,8 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { comment } = req.body;
+      const thr = await enforceApprovalThreshold(id, req);
+      if (!thr.ok) return res.status(thr.status).json(thr.body);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, account_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod' RETURNING *`,
         [id, req.user.userId, comment || null]
@@ -672,6 +847,8 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { comment } = req.body;
+      const thr = await enforceApprovalThreshold(id, req);
+      if (!thr.ok) return res.status(thr.status).json(thr.body);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' RETURNING *`,
         [id, req.user.userId, comment || null]
