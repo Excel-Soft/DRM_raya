@@ -11,6 +11,7 @@ import { NotificationService } from "./services/notification-service";
 import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service";
 import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit";
+import { sendError, sendSuccess, zodIssues } from "./utils/api-response";
 import {
   resolveCanonicalGmType,
   checkLoanGmEnabled,
@@ -160,6 +161,71 @@ const gmPackages = [
   { id: "kwa-pro", name: "Kwa-Pro", priceUsd: 800, orderDollar: 800 },
   { id: "kap-package", name: "KAP-Package", priceUsd: 10999, orderDollar: 10999 },
 ];
+
+/**
+ * Patch 5 Stage 3 — final-approval gate for PARTIAL (P4) and LOAN (P5) GMs.
+ * Runs immediately before any transition that finalises a GM (sets
+ * `final_status = 'approved'`). FULL GMs are a pure no-op (zero behaviour change).
+ * A PARTIAL GM is blocked until its recorded receipts cover the full customer
+ * dollar (remaining <= 0); a LOAN GM is blocked until an Admin (Super HOD) has
+ * approved its loan terms. Returns the LEGACY `{ error, code, details }` body used
+ * by the surrounding approval routes so existing frontends keep working unchanged.
+ */
+async function enforceLoanPartialFinalApprovalGate(
+  id: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
+  const cur = await pool.query(
+    "SELECT is_loan, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1",
+    [id],
+  );
+  const e = cur.rows[0];
+  if (!e) return { ok: true }; // missing GM → let the route's own 404 handle it
+  const isLoan = Number(e.is_loan) === 1;
+  const isPartial = Number(e.is_partial_payment) === 1;
+  if (!isLoan && !isPartial) return { ok: true }; // FULL GM — no-op
+
+  if (isPartial) {
+    const paidRes = await pool.query(
+      "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
+      [id],
+    );
+    const target = Number(e.target || 0);
+    const paid = Number(paidRes.rows[0]?.paid || 0);
+    const remaining = Number((target - paid).toFixed(2));
+    if (remaining > 0.009) {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: `Cannot grant final approval: this partial-payment GM still has an outstanding balance of $${remaining.toFixed(2)}. Record receipts until it is fully paid first.`,
+          code: "PARTIAL_PAYMENT_INCOMPLETE",
+          details: { target, paid, remaining },
+        },
+      };
+    }
+  }
+
+  if (isLoan) {
+    const lt = await pool.query(
+      "SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
+      [id],
+    );
+    const status = (lt.rows[0]?.admin_approval_status as string | undefined) ?? "NONE";
+    if (status !== "APPROVED") {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: "Cannot grant final approval: this loan GM requires Admin (Super HOD) approval of its loan terms first.",
+          code: "LOAN_ADMIN_APPROVAL_REQUIRED",
+          details: { adminApprovalStatus: status },
+        },
+      };
+    }
+  }
+
+  return { ok: true };
+}
 
 export function registerGmPoolRoutes(app: Express) {
   const router = Router();
@@ -849,6 +915,9 @@ export function registerGmPoolRoutes(app: Express) {
       const { comment } = req.body;
       const thr = await enforceApprovalThreshold(id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
+      // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
+      const gate = await enforceLoanPartialFinalApprovalGate(id);
+      if (!gate.ok) return res.status(gate.status).json(gate.body);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' RETURNING *`,
         [id, req.user.userId, comment || null]
@@ -921,6 +990,19 @@ export function registerGmPoolRoutes(app: Express) {
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const entry = result.rows[0];
       if (entry.account_manager_status === 'approved') {
+        // Patch 5 Stage 3 — the Sales Manager approval is recorded above; only the
+        // FINAL flip is gated. Hold final approval for an unpaid PARTIAL / un-admin-
+        // approved LOAN GM instead of erroring (SM status stays recorded).
+        const gate = await enforceLoanPartialFinalApprovalGate(id);
+        if (!gate.ok) {
+          return res.json({
+            success: true,
+            finalApprovalBlocked: true,
+            code: gate.body.code,
+            message: `Sales Manager approval recorded. Final approval is on hold: ${String(gate.body.error)}`,
+            data: entry,
+          });
+        }
         await pool.query(`UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
 
         // Notify Sales Executive
@@ -1036,6 +1118,9 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { comment } = req.body;
+      // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
+      const gate = await enforceLoanPartialFinalApprovalGate(id);
+      if (!gate.ok) return res.status(gate.status).json(gate.body);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod' RETURNING *`,
         [id, req.user.userId, comment || null]
@@ -1306,6 +1391,494 @@ export function registerGmPoolRoutes(app: Express) {
       return res.json({ success: true, message: "Entry deleted" });
     } catch (err) {
       return res.status(500).json({ error: "Failed to delete entry" });
+    }
+  });
+
+  // ===========================================================================
+  // Patch 5 Stage 3 — Partial GM receipts (P4) + Loan GM admin/return (P5).
+  // New endpoints use the api-response envelope (sendSuccess/sendError). Mutations
+  // are guarded by the existing gm-sales permission middleware and audited via
+  // recordGmSalesAudit (best-effort). `gm_id` is a plain varchar link to
+  // drm.gm_entries(id); existence is validated here in the app layer.
+  // ===========================================================================
+  async function loadPartialSummary(id: string, target: number) {
+    const paidRes = await pool.query(
+      "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
+      [id],
+    );
+    const paid = Number(Number(paidRes.rows[0]?.paid || 0).toFixed(2));
+    const remaining = Number((target - paid).toFixed(2));
+    return { target, paid, remaining, fullyPaid: remaining <= 0.009 };
+  }
+
+  const partialReceiptSchema = z.object({
+    amountUsd: z.coerce.number().positive(),
+    amountPkr: z.coerce.number().nonnegative().optional(),
+    dollarRate: z.coerce.number().positive().optional(),
+    receiptDate: z.coerce.date().optional(),
+    method: z.string().trim().max(80).optional(),
+    reference: z.string().trim().max(160).optional(),
+    notes: z.string().trim().max(1000).optional(),
+  });
+
+  // --- P4: list partial receipts + payment summary --------------------------
+  router.get("/gm-pool/:id/partial-receipts", async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      const { id } = req.params;
+      const gm = await pool.query(
+        "SELECT id, company_name, is_partial_payment, is_loan, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+        [id],
+      );
+      if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+      const receipts = await pool.query(
+        `SELECT id, gm_id AS "gmId", amount_usd AS "amountUsd", amount_pkr AS "amountPkr",
+                dollar_rate AS "dollarRate", receipt_date AS "receiptDate", method, reference,
+                notes, collected_by AS "collectedBy", created_at AS "createdAt"
+           FROM drm.gm_partial_receipts WHERE gm_id = $1 ORDER BY receipt_date ASC, created_at ASC`,
+        [id],
+      );
+      const summary = await loadPartialSummary(id, Number(gm.rows[0].target || 0));
+      return sendSuccess(res, {
+        gmId: id,
+        companyName: gm.rows[0].company_name,
+        isPartialPayment: Number(gm.rows[0].is_partial_payment) === 1,
+        summary,
+        receipts: receipts.rows,
+      });
+    } catch (err) {
+      console.error("[gm-pool] list partial receipts error:", err);
+      return sendError(res, 500, "INTERNAL", "Failed to load partial receipts");
+    }
+  });
+
+  // --- P4: record a partial receipt -----------------------------------------
+  router.post(
+    "/gm-pool/:id/partial-receipts",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const input = partialReceiptSchema.parse(req.body ?? {});
+        const gm = await pool.query(
+          "SELECT id, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        if (Number(gm.rows[0].is_partial_payment) !== 1) {
+          return sendError(res, 409, "NOT_PARTIAL_GM", "Receipts can only be recorded against a partial-payment GM");
+        }
+        const target = Number(gm.rows[0].target || 0);
+        const before = await loadPartialSummary(id, target);
+        if (target > 0 && input.amountUsd - before.remaining > 0.009) {
+          return sendError(
+            res,
+            409,
+            "RECEIPT_EXCEEDS_BALANCE",
+            `Receipt of $${input.amountUsd.toFixed(2)} exceeds the outstanding balance of $${before.remaining.toFixed(2)}`,
+            before,
+          );
+        }
+        const ins = await pool.query(
+          `INSERT INTO drm.gm_partial_receipts
+             (gm_id, amount_usd, amount_pkr, dollar_rate, receipt_date, method, reference, notes, collected_by)
+           VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6, $7, $8, $9) RETURNING *`,
+          [
+            id,
+            input.amountUsd,
+            input.amountPkr ?? null,
+            input.dollarRate ?? null,
+            input.receiptDate ?? null,
+            input.method ?? null,
+            input.reference ?? null,
+            input.notes ?? null,
+            req.user.userId,
+          ],
+        );
+        const summary = await loadPartialSummary(id, target);
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_PARTIAL_RECEIPT_ADD,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: `Partial receipt of $${input.amountUsd.toFixed(2)} recorded`,
+          after: { receiptId: ins.rows[0]?.id, ...summary },
+          req,
+        });
+        return sendSuccess(res, { receipt: ins.rows[0], summary }, 201);
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid receipt data", zodIssues(err));
+        console.error("[gm-pool] add partial receipt error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to record receipt");
+      }
+    },
+  );
+
+  // --- P4: confirm a partial GM is fully paid (does NOT set final_status) ----
+  router.post(
+    "/gm-pool/:id/finalize-partial",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_FINALIZE_PARTIAL, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const gm = await pool.query(
+          "SELECT id, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        if (Number(gm.rows[0].is_partial_payment) !== 1) {
+          return sendError(res, 409, "NOT_PARTIAL_GM", "Only a partial-payment GM can be finalised this way");
+        }
+        const summary = await loadPartialSummary(id, Number(gm.rows[0].target || 0));
+        if (!summary.fullyPaid) {
+          return sendError(
+            res,
+            409,
+            "PARTIAL_PAYMENT_INCOMPLETE",
+            `Outstanding balance of $${summary.remaining.toFixed(2)} must be fully collected before this partial GM can be finalised`,
+            summary,
+          );
+        }
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_PARTIAL_FINAL_APPROVE,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: "Partial GM confirmed fully paid; eligible for final approval",
+          after: summary,
+          req,
+        });
+        return sendSuccess(res, {
+          gmId: id,
+          summary,
+          message: "Partial payment complete. This GM can now proceed through the normal final-approval routes.",
+        });
+      } catch (err) {
+        console.error("[gm-pool] finalize-partial error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to finalise partial payment");
+      }
+    },
+  );
+
+  // --- P5: loan terms (read) ------------------------------------------------
+  router.get("/gm-pool/:id/loan-terms", async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      const { id } = req.params;
+      const gm = await pool.query(
+        "SELECT id, company_name, is_loan FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+        [id],
+      );
+      if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+      const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
+      return sendSuccess(res, {
+        gmId: id,
+        companyName: gm.rows[0].company_name,
+        isLoan: Number(gm.rows[0].is_loan) === 1,
+        terms: lt.rows[0] || null,
+      });
+    } catch (err) {
+      console.error("[gm-pool] get loan terms error:", err);
+      return sendError(res, 500, "INTERNAL", "Failed to load loan terms");
+    }
+  });
+
+  // --- P5: loan terms (create / update). Changing financial terms re-arms the
+  // admin gate (back to PENDING); editing only the return date keeps approval. ---
+  const loanTermsSchema = z.object({
+    loanAmountUsd: z.coerce.number().nonnegative().optional(),
+    companyCopayUsd: z.coerce.number().nonnegative().optional(),
+    agreedReturnDate: z.coerce.date().optional(),
+  });
+  const upsertLoanTerms = async (req: any, res: any) => {
+    try {
+      if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      const { id } = req.params;
+      const input = loanTermsSchema.parse(req.body ?? {});
+      const gm = await pool.query(
+        "SELECT id, is_loan FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+        [id],
+      );
+      if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+      if (Number(gm.rows[0].is_loan) !== 1) {
+        return sendError(res, 409, "NOT_LOAN_GM", "Loan terms can only be set on a loan GM");
+      }
+      const returnDate = input.agreedReturnDate ? input.agreedReturnDate.toISOString().slice(0, 10) : null;
+      const existing = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
+      let row: any;
+      if (!existing.rows[0]) {
+        const insRes = await pool.query(
+          `INSERT INTO drm.gm_loan_terms (gm_id, loan_amount_usd, company_copay_usd, agreed_return_date, created_by)
+           VALUES ($1, COALESCE($2, 0), COALESCE($3, 0), $4, $5) RETURNING *`,
+          [id, input.loanAmountUsd ?? null, input.companyCopayUsd ?? null, returnDate, req.user.userId],
+        );
+        row = insRes.rows[0];
+      } else {
+        const financialChanged =
+          (input.loanAmountUsd !== undefined && Number(input.loanAmountUsd) !== Number(existing.rows[0].loan_amount_usd)) ||
+          (input.companyCopayUsd !== undefined && Number(input.companyCopayUsd) !== Number(existing.rows[0].company_copay_usd));
+        const updRes = await pool.query(
+          `UPDATE drm.gm_loan_terms SET
+             loan_amount_usd = COALESCE($2, loan_amount_usd),
+             company_copay_usd = COALESCE($3, company_copay_usd),
+             agreed_return_date = COALESCE($4, agreed_return_date),
+             admin_approval_status = CASE WHEN $5 THEN 'PENDING' ELSE admin_approval_status END,
+             admin_approved_by = CASE WHEN $5 THEN NULL ELSE admin_approved_by END,
+             admin_approved_at = CASE WHEN $5 THEN NULL ELSE admin_approved_at END,
+             updated_at = now()
+           WHERE gm_id = $1 RETURNING *`,
+          [id, input.loanAmountUsd ?? null, input.companyCopayUsd ?? null, returnDate, financialChanged],
+        );
+        row = updRes.rows[0];
+      }
+      await recordGmSalesAudit({
+        action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_TERMS_ADD,
+        entityType: "gm_entry",
+        entityId: String(id),
+        reason: existing.rows[0] ? "Loan terms updated" : "Loan terms recorded",
+        after: {
+          loanAmountUsd: row?.loan_amount_usd,
+          companyCopayUsd: row?.company_copay_usd,
+          agreedReturnDate: row?.agreed_return_date,
+          adminApprovalStatus: row?.admin_approval_status,
+        },
+        req,
+      });
+      return sendSuccess(res, { terms: row });
+    } catch (err) {
+      if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid loan terms", zodIssues(err));
+      console.error("[gm-pool] upsert loan terms error:", err);
+      return sendError(res, 500, "INTERNAL", "Failed to save loan terms");
+    }
+  };
+  router.post(
+    "/gm-pool/:id/loan-terms",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN, { auditUnauthorizedAttempt: true }),
+    upsertLoanTerms,
+  );
+  router.patch(
+    "/gm-pool/:id/loan-terms",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN, { auditUnauthorizedAttempt: true }),
+    upsertLoanTerms,
+  );
+
+  // --- P5: loan admin approval queue (pending) ------------------------------
+  router.get("/gm-pool/loan-admin-queue", async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
+      const offset = (page - 1) * pageSize;
+      const where = `g.is_loan = 1 AND g.is_deleted = false AND COALESCE(lt.admin_approval_status, 'PENDING') = 'PENDING'`;
+      const rows = await pool.query(
+        `SELECT g.id, g.company_name AS "companyName", g.drm_id AS "drmId",
+                COALESCE(g.customer_dollar, g.amount_usd, 0)::numeric AS "amountUsd",
+                g.approval_status AS "approvalStatus", g.final_status AS "finalStatus", g.created_at AS "createdAt",
+                lt.id AS "loanTermsId", lt.loan_amount_usd AS "loanAmountUsd", lt.company_copay_usd AS "companyCopayUsd",
+                lt.agreed_return_date AS "agreedReturnDate",
+                COALESCE(lt.admin_approval_status, 'PENDING') AS "adminApprovalStatus",
+                COALESCE(lt.return_status, 'PENDING') AS "returnStatus"
+           FROM drm.gm_entries g
+           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id
+          WHERE ${where}
+          ORDER BY g.created_at DESC LIMIT $1 OFFSET $2`,
+        [pageSize, offset],
+      );
+      const count = await pool.query(
+        `SELECT COUNT(*) AS total FROM drm.gm_entries g
+           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id WHERE ${where}`,
+      );
+      return sendSuccess(res, {
+        entries: rows.rows,
+        meta: { total: parseInt(count.rows[0]?.total || "0", 10), page, pageSize },
+      });
+    } catch (err) {
+      console.error("[gm-pool] loan admin queue error:", err);
+      return sendError(res, 500, "INTERNAL", "Failed to load loan admin queue");
+    }
+  });
+
+  // --- P5: loan admin approve -----------------------------------------------
+  const adminApproveSchema = z.object({ comment: z.string().trim().max(1000).optional() });
+  router.post(
+    "/gm-pool/:id/loan-admin-approve",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const input = adminApproveSchema.parse(req.body ?? {});
+        const gm = await pool.query(
+          "SELECT id, is_loan, company_name, created_by, sales_person_id FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        if (Number(gm.rows[0].is_loan) !== 1) {
+          return sendError(res, 409, "NOT_LOAN_GM", "Only a loan GM can receive loan admin approval");
+        }
+        const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
+        if (!lt.rows[0]) return sendError(res, 409, "LOAN_TERMS_MISSING", "Loan terms must be recorded before admin approval");
+        const upd = await pool.query(
+          `UPDATE drm.gm_loan_terms SET admin_approval_status = 'APPROVED', admin_approved_by = $2,
+                  admin_approved_at = now(), admin_comment = $3, updated_at = now()
+             WHERE gm_id = $1 RETURNING *`,
+          [id, req.user.userId, input.comment ?? null],
+        );
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_ADMIN_APPROVE,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: "Loan GM terms approved by Admin (Super HOD)",
+          after: { adminApprovalStatus: "APPROVED" },
+          req,
+        });
+        const notifyUser = gm.rows[0].sales_person_id || gm.rows[0].created_by;
+        if (notifyUser) {
+          try {
+            await NotificationService.notify({
+              userId: notifyUser,
+              message: `Loan terms for GM '${gm.rows[0].company_name || "Unknown"}' were approved by Admin. It can now proceed to final approval.`,
+              type: "SUCCESS",
+              targetUrl: "/pms/approvals",
+            });
+          } catch (notifErr) {
+            console.error("Failed to send loan admin approval notification:", notifErr);
+          }
+        }
+        return sendSuccess(res, { terms: upd.rows[0], message: "Loan terms approved. This loan GM can now proceed through final approval." });
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid input", zodIssues(err));
+        console.error("[gm-pool] loan admin approve error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to approve loan terms");
+      }
+    },
+  );
+
+  // --- P5: loan admin reject (reason required) ------------------------------
+  const adminRejectSchema = z.object({ comment: z.string().trim().min(1, "A reason is required") });
+  router.post(
+    "/gm-pool/:id/loan-admin-reject",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const input = adminRejectSchema.parse(req.body ?? {});
+        const gm = await pool.query(
+          "SELECT id, is_loan FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        if (Number(gm.rows[0].is_loan) !== 1) {
+          return sendError(res, 409, "NOT_LOAN_GM", "Only a loan GM can receive a loan admin decision");
+        }
+        const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
+        if (!lt.rows[0]) return sendError(res, 409, "LOAN_TERMS_MISSING", "Loan terms must be recorded before an admin decision");
+        const upd = await pool.query(
+          `UPDATE drm.gm_loan_terms SET admin_approval_status = 'REJECTED', admin_approved_by = $2,
+                  admin_approved_at = now(), admin_comment = $3, updated_at = now()
+             WHERE gm_id = $1 RETURNING *`,
+          [id, req.user.userId, input.comment],
+        );
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_ADMIN_APPROVE,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: `Loan GM terms rejected by Admin: ${input.comment}`,
+          after: { adminApprovalStatus: "REJECTED" },
+          req,
+        });
+        return sendSuccess(res, { terms: upd.rows[0], message: "Loan terms rejected." });
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "A rejection reason is required", zodIssues(err));
+        console.error("[gm-pool] loan admin reject error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to reject loan terms");
+      }
+    },
+  );
+
+  // --- P5: loan return-status tracking --------------------------------------
+  const loanReturnSchema = z.object({
+    returnStatus: z.enum(["PENDING", "RETURNED", "OVERDUE"]),
+    returnedAt: z.coerce.date().optional(),
+    agreedReturnDate: z.coerce.date().optional(),
+  });
+  router.patch(
+    "/gm-pool/:id/loan-return",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const input = loanReturnSchema.parse(req.body ?? {});
+        const gm = await pool.query("SELECT id, is_loan FROM drm.gm_entries WHERE id = $1 AND is_deleted = false", [id]);
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        if (Number(gm.rows[0].is_loan) !== 1) {
+          return sendError(res, 409, "NOT_LOAN_GM", "Return tracking only applies to a loan GM");
+        }
+        const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
+        if (!lt.rows[0]) return sendError(res, 409, "LOAN_TERMS_MISSING", "Loan terms must be recorded before return tracking");
+        const returnedAt = input.returnStatus === "RETURNED" ? (input.returnedAt ?? new Date()) : null;
+        const returnDate = input.agreedReturnDate ? input.agreedReturnDate.toISOString().slice(0, 10) : null;
+        const upd = await pool.query(
+          `UPDATE drm.gm_loan_terms SET return_status = $2, returned_at = $3,
+                  agreed_return_date = COALESCE($4, agreed_return_date), updated_at = now()
+             WHERE gm_id = $1 RETURNING *`,
+          [id, input.returnStatus, returnedAt, returnDate],
+        );
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_RETURN_UPDATE,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: `Loan return status set to ${input.returnStatus}`,
+          after: { returnStatus: input.returnStatus, returnedAt },
+          req,
+        });
+        return sendSuccess(res, { terms: upd.rows[0] });
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid return update", zodIssues(err));
+        console.error("[gm-pool] loan return update error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to update return status");
+      }
+    },
+  );
+
+  // --- P5: loan return / overdue tracking report ----------------------------
+  router.get("/gm-pool/loan-return-report", async (req, res) => {
+    try {
+      if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      const rows = await pool.query(
+        `SELECT g.id, g.company_name AS "companyName", g.drm_id AS "drmId",
+                COALESCE(g.customer_dollar, g.amount_usd, 0)::numeric AS "gmAmountUsd",
+                g.final_status AS "finalStatus",
+                lt.loan_amount_usd AS "loanAmountUsd", lt.company_copay_usd AS "companyCopayUsd",
+                lt.agreed_return_date AS "agreedReturnDate",
+                lt.admin_approval_status AS "adminApprovalStatus",
+                lt.return_status AS "returnStatus", lt.returned_at AS "returnedAt",
+                CASE
+                  WHEN lt.return_status = 'RETURNED' THEN 'RETURNED'
+                  WHEN lt.agreed_return_date IS NOT NULL AND lt.agreed_return_date < CURRENT_DATE THEN 'OVERDUE'
+                  ELSE 'PENDING'
+                END AS "derivedStatus",
+                CASE
+                  WHEN lt.return_status <> 'RETURNED' AND lt.agreed_return_date IS NOT NULL
+                    THEN (CURRENT_DATE - lt.agreed_return_date)
+                  ELSE NULL
+                END AS "daysOverdue"
+           FROM drm.gm_entries g
+           JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id
+          WHERE g.is_loan = 1 AND g.is_deleted = false
+          ORDER BY lt.agreed_return_date ASC NULLS LAST, g.created_at DESC`,
+      );
+      const summary = {
+        total: rows.rows.length,
+        returned: rows.rows.filter((r) => r.returnStatus === "RETURNED").length,
+        overdue: rows.rows.filter((r) => r.derivedStatus === "OVERDUE").length,
+        pending: rows.rows.filter((r) => r.derivedStatus === "PENDING").length,
+      };
+      return sendSuccess(res, { entries: rows.rows, summary });
+    } catch (err) {
+      console.error("[gm-pool] loan return report error:", err);
+      return sendError(res, 500, "INTERNAL", "Failed to load loan return report");
     }
   });
 

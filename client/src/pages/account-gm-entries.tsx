@@ -8,9 +8,11 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
+import { PartialReceiptsDialog } from "@/components/gm/PartialReceiptsDialog";
+import { LoanTermsDialog } from "@/components/gm/LoanTermsDialog";
 import {
   Plus, Eye, Pencil, Trash2, ChevronLeft, ChevronRight,
-  Search, Monitor, UserCog, X, Users, CheckCircle, XCircle
+  Search, Monitor, UserCog, X, Users, CheckCircle, XCircle, Wallet, Landmark
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -114,6 +116,11 @@ export default function AccountGmEntries() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<GmEntry | null>(null);
+
+  // ── Patch 5 Stage 3 — partial receipt / loan terms dialogs
+  const [partialDialogOpen, setPartialDialogOpen] = useState(false);
+  const [loanDialogOpen, setLoanDialogOpen] = useState(false);
+  const [stage3Entry, setStage3Entry] = useState<GmEntry | null>(null);
 
   // ── Team Members
   const [teamDialogOpen, setTeamDialogOpen] = useState(false);
@@ -559,6 +566,25 @@ export default function AccountGmEntries() {
                           </button>
                         </>
                       )}
+                      {/* ── Patch 5 Stage 3: partial receipts / loan terms ── */}
+                      {entry.isPartialPayment && (
+                        <button
+                          onClick={() => { setStage3Entry(entry); setPartialDialogOpen(true); }}
+                          className="text-purple-500 hover:text-purple-700 transition-colors"
+                          title="Partial payment receipts"
+                        >
+                          <Wallet className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {entry.isLoan && (
+                        <button
+                          onClick={() => { setStage3Entry(entry); setLoanDialogOpen(true); }}
+                          className="text-amber-600 hover:text-amber-800 transition-colors"
+                          title="Loan terms & admin approval"
+                        >
+                          <Landmark className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       {/* ── Normal actions ── */}
                       <button onClick={() => handleViewEntry(entry)} className="text-gray-500 hover:text-blue-600 transition-colors dark:text-zinc-400" title="View">
                         <Eye className="h-3.5 w-3.5" />
@@ -904,6 +930,20 @@ export default function AccountGmEntries() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Patch 5 Stage 3: partial receipts / loan terms dialogs ── */}
+      <PartialReceiptsDialog
+        gmId={stage3Entry?.id ?? null}
+        companyName={stage3Entry?.companyName}
+        open={partialDialogOpen}
+        onOpenChange={setPartialDialogOpen}
+      />
+      <LoanTermsDialog
+        gmId={stage3Entry?.id ?? null}
+        companyName={stage3Entry?.companyName}
+        open={loanDialogOpen}
+        onOpenChange={setLoanDialogOpen}
+      />
     </div>
   );
 }

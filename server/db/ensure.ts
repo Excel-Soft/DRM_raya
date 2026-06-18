@@ -397,6 +397,76 @@ async function ensureGmEntriesPatch5Schema(client: {
   );
 }
 
+/**
+ * Patch 5 Stage 3 — Partial GM receipts (P4) + Loan GM terms/admin-approval/return
+ * tracking (P5). `db:push` is broken repo-wide (pre-existing FK mismatch), so these
+ * tables are created idempotently at runtime here (mirrors shared/schema.ts
+ * `gmPartialReceipts` / `gmLoanTerms`). Each statement runs as a SEPARATE
+ * client.query so a no-op can never abort a sibling. `gm_id` links
+ * drm.gm_entries(id) (varchar) but is deliberately a plain varchar WITHOUT a FK:
+ * gm_entries.id is varchar while users.id is uuid, and a hard cross-type FK risks a
+ * type-clash rollback — existence is validated in the application layer. Actor
+ * columns reference drm.users(id) (uuid) which is type-safe.
+ */
+async function ensureGmStage3Schema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  // --- gm_partial_receipts (P4): first-class partial-payment receipt rows ---
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.gm_partial_receipts (
+       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+       gm_id varchar NOT NULL,
+       amount_usd numeric(12,2) NOT NULL,
+       amount_pkr numeric(15,2),
+       dollar_rate numeric(12,4),
+       receipt_date timestamp NOT NULL DEFAULT now(),
+       method text,
+       reference text,
+       notes text,
+       collected_by uuid REFERENCES drm.users(id),
+       created_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_partial_receipts_gm ON drm.gm_partial_receipts (gm_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_partial_receipts_date ON drm.gm_partial_receipts (receipt_date)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_partial_receipts_collected_by ON drm.gm_partial_receipts (collected_by)`,
+  );
+
+  // --- gm_loan_terms (P5): one row per loan GM (gm_id unique) ---
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.gm_loan_terms (
+       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+       gm_id varchar NOT NULL UNIQUE,
+       loan_amount_usd numeric(12,2) NOT NULL DEFAULT 0,
+       company_copay_usd numeric(12,2) NOT NULL DEFAULT 0,
+       agreed_return_date date,
+       admin_approval_status text NOT NULL DEFAULT 'PENDING',
+       admin_approved_by uuid REFERENCES drm.users(id),
+       admin_approved_at timestamp,
+       admin_comment text,
+       return_status text NOT NULL DEFAULT 'PENDING',
+       returned_at timestamp,
+       created_by uuid REFERENCES drm.users(id),
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_loan_terms_admin_status ON drm.gm_loan_terms (admin_approval_status)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_loan_terms_return_status ON drm.gm_loan_terms (return_status)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_loan_terms_return_date ON drm.gm_loan_terms (agreed_return_date)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -429,6 +499,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureNotificationsSchema(client);
         await ensureOfficeAccountsStage2Schema(client);
         await ensureGmEntriesPatch5Schema(client);
+        await ensureGmStage3Schema(client);
         return;
       } catch (err) {
         lastErr = err;
