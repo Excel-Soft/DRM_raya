@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { LoanAdminQueuePanel } from "@/components/gm/LoanAdminQueuePanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -807,6 +808,11 @@ export default function SuperHODDashboard() {
                                     </Card>
                                 ))}
                             </div>
+                        </motion.div>
+
+                        {/* Patch 5 Stage 3: Loan admin approval queue + return tracking */}
+                        <motion.div variants={itemVariants}>
+                            <LoanAdminQueuePanel />
                         </motion.div>
 
                         {/* Verification Of Project Section */}

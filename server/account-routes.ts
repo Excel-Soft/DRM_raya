@@ -99,6 +99,69 @@ async function enforceApprovalThreshold(
   return { ok: false, status: 400, body: { error: recheck.message, code: recheck.code, details: recheck.details } };
 }
 
+/**
+ * Patch 5 Stage 3 — final-approval gate (mirror of the gm-pool-routes helper) for
+ * PARTIAL (P4) and LOAN (P5) GMs. FULL GMs are a pure no-op. A PARTIAL GM is blocked
+ * until its receipts cover the full customer dollar; a LOAN GM is blocked until its
+ * loan terms are Admin (Super HOD) approved. Returns the LEGACY `{ error, code,
+ * details }` body shape used by the surrounding approve route.
+ */
+async function enforceLoanPartialFinalApprovalGate(
+  id: string,
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
+  const cur = await pool.query(
+    "SELECT is_loan, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1",
+    [id],
+  );
+  const e = cur.rows[0];
+  if (!e) return { ok: true };
+  const isLoan = Number(e.is_loan) === 1;
+  const isPartial = Number(e.is_partial_payment) === 1;
+  if (!isLoan && !isPartial) return { ok: true };
+
+  if (isPartial) {
+    const paidRes = await pool.query(
+      "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
+      [id],
+    );
+    const target = Number(e.target || 0);
+    const paid = Number(paidRes.rows[0]?.paid || 0);
+    const remaining = Number((target - paid).toFixed(2));
+    if (remaining > 0.009) {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: `Cannot grant final approval: this partial-payment GM still has an outstanding balance of $${remaining.toFixed(2)}. Record receipts until it is fully paid first.`,
+          code: "PARTIAL_PAYMENT_INCOMPLETE",
+          details: { target, paid, remaining },
+        },
+      };
+    }
+  }
+
+  if (isLoan) {
+    const lt = await pool.query(
+      "SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
+      [id],
+    );
+    const status = (lt.rows[0]?.admin_approval_status as string | undefined) ?? "NONE";
+    if (status !== "APPROVED") {
+      return {
+        ok: false,
+        status: 409,
+        body: {
+          error: "Cannot grant final approval: this loan GM requires Admin (Super HOD) approval of its loan terms first.",
+          code: "LOAN_ADMIN_APPROVAL_REQUIRED",
+          details: { adminApprovalStatus: status },
+        },
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 export function registerAccountRoutes(app: Express) {
   // ===== GM Entries Routes =====
 
@@ -863,6 +926,10 @@ export function registerAccountRoutes(app: Express) {
 
       const thr = await enforceApprovalThreshold(req.params.id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
+
+      // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
+      const gate = await enforceLoanPartialFinalApprovalGate(req.params.id);
+      if (!gate.ok) return res.status(gate.status).json(gate.body);
 
       const { rows } = await pool.query(
         `

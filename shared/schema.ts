@@ -1096,6 +1096,56 @@ export const gmEntries = drmSchema.table("gm_entries", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Patch 5 Stage 3 (P4) — Partial GM payment receipts. First-class receipt rows so a
+// partial GM's remaining balance = customer_dollar - SUM(receipts.amount_usd). `gm_id`
+// links drm.gm_entries(id) (varchar) WITHOUT a hard FK (gm_entries.id is varchar but
+// users.id is uuid; a cross-type FK risks a type-clash rollback — existence is validated
+// in the app layer). The live table is created at runtime in server/db/ensure.ts because
+// db:push is broken repo-wide; this def supplies the TS/Drizzle types only.
+export const gmPartialReceipts = drmSchema.table("gm_partial_receipts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  gmId: varchar("gm_id").notNull(),
+  amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull(),
+  amountPkr: decimal("amount_pkr", { precision: 15, scale: 2 }),
+  dollarRate: decimal("dollar_rate", { precision: 12, scale: 4 }),
+  receiptDate: timestamp("receipt_date").notNull().defaultNow(),
+  method: text("method"),
+  reference: text("reference"),
+  notes: text("notes"),
+  collectedBy: uuid("collected_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  gmIdIdx: index("idx_gm_partial_receipts_gm").on(table.gmId),
+  receiptDateIdx: index("idx_gm_partial_receipts_date").on(table.receiptDate),
+  collectedByIdx: index("idx_gm_partial_receipts_collected_by").on(table.collectedBy),
+}));
+
+// Patch 5 Stage 3 (P5) — Loan GM terms: agreed return date, optional company co-pay,
+// the mandatory Admin (Super HOD) approval gate, and return/overdue tracking. One row
+// per GM (`gm_id` unique). Same mixed-type-FK caveat as gm_partial_receipts: `gm_id`
+// is a plain varchar link, actor columns reference drm.users(id) (uuid). Live table is
+// created at runtime in server/db/ensure.ts; this def supplies the TS/Drizzle types only.
+export const gmLoanTerms = drmSchema.table("gm_loan_terms", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  gmId: varchar("gm_id").notNull().unique(),
+  loanAmountUsd: decimal("loan_amount_usd", { precision: 12, scale: 2 }).notNull().default("0"),
+  companyCopayUsd: decimal("company_copay_usd", { precision: 12, scale: 2 }).notNull().default("0"),
+  agreedReturnDate: date("agreed_return_date"),
+  adminApprovalStatus: text("admin_approval_status").notNull().default("PENDING"),
+  adminApprovedBy: uuid("admin_approved_by").references(() => users.id),
+  adminApprovedAt: timestamp("admin_approved_at"),
+  adminComment: text("admin_comment"),
+  returnStatus: text("return_status").notNull().default("PENDING"),
+  returnedAt: timestamp("returned_at"),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  adminStatusIdx: index("idx_gm_loan_terms_admin_status").on(table.adminApprovalStatus),
+  returnStatusIdx: index("idx_gm_loan_terms_return_status").on(table.returnStatus),
+  returnDateIdx: index("idx_gm_loan_terms_return_date").on(table.agreedReturnDate),
+}));
+
 // Temporary GM Entries (for Add Temporary GM screen)
 export const tempGmEntries = drmSchema.table("temp_gm_entries", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
