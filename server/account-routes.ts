@@ -22,6 +22,8 @@ import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { NotificationService } from "./services/notification-service";
 import { createProductPostingInvoices } from "./utils/invoice-utils";
+import { generateDefaultInvoicesForGm } from "./services/gm-invoice-generation.service";
+import { requireManualInvoiceCreator } from "./utils/gm-sales-permissions";
 import { projects, projectFinancials, projectApprovals } from "@shared/schema";
 import { projectsRepository } from "./repositories/projects.repository";
 import { projectFinancialsRepository } from "./repositories/project-financials.repository";
@@ -48,7 +50,7 @@ import {
   getInitialGmDbState,
   recheckGmThresholdAtApproval,
 } from "./services/gm-create-policy.service";
-import { mapGmTypeToDbFlags, type GmSalesConfig } from "@shared/gm-sales-constants";
+import { mapGmTypeToDbFlags, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "@shared/gm-sales-constants";
 import { normalizeRole, ROLES } from "./utils/role-utils";
 
 // Helper to get user ID from request (supports both mock auth and JWT)
@@ -1265,7 +1267,20 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // POST /api/account/invoices - Create new invoice
-  app.post("/api/account/invoices", async (req, res) => {
+  //
+  // LEGACY endpoint (Patch 5 Stage 4 / P7). This writes to the separate `invoices`
+  // table, NOT the canonical `drm.product_posting_invoices` workflow owned by
+  // InvoiceWorkflowService. The canonical manual-create path is POST /api/invoices.
+  // Minimal hardening applied here: the same role policy as the canonical path
+  // (sales + admin; service_executive only via config; account_manager retained
+  // for legacy callers). REMAINING GAP: this legacy table has no canonical
+  // invoice_type enum and is not part of the HOD/Accounts approval state machine,
+  // so the closed-vocabulary type check and approval-completeness gates do NOT
+  // apply here. New invoices should use the canonical POST /api/invoices.
+  app.post(
+    "/api/account/invoices",
+    requireManualInvoiceCreator({ extraAllowedRoles: [ROLES.ACCOUNT_MANAGER] }),
+    async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -2254,9 +2269,20 @@ export function registerAccountRoutes(app: Express) {
 
       res.json({ success: true, id: newId });
       
-      // Automatically create 3 zero-amount invoices for the Product Posting Workflow
+      // Automatically create the default product-posting invoices (Patch 5
+      // Stage 4 / P6). Wallet operations have no GM record, so no idempotency
+      // key — matches prior behavior. Gated by configured timing (default
+      // ON_GM_CREATION). Best-effort: never throws.
       if (req.user?.userId) {
-        await createProductPostingInvoices(req.user.userId, null, company || 'Wallet Operation');
+        await generateDefaultInvoicesForGm({
+          gmId: null,
+          customerId: null,
+          companyName: company || 'Wallet Operation',
+          ownerUserId: req.user.userId,
+          event: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+          actorUserId: req.user.userId,
+          req,
+        });
       }
     } catch (error) {
       console.error("Error creating transaction:", error);

@@ -7,9 +7,36 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, throwIfResNotOk } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { FileText, Plus, AlertCircle, Upload } from "lucide-react";
+import {
+    INVOICE_TYPE_VALUES,
+    INVOICE_TYPE_TO_PRODUCT_NAME,
+    type InvoiceType,
+} from "@shared/gm-sales-constants";
+
+/** Roles permitted to create a manual invoice from this widget. Mirrors the
+ *  backend `requireManualInvoiceCreator` policy. Service Executive is gated by
+ *  config on the server and is not a surface for this (sales) widget. */
+const MANUAL_INVOICE_ROLES = ["admin", "sales_executive", "sales_manager"];
+
+function normalizeRole(raw: string | null | undefined): string {
+    return (raw || "").toLowerCase().trim().replace(/\s+/g, "_");
+}
+
+/** Read the viewer's roles from sessionStorage (set by App after /api/auth/me). */
+function canCreateManualInvoice(): boolean {
+    const active = normalizeRole(sessionStorage.getItem("userRole"));
+    let all: string[] = [];
+    try {
+        all = (JSON.parse(sessionStorage.getItem("userRoles") || "[]") as string[]).map(normalizeRole);
+    } catch {
+        all = [];
+    }
+    const roles = new Set<string>([active, ...all].filter(Boolean));
+    return MANUAL_INVOICE_ROLES.some((r) => roles.has(r));
+}
 
 /** Pull a clean message out of the `${status}: ${jsonBody}` error apiRequest throws. */
 function readApiError(err: unknown): string {
@@ -38,9 +65,10 @@ export function ProductPostingSalesWidget() {
     const { toast } = useToast();
     const [isOpen, setIsOpen] = useState(false);
     const [amount, setAmount] = useState("");
-    const [projectName, setProjectName] = useState("");
+    const [invoiceType, setInvoiceType] = useState<InvoiceType | "">("");
     const [companyName, setCompanyName] = useState("");
     const [customerId, setCustomerId] = useState("");
+    const canCreate = canCreateManualInvoice();
     const [docUploadOpen, setDocUploadOpen] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState("");
     const [docUrl, setDocUrl] = useState("");
@@ -63,14 +91,15 @@ export function ProductPostingSalesWidget() {
     const customers = (customersData as any)?.data || [];
 
     const createInvoiceMutation = useMutation({
-        mutationFn: async (data: { amount: string, projectName: string, companyName: string, customerId: string }) => {
-            await apiRequest("POST", "/api/invoices", data);
+        mutationFn: async (data: { amount: string, invoiceType: InvoiceType, companyName: string, customerId: string }) => {
+            const res = await apiRequest("POST", "/api/invoices", data);
+            await throwIfResNotOk(res);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
             setIsOpen(false);
             setAmount("");
-            setProjectName("");
+            setInvoiceType("");
             setCompanyName("");
             setCustomerId("");
             toast({ title: "Invoice created", description: "Submitted for HOD approval." });
@@ -124,12 +153,14 @@ export function ProductPostingSalesWidget() {
                     </CardDescription>
                 </div>
                 <Dialog open={isOpen} onOpenChange={setIsOpen}>
-                    <DialogTrigger asChild>
-                        <Button size="sm" className="h-8 gap-1">
-                            <Plus className="h-3.5 w-3.5" />
-                            New Invoice
-                        </Button>
-                    </DialogTrigger>
+                    {canCreate && (
+                        <DialogTrigger asChild>
+                            <Button size="sm" className="h-8 gap-1">
+                                <Plus className="h-3.5 w-3.5" />
+                                New Invoice
+                            </Button>
+                        </DialogTrigger>
+                    )}
                     <DialogContent>
                         <DialogHeader>
                             <DialogTitle>Create Product Posting Invoice</DialogTitle>
@@ -151,13 +182,19 @@ export function ProductPostingSalesWidget() {
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="projectName">Project / Service Name</Label>
-                                <Input
-                                    id="projectName"
-                                    placeholder="e.g. SEO Campaign"
-                                    value={projectName}
-                                    onChange={(e) => setProjectName(e.target.value)}
-                                />
+                                <Label htmlFor="invoiceType">Invoice Type</Label>
+                                <Select value={invoiceType} onValueChange={(v) => setInvoiceType(v as InvoiceType)}>
+                                    <SelectTrigger id="invoiceType">
+                                        <SelectValue placeholder="Select an invoice type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {INVOICE_TYPE_VALUES.map((t) => (
+                                            <SelectItem key={t} value={t}>
+                                                {INVOICE_TYPE_TO_PRODUCT_NAME[t]}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="companyName">Company Name</Label>
@@ -181,13 +218,16 @@ export function ProductPostingSalesWidget() {
                                 />
                             </div>
                             <Button
-                                onClick={() => createInvoiceMutation.mutate({
-                                    amount: amount,
-                                    projectName: projectName,
-                                    companyName: companyName,
-                                    customerId: customerId,
-                                })}
-                                disabled={createInvoiceMutation.isPending || !customerId || !amount || !projectName.trim()}
+                                onClick={() => {
+                                    if (!invoiceType) return;
+                                    createInvoiceMutation.mutate({
+                                        amount: amount,
+                                        invoiceType: invoiceType,
+                                        companyName: companyName,
+                                        customerId: customerId,
+                                    });
+                                }}
+                                disabled={createInvoiceMutation.isPending || !customerId || !amount || !invoiceType}
                             >
                                 {createInvoiceMutation.isPending ? "Creating..." : "Submit Invoice"}
                             </Button>

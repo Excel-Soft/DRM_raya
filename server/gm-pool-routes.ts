@@ -7,6 +7,7 @@ import { generateDrmId } from "./utils/drm-id-utils";
 import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
 import crypto from "crypto";
 import { createProductPostingInvoices } from "./utils/invoice-utils";
+import { generateDefaultInvoicesForGm, generateInvoicesAfterFinalGmApproval } from "./services/gm-invoice-generation.service";
 import { NotificationService } from "./services/notification-service";
 import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service";
@@ -20,7 +21,7 @@ import {
   getInitialGmDbState,
   recheckGmThresholdAtApproval,
 } from "./services/gm-create-policy.service";
-import { mapGmTypeToDbFlags, GM_TYPES, type GmSalesConfig } from "../shared/gm-sales-constants";
+import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../shared/gm-sales-constants";
 
 /**
  * Patch 5 Stage 2 — re-validate a GM's payment amount against the configured
@@ -703,8 +704,19 @@ export function registerGmPoolRoutes(app: Express) {
         req,
       });
 
-      // Automatically create 3 zero-amount invoices for the Product Posting Workflow
-      await createProductPostingInvoices(req.user.userId, finalCustomerId, parsed.companyName);
+      // Automatically create the default product-posting invoices (Patch 5
+      // Stage 4 / P6). Delegated to the generation service: idempotent per GM,
+      // canonical invoice types, and gated by configured timing (default
+      // ON_GM_CREATION preserves the prior behavior). Best-effort: never throws.
+      await generateDefaultInvoicesForGm({
+        gmId: String(row.id),
+        customerId: finalCustomerId,
+        companyName: parsed.companyName,
+        ownerUserId: req.user.userId,
+        event: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+        actorUserId: req.user.userId,
+        req,
+      });
 
       return res.status(201).json({
         success: true,
@@ -925,6 +937,10 @@ export function registerGmPoolRoutes(app: Express) {
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const entry = result.rows[0];
 
+      // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
+      // No-op under the default ON_GM_CREATION policy; never throws.
+      await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+
       // Always notify Sales Executive immediately after Account Manager approves
       let salesPersonId = entry.sales_person_id || entry.created_by;
       if (!salesPersonId && entry.customer_id) {
@@ -1004,6 +1020,10 @@ export function registerGmPoolRoutes(app: Express) {
           });
         }
         await pool.query(`UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
+
+        // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
+        // No-op under the default ON_GM_CREATION policy; never throws.
+        await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
 
         // Notify Sales Executive
         let salesPersonId = entry.sales_person_id;
@@ -1126,6 +1146,11 @@ export function registerGmPoolRoutes(app: Express) {
         [id, req.user.userId, comment || null]
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
+
+      // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
+      // No-op under the default ON_GM_CREATION policy; never throws.
+      await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+
       res.json({ success: true, message: "Final approval by Super HOD!", data: result.rows[0] });
     } catch (error) {
       res.status(500).json({ error: "Failed to approve GM entry" });

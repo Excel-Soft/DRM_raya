@@ -467,6 +467,62 @@ async function ensureGmStage3Schema(client: {
   );
 }
 
+/**
+ * Patch 5 Stage 4 — additive columns + idempotency index on the canonical
+ * product-posting invoice table. ALL statements are idempotent (ADD COLUMN IF
+ * NOT EXISTS / CREATE INDEX IF NOT EXISTS); none drop or rewrite data. db:push
+ * is broken repo-wide, so the schema is applied here at boot instead.
+ */
+async function ensureInvoiceStage4Schema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  // Base table guard so a fresh database boots cleanly even before the first
+  // invoice operation runs the lazy service-level ensure.
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.product_posting_invoices (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       amount numeric(12,2) DEFAULT 0,
+       sales_exec_id uuid,
+       customer_id uuid,
+       project_name text,
+       company_name text,
+       status text DEFAULT 'PENDING_HOD',
+       created_at timestamptz DEFAULT now(),
+       updated_at timestamptz DEFAULT now()
+     )`,
+  );
+  // Stage 4 additive columns (generation linkage + approval/rejection audit).
+  await client.query(
+    `ALTER TABLE drm.product_posting_invoices
+       ADD COLUMN IF NOT EXISTS service_type text,
+       ADD COLUMN IF NOT EXISTS source_module text,
+       ADD COLUMN IF NOT EXISTS source_id text,
+       ADD COLUMN IF NOT EXISTS gm_id text,
+       ADD COLUMN IF NOT EXISTS invoice_type text,
+       ADD COLUMN IF NOT EXISTS auto_generated boolean DEFAULT false,
+       ADD COLUMN IF NOT EXISTS generated_by uuid,
+       ADD COLUMN IF NOT EXISTS generated_at timestamptz,
+       ADD COLUMN IF NOT EXISTS generation_event text,
+       ADD COLUMN IF NOT EXISTS hod_approved_by uuid,
+       ADD COLUMN IF NOT EXISTS hod_approved_at timestamptz,
+       ADD COLUMN IF NOT EXISTS accounts_approved_by uuid,
+       ADD COLUMN IF NOT EXISTS accounts_approved_at timestamptz,
+       ADD COLUMN IF NOT EXISTS rejected_by uuid,
+       ADD COLUMN IF NOT EXISTS rejected_at timestamptz`,
+  );
+  // Idempotency: at most one auto-generated invoice per (gm_id, invoice_type).
+  // Partial predicate keeps every existing row (auto_generated=false / gm_id NULL)
+  // out of the index, so the index builds without conflict on legacy data.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_ppi_autogen_gm_type
+       ON drm.product_posting_invoices (gm_id, invoice_type)
+       WHERE auto_generated AND gm_id IS NOT NULL`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_ppi_gm_id ON drm.product_posting_invoices (gm_id)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -500,6 +556,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureOfficeAccountsStage2Schema(client);
         await ensureGmEntriesPatch5Schema(client);
         await ensureGmStage3Schema(client);
+        await ensureInvoiceStage4Schema(client);
         return;
       } catch (err) {
         lastErr = err;
