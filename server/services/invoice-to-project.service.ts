@@ -5,12 +5,14 @@ import {
   INVOICE_TYPES,
   PROJECT_TYPES,
   PROJECT_DEPENDENCY_TYPES,
+  WORKFLOW_ENTITY_TYPES,
   mapProjectInitialStatusToDb,
   type DbProjectStatus,
 } from "../../shared/gm-sales-constants";
 import { getConfigValue } from "./gm-sales-config.service";
 import { AuditLogService } from "./audit-log.service";
 import { NotificationService } from "./notification-service";
+import { transitionWorkflowStatus } from "./workflow-status.service";
 
 /**
  * InvoiceToProjectService — Patch 5 Stage 5 (P9 + P10).
@@ -307,6 +309,14 @@ export async function assertProductPostingDependencySatisfied(
  * a Listing-Page project's QA completes. No-op when no dependency rows exist
  * (i.e. config was off), so it is always safe to call. Best-effort.
  */
+/**
+ * Thrown by the dependency-release executor when a project is no longer held
+ * (it lost the release race, or was never OnHold). Throwing rolls the
+ * would-be-spurious history row back; it is caught locally and treated as a
+ * no-op so the rest of the dependency loop continues.
+ */
+class DependencyNotHeld extends Error {}
+
 export async function satisfyListingQaDependencies(input: {
   gmId: string;
   actorUserId?: string | null;
@@ -330,23 +340,52 @@ export async function satisfyListingQaDependencies(input: {
     const targetStatus = await resolveInitialDbStatus();
     for (const dep of rows) {
       const projectId = dep.project_id as string;
-      // Only flip projects that are currently held; leave any other status alone.
-      const released = await pool.query(
-        `UPDATE drm.projects
-            SET status = $2, updated_at = now()
-          WHERE id = $1 AND status = 'OnHold'
-          RETURNING id`,
-        [projectId, targetStatus],
-      );
-      if (released.rows[0]?.id) releasedProjectIds.push(projectId);
+      // Patch 5 Stage 6 (P14): route the held-project release (OnHold -> initial)
+      // through the central workflow-status service so the status flip and its
+      // workflow_status_history row are written atomically in one transaction.
+      // The flip is conditional (WHERE status = 'OnHold' ... RETURNING) and runs
+      // INSIDE the tx: if this call did not win the race (0 rows changed) we throw
+      // a sentinel so the otherwise-spurious history row rolls back, and treat it
+      // as a no-op. This closes the TOCTOU window and prevents a false/duplicate
+      // ledger entry for a project someone else already released.
+      let released = false;
+      try {
+        await transitionWorkflowStatus<{ id: string }>({
+          entityType: WORKFLOW_ENTITY_TYPES.PROJECT,
+          entityId: projectId,
+          action: "PP_DEPENDENCY_RELEASED",
+          fromStatus: "OnHold",
+          toStatus: targetStatus,
+          actor: { userId: input.actorUserId ?? "" },
+          module: MODULE,
+          metadata: { dependencyId: dep.id, dependencyType: DEPENDENCY_TYPE, gmId },
+          req: input.req,
+          execute: async (client) => {
+            const upd = await client.query(
+              `UPDATE drm.projects
+                  SET status = $2, updated_at = now()
+                WHERE id = $1 AND status = 'OnHold'
+                RETURNING id`,
+              [projectId, targetStatus],
+            );
+            if (upd.rows.length === 0) throw new DependencyNotHeld();
+            return { previousStatus: "OnHold", nextStatus: targetStatus };
+          },
+        });
+        released = true;
+      } catch (relErr) {
+        if (!(relErr instanceof DependencyNotHeld)) throw relErr;
+      }
+      if (released) releasedProjectIds.push(projectId);
 
+      // Preserve the existing dependency-satisfaction audit stream (additive).
       await AuditLogService.record({
         actorUserId: input.actorUserId ?? undefined,
         action: "PROJECT_DEPENDENCY_SATISFIED",
         module: MODULE,
         entityType: ENTITY,
         entityId: projectId,
-        nextStatus: released.rows[0]?.id ? targetStatus : undefined,
+        nextStatus: released ? targetStatus : undefined,
         after: { dependencyId: dep.id, dependencyType: DEPENDENCY_TYPE, gmId },
         req: input.req,
       });

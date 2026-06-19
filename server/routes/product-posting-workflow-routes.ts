@@ -26,7 +26,8 @@ import { mapWorkflowError } from "../services/workflow-transition.service";
 import { ActivityLogService } from "../services/activity-service";
 import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
 import { NotificationService } from "../services/notification-service";
-import { PROJECT_TYPES, INVOICE_TYPES } from "../../shared/gm-sales-constants";
+import { PROJECT_TYPES, INVOICE_TYPES, WORKFLOW_ENTITY_TYPES } from "../../shared/gm-sales-constants";
+import { transitionWorkflowStatus } from "../services/workflow-status.service";
 import {
   assertProductPostingDependencySatisfied,
   satisfyListingQaDependencies,
@@ -713,6 +714,34 @@ productPostingWorkflowRouter.post("/tasks/:taskId/verification-review", requireR
         notify: false,
         req,
       });
+
+      // Patch 5 Stage 6 (P14): record the final workflow status
+      // (VERIFICATION_PENDING -> VERIFICATION_COMPLETE) in the central
+      // workflow_status_history ledger. The PP workflow engine
+      // (transitionWorkflowByTask) owns its own transaction + task-status
+      // history above, so this is a post-commit milestone marker only: the
+      // executor performs no DB mutation. Best-effort — a ledger hiccup must
+      // never undo a completed verification.
+      try {
+        await transitionWorkflowStatus({
+          entityType: WORKFLOW_ENTITY_TYPES.PRODUCT_POSTING_WORKFLOW,
+          entityId: String(updated.id),
+          action: "VERIFICATION_COMPLETE",
+          fromStatus: "VERIFICATION_PENDING",
+          toStatus: "VERIFICATION_COMPLETE",
+          actor: { userId: actorUserId, roleId: req.user!.roleId, roles: req.user!.roles },
+          module: "product-posting",
+          relatedEntity: { entityType: WORKFLOW_ENTITY_TYPES.PROJECT, entityId: String(updated.projectId) },
+          metadata: { taskId },
+          req,
+          execute: async () => ({
+            previousStatus: "VERIFICATION_PENDING",
+            nextStatus: "VERIFICATION_COMPLETE",
+          }),
+        });
+      } catch (histErr) {
+        console.error("[PRODUCT_POSTING_VERIFICATION_COMPLETE] central history record failed (non-fatal):", histErr);
+      }
 
       return res.json({ success: true, data: updated });
     }

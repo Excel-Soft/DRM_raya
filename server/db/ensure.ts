@@ -593,6 +593,50 @@ async function ensureProjectStage5Schema(client: {
   );
 }
 
+/**
+ * Patch 5 Stage 6 (P14) — append-only `drm.workflow_status_history` ledger for
+ * the central WorkflowStatusService. Idempotent (CREATE TABLE / INDEX IF NOT
+ * EXISTS). `entity_id` is TEXT (GM ids are varchar, invoice/project ids uuid);
+ * `actor_user_id` is uuid with NO FK so history is immutable and `db:push`'s
+ * pre-existing FK mismatch is avoided. Mirrors `workflowStatusHistory` in
+ * shared/schema.ts.
+ */
+async function ensureWorkflowStatusHistorySchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS drm.workflow_status_history (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      entity_type text NOT NULL,
+      entity_id text NOT NULL,
+      action text NOT NULL,
+      previous_status text,
+      next_status text NOT NULL,
+      actor_user_id uuid,
+      actor_role text,
+      reason text,
+      evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
+      related_entity_type text,
+      related_entity_id text,
+      metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+      audit_log_id uuid,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_status_hist_entity
+       ON drm.workflow_status_history (entity_type, entity_id, created_at DESC)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_status_hist_actor
+       ON drm.workflow_status_history (actor_user_id, created_at DESC)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_workflow_status_hist_action
+       ON drm.workflow_status_history (action, created_at DESC)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -628,6 +672,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureGmStage3Schema(client);
         await ensureInvoiceStage4Schema(client);
         await ensureProjectStage5Schema(client);
+        await ensureWorkflowStatusHistorySchema(client);
         return;
       } catch (err) {
         lastErr = err;
