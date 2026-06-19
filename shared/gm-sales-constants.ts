@@ -404,3 +404,176 @@ export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> 
 export const GM_SALES_CONFIG_KEYS = Object.keys(
   GM_SALES_CONFIG_DEFAULTS,
 ) as GmSalesConfigKey[];
+
+/* -------------------------------------------------------------------------- */
+/* Patch 5 Stage 6 (P14): centralized cross-module workflow synchronization.  */
+/*                                                                            */
+/* These maps are the single shared source of truth for which workflow-status */
+/* transitions are LEGAL. The central WorkflowStatusService consults them     */
+/* before delegating any entity write, so an illegal transition is rejected   */
+/* (HTTP 400) before a single row is touched. The maps are deliberately kept  */
+/* in `shared/` so both client and server (and tests) reason about the same   */
+/* state machine. Role / reason / evidence policy is server-only and lives in */
+/* the service, not here.                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Entity types the central workflow-status service can transition. */
+export const WORKFLOW_ENTITY_TYPES = {
+  GM: "GM",
+  INVOICE: "INVOICE",
+  PROJECT: "PROJECT",
+  PRODUCT_POSTING_WORKFLOW: "PRODUCT_POSTING_WORKFLOW",
+  SOFTWARE_WORKFLOW: "SOFTWARE_WORKFLOW",
+  QA_REVIEW: "QA_REVIEW",
+  VERIFICATION_REVIEW: "VERIFICATION_REVIEW",
+} as const;
+export type WorkflowEntityType =
+  (typeof WORKFLOW_ENTITY_TYPES)[keyof typeof WORKFLOW_ENTITY_TYPES];
+export const WORKFLOW_ENTITY_TYPE_VALUES = Object.values(
+  WORKFLOW_ENTITY_TYPES,
+) as WorkflowEntityType[];
+
+/**
+ * Legal GM workflow-stage transitions. These describe the LOGICAL GM stage
+ * machine (see {@link GM_WORKFLOW_STAGES}). The GM record itself has no single
+ * status column — its stage is derived from `gm_entries` + `gm_loan_terms`
+ * (see `deriveOfficialGmStatus`). Stage 6 only routes the two GM transitions it
+ * migrates (partial-payment finalize, loan-admin decision) through this map;
+ * the remaining GM stage moves still run through their existing handlers and
+ * are documented as deferred.
+ */
+export const GM_LEGAL_TRANSITIONS: Record<GmWorkflowStage, GmWorkflowStage[]> = {
+  [GM_WORKFLOW_STAGES.DRAFT]: [
+    GM_WORKFLOW_STAGES.SUBMITTED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.SUBMITTED]: [
+    GM_WORKFLOW_STAGES.PENDING_HOD,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.PENDING_HOD]: [
+    GM_WORKFLOW_STAGES.PENDING_ACCOUNTS,
+    GM_WORKFLOW_STAGES.REJECTED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.PENDING_ACCOUNTS]: [
+    GM_WORKFLOW_STAGES.PENDING_ADMIN,
+    GM_WORKFLOW_STAGES.PARTIAL_PAYMENT_PENDING,
+    GM_WORKFLOW_STAGES.APPROVED,
+    GM_WORKFLOW_STAGES.REJECTED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.PENDING_ADMIN]: [
+    GM_WORKFLOW_STAGES.APPROVED,
+    GM_WORKFLOW_STAGES.LOAN_RETURN_PENDING,
+    GM_WORKFLOW_STAGES.REJECTED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.PARTIAL_PAYMENT_PENDING]: [
+    GM_WORKFLOW_STAGES.PARTIAL_FULLY_PAID,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.PARTIAL_FULLY_PAID]: [
+    GM_WORKFLOW_STAGES.APPROVED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.LOAN_RETURN_PENDING]: [
+    GM_WORKFLOW_STAGES.APPROVED,
+    GM_WORKFLOW_STAGES.CANCELLED,
+  ],
+  [GM_WORKFLOW_STAGES.APPROVED]: [GM_WORKFLOW_STAGES.PROJECT_CREATED],
+  [GM_WORKFLOW_STAGES.PROJECT_CREATED]: [],
+  [GM_WORKFLOW_STAGES.REJECTED]: [],
+  [GM_WORKFLOW_STAGES.CANCELLED]: [],
+};
+
+/** Canonical loan-terms admin-gate decision states (`gm_loan_terms.admin_approval_status`). */
+export const GM_LOAN_ADMIN_GATE_STATES = {
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+} as const;
+
+/**
+ * Legal transitions for the loan-GM admin gate (`gm_loan_terms.admin_approval_status`).
+ *
+ * This is a SUB-state machine, not part of the logical GM stage machine: the loan
+ * admin decision gates whether a loan GM may proceed to final approval, but it
+ * does not move the GM's own stage (see `deriveOfficialGmStatus`, where a loan GM
+ * sits at PENDING_ADMIN until the gate clears). It is intentionally permissive —
+ * self-loops and re-arming to PENDING are allowed — so wrapping the existing
+ * loan-admin handlers in the central service records history WITHOUT rejecting any
+ * decision the legacy handlers previously accepted (idempotent re-approve, an
+ * admin changing their mind, or a terms edit re-arming the gate to PENDING).
+ */
+export const GM_LOAN_ADMIN_GATE_TRANSITIONS: Record<string, string[]> = {
+  [GM_LOAN_ADMIN_GATE_STATES.PENDING]: [
+    GM_LOAN_ADMIN_GATE_STATES.APPROVED,
+    GM_LOAN_ADMIN_GATE_STATES.REJECTED,
+  ],
+  [GM_LOAN_ADMIN_GATE_STATES.APPROVED]: [
+    GM_LOAN_ADMIN_GATE_STATES.APPROVED,
+    GM_LOAN_ADMIN_GATE_STATES.REJECTED,
+    GM_LOAN_ADMIN_GATE_STATES.PENDING,
+  ],
+  [GM_LOAN_ADMIN_GATE_STATES.REJECTED]: [
+    GM_LOAN_ADMIN_GATE_STATES.APPROVED,
+    GM_LOAN_ADMIN_GATE_STATES.REJECTED,
+    GM_LOAN_ADMIN_GATE_STATES.PENDING,
+  ],
+};
+
+/**
+ * Legal invoice workflow-status transitions. Mirrors the authoritative map in
+ * `InvoiceWorkflowService` (Sales → HOD → Account → PMS) so the central service
+ * and the invoice service can never disagree about what is legal.
+ */
+export const INVOICE_LEGAL_TRANSITIONS: Record<
+  InvoiceWorkflowStatus,
+  InvoiceWorkflowStatus[]
+> = {
+  [INVOICE_WORKFLOW_STATUSES.DRAFT]: [
+    INVOICE_WORKFLOW_STATUSES.PENDING_HOD,
+    INVOICE_WORKFLOW_STATUSES.CANCELLED,
+  ],
+  [INVOICE_WORKFLOW_STATUSES.PENDING_HOD]: [
+    INVOICE_WORKFLOW_STATUSES.PENDING_ACCOUNT,
+    INVOICE_WORKFLOW_STATUSES.REJECTED,
+    INVOICE_WORKFLOW_STATUSES.CANCELLED,
+  ],
+  [INVOICE_WORKFLOW_STATUSES.PENDING_ACCOUNT]: [
+    INVOICE_WORKFLOW_STATUSES.APPROVED,
+    INVOICE_WORKFLOW_STATUSES.REJECTED,
+    INVOICE_WORKFLOW_STATUSES.CANCELLED,
+  ],
+  [INVOICE_WORKFLOW_STATUSES.APPROVED]: [
+    INVOICE_WORKFLOW_STATUSES.PAID,
+    INVOICE_WORKFLOW_STATUSES.CANCELLED,
+  ],
+  [INVOICE_WORKFLOW_STATUSES.PAID]: [],
+  [INVOICE_WORKFLOW_STATUSES.REJECTED]: [],
+  [INVOICE_WORKFLOW_STATUSES.CANCELLED]: [],
+};
+
+/**
+ * Generic legal-transition check used by the central service. Returns true when
+ * `from === to` is NOT assumed legal (a no-op transition is rejected) and `to`
+ * is listed under `from` in the supplied map.
+ */
+export function isLegalTransition(
+  map: Record<string, string[]>,
+  from: string,
+  to: string,
+): boolean {
+  const allowed = map[from];
+  if (!allowed) return false;
+  return allowed.includes(to);
+}
+
+/** Next legal statuses from a given status (empty array for unknown/terminal). */
+export function nextLegalStatuses(
+  map: Record<string, string[]>,
+  from: string,
+): string[] {
+  return map[from] ? [...map[from]] : [];
+}

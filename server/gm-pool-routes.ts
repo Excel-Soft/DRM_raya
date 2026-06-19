@@ -22,6 +22,25 @@ import {
   recheckGmThresholdAtApproval,
 } from "./services/gm-create-policy.service";
 import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../shared/gm-sales-constants";
+import { transitionWorkflowStatus } from "./services/workflow-status.service";
+import { ApiError } from "./utils/api-error";
+import {
+  WORKFLOW_ENTITY_TYPES,
+  GM_WORKFLOW_STAGES,
+  GM_LOAN_ADMIN_GATE_STATES,
+  GM_LOAN_ADMIN_GATE_TRANSITIONS,
+} from "../shared/gm-sales-constants";
+
+/** Build the central-service actor from the authenticated request user. */
+function gmWorkflowActor(req: any) {
+  const u = req.user ?? {};
+  return {
+    userId: u.userId,
+    roleId: u.roleId,
+    activeRoleId: u.activeRoleId,
+    roles: u.roles,
+  };
+}
 
 /**
  * Patch 5 Stage 2 — re-validate a GM's payment amount against the configured
@@ -1565,6 +1584,27 @@ export function registerGmPoolRoutes(app: Express) {
             summary,
           );
         }
+        // Patch 5 Stage 6 (P14): record the partial-payment milestone
+        // (PARTIAL_PAYMENT_PENDING -> PARTIAL_FULLY_PAID) in the central
+        // workflow-status ledger. This is a milestone-only transition: it does
+        // NOT mutate gm_entries (finalize-partial has never set final_status), so
+        // the executor performs no state write and the history row is the record.
+        await transitionWorkflowStatus({
+          entityType: WORKFLOW_ENTITY_TYPES.GM,
+          entityId: String(id),
+          action: "GM_PARTIAL_FINALIZED",
+          fromStatus: GM_WORKFLOW_STAGES.PARTIAL_PAYMENT_PENDING,
+          toStatus: GM_WORKFLOW_STAGES.PARTIAL_FULLY_PAID,
+          actor: gmWorkflowActor(req),
+          module: "gm-pool",
+          metadata: { summary },
+          req,
+          execute: async () => ({
+            previousStatus: GM_WORKFLOW_STAGES.PARTIAL_PAYMENT_PENDING,
+            nextStatus: GM_WORKFLOW_STAGES.PARTIAL_FULLY_PAID,
+          }),
+        });
+        // Preserve the existing GM-sales audit trail (additive).
         await recordGmSalesAudit({
           action: GM_SALES_AUDIT_ACTIONS.GM_PARTIAL_FINAL_APPROVE,
           entityType: "gm_entry",
@@ -1579,6 +1619,7 @@ export function registerGmPoolRoutes(app: Express) {
           message: "Partial payment complete. This GM can now proceed through the normal final-approval routes.",
         });
       } catch (err) {
+        if (err instanceof ApiError) return sendError(res, err.status, err.code, err.message, err.details);
         console.error("[gm-pool] finalize-partial error:", err);
         return sendError(res, 500, "INTERNAL", "Failed to finalise partial payment");
       }
@@ -1742,12 +1783,48 @@ export function registerGmPoolRoutes(app: Express) {
         }
         const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
         if (!lt.rows[0]) return sendError(res, 409, "LOAN_TERMS_MISSING", "Loan terms must be recorded before admin approval");
-        const upd = await pool.query(
-          `UPDATE drm.gm_loan_terms SET admin_approval_status = 'APPROVED', admin_approved_by = $2,
-                  admin_approved_at = now(), admin_comment = $3, updated_at = now()
-             WHERE gm_id = $1 RETURNING *`,
-          [id, req.user.userId, input.comment ?? null],
-        );
+        const fromGate = (lt.rows[0].admin_approval_status as string | null) || GM_LOAN_ADMIN_GATE_STATES.PENDING;
+        // Patch 5 Stage 6 (P14): the loan-admin gate flip + its history row are
+        // written atomically through the central workflow-status service. The gate
+        // is a sub-state machine (GM_LOAN_ADMIN_GATE_TRANSITIONS), so the central
+        // service validates + records it WITHOUT moving the GM's own stage.
+        const transition = await transitionWorkflowStatus<{ terms: any }>({
+          entityType: WORKFLOW_ENTITY_TYPES.GM,
+          entityId: String(id),
+          action: "GM_LOAN_ADMIN_APPROVE",
+          fromStatus: fromGate,
+          toStatus: GM_LOAN_ADMIN_GATE_STATES.APPROVED,
+          transitionMap: GM_LOAN_ADMIN_GATE_TRANSITIONS,
+          actor: gmWorkflowActor(req),
+          module: "gm-pool",
+          metadata: { gate: "loan_terms_admin_approval", comment: input.comment ?? null },
+          req,
+          execute: async (client) => {
+            // Read + lock the gate row inside the tx so the recorded
+            // previousStatus reflects the true current gate even under concurrent
+            // admin decisions (the outer fromGate only feeds permissive validation).
+            const locked = await client.query(
+              `SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1 FOR UPDATE`,
+              [id],
+            );
+            const prevGate =
+              (locked.rows[0]?.admin_approval_status as string | null) ||
+              GM_LOAN_ADMIN_GATE_STATES.PENDING;
+            const r = await client.query(
+              `UPDATE drm.gm_loan_terms SET admin_approval_status = 'APPROVED', admin_approved_by = $2,
+                      admin_approved_at = now(), admin_comment = $3, updated_at = now()
+                 WHERE gm_id = $1 RETURNING *`,
+              [id, req.user!.userId, input.comment ?? null],
+            );
+            return {
+              previousStatus: prevGate,
+              nextStatus: GM_LOAN_ADMIN_GATE_STATES.APPROVED,
+              updatedEntity: { terms: r.rows[0] },
+            };
+          },
+        });
+        const upd = { rows: [transition.updatedEntity?.terms] };
+        // Preserve the existing GM-sales audit trail (additive).
         await recordGmSalesAudit({
           action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_ADMIN_APPROVE,
           entityType: "gm_entry",
@@ -1772,6 +1849,7 @@ export function registerGmPoolRoutes(app: Express) {
         return sendSuccess(res, { terms: upd.rows[0], message: "Loan terms approved. This loan GM can now proceed through final approval." });
       } catch (err) {
         if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid input", zodIssues(err));
+        if (err instanceof ApiError) return sendError(res, err.status, err.code, err.message, err.details);
         console.error("[gm-pool] loan admin approve error:", err);
         return sendError(res, 500, "INTERNAL", "Failed to approve loan terms");
       }
@@ -1798,12 +1876,49 @@ export function registerGmPoolRoutes(app: Express) {
         }
         const lt = await pool.query("SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1", [id]);
         if (!lt.rows[0]) return sendError(res, 409, "LOAN_TERMS_MISSING", "Loan terms must be recorded before an admin decision");
-        const upd = await pool.query(
-          `UPDATE drm.gm_loan_terms SET admin_approval_status = 'REJECTED', admin_approved_by = $2,
-                  admin_approved_at = now(), admin_comment = $3, updated_at = now()
-             WHERE gm_id = $1 RETURNING *`,
-          [id, req.user.userId, input.comment],
-        );
+        const fromGate = (lt.rows[0].admin_approval_status as string | null) || GM_LOAN_ADMIN_GATE_STATES.PENDING;
+        // Patch 5 Stage 6 (P14): loan-admin reject flip + history, atomically via
+        // the central service (reason required). Sub-state gate only — no GM stage move.
+        const transition = await transitionWorkflowStatus<{ terms: any }>({
+          entityType: WORKFLOW_ENTITY_TYPES.GM,
+          entityId: String(id),
+          action: "GM_LOAN_ADMIN_REJECT",
+          fromStatus: fromGate,
+          toStatus: GM_LOAN_ADMIN_GATE_STATES.REJECTED,
+          transitionMap: GM_LOAN_ADMIN_GATE_TRANSITIONS,
+          actor: gmWorkflowActor(req),
+          requireReason: true,
+          reason: input.comment,
+          module: "gm-pool",
+          metadata: { gate: "loan_terms_admin_approval" },
+          req,
+          execute: async (client) => {
+            // Read + lock the gate row inside the tx so the recorded
+            // previousStatus reflects the true current gate even under concurrent
+            // admin decisions (the outer fromGate only feeds permissive validation).
+            const locked = await client.query(
+              `SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1 FOR UPDATE`,
+              [id],
+            );
+            const prevGate =
+              (locked.rows[0]?.admin_approval_status as string | null) ||
+              GM_LOAN_ADMIN_GATE_STATES.PENDING;
+            const r = await client.query(
+              `UPDATE drm.gm_loan_terms SET admin_approval_status = 'REJECTED', admin_approved_by = $2,
+                      admin_approved_at = now(), admin_comment = $3, updated_at = now()
+                 WHERE gm_id = $1 RETURNING *`,
+              [id, req.user!.userId, input.comment],
+            );
+            return {
+              previousStatus: prevGate,
+              nextStatus: GM_LOAN_ADMIN_GATE_STATES.REJECTED,
+              updatedEntity: { terms: r.rows[0] },
+            };
+          },
+        });
+        const upd = { rows: [transition.updatedEntity?.terms] };
+        // Preserve the existing GM-sales audit trail (additive). The legacy action
+        // constant (…_APPROVE) is kept intentionally to not change the audit stream.
         await recordGmSalesAudit({
           action: GM_SALES_AUDIT_ACTIONS.GM_LOAN_ADMIN_APPROVE,
           entityType: "gm_entry",
@@ -1815,6 +1930,7 @@ export function registerGmPoolRoutes(app: Express) {
         return sendSuccess(res, { terms: upd.rows[0], message: "Loan terms rejected." });
       } catch (err) {
         if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "A rejection reason is required", zodIssues(err));
+        if (err instanceof ApiError) return sendError(res, err.status, err.code, err.message, err.details);
         console.error("[gm-pool] loan admin reject error:", err);
         return sendError(res, 500, "INTERNAL", "Failed to reject loan terms");
       }

@@ -1,4 +1,5 @@
 import type { Request } from "express";
+import type { PoolClient } from "pg";
 import { db, pool } from "../db";
 import { productPostingInvoices, projects } from "../../shared/schema";
 import { eq, desc, sql } from "drizzle-orm";
@@ -78,6 +79,13 @@ export interface Actor {
 
 const MODULE = "invoice-workflow";
 const ENTITY = "Invoice";
+/**
+ * The audit-log `entityType` the invoice history view (`GET /:id/history`) reads
+ * by. Migrated routes route their audit through the central workflow-status
+ * service with `auditEntityType: INVOICE_AUDIT_ENTITY` so the transition audit
+ * keeps landing where the history view looks for it.
+ */
+export const INVOICE_AUDIT_ENTITY = ENTITY;
 
 let schemaEnsured = false;
 async function ensureInvoiceWorkflowSchema(): Promise<void> {
@@ -193,6 +201,48 @@ function assertApprovalReadiness(
       { stage, missing },
     );
   }
+}
+
+/**
+ * Minimal result returned by the tx-aware decision executors (Patch 5 Stage 6).
+ * Structurally compatible with the central service's WorkflowExecuteResult.
+ */
+export interface InvoiceTxResult {
+  previousStatus: string;
+  nextStatus: string;
+  updatedEntity: { id: string; status: string; salesExecId: string | null };
+}
+
+/** Project a snake_case invoice row onto the shape assertApprovalReadiness reads. */
+function rowToReadinessShape(row: {
+  customer_id: string | null;
+  amount: string | null;
+  invoice_type: string | null;
+  service_type: string | null;
+  project_name: string | null;
+}): typeof productPostingInvoices.$inferSelect {
+  return {
+    customerId: row.customer_id,
+    amount: row.amount,
+    invoiceType: row.invoice_type,
+    serviceType: row.service_type,
+    projectName: row.project_name,
+  } as typeof productPostingInvoices.$inferSelect;
+}
+
+function txInvoiceResult(
+  previousStatus: string,
+  row: { id: string; status: string; sales_exec_id: string | null },
+): InvoiceTxResult {
+  return {
+    previousStatus,
+    nextStatus: row.status,
+    updatedEntity: {
+      id: row.id,
+      status: row.status,
+      salesExecId: row.sales_exec_id ?? null,
+    },
+  };
 }
 
 export class InvoiceWorkflowService {
@@ -491,6 +541,148 @@ export class InvoiceWorkflowService {
     }
 
     return { invoice: updated, projectId: projectLink };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Patch 5 Stage 6 (P14) — tx-aware decision EXECUTORS for the central
+  // WorkflowStatusService. Each performs ONLY the validated invoice STATE WRITE
+  // on the supplied transaction client (status + the approval/rejection audit
+  // columns), re-reading the row `FOR UPDATE` inside the tx for race-safety, and
+  // returns the prev/next status + a minimal updated entity. They are
+  // deliberately SIDE-EFFECT FREE: history, the activity-log audit, notifications
+  // and project generation are owned by the caller (central service + route) so
+  // these compose atomically inside one transaction. Role / legal-transition are
+  // re-asserted here as defense-in-depth on top of the central service's checks.
+  // ---------------------------------------------------------------------------
+  private static async loadInvoiceForUpdateTx(
+    client: PoolClient,
+    id: string,
+  ): Promise<{
+    id: string;
+    status: string;
+    sales_exec_id: string | null;
+    customer_id: string | null;
+    amount: string | null;
+    invoice_type: string | null;
+    service_type: string | null;
+    project_name: string | null;
+  }> {
+    const { rows } = await client.query(
+      `SELECT id, status, sales_exec_id, customer_id, amount,
+              invoice_type, service_type, project_name
+         FROM drm.product_posting_invoices
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    if (!rows[0]) throw new ApiError(404, "NOT_FOUND", "Invoice not found");
+    return rows[0];
+  }
+
+  static async approveByHodTx(
+    client: PoolClient,
+    actor: Actor,
+    id: string,
+  ): Promise<InvoiceTxResult> {
+    const inv = await this.loadInvoiceForUpdateTx(client, id);
+    if (!isHodActor(actor)) {
+      throw new ApiError(403, "FORBIDDEN", "Only an HOD may act on this stage");
+    }
+    if (inv.status !== INVOICE_STATUS.PENDING_HOD) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        `This invoice is not awaiting HOD approval (status: ${inv.status})`,
+      );
+    }
+    assertApprovalReadiness(rowToReadinessShape(inv), "HOD");
+    assertTransition(inv.status, INVOICE_STATUS.PENDING_ACCOUNT);
+    const { rows } = await client.query(
+      `UPDATE drm.product_posting_invoices
+          SET status = $2, hod_approved_by = $3::uuid, hod_approved_at = now(),
+              updated_at = now()
+        WHERE id = $1
+        RETURNING id, status, sales_exec_id`,
+      [id, INVOICE_STATUS.PENDING_ACCOUNT, actor.userId],
+    );
+    return txInvoiceResult(inv.status, rows[0]);
+  }
+
+  static async approveByAccountTx(
+    client: PoolClient,
+    actor: Actor,
+    id: string,
+  ): Promise<InvoiceTxResult> {
+    const inv = await this.loadInvoiceForUpdateTx(client, id);
+    if (!isAccountActor(actor)) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        "Only an account manager may act on this stage",
+      );
+    }
+    if (inv.status !== INVOICE_STATUS.PENDING_ACCOUNT) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        `This invoice is not awaiting account approval (status: ${inv.status})`,
+      );
+    }
+    assertApprovalReadiness(rowToReadinessShape(inv), "Account");
+    assertTransition(inv.status, INVOICE_STATUS.APPROVED);
+    const { rows } = await client.query(
+      `UPDATE drm.product_posting_invoices
+          SET status = $2, accounts_approved_by = $3::uuid,
+              accounts_approved_at = now(), updated_at = now()
+        WHERE id = $1
+        RETURNING id, status, sales_exec_id`,
+      [id, INVOICE_STATUS.APPROVED, actor.userId],
+    );
+    return txInvoiceResult(inv.status, rows[0]);
+  }
+
+  static async rejectByStageTx(
+    client: PoolClient,
+    actor: Actor,
+    id: string,
+    reason: string | undefined,
+    stage: "HOD" | "Account",
+  ): Promise<InvoiceTxResult> {
+    const inv = await this.loadInvoiceForUpdateTx(client, id);
+    const roleOk = stage === "HOD" ? isHodActor(actor) : isAccountActor(actor);
+    if (!roleOk) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        stage === "HOD"
+          ? "Only an HOD may act on this stage"
+          : "Only an account manager may act on this stage",
+      );
+    }
+    const expected =
+      stage === "HOD"
+        ? INVOICE_STATUS.PENDING_HOD
+        : INVOICE_STATUS.PENDING_ACCOUNT;
+    if (inv.status !== expected) {
+      throw new ApiError(
+        403,
+        "FORBIDDEN",
+        `This invoice is not awaiting ${stage} approval (status: ${inv.status})`,
+      );
+    }
+    if (!reason || !reason.trim()) {
+      throw new ApiError(400, "BAD_REQUEST", "A rejection reason is required");
+    }
+    assertTransition(inv.status, INVOICE_STATUS.REJECTED);
+    const { rows } = await client.query(
+      `UPDATE drm.product_posting_invoices
+          SET status = $2, rejection_reason = $3, rejected_by = $4::uuid,
+              rejected_at = now(), updated_at = now()
+        WHERE id = $1
+        RETURNING id, status, sales_exec_id`,
+      [id, INVOICE_STATUS.REJECTED, reason, actor.userId],
+    );
+    return txInvoiceResult(inv.status, rows[0]);
   }
 
   // ---------------------------------------------------------------------------

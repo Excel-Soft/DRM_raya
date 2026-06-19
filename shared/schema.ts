@@ -2678,6 +2678,47 @@ export const insertCrossDepartmentStatusHistorySchema = createInsertSchema(cross
   id: true,
   createdAt: true,
 });
+
+/**
+ * Patch 5 Stage 6 (P14): append-only workflow status history.
+ *
+ * One canonical ledger of every transition the central WorkflowStatusService
+ * performs (GM, invoice, project, QA, verification). It is intentionally
+ * generic: `entity_id` is TEXT because GM ids are `varchar` while invoice /
+ * project ids are `uuid` — a single typed column could not hold both.
+ * `actor_user_id` is a plain `uuid` with NO foreign key, to stay an immutable
+ * audit record (a user deletion must never cascade away history) and to avoid
+ * the repo-wide FK-type-mismatch that breaks `db:push`. The table is created
+ * idempotently at boot by `ensureWorkflowStatusHistorySchema`.
+ */
+export const workflowStatusHistory = drmSchema.table("workflow_status_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  action: text("action").notNull(),
+  previousStatus: text("previous_status"),
+  nextStatus: text("next_status").notNull(),
+  actorUserId: uuid("actor_user_id"),
+  actorRole: text("actor_role"),
+  reason: text("reason"),
+  evidence: jsonb("evidence").notNull().default(sql`'[]'::jsonb`),
+  relatedEntityType: text("related_entity_type"),
+  relatedEntityId: text("related_entity_id"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  auditLogId: uuid("audit_log_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("idx_workflow_status_hist_entity").on(t.entityType, t.entityId, t.createdAt),
+  index("idx_workflow_status_hist_actor").on(t.actorUserId, t.createdAt),
+  index("idx_workflow_status_hist_action").on(t.action, t.createdAt),
+]);
+
+export const insertWorkflowStatusHistorySchema = createInsertSchema(workflowStatusHistory).omit({
+  id: true,
+  createdAt: true,
+});
+export type WorkflowStatusHistory = typeof workflowStatusHistory.$inferSelect;
+export type InsertWorkflowStatusHistory = typeof workflowStatusHistory.$inferInsert;
 export type InsertCrossDepartmentStatusHistory = z.infer<typeof insertCrossDepartmentStatusHistorySchema>;
 export type CrossDepartmentStatusHistory = typeof crossDepartmentStatusHistory.$inferSelect;
 
