@@ -1,19 +1,17 @@
 ---
-name: tsc baseline is zero
-description: The repo's `tsc --noEmit` baseline was driven to zero; any new error is a real regression.
+name: tsc baseline is clean
+description: authoritative npm run check / tsc --noEmit returns 0 errors; an older "~57 baseline errors" note is stale.
 ---
 
-`npm run check` (`tsc --noEmit`, strict) now reports **0 errors**. The repo
-previously carried a stable ~57-error baseline (Drizzle overload / null-vs-string
-mismatches in `server/reports-routes.ts`, `server/repositories/*`, plus a handful
-of client implicit-any / missing-generic spots); those were all resolved.
+# tsc baseline is clean
 
-**Why:** A dedicated task fixed every baseline error with type-only changes
-wherever possible. The app runs via `tsx` (no typecheck at runtime), so type fixes
-are safe as long as they don't alter emitted/runtime behavior.
+`npm run check` (`tsc --noEmit`) returns **0 errors** and finishes within the ~115s
+sandbox window.
 
-**How to apply:** Treat any `tsc` error as a regression introduced by your own
-change — fix it before finishing. Do not assume a "pre-existing" baseline anymore.
-When a strict error points at genuinely broken runtime code (e.g. a Drizzle table
-property that doesn't exist and is `undefined` at runtime), prefer using the real
-column over casting-to-suppress, which would preserve the latent crash.
+**Why this matters:** an earlier note claimed ~57 pre-existing `tsc` errors to ignore
+as baseline. That is stale. Do NOT excuse new `tsc` errors as "pre-existing baseline" —
+any error tsc reports now is a real regression to fix.
+
+**How to apply:** LSP per-file diagnostics or `vitest` are fine for the inner loop, but
+the authoritative gate (`npm run check`) is expected fully green. `npm run build`
+(vite + esbuild) also passes; `npm run dev` boots on fixed port 5000.
