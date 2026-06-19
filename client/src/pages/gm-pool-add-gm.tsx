@@ -18,6 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useServiceExecutiveCreateGates } from "@/hooks/use-ui-workflow-config";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Textarea } from "@/components/ui/textarea";
@@ -270,6 +271,7 @@ export default function GmPoolAddGm() {
   const [editRow, setEditRow] = useState<GmPoolRow | null>(null);
   const [editDraft, setEditDraft] = useState<Partial<GmPoolRow>>({});
   const [showForm, setShowForm] = useState(false);
+  const { canCreateGm } = useServiceExecutiveCreateGates();
   const [withdrawId, setWithdrawId] = useState<string | null>(null);
   const [withdrawReason, setWithdrawReason] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -632,14 +634,16 @@ export default function GmPoolAddGm() {
             <h1 className="text-2xl font-bold uppercase tracking-tight">ADD GM</h1>
             <p className="text-muted-foreground">Manage GM pool entries</p>
           </div>
-          <Button
-            variant="outline"
-            className="ml-auto"
-            onClick={() => setShowForm((prev) => !prev)}
-            data-testid="button-toggle-add-gm-form"
-          >
-            {showForm ? "Hide Add GM" : "Add GM"}
-          </Button>
+          {canCreateGm && (
+            <Button
+              variant="outline"
+              className="ml-auto"
+              onClick={() => setShowForm((prev) => !prev)}
+              data-testid="button-toggle-add-gm-form"
+            >
+              {showForm ? "Hide Add GM" : "Add GM"}
+            </Button>
+          )}
         </div>
       </div>
 

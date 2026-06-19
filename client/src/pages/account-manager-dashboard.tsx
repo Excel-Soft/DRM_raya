@@ -3,6 +3,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { GmApprovalCard } from "@/components/gm-approval-card";
+import { AccountsGmSummaryWidget } from "@/components/accounts-gm-summary-widget";
 import { useToast } from "@/hooks/use-toast";
 import {
     Users,
@@ -441,6 +442,9 @@ export default function AccountManagerDashboard() {
                     colorClass="bg-violet-500 text-violet-500"
                 />
             </div>
+
+            {/* Patch 5 Stage 7 — GM type / invoice overview */}
+            <AccountsGmSummaryWidget />
 
             <div className="grid gap-8 lg:grid-cols-3">
                 {/* Main Content Area (2 Cols) */}
