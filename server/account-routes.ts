@@ -29,6 +29,7 @@ import { projectsRepository } from "./repositories/projects.repository";
 import { projectFinancialsRepository } from "./repositories/project-financials.repository";
 import { projectApprovalsRepository } from "./repositories/project-approvals.repository";
 import { sendError, sendApiError, ApiError } from "./utils/api-error";
+import { sendSuccess, sendError as sendEnvelopeError } from "./utils/api-response";
 import {
   INVOICE_WRITABLE_FIELDS,
   pickWritable,
@@ -501,6 +502,511 @@ export function registerAccountRoutes(app: Express) {
     } catch (error) {
       console.error("Error fetching GM stats:", error);
       res.status(500).json({ error: "Failed to fetch GM stats" });
+    }
+  });
+
+  // GET /api/accounts/dashboard/gm-summary
+  // Patch 5 Stage 7 (P12) — Accounts dashboard GM type + invoice breakdown.
+  // Aggregates Full/Partial/Loan GMs with partial received/pending, loan due-soon/
+  // overdue, a by-status breakdown, and a recent-GM list enriched with linked
+  // invoice statuses + payment confirmation. CTEs pre-aggregate receipts / loan
+  // terms / invoices to ONE row per GM, so totals never double-count. GM type is
+  // derived from is_loan / is_partial_payment (not the gm_type column). This is a
+  // NEW account-dashboard aggregate, not a replacement for /gm-entries/stats.
+  app.get("/api/accounts/dashboard/gm-summary", async (req, res) => {
+    try {
+      if (!req.user) {
+        return sendEnvelopeError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      }
+
+      const querySchema = z.object({
+        gmType: z
+          .string()
+          .trim()
+          .transform((s) => s.toUpperCase())
+          .pipe(z.enum(["FULL", "PARTIAL", "LOAN"]))
+          .optional(),
+        status: z.enum(["Pending", "Approved", "Rejected", "Completed"]).optional(),
+        dateFrom: z.string().trim().min(1).optional(),
+        dateTo: z.string().trim().min(1).optional(),
+        customer: z.string().trim().min(1).optional(),
+        owner: z.string().trim().min(1).optional(),
+        branch: z.string().trim().min(1).optional(),
+        package: z.string().trim().min(1).optional(),
+        invoiceStatus: z
+          .string()
+          .trim()
+          .transform((s) => s.toUpperCase())
+          .pipe(z.enum(["PENDING_HOD", "PENDING_ACCOUNT", "APPROVED", "REJECTED"]))
+          .optional(),
+        dueSoonDays: z.coerce.number().int().min(1).max(365).default(7),
+        recentLimit: z.coerce.number().int().min(1).max(100).default(10),
+      });
+
+      // Drop empty-string query params so they fall back to optional/defaults.
+      const cleaned: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(req.query)) {
+        if (v === undefined || v === null) continue;
+        if (typeof v === "string" && v.trim() === "") continue;
+        cleaned[k] = v;
+      }
+      const parsedQuery = querySchema.safeParse(cleaned);
+      if (!parsedQuery.success) {
+        return sendEnvelopeError(
+          res,
+          400,
+          "INVALID_QUERY",
+          "Invalid dashboard filter parameters",
+          parsedQuery.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+        );
+      }
+      const q = parsedQuery.data;
+
+      // Build the shared GM filter WHERE clause. `e` = gm_entries, `u` = users
+      // (joined for the branch filter). startIdx is the first positional param.
+      const buildGmFilters = (startIdx: number) => {
+        const conds: string[] = ["COALESCE(e.is_deleted,false) = false"];
+        const params: unknown[] = [];
+        let i = startIdx;
+        if (q.gmType === "LOAN") {
+          conds.push("COALESCE(e.is_loan,0) = 1");
+        } else if (q.gmType === "PARTIAL") {
+          conds.push("COALESCE(e.is_loan,0) = 0 AND COALESCE(e.is_partial_payment,0) = 1");
+        } else if (q.gmType === "FULL") {
+          conds.push("COALESCE(e.is_loan,0) = 0 AND COALESCE(e.is_partial_payment,0) = 0");
+        }
+        if (q.status) {
+          conds.push(`e.status::text = $${i++}`);
+          params.push(q.status);
+        }
+        if (q.dateFrom) {
+          conds.push(`e.created_at >= $${i++}`);
+          params.push(q.dateFrom);
+        }
+        if (q.dateTo) {
+          conds.push(`e.created_at <= $${i++}`);
+          params.push(q.dateTo);
+        }
+        if (q.customer) {
+          conds.push(`e.company_name ILIKE $${i++}`);
+          params.push(`%${q.customer}%`);
+        }
+        if (q.owner) {
+          conds.push(`(e.sales_person_name ILIKE $${i} OR e.sales_person_id::text = $${i + 1})`);
+          params.push(`%${q.owner}%`, String(q.owner));
+          i += 2;
+        }
+        if (q.branch) {
+          conds.push(`u.branch ILIKE $${i++}`);
+          params.push(`%${q.branch}%`);
+        }
+        if (q.package) {
+          conds.push(`e.package_type ILIKE $${i++}`);
+          params.push(`%${q.package}%`);
+        }
+        if (q.invoiceStatus) {
+          conds.push(
+            `EXISTS (SELECT 1 FROM drm.product_posting_invoices pi WHERE pi.gm_id::text = e.id::text AND pi.status = $${i++})`,
+          );
+          params.push(q.invoiceStatus);
+        }
+        return { whereSql: `WHERE ${conds.join(" AND ")}`, params, nextIdx: i };
+      };
+
+      // ---- Totals ----
+      const totalsFilters = buildGmFilters(1);
+      const dueSoonIdx = totalsFilters.nextIdx;
+      const totalsParams = [...totalsFilters.params, q.dueSoonDays];
+      const totalsSql = `
+        WITH receipts AS (
+          SELECT gm_id::text AS gm_id, COALESCE(SUM(COALESCE(amount_usd,0)),0)::numeric AS received
+          FROM drm.gm_partial_receipts GROUP BY gm_id
+        ),
+        loans AS (
+          -- DISTINCT ON guarantees ONE loan row per GM (latest by created_at) so a
+          -- GM with multiple loan-term rows can never multiply the base rows and
+          -- double-count loan totals. gm_id stays varchar so the join to e.id::text
+          -- (varchar = text) and DISTINCT ON / ORDER BY agree on the same column.
+          SELECT DISTINCT ON (gm_id)
+                 gm_id, COALESCE(loan_amount_usd,0)::numeric AS loan_amount,
+                 agreed_return_date, return_status
+          FROM drm.gm_loan_terms
+          ORDER BY gm_id, created_at DESC NULLS LAST
+        ),
+        base AS (
+          SELECT
+            CASE WHEN COALESCE(e.is_loan,0)=1 THEN 'LOAN'
+                 WHEN COALESCE(e.is_partial_payment,0)=1 THEN 'PARTIAL'
+                 ELSE 'FULL' END AS gm_type_canonical,
+            COALESCE(e.amount_usd,0)::numeric AS amount_usd,
+            COALESCE(e.customer_dollar, e.amount_usd, 0)::numeric AS customer_total,
+            COALESCE(r.received,0)::numeric AS received,
+            COALESCE(l.loan_amount, e.amount_usd, 0)::numeric AS loan_amount,
+            l.agreed_return_date, l.return_status
+          FROM drm.gm_entries e
+          LEFT JOIN drm.users u ON u.id::text = e.sales_person_id
+          LEFT JOIN receipts r ON r.gm_id = e.id::text
+          LEFT JOIN loans l ON l.gm_id = e.id::text
+          ${totalsFilters.whereSql}
+        )
+        SELECT
+          COUNT(*)::int AS total_count,
+          COUNT(*) FILTER (WHERE gm_type_canonical='FULL')::int AS full_count,
+          COUNT(*) FILTER (WHERE gm_type_canonical='PARTIAL')::int AS partial_count,
+          COUNT(*) FILTER (WHERE gm_type_canonical='LOAN')::int AS loan_count,
+          COALESCE(SUM(amount_usd),0)::numeric AS total_amount,
+          COALESCE(SUM(amount_usd) FILTER (WHERE gm_type_canonical='FULL'),0)::numeric AS full_amount,
+          COALESCE(SUM(customer_total) FILTER (WHERE gm_type_canonical='PARTIAL'),0)::numeric AS partial_total_amount,
+          COALESCE(SUM(received) FILTER (WHERE gm_type_canonical='PARTIAL'),0)::numeric AS partial_received_amount,
+          COALESCE(SUM(GREATEST(customer_total - received,0)) FILTER (WHERE gm_type_canonical='PARTIAL'),0)::numeric AS partial_pending_amount,
+          COALESCE(SUM(loan_amount) FILTER (WHERE gm_type_canonical='LOAN'),0)::numeric AS loan_amount,
+          COUNT(*) FILTER (
+            WHERE gm_type_canonical='LOAN' AND return_status IS DISTINCT FROM 'RETURNED'
+              AND agreed_return_date IS NOT NULL AND agreed_return_date < CURRENT_DATE
+          )::int AS loan_overdue_count,
+          COUNT(*) FILTER (
+            WHERE gm_type_canonical='LOAN' AND return_status IS DISTINCT FROM 'RETURNED'
+              AND agreed_return_date IS NOT NULL AND agreed_return_date >= CURRENT_DATE
+              AND agreed_return_date <= CURRENT_DATE + $${dueSoonIdx}::int
+          )::int AS loan_due_soon_count
+        FROM base
+      `;
+
+      // ---- By status ----
+      const statusFilters = buildGmFilters(1);
+      const byStatusSql = `
+        SELECT e.status AS status, COUNT(*)::int AS count,
+               COALESCE(SUM(COALESCE(e.amount_usd,0)),0)::numeric AS amount
+        FROM drm.gm_entries e
+        LEFT JOIN drm.users u ON u.id::text = e.sales_person_id
+        ${statusFilters.whereSql}
+        GROUP BY e.status
+      `;
+
+      // ---- Recent GMs (enriched with linked invoice statuses) ----
+      const recentFilters = buildGmFilters(1);
+      const limitIdx = recentFilters.nextIdx;
+      const recentParams = [...recentFilters.params, q.recentLimit];
+      const recentSql = `
+        WITH receipts AS (
+          SELECT gm_id::text AS gm_id, COALESCE(SUM(COALESCE(amount_usd,0)),0)::numeric AS received
+          FROM drm.gm_partial_receipts GROUP BY gm_id
+        ),
+        loans AS (
+          -- One loan row per GM (latest by created_at); see totals query above.
+          SELECT DISTINCT ON (gm_id)
+                 gm_id, COALESCE(loan_amount_usd,0)::numeric AS loan_amount,
+                 agreed_return_date, return_status, admin_approval_status
+          FROM drm.gm_loan_terms
+          ORDER BY gm_id, created_at DESC NULLS LAST
+        ),
+        invoices AS (
+          SELECT gm_id::text AS gm_id,
+            ARRAY_AGG(DISTINCT status) AS statuses,
+            COUNT(*)::int AS invoice_count,
+            BOOL_OR(COALESCE(paid_amount,0) > 0 OR paid_date IS NOT NULL) AS any_paid,
+            BOOL_OR(status='APPROVED') AS any_approved,
+            BOOL_OR(status IN ('PENDING_HOD','PENDING_ACCOUNT')) AS any_pending
+          FROM drm.product_posting_invoices WHERE gm_id IS NOT NULL GROUP BY gm_id
+        )
+        SELECT
+          e.id,
+          CASE WHEN COALESCE(e.is_loan,0)=1 THEN 'LOAN'
+               WHEN COALESCE(e.is_partial_payment,0)=1 THEN 'PARTIAL'
+               ELSE 'FULL' END AS gm_type_canonical,
+          e.company_name, e.sales_person_name, e.package_type, e.status, e.created_at,
+          COALESCE(e.amount_usd,0)::numeric AS amount_usd,
+          e.customer_dollar,
+          COALESCE(r.received,0)::numeric AS received,
+          l.loan_amount, l.agreed_return_date, l.return_status, l.admin_approval_status,
+          COALESCE(inv.statuses, ARRAY[]::text[]) AS invoice_statuses,
+          COALESCE(inv.invoice_count,0)::int AS invoice_count,
+          COALESCE(inv.any_paid,false) AS any_paid,
+          COALESCE(inv.any_approved,false) AS any_approved,
+          COALESCE(inv.any_pending,false) AS any_pending
+        FROM drm.gm_entries e
+        LEFT JOIN drm.users u ON u.id::text = e.sales_person_id
+        LEFT JOIN receipts r ON r.gm_id = e.id::text
+        LEFT JOIN loans l ON l.gm_id = e.id::text
+        LEFT JOIN invoices inv ON inv.gm_id = e.id::text
+        ${recentFilters.whereSql}
+        ORDER BY e.created_at DESC
+        LIMIT $${limitIdx}
+      `;
+
+      const [totalsRes, byStatusRes, recentRes] = await Promise.all([
+        pool.query(totalsSql, totalsParams),
+        pool.query(byStatusSql, statusFilters.params),
+        pool.query(recentSql, recentParams),
+      ]);
+
+      const t = totalsRes.rows[0] || {};
+      const totals = {
+        totalGmCount: t.total_count ?? 0,
+        fullGmCount: t.full_count ?? 0,
+        partialGmCount: t.partial_count ?? 0,
+        loanGmCount: t.loan_count ?? 0,
+        totalGmAmount: String(t.total_amount ?? "0"),
+        fullGmAmount: String(t.full_amount ?? "0"),
+        partialGmTotalAmount: String(t.partial_total_amount ?? "0"),
+        partialGmReceivedAmount: String(t.partial_received_amount ?? "0"),
+        partialGmPendingAmount: String(t.partial_pending_amount ?? "0"),
+        loanGmAmount: String(t.loan_amount ?? "0"),
+        loanDueSoonCount: t.loan_due_soon_count ?? 0,
+        loanOverdueCount: t.loan_overdue_count ?? 0,
+      };
+
+      const byStatus = byStatusRes.rows.map((r: any) => ({
+        status: r.status,
+        count: r.count ?? 0,
+        amount: String(r.amount ?? "0"),
+      }));
+
+      const derivePaymentStatus = (r: any): string => {
+        if (r.any_paid) return "PAID";
+        if (r.any_approved) return "APPROVED";
+        if (r.any_pending) return "PENDING";
+        if ((r.invoice_count ?? 0) > 0) return "OTHER";
+        return "NONE";
+      };
+
+      const todayStart = new Date(new Date().toDateString());
+      const recentGms = recentRes.rows.map((r: any) => {
+        const type = r.gm_type_canonical as string;
+        const customerTotal = r.customer_dollar != null ? Number(r.customer_dollar) : Number(r.amount_usd ?? 0);
+        const received = Number(r.received ?? 0);
+        const overdue =
+          type === "LOAN" &&
+          r.return_status !== "RETURNED" &&
+          !!r.agreed_return_date &&
+          new Date(r.agreed_return_date) < todayStart;
+        return {
+          id: r.id,
+          gmType: type,
+          companyName: r.company_name || "",
+          salesPersonName: r.sales_person_name || null,
+          packageType: r.package_type || "",
+          status: r.status,
+          createdAt: r.created_at,
+          amountUsd: String(r.amount_usd ?? "0"),
+          customerDollar: r.customer_dollar != null ? String(r.customer_dollar) : null,
+          partialReceivedAmount: type === "PARTIAL" ? String(received) : null,
+          partialPendingAmount: type === "PARTIAL" ? String(Math.max(customerTotal - received, 0)) : null,
+          loan:
+            type === "LOAN"
+              ? {
+                  loanAmountUsd: r.loan_amount != null ? String(r.loan_amount) : null,
+                  agreedReturnDate: r.agreed_return_date,
+                  returnStatus: r.return_status || null,
+                  adminApprovalStatus: r.admin_approval_status || null,
+                  overdue,
+                }
+              : null,
+          invoiceStatuses: r.invoice_statuses || [],
+          invoiceCount: r.invoice_count ?? 0,
+          paymentConfirmationStatus: derivePaymentStatus(r),
+        };
+      });
+
+      return sendSuccess(res, {
+        totals,
+        byStatus,
+        recentGms,
+        filters: {
+          gmType: q.gmType ?? null,
+          status: q.status ?? null,
+          dateFrom: q.dateFrom ?? null,
+          dateTo: q.dateTo ?? null,
+          customer: q.customer ?? null,
+          owner: q.owner ?? null,
+          branch: q.branch ?? null,
+          package: q.package ?? null,
+          invoiceStatus: q.invoiceStatus ?? null,
+        },
+        dueSoonDays: q.dueSoonDays,
+      });
+    } catch (error) {
+      console.error("Error building GM dashboard summary:", error);
+      return sendEnvelopeError(res, 500, "GM_SUMMARY_FAILED", "Failed to build GM dashboard summary");
+    }
+  });
+
+  // GET /api/account/gm-entries/:id/invoices
+  // Patch 5 Stage 7 (P13) — GM detail linked-invoice visibility. Returns the
+  // invoices linked to a GM (product-posting invoices carry a gm_id; legacy
+  // drm.invoices has no GM linkage so it is intentionally excluded), each with its
+  // type, status, HOD + Accounts approval audit, payment/proof, and linked project
+  // status — plus the GM's partial receipt history and loan terms. Read-only.
+  app.get("/api/account/gm-entries/:id/invoices", async (req, res) => {
+    try {
+      if (!req.user) {
+        return sendEnvelopeError(res, 401, "UNAUTHENTICATED", "Authentication required");
+      }
+      const id = String(req.params.id);
+
+      const gmRes = await pool.query(
+        `SELECT id, gm_type, company_name, sales_person_name, package_type, status,
+                COALESCE(amount_usd,0)::numeric AS amount_usd, customer_dollar, created_at,
+                COALESCE(is_loan,0) AS is_loan, COALESCE(is_partial_payment,0) AS is_partial_payment
+         FROM drm.gm_entries
+         WHERE id::text = $1 AND COALESCE(is_deleted,false) = false`,
+        [id],
+      );
+      if (gmRes.rows.length === 0) {
+        return sendEnvelopeError(res, 404, "GM_NOT_FOUND", "GM entry not found");
+      }
+      const g = gmRes.rows[0];
+      const canonicalType = Number(g.is_loan) === 1 ? "LOAN" : Number(g.is_partial_payment) === 1 ? "PARTIAL" : "FULL";
+
+      const [invRes, recRes, loanRes] = await Promise.all([
+        pool.query(
+          `SELECT id, invoice_type, status, COALESCE(amount,0)::numeric AS amount, currency,
+                  auto_generated, hod_approved_by, hod_approved_at, accounts_approved_by,
+                  accounts_approved_at, rejected_by, rejected_at, rejection_reason,
+                  paid_amount, paid_date, payment_method, receipt_reference,
+                  project_name, company_name, created_at
+           FROM drm.product_posting_invoices
+           WHERE gm_id::text = $1
+           ORDER BY created_at DESC`,
+          [id],
+        ),
+        pool.query(
+          `SELECT id, COALESCE(amount_usd,0)::numeric AS amount_usd, amount_pkr, dollar_rate,
+                  receipt_date, method, reference, notes
+           FROM drm.gm_partial_receipts
+           WHERE gm_id::text = $1
+           ORDER BY receipt_date ASC`,
+          [id],
+        ),
+        pool.query(
+          `SELECT loan_amount_usd, company_copay_usd, agreed_return_date, admin_approval_status,
+                  admin_approved_at, admin_comment, return_status, returned_at
+           FROM drm.gm_loan_terms
+           WHERE gm_id::text = $1
+           LIMIT 1`,
+          [id],
+        ),
+      ]);
+
+      const invoiceIds = invRes.rows.map((r: any) => r.id);
+      let projectRows: any[] = [];
+      if (invoiceIds.length > 0) {
+        const projRes = await pool.query(
+          `SELECT id, invoice_id, name, status, department_type
+           FROM drm.projects
+           WHERE invoice_id = ANY($1::uuid[])`,
+          [invoiceIds],
+        );
+        projectRows = projRes.rows;
+      }
+      const projectsByInvoice = new Map<string, any[]>();
+      for (const p of projectRows) {
+        const key = String(p.invoice_id);
+        if (!projectsByInvoice.has(key)) projectsByInvoice.set(key, []);
+        projectsByInvoice.get(key)!.push({
+          id: p.id,
+          name: p.name,
+          status: p.status,
+          departmentType: p.department_type ?? null,
+        });
+      }
+
+      const invoices = invRes.rows.map((r: any) => ({
+        id: r.id,
+        invoiceType: r.invoice_type ?? null,
+        status: r.status,
+        amount: String(r.amount ?? "0"),
+        currency: r.currency ?? "USD",
+        autoGenerated: Boolean(r.auto_generated),
+        hodApprovedBy: r.hod_approved_by ?? null,
+        hodApprovedAt: r.hod_approved_at ?? null,
+        accountsApprovedBy: r.accounts_approved_by ?? null,
+        accountsApprovedAt: r.accounts_approved_at ?? null,
+        rejectedBy: r.rejected_by ?? null,
+        rejectedAt: r.rejected_at ?? null,
+        rejectionReason: r.rejection_reason ?? null,
+        paidAmount: r.paid_amount != null ? String(r.paid_amount) : null,
+        paidDate: r.paid_date ?? null,
+        paymentMethod: r.payment_method ?? null,
+        receiptReference: r.receipt_reference ?? null,
+        projectName: r.project_name ?? null,
+        companyName: r.company_name ?? null,
+        createdAt: r.created_at,
+        projects: projectsByInvoice.get(String(r.id)) ?? [],
+      }));
+
+      const partialReceipts = recRes.rows.map((r: any) => ({
+        id: r.id,
+        amountUsd: String(r.amount_usd ?? "0"),
+        amountPkr: r.amount_pkr != null ? String(r.amount_pkr) : null,
+        dollarRate: r.dollar_rate != null ? String(r.dollar_rate) : null,
+        receiptDate: r.receipt_date,
+        method: r.method ?? null,
+        reference: r.reference ?? null,
+        notes: r.notes ?? null,
+      }));
+
+      const todayStart = new Date(new Date().toDateString());
+      let loanTerms: any = null;
+      if (loanRes.rows.length > 0) {
+        const l = loanRes.rows[0];
+        const overdue =
+          l.return_status !== "RETURNED" && !!l.agreed_return_date && new Date(l.agreed_return_date) < todayStart;
+        loanTerms = {
+          loanAmountUsd: l.loan_amount_usd != null ? String(l.loan_amount_usd) : null,
+          companyCopayUsd: l.company_copay_usd != null ? String(l.company_copay_usd) : null,
+          agreedReturnDate: l.agreed_return_date ?? null,
+          adminApprovalStatus: l.admin_approval_status ?? null,
+          adminApprovedAt: l.admin_approved_at ?? null,
+          adminComment: l.admin_comment ?? null,
+          returnStatus: l.return_status ?? null,
+          returnedAt: l.returned_at ?? null,
+          overdue,
+        };
+      }
+
+      const customerTotal = g.customer_dollar != null ? Number(g.customer_dollar) : Number(g.amount_usd ?? 0);
+      const partialReceivedTotal = partialReceipts.reduce((acc, r) => acc + Number(r.amountUsd || 0), 0);
+      const partialPendingTotal = canonicalType === "PARTIAL" ? Math.max(customerTotal - partialReceivedTotal, 0) : 0;
+
+      const anyPaid = invoices.some((i) => (i.paidAmount != null && Number(i.paidAmount) > 0) || i.paidDate != null);
+      const anyApproved = invoices.some((i) => i.status === "APPROVED");
+      const anyPending = invoices.some((i) => i.status === "PENDING_HOD" || i.status === "PENDING_ACCOUNT");
+      const paymentConfirmationStatus = anyPaid
+        ? "PAID"
+        : anyApproved
+          ? "APPROVED"
+          : anyPending
+            ? "PENDING"
+            : invoices.length > 0
+              ? "OTHER"
+              : "NONE";
+
+      return sendSuccess(res, {
+        gm: {
+          id: g.id,
+          gmType: canonicalType,
+          companyName: g.company_name || "",
+          salesPersonName: g.sales_person_name || null,
+          packageType: g.package_type || "",
+          status: g.status,
+          amountUsd: String(g.amount_usd ?? "0"),
+          customerDollar: g.customer_dollar != null ? String(g.customer_dollar) : null,
+          createdAt: g.created_at,
+        },
+        invoices,
+        partialReceipts,
+        loanTerms,
+        summary: {
+          invoiceCount: invoices.length,
+          paymentConfirmationStatus,
+          partialReceivedTotal: canonicalType === "PARTIAL" ? String(partialReceivedTotal) : null,
+          partialPendingTotal: canonicalType === "PARTIAL" ? String(partialPendingTotal) : null,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching GM linked invoices:", error);
+      return sendEnvelopeError(res, 500, "GM_INVOICES_FAILED", "Failed to fetch GM linked invoices");
     }
   });
 

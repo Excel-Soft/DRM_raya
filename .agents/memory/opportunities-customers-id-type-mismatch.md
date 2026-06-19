@@ -35,6 +35,12 @@ local cast workaround; a proper fix is a schema migration to align the id types
   (`u.id::text = a.user_id`). Note `attendance_edit_requests.user_id` is `uuid`
   (so its join to users needs no cast) while `attendance_edit_requests.attendance_id`
   is `varchar` (matches `attendance.id`).
+- `drm.gm_entries.sales_person_id` is `varchar` but `drm.users.id` is `uuid`, so
+  `LEFT JOIN drm.users u ON u.id = e.sales_person_id` throws 42883 (`operator does
+  not exist: uuid = character varying`); cast `u.id::text = e.sales_person_id`. Also
+  `gm_entries.status` is an enum (`USER-DEFINED`): filtering `e.status = $param`
+  (enum = text) throws 42883 too — cast `e.status::text = $param`. (Both bit the
+  Accounts gm-summary aggregate.)
 - `drm.users` *does* have `name`; only `customers` lacks it.
 **Why:** these caused 500s on otherwise-correct Stage 6/7 list endpoints.
 **How to apply:** in any new raw SQL touching customers or project↔approval/task

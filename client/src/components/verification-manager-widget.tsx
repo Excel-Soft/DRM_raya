@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { isSupportModuleEnabled } from "@/lib/feature-flags";
+import { useUiWorkflowConfig } from "@/hooks/use-ui-workflow-config";
+import { getVerificationLifecycleLabels } from "@shared/verification-lifecycle";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
@@ -111,6 +113,8 @@ const isTodayProject = (row: any) => {
 // ── Main Component ─────────────────────────────────────────────────────────────
 export function VerificationManagerWidget() {
     const [, setLocation] = useLocation();
+    const { config: uiWorkflowConfig } = useUiWorkflowConfig();
+    const lifecycleLabels = getVerificationLifecycleLabels(uiWorkflowConfig.verificationManagerRequiredAfterQa);
     const [projectTab, setProjectTab] = useState<"today" | "pending">("today");
     const [sellingPeriod, setSellingPeriod] = useState("LD");
     const [entriesCount, setEntriesCount] = useState("10");
@@ -185,7 +189,7 @@ export function VerificationManagerWidget() {
         tasker: p.assignee?.name || "Posting Executive",
         project: p.name || p.title,
         status: p.phaseLabel || p.status,
-        statusTag: p.returnCount ? `rework ${p.returnCount}` : "verification pending",
+        statusTag: p.returnCount ? `rework ${p.returnCount}` : lifecycleLabels.postQaTag,
         time: p.qaReviewedAt ? new Date(p.qaReviewedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "N/A",
         id: p.taskId,
         raw: p,

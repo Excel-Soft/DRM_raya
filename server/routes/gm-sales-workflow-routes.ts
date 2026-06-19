@@ -41,6 +41,32 @@ gmSalesWorkflowRouter.get("/config", requireAdmin, async (_req: Request, res: Re
   }
 });
 
+/**
+ * Read-only UI projection of the workflow config (P12/P13/P11 frontend support).
+ *
+ * Authenticated but NOT admin-only: any logged-in user may read the small set of
+ * flags the UI needs to render config-aware labels and to hide actions the server
+ * would reject anyway. This is intentionally NOT a duplicate of the admin
+ * `GET /config` endpoint — it returns only these safe UI flags, never the full
+ * config or its metadata. The server remains the single source of truth for
+ * enforcement; this only drives presentation.
+ */
+gmSalesWorkflowRouter.get("/ui-config", async (req: Request, res: Response) => {
+  if (!req.user) {
+    return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+  }
+  try {
+    const { config } = await getConfig();
+    return sendSuccess(res, {
+      verificationManagerRequiredAfterQa: config.verificationManagerRequiredAfterQa,
+      serviceExecutiveCanCreateGM: config.serviceExecutiveCanCreateGM,
+      serviceExecutiveCanCreateManualInvoice: config.serviceExecutiveCanCreateManualInvoice,
+    });
+  } catch {
+    return sendError(res, 500, "CONFIG_READ_FAILED", "Failed to read workflow configuration");
+  }
+});
+
 gmSalesWorkflowRouter.patch("/config", requireAdmin, async (req: Request, res: Response) => {
   try {
     const before = (await getConfig()).config;
