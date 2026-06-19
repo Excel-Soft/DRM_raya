@@ -88,11 +88,49 @@ export function ProductPostingApprovalsWidget({ role }: { role: "HOD" | "Account
         }
     });
 
+    // Patch 5 Stage 5 (Part C): explicit, idempotent invoice -> project generation
+    // for the Account Manager. The endpoint is safe to call repeatedly (create-or-
+    // link), so the worst case of a double click is a "already generated" toast.
+    const [generated, setGenerated] = useState<Record<string, { status: string | null; held: boolean }>>({});
+    const generateMutation = useMutation({
+        mutationFn: async ({ id }: { id: string }) => {
+            const res = await apiRequest("POST", `/api/invoices/${id}/generate-project`, {});
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(body?.error?.message || body?.error || "Could not generate project");
+            }
+            return body;
+        },
+        onSuccess: (body, variables) => {
+            const result = body?.data || {};
+            setGenerated((m) => ({ ...m, [variables.id]: { status: result.status ?? null, held: !!result.held } }));
+            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            const already = !!result.linked && !result.created;
+            toast({
+                title: already ? "Project already generated" : "Project generated",
+                description: result.held
+                    ? "Project created on hold — waiting for Listing Page QA approval."
+                    : `Project ready${result.status ? ` (status: ${result.status})` : ""}.`,
+            });
+        },
+        onError: (err) => {
+            toast({
+                title: "Generation failed",
+                description: err instanceof Error ? err.message : "Could not generate project",
+                variant: "destructive",
+            });
+        },
+    });
+
     const invoices = invoicesData?.data || [];
 
     // Filter invoices based on which role is viewing the queue
     const targetStatus = role === "HOD" ? "PENDING_HOD" : "PENDING_ACCOUNT";
     const pendingInvoices = invoices.filter((inv: any) => inv.status === targetStatus);
+    // Patch 5 Stage 5 (Part C): approved invoices the Account Manager can turn into projects.
+    const approvedInvoices = role === "Account Manager"
+        ? invoices.filter((inv: any) => inv.status === "APPROVED")
+        : [];
 
     if (isLoading) return <div>Loading approvals...</div>;
 
@@ -178,6 +216,45 @@ export function ProductPostingApprovalsWidget({ role }: { role: "HOD" | "Account
                         ))
                     )}
                 </div>
+
+                {/* Patch 5 Stage 5 (Part C): approved invoices ready for project
+                    generation. Account Manager only; idempotent action. */}
+                {role === "Account Manager" && approvedInvoices.length > 0 && (
+                    <div className="border-t">
+                        <div className="px-4 py-2 text-xs font-semibold text-muted-foreground bg-slate-50 dark:bg-zinc-900">
+                            Approved — project generation
+                        </div>
+                        <div className="max-h-[300px] overflow-auto">
+                            {approvedInvoices.map((inv: any) => {
+                                const gen = generated[inv.id];
+                                return (
+                                    <div key={inv.id} className="flex items-center justify-between p-4 border-b hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-semibold">INV-{inv.id.substring(0, 6)}</span>
+                                            <span className="text-xs text-muted-foreground">
+                                                {invoiceTypeLabel(inv)}{inv.companyName ? ` · ${inv.companyName}` : ""}
+                                            </span>
+                                            {gen && (
+                                                <span className={`text-[11px] mt-0.5 ${gen.held ? "text-amber-600" : "text-emerald-600"}`}>
+                                                    {gen.held
+                                                        ? "On hold — waiting for Listing Page QA approval"
+                                                        : `Project ready${gen.status ? ` · ${gen.status}` : ""}`}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <Button
+                                            variant="outline" size="sm" className="h-7 text-xs"
+                                            onClick={() => generateMutation.mutate({ id: inv.id })}
+                                            disabled={generateMutation.isPending || !!gen}
+                                        >
+                                            {gen ? "Project ready" : "Generate Project"}
+                                        </Button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
             </CardContent>
 
             {/* Audit history dialog */}

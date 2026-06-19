@@ -504,11 +504,48 @@ export const projects = drmSchema.table("projects", {
   // SOFTWARE. Set at workflow creation so notification/dashboard routing reads a
   // stored value instead of guessing from free-text project/invoice names.
   departmentType: text("department_type"),
+  // Patch 5 Stage 5 (P9) — structured invoice->project routing fields. These let
+  // generation/dependency logic read stored values instead of parsing names:
+  //   gmId        — the originating GM key (shared by an invoice set)
+  //   serviceType — canonical service/product name (mirrors invoice service_type)
+  //   invoiceType — canonical INVOICE_TYPES value (LISTING_PAGE/MINIWEBSITE/PRODUCT_POSTING)
+  //   projectType — PROJECT_TYPES kind: INVOICE_ROOT (generated/linked from an
+  //                 invoice) vs SUBPROJECT (created by the assign-task flow).
+  gmId: text("gm_id"),
+  serviceType: text("service_type"),
+  invoiceType: text("invoice_type"),
+  projectType: text("project_type"),
   status: text("status").notNull().default("Active"),
   startDate: timestamp("start_date", { withTimezone: true }),
   endDate: timestamp("end_date", { withTimezone: true }),
   notes: text("notes"),
   isDeleted: boolean("is_deleted").default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Project dependencies (Patch 5 Stage 5, P10) — a Product Posting project may not
+// start until a prerequisite project (the same GM's Listing Page project) has
+// passed QA. Rows are created only when the controlling config
+// (requireProductPostingWaitForListingQa) is true. Matching/satisfaction is keyed
+// on gm_id so it is robust to the order in which the two projects are generated;
+// dependency_project_id is backfilled for traceability once the prerequisite root
+// project exists. db:push is broken repo-wide, so the table is also created at
+// runtime in server/db/ensure.ts (ensureProjectStage5Schema).
+export const projectDependencies = drmSchema.table("project_dependencies", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // The dependent (blocked) project — the Product Posting INVOICE_ROOT project.
+  projectId: uuid("project_id").notNull().references(() => projects.id),
+  // The prerequisite project — the Listing Page INVOICE_ROOT project. Nullable
+  // until that root exists; resolution/satisfaction works via gmId regardless.
+  dependencyProjectId: uuid("dependency_project_id").references(() => projects.id),
+  // Shared GM key linking the prerequisite & dependent invoice/project set.
+  gmId: text("gm_id"),
+  dependencyType: text("dependency_type").notNull().default("LISTING_PAGE_QA_APPROVAL"),
+  status: text("status").notNull().default("PENDING"),
+  satisfiedAt: timestamp("satisfied_at", { withTimezone: true }),
+  satisfiedBy: uuid("satisfied_by").references(() => users.id),
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

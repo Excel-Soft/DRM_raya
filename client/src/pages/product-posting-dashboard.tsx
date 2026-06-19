@@ -478,7 +478,16 @@ export default function ProductPostingDashboard() {
 
     const createTaskMutation = useMutation({
         mutationFn: async (data: any) => {
-            await apiRequest("POST", `/api/product-posting/projects/${data.projectId}/assign-task`, data);
+            const res = await apiRequest("POST", `/api/product-posting/projects/${data.projectId}/assign-task`, data);
+            if (!res.ok) {
+                // apiRequest does not throw on non-2xx; parse the body so the backend's
+                // honest rejection (e.g. Patch 5 Stage 5 LISTING_QA_PENDING hold) is
+                // surfaced instead of being mistaken for a successful assignment.
+                const body = await res.json().catch(() => ({}));
+                const err: any = new Error(body?.error || body?.error?.message || "Failed to assign task");
+                err.code = body?.code;
+                throw err;
+            }
         },
         onSuccess: () => {
             refetchManagerQueue();
@@ -489,6 +498,16 @@ export default function ProductPostingDashboard() {
                 title: "Task Assigned",
                 description: "The task has been successfully assigned to the executive.",
                 variant: "default",
+            });
+        },
+        onError: (err: any) => {
+            // Patch 5 Stage 5 (Part D): show the clear hold reason when Product Posting
+            // is blocked on Listing Page QA approval (config-gated); generic otherwise.
+            const isHold = err?.code === "LISTING_QA_PENDING";
+            toast({
+                title: isHold ? "Waiting for Listing Page QA approval" : "Assignment failed",
+                description: err?.message || "Could not assign the task.",
+                variant: "destructive",
             });
         }
     });

@@ -91,6 +91,36 @@ export const GM_INVOICE_GENERATION_TIMING = {
 export type GmInvoiceGenerationTiming =
   (typeof GM_INVOICE_GENERATION_TIMING)[keyof typeof GM_INVOICE_GENERATION_TIMING];
 
+/** How an approved invoice becomes a project (config-controlled, Stage 5 P9).
+ *  MANUAL (default) preserves today's PMS pending-invoices queue: account
+ *  approval only *enables* creation. AUTOMATIC creates/links exactly one root
+ *  project on final account approval. The manual generate endpoint works in
+ *  either mode (explicit invocation). */
+export const PROJECT_GENERATION_MODE = {
+  MANUAL: "MANUAL",
+  AUTOMATIC: "AUTOMATIC",
+} as const;
+export type ProjectGenerationMode =
+  (typeof PROJECT_GENERATION_MODE)[keyof typeof PROJECT_GENERATION_MODE];
+
+/** Project-to-project dependency kinds (Stage 5 P10). LISTING_PAGE_QA_APPROVAL:
+ *  a Product Posting project may not start until the same GM's Listing Page
+ *  project has passed QA. */
+export const PROJECT_DEPENDENCY_TYPES = {
+  LISTING_PAGE_QA_APPROVAL: "LISTING_PAGE_QA_APPROVAL",
+} as const;
+export type ProjectDependencyType =
+  (typeof PROJECT_DEPENDENCY_TYPES)[keyof typeof PROJECT_DEPENDENCY_TYPES];
+
+/** Project routing "kind" stored on drm.projects.project_type (Stage 5).
+ *  INVOICE_ROOT = the single project generated/linked for an approved invoice;
+ *  SUBPROJECT = a child created by the assign-task flow. */
+export const PROJECT_TYPES = {
+  INVOICE_ROOT: "INVOICE_ROOT",
+  SUBPROJECT: "SUBPROJECT",
+} as const;
+export type ProjectType = (typeof PROJECT_TYPES)[keyof typeof PROJECT_TYPES];
+
 /* -------------------------------------------------------------------------- */
 /* Existing DB enum values (source of truth lives in shared/schema.ts)        */
 /* -------------------------------------------------------------------------- */
@@ -156,6 +186,13 @@ export const projectInitialStatusSchema = z.enum([
 export const gmInvoiceGenerationTimingSchema = z.enum([
   GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
   GM_INVOICE_GENERATION_TIMING.AFTER_FINAL_GM_APPROVAL,
+]);
+export const projectGenerationModeSchema = z.enum([
+  PROJECT_GENERATION_MODE.MANUAL,
+  PROJECT_GENERATION_MODE.AUTOMATIC,
+]);
+export const projectDependencyTypeSchema = z.enum([
+  PROJECT_DEPENDENCY_TYPES.LISTING_PAGE_QA_APPROVAL,
 ]);
 
 /* -------------------------------------------------------------------------- */
@@ -298,6 +335,7 @@ export const gmSalesConfigSchema = z
     serviceExecutiveCanCreateGM: z.boolean(),
     serviceExecutiveCanCreateManualInvoice: z.boolean(),
     gmInvoiceGenerationTiming: gmInvoiceGenerationTimingSchema,
+    projectGenerationMode: projectGenerationModeSchema,
     requireProductPostingWaitForListingQa: z.boolean(),
     verificationManagerRequiredAfterQa: z.boolean(),
     defaultProjectStatusAfterInvoiceApproval: projectInitialStatusSchema,
@@ -322,6 +360,7 @@ export const GM_SALES_CONFIG_DEFAULTS: GmSalesConfig = {
   serviceExecutiveCanCreateGM: false,
   serviceExecutiveCanCreateManualInvoice: false,
   gmInvoiceGenerationTiming: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+  projectGenerationMode: PROJECT_GENERATION_MODE.MANUAL,
   requireProductPostingWaitForListingQa: false,
   verificationManagerRequiredAfterQa: true,
   defaultProjectStatusAfterInvoiceApproval: PROJECT_INITIAL_STATUSES.ACTIVE,
@@ -341,6 +380,8 @@ export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> 
     "Whether Service Executives may create manual invoices (false until management confirms).",
   gmInvoiceGenerationTiming:
     "When the 3 default invoices are generated: ON_GM_CREATION (current) or AFTER_FINAL_GM_APPROVAL.",
+  projectGenerationMode:
+    "How an approved invoice becomes a project: MANUAL (current PMS pending-invoices queue) or AUTOMATIC (auto-create one root project on final account approval).",
   requireProductPostingWaitForListingQa:
     "If true, Product Posting cannot start until Listing-Page QA is complete.",
   verificationManagerRequiredAfterQa:

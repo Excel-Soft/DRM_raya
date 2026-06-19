@@ -5,6 +5,7 @@ import { ValidationService } from "../services/validation.service";
 import { sendError, ApiError } from "../utils/api-error";
 import { InvoiceWorkflowService, type Actor } from "../services/invoice-workflow.service";
 import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
+import { createOrLinkProjectForApprovedInvoice } from "../services/invoice-to-project.service";
 import {
   workflowCreateInvoiceSchema,
   workflowDecisionSchema,
@@ -238,6 +239,32 @@ invoiceRouter.post("/:id/account-reject", requireRole("account_manager", "admin"
     sendError(res, error);
   }
 });
+
+// POST /api/invoices/:invoiceId/generate-project — Patch 5 Stage 5 (P9). Explicit,
+// idempotent invoice -> project generation. Works in either projectGenerationMode
+// (this is the manual trigger); creates-or-links a single INVOICE_ROOT project for
+// an APPROVED invoice. Available to Account / Admin / Product-Posting managers.
+invoiceRouter.post(
+  "/:invoiceId/generate-project",
+  requireRole("account_manager", "admin", "product_posting_manager"),
+  async (req, res) => {
+    try {
+      requireAuth(req);
+      const result = await createOrLinkProjectForApprovedInvoice({
+        invoiceId: req.params.invoiceId,
+        actorUserId: actorFrom(req).userId,
+        req,
+      });
+      if (!result.ok) {
+        throw new ApiError(400, "GENERATION_FAILED", result.reason || "Could not generate project");
+      }
+      res.json({ success: true, data: result, projectId: result.projectId });
+    } catch (error) {
+      console.error("[Invoices generate-project]", error);
+      sendError(res, error);
+    }
+  },
+);
 
 // POST /api/invoices/:id/mark-paid — APPROVED -> PAID
 invoiceRouter.post("/:id/mark-paid", requireRole("account_manager", "admin"), async (req, res) => {

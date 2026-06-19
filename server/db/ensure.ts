@@ -523,6 +523,76 @@ async function ensureInvoiceStage4Schema(client: {
   );
 }
 
+/**
+ * Patch 5 Stage 5 — structured invoice->project routing columns on drm.projects
+ * (P9) + the project-dependency table (P10). `db:push` is broken repo-wide
+ * (pre-existing FK mismatch), so the schema is applied at runtime here. ALL
+ * statements are additive + idempotent (ADD COLUMN / CREATE TABLE / CREATE INDEX
+ * IF NOT EXISTS) and each runs as a SEPARATE client.query so a no-op can never
+ * abort a sibling. The partial unique index only constrains generated
+ * INVOICE_ROOT projects, so legacy rows (project_type NULL, incl. assign-task
+ * sub-projects that copy a parent invoice_id) are excluded and the index builds
+ * cleanly on existing data.
+ */
+async function ensureProjectStage5Schema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  // --- drm.projects: structured routing columns (additive) ---
+  // created_by is normally added by projects.repository.ensureProjectsSchema; we
+  // (re)assert it here too so this service's INSERT is self-healing regardless of
+  // which ensure path runs first (mirrors gm-invoice-generation's self-heal).
+  await client.query(
+    `ALTER TABLE drm.projects
+       ADD COLUMN IF NOT EXISTS created_by uuid,
+       ADD COLUMN IF NOT EXISTS gm_id text,
+       ADD COLUMN IF NOT EXISTS service_type text,
+       ADD COLUMN IF NOT EXISTS invoice_type text,
+       ADD COLUMN IF NOT EXISTS project_type text`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_projects_gm_id ON drm.projects (gm_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_projects_invoice_type ON drm.projects (invoice_type)`,
+  );
+  // Idempotency backstop: at most one generated/linked root project per invoice.
+  // Partial predicate keeps legacy rows + assign-task sub-projects out of the
+  // index so it never conflicts with the multi-project-per-invoice reality.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_invoice_root
+       ON drm.projects (invoice_id)
+       WHERE invoice_id IS NOT NULL AND project_type = 'INVOICE_ROOT'`,
+  );
+
+  // --- drm.project_dependencies (P10) ---
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.project_dependencies (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       project_id uuid NOT NULL REFERENCES drm.projects(id),
+       dependency_project_id uuid REFERENCES drm.projects(id),
+       gm_id text,
+       dependency_type text NOT NULL DEFAULT 'LISTING_PAGE_QA_APPROVAL',
+       status text NOT NULL DEFAULT 'PENDING',
+       satisfied_at timestamptz,
+       satisfied_by uuid REFERENCES drm.users(id),
+       metadata jsonb,
+       created_at timestamptz NOT NULL DEFAULT now(),
+       updated_at timestamptz NOT NULL DEFAULT now()
+     )`,
+  );
+  // One dependency row per (dependent project, type) — makes creation idempotent.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_project_dependencies_project_type
+       ON drm.project_dependencies (project_id, dependency_type)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_project_dependencies_gm ON drm.project_dependencies (gm_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_project_dependencies_status ON drm.project_dependencies (status)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -557,6 +627,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureGmEntriesPatch5Schema(client);
         await ensureGmStage3Schema(client);
         await ensureInvoiceStage4Schema(client);
+        await ensureProjectStage5Schema(client);
         return;
       } catch (err) {
         lastErr = err;

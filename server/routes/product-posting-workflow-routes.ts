@@ -26,6 +26,11 @@ import { mapWorkflowError } from "../services/workflow-transition.service";
 import { ActivityLogService } from "../services/activity-service";
 import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
 import { NotificationService } from "../services/notification-service";
+import { PROJECT_TYPES, INVOICE_TYPES } from "../../shared/gm-sales-constants";
+import {
+  assertProductPostingDependencySatisfied,
+  satisfyListingQaDependencies,
+} from "../services/invoice-to-project.service";
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -136,6 +141,21 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
       return res.status(404).json({ success: false, error: "Project not found" });
     }
 
+    // Patch 5 Stage 5 (P10): a Product Posting root project may not start until the
+    // same GM's Listing Page QA is complete. No-op unless
+    // requireProductPostingWaitForListingQa is true (no dependency rows exist
+    // otherwise); fail-open on bookkeeping errors so it never blocks legitimately.
+    const depCheck = await assertProductPostingDependencySatisfied(projectId);
+    if (!depCheck.satisfied) {
+      return res.status(409).json({
+        success: false,
+        code: "LISTING_QA_PENDING",
+        error:
+          depCheck.reason ||
+          "Listing Page QA must be completed before this Product Posting project can start.",
+      });
+    }
+
     // Get invoice to determine the correct task type label. The label is still
     // derived from the invoice's free-text project name; only the routing URL
     // below reads the structured department column.
@@ -200,6 +220,13 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
         ownerUserId: assigneeId,
         status: 'Active',
         departmentType: subDepartmentType,
+        // Patch 5 Stage 5: tag as SUBPROJECT (so it is excluded from the
+        // INVOICE_ROOT partial unique index even though it copies the parent's
+        // invoice_id) and carry the structured routing fields forward.
+        gmId: (project as any).gmId ?? null,
+        serviceType: (project as any).serviceType ?? null,
+        invoiceType: (project as any).invoiceType ?? null,
+        projectType: PROJECT_TYPES.SUBPROJECT,
         description: description || `Task assigned from ${project.name}`,
       } as any).returning();
       if (newProject) {
@@ -548,6 +575,26 @@ productPostingWorkflowRouter.post("/tasks/:taskId/qa-review", requireRole("qa_ma
         notify: false,
         req,
       });
+
+      // Patch 5 Stage 5 (P10): if this QA completion is for a Listing Page project,
+      // satisfy any Product-Posting dependencies waiting on the same GM's Listing
+      // Page QA and release held PP projects. No-op unless dependency rows exist
+      // (i.e. requireProductPostingWaitForListingQa was on). Best-effort.
+      try {
+        const projRes = await pool.query(
+          `SELECT gm_id, invoice_type FROM drm.projects WHERE id = $1 LIMIT 1`,
+          [updated.projectId],
+        );
+        const proj = projRes.rows[0];
+        if (
+          proj?.gm_id &&
+          String(proj.invoice_type ?? "").toUpperCase() === INVOICE_TYPES.LISTING_PAGE
+        ) {
+          await satisfyListingQaDependencies({ gmId: proj.gm_id, actorUserId, req });
+        }
+      } catch (depErr) {
+        console.error("[qa-review] LP-QA dependency satisfaction failed (best-effort):", depErr);
+      }
 
       return res.json({ success: true, data: updated });
     }
