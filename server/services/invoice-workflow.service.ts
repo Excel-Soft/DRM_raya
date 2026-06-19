@@ -8,8 +8,11 @@ import { NotificationService } from "./notification-service";
 import { normalizeRole } from "../utils/role-utils";
 import {
   INVOICE_TYPE_TO_PRODUCT_NAME,
+  PROJECT_GENERATION_MODE,
   type InvoiceType,
 } from "../../shared/gm-sales-constants";
+import { getConfigValue } from "./gm-sales-config.service";
+import { createOrLinkProjectForApprovedInvoice } from "./invoice-to-project.service";
 
 /**
  * InvoiceWorkflowService — the single owner of every product-posting invoice
@@ -457,7 +460,7 @@ export class InvoiceWorkflowService {
     // PMS linkage: the invoice now appears in the existing pending-project queue
     // (projectsRepository.findPendingInvoices filters status='APPROVED' with no
     // project). Notify PMS managers; surface any existing project link.
-    const projectLink = await this.findProjectLink(id);
+    let projectLink = await this.findProjectLink(id);
     await NotificationService.notifyWorkflowTransition({
       message: `New approved invoice ${shortId(id)} is ready for project creation.`,
       type: "INFO",
@@ -467,6 +470,25 @@ export class InvoiceWorkflowService {
       entityId: id,
       targetUrl: "/pms/approvals?tab=invoices",
     });
+
+    // Patch 5 Stage 5 (P9): standardized invoice -> project generation. Only fires
+    // when projectGenerationMode is AUTOMATIC; the default (MANUAL) preserves the
+    // existing PMS pending-invoices queue untouched. Best-effort and idempotent —
+    // the service creates-or-links a single INVOICE_ROOT project and never throws,
+    // so approval cannot break if generation hiccups.
+    try {
+      const mode = await getConfigValue("projectGenerationMode");
+      if (mode === PROJECT_GENERATION_MODE.AUTOMATIC) {
+        const gen = await createOrLinkProjectForApprovedInvoice({
+          invoiceId: id,
+          actorUserId: actor.userId,
+          req,
+        });
+        if (gen.ok && gen.projectId) projectLink = gen.projectId;
+      }
+    } catch (genErr) {
+      console.error("[invoice-workflow] automatic project generation failed (best-effort):", genErr);
+    }
 
     return { invoice: updated, projectId: projectLink };
   }

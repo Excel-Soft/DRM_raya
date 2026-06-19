@@ -142,6 +142,10 @@ export class ProjectsRepository {
         isDeleted: projects.isDeleted,
         createdAt: projects.createdAt,
         updatedAt: projects.updatedAt,
+        gmId: projects.gmId,
+        serviceType: projects.serviceType,
+        invoiceType: projects.invoiceType,
+        projectType: projects.projectType,
         companyName: sql<string>`COALESCE(${customers.companyName}, ${productPostingInvoices.companyName})`
       })
       .from(projects)
@@ -221,6 +225,10 @@ export class ProjectsRepository {
         isDeleted: projects.isDeleted,
         createdAt: projects.createdAt,
         updatedAt: projects.updatedAt,
+        gmId: projects.gmId,
+        serviceType: projects.serviceType,
+        invoiceType: projects.invoiceType,
+        projectType: projects.projectType,
         companyName: sql<string>`COALESCE(${customers.companyName}, ${productPostingInvoices.companyName})`
       })
       .from(projects)
