@@ -95,11 +95,15 @@ export const workflowCreateInvoiceSchema = z
   .object({
     customerId: uuid,
     amount: positiveAmount,
+    // Patch 5 Stage 4 (P7): the invoice type is a CLOSED enum, never free text.
+    // It drives the canonical project name / service type used for dedup.
+    invoiceType: invoiceTypeSchema,
     currency: currency.optional(),
     projectName: z.string().trim().max(300).optional(),
     serviceType: z.string().trim().max(200).optional(),
     servicePackage: z.string().trim().max(200).optional(),
     companyName: z.string().trim().max(300).optional(),
+    gmId: z.string().trim().max(128).optional(),
     invoiceDate: isoDate.optional(),
     paymentTerms: z.string().trim().max(200).optional(),
     sourceModule: z.string().trim().max(100).optional(),
@@ -108,10 +112,6 @@ export const workflowCreateInvoiceSchema = z
     status: z.enum(["DRAFT", "PENDING_HOD"]).optional(),
     overrideDuplicate: z.boolean().optional(),
     overrideReason: z.string().trim().max(2000).optional(),
-  })
-  .refine((v) => Boolean(v.serviceType || v.projectName), {
-    message: "A service (serviceType or projectName) is required",
-    path: ["serviceType"],
   })
   .refine((v) => !v.overrideDuplicate || (v.overrideReason && v.overrideReason.length > 0), {
     message: "An override reason is required to bypass the duplicate check",

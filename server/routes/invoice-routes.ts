@@ -1,5 +1,6 @@
 import { Router, type Request } from "express";
 import { requireRole } from "../auth.middleware";
+import { requireManualInvoiceCreator } from "../utils/gm-sales-permissions";
 import { ValidationService } from "../services/validation.service";
 import { sendError, ApiError } from "../utils/api-error";
 import { InvoiceWorkflowService, type Actor } from "../services/invoice-workflow.service";
@@ -46,8 +47,9 @@ invoiceRouter.get("/", async (req, res) => {
   }
 });
 
-// POST /api/invoices — create a workflow invoice
-invoiceRouter.post("/", requireRole("sales_executive", "sales_manager", "admin"), async (req, res) => {
+// POST /api/invoices — create a workflow invoice (P7: closed invoice-type enum +
+// role policy; service_executive admitted only when config enables it).
+invoiceRouter.post("/", requireManualInvoiceCreator(), async (req, res) => {
   try {
     requireAuth(req);
     const body = ValidationService.parse(workflowCreateInvoiceSchema, req.body);

@@ -196,3 +196,76 @@ export function requireGmSalesActionPermission(
     return next();
   };
 }
+
+/** Collect every role the user carries (roleId, activeRoleId, roles[]), normalized. */
+function collectUserRoles(user: unknown): Set<string> {
+  const u = (user ?? {}) as { roleId?: string; activeRoleId?: string; roles?: string[] };
+  const raw = [u.roleId, u.activeRoleId, ...(u.roles ?? [])].filter(Boolean) as string[];
+  return new Set(raw.map((r) => normalizeRole(r)));
+}
+
+export interface ManualInvoiceCreatorOptions {
+  /** Extra roles permitted in addition to the canonical sales set (e.g. the
+   *  legacy accounts endpoint also allows account_manager). */
+  extraAllowedRoles?: string[];
+  /** Entity type used for the unauthorized-attempt audit (default "invoice"). */
+  auditEntityType?: string;
+}
+
+/**
+ * Manual invoice creation gate (Patch 5 Stage 4, P7).
+ *
+ * Preserves the canonical route's existing allowed set — sales_executive,
+ * sales_manager, admin — while adding the policy that a service_executive may
+ * create manual invoices ONLY when `serviceExecutiveCanCreateManualInvoice` is
+ * enabled. Reads roles the same permissive way the legacy `requireRole` and the
+ * invoice service do (roleId / activeRoleId / roles[]), so no existing caller
+ * loses access. Every denial is audited. Fails CLOSED on config-load error.
+ */
+export function requireManualInvoiceCreator(options: ManualInvoiceCreatorOptions = {}) {
+  const entityType = options.auditEntityType ?? "invoice";
+  const extra = new Set((options.extraAllowedRoles ?? []).map((r) => normalizeRole(r)));
+
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+    }
+
+    const roles = collectUserRoles(req.user);
+    const auditedDeny = (reason: string) => {
+      void recordGmSalesAudit({
+        action: GM_SALES_AUDIT_ACTIONS.GM_CREATE_UNAUTHORIZED_ATTEMPT,
+        entityType,
+        entityId: "n/a",
+        reason,
+        after: { action: GM_SALES_ACTION_KEYS.INVOICE_MANUAL_CREATE, roles: Array.from(roles) },
+        req,
+      });
+      return sendError(res, 403, "FORBIDDEN", "You do not have permission to create invoices", {
+        action: GM_SALES_ACTION_KEYS.INVOICE_MANUAL_CREATE,
+      });
+    };
+
+    if (roles.has(ROLES.ADMIN)) return next();
+    if (roles.has(ROLES.SALES_EXECUTIVE) || roles.has(ROLES.SALES_MANAGER)) return next();
+    for (const r of Array.from(extra)) {
+      if (roles.has(r)) return next();
+    }
+
+    // service_executive is admitted only when the config flag is on.
+    if (roles.has(ROLES.SERVICE_EXECUTIVE)) {
+      let config: GmSalesConfig;
+      try {
+        config = (await getConfig()).config;
+      } catch {
+        return sendError(res, 503, "CONFIG_UNAVAILABLE", "Workflow configuration is unavailable");
+      }
+      if (config.serviceExecutiveCanCreateManualInvoice) return next();
+      return auditedDeny(
+        "Service Executive manual invoice creation is disabled (serviceExecutiveCanCreateManualInvoice=false)",
+      );
+    }
+
+    return auditedDeny(`Roles [${Array.from(roles).join(", ")}] may not create manual invoices`);
+  };
+}

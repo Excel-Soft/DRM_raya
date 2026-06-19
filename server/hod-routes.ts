@@ -7,6 +7,8 @@ import { pool } from "./db";
 import { isHodAllowed, normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { registerHodQuickActionRoutes } from "./hod-quick-actions.routes";
 import { createProductPostingInvoices } from "./utils/invoice-utils";
+import { generateDefaultInvoicesForGm } from "./services/gm-invoice-generation.service";
+import { GM_INVOICE_GENERATION_TIMING } from "../shared/gm-sales-constants";
 import { NotificationService } from "./services/notification-service";
 
 
@@ -974,11 +976,22 @@ router.post("/verification/update-requests/:id/action", async (req, res) => {
             data.reason,
           ]);
           
-          // Automatically create 3 zero-amount invoices for the Product Posting Workflow
+          // Automatically create the default product-posting invoices (Patch 5
+          // Stage 4 / P6). Delegated to the generation service: idempotent,
+          // canonical types, gated by configured timing (default ON_GM_CREATION
+          // preserves prior behavior). Best-effort: never throws.
           const creatorRes = await client.query('SELECT created_by_user_id FROM drm.temp_gm_entries WHERE id = $1', [id]);
           const creatorId = creatorRes.rows[0]?.created_by_user_id;
           if (creatorId) {
-            await createProductPostingInvoices(creatorId, data.customerId || null, data.company);
+            await generateDefaultInvoicesForGm({
+              gmId: String(id),
+              customerId: data.customerId || null,
+              companyName: data.company,
+              ownerUserId: creatorId,
+              event: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+              actorUserId: creatorId,
+              req,
+            });
           }
 
           // Update temp entry to Approved

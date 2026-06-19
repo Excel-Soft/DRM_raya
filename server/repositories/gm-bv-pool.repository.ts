@@ -3,6 +3,8 @@ import { ensureBvReportsSchema } from "./bv-reports.repository";
 import { generateDrmId } from "../utils/drm-id-utils";
 import { isManagerialRole } from "../utils/role-utils";
 import { createProductPostingInvoices } from "../utils/invoice-utils";
+import { generateDefaultInvoicesForGm } from "../services/gm-invoice-generation.service";
+import { GM_INVOICE_GENERATION_TIMING } from "../../shared/gm-sales-constants";
 import crypto from "crypto";
 
 type ListParams = {
@@ -304,8 +306,17 @@ export const gmBvPoolRepository = {
     const res = await pool.query(insertSql, values);
     await markCustomerGmbv(payload.customerId);
     
-    // Automatically create 3 zero-amount invoices for the Product Posting Workflow
-    await createProductPostingInvoices(userId, payload.customerId, payload.companyName);
+    // Automatically create the default product-posting invoices (Patch 5 Stage 4
+    // / P6). BV reports are not GM records, so no idempotency key — matches prior
+    // behavior. Gated by configured timing (default ON_GM_CREATION). Best-effort.
+    await generateDefaultInvoicesForGm({
+      gmId: null,
+      customerId: payload.customerId ?? null,
+      companyName: payload.companyName ?? null,
+      ownerUserId: userId,
+      event: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+      actorUserId: userId,
+    });
     
     return res.rows[0];
   },
