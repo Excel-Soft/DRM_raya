@@ -14,6 +14,16 @@ import { isManagerialRole } from "./utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission.middleware";
 import { CommunicationService } from "./services/communication.service";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
+import { safePage, safePageSize } from "./utils/sql-safety";
+import { ValidationService } from "./services/validation.service";
+import { sendError, badRequest, unauthorized } from "./utils/api-error";
+import { AuditLogService } from "./services/audit-log.service";
+import {
+  serviceFollowupCreateSchema,
+  serviceComplaintCreateSchema,
+  serviceDropoutCreateSchema,
+  serviceRenewalCreateSchema,
+} from "./validators/service.validators";
 
 // --- Stage 7 best-effort communication logging helpers ---------------------
 const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,8 +56,8 @@ async function scopedUserIds(req: Request): Promise<string[] | null> {
 
 function listOpts(req: Request, userIds: string[] | null): ServiceListOptions & { priority?: string } {
   return {
-    page: Number(req.query.page) || 1,
-    pageSize: Number(req.query.pageSize) || 25,
+    page: safePage(req.query.page, 1),
+    pageSize: safePageSize(req.query.pageSize, 25, 200),
     search: (req.query.search as string) || undefined,
     executive: (req.query.executive as string) || undefined,
     status: (req.query.status as string) || undefined,
@@ -72,8 +82,9 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.post("/api/service/followups", requireActionPermission("service.followup.create"), async (req: Request, res: Response) => {
     try {
+      const dto = ValidationService.parse(serviceFollowupCreateSchema, req.body);
       const result = await db.insert(serviceFollowups).values({
-        ...req.body,
+        ...dto,
         createdBy: req.user!.userId || (req.user as any)!.id,
       }).returning();
       const created = result[0];
@@ -90,9 +101,25 @@ export function registerServiceCoreRoutes(app: Express) {
           relatedFollowupId: String(created.id),
         }, { userId: req.user!.userId }, req);
       }
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user!.userId || (req.user as any)!.id,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_followup",
+          entityId: String(created.id),
+          after: {
+            serviceCustomerId: created.serviceCustomerId,
+            method: created.method,
+            status: created.status,
+          },
+          req,
+        });
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
-      res.status(500).json({ error: "Failed to create followup" });
+      sendError(res, err);
     }
   });
 
@@ -141,13 +168,14 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.post("/api/service/complaints", requireActionPermission("service.complaint.create"), async (req: Request, res: Response) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) throw unauthorized();
       const { title } = req.body || {};
       if (!title || !String(title).trim()) {
-        return res.status(400).json({ error: "Complaint title is required." });
+        throw badRequest("Complaint title is required.");
       }
+      const dto = ValidationService.parse(serviceComplaintCreateSchema, req.body);
       const result = await db.insert(serviceComplaints).values({
-        ...req.body,
+        ...dto,
         title: String(title).trim(),
         createdBy: req.user.userId,
       }).returning();
@@ -176,10 +204,27 @@ export function registerServiceCoreRoutes(app: Express) {
           req,
         });
       }
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user.userId,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_complaint",
+          entityId: String(created.id),
+          after: {
+            serviceCustomerId: created.serviceCustomerId,
+            title: created.title,
+            status: created.status,
+            assignedTo: (created as any).assignedTo ?? null,
+          },
+          req,
+        });
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
       console.error("Error creating complaint:", err);
-      res.status(500).json({ error: "Failed to create complaint" });
+      sendError(res, err);
     }
   });
 
@@ -338,12 +383,13 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.post("/api/service/dropouts", requireActionPermission("service.dropout.create"), async (req: Request, res: Response) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) throw unauthorized();
       if (!req.body?.reason || !String(req.body.reason).trim()) {
-        return res.status(400).json({ error: "A reason is required to mark a customer as a dropout." });
+        throw badRequest("A reason is required to mark a customer as a dropout.");
       }
+      const dto = ValidationService.parse(serviceDropoutCreateSchema, req.body);
       const result = await db.insert(serviceDropouts).values({
-        ...req.body,
+        ...dto,
         createdBy: req.user.userId,
       }).returning();
       const created = result[0];
@@ -359,9 +405,24 @@ export function registerServiceCoreRoutes(app: Express) {
           relatedFollowupId: String(created.id),
         }, { userId: req.user.userId }, req);
       }
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user.userId,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_dropout",
+          entityId: String(created.id),
+          after: {
+            serviceCustomerId: created.serviceCustomerId,
+            status: created.status,
+          },
+          req,
+        });
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
-      res.status(500).json({ error: "Failed to mark dropout" });
+      sendError(res, err);
     }
   });
 
@@ -392,24 +453,28 @@ export function registerServiceCoreRoutes(app: Express) {
 
   app.post("/api/service/renewals", requireActionPermission("service.renewal.create"), async (req: Request, res: Response) => {
     try {
-      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) throw unauthorized();
       const b = req.body || {};
       if (!b.serviceCustomerId) {
-        return res.status(400).json({ error: "serviceCustomerId is required for a renewal." });
+        throw badRequest("serviceCustomerId is required for a renewal.");
       }
       const pkg = b.package ?? b.packageName ?? b.renewalType ?? b.service;
       if (!pkg || !String(pkg).trim()) {
-        return res.status(400).json({ error: "A renewal package/service is required." });
+        throw badRequest("A renewal package/service is required.");
       }
       const due = b.dueDate ?? b.newExpiryDate;
       if (!due) {
-        return res.status(400).json({ error: "A renewal due/expiry date is required." });
+        throw badRequest("A renewal due/expiry date is required.");
       }
       if (b.amount === undefined || b.amount === null || Number(b.amount) <= 0 || Number.isNaN(Number(b.amount))) {
-        return res.status(400).json({ error: "A valid renewal amount greater than 0 is required." });
+        throw badRequest("A valid renewal amount greater than 0 is required.");
       }
+      const dto = ValidationService.parse(serviceRenewalCreateSchema, req.body);
       const result = await db.insert(serviceRenewals).values({
-        ...req.body,
+        ...dto,
+        // `amount` is a decimal column (Drizzle expects a string); the DTO
+        // validated/coerced it to a number, so serialize it back here.
+        amount: dto.amount === undefined ? undefined : String(dto.amount),
         createdBy: req.user!.userId || (req.user as any)!.id,
       }).returning();
       const created = result[0];
@@ -427,9 +492,25 @@ export function registerServiceCoreRoutes(app: Express) {
           relatedFollowupId: String(created.id),
         }, { userId: req.user!.userId || (req.user as any)!.id }, req);
       }
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user!.userId || (req.user as any)!.id,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_renewal",
+          entityId: String(created.id),
+          after: {
+            serviceCustomerId: created.serviceCustomerId,
+            renewalType: (created as any).renewalType ?? null,
+            status: (created as any).status ?? null,
+          },
+          req,
+        });
+      }
       res.json(result[0] || { success: true });
     } catch (err) {
-      res.status(500).json({ error: "Failed to create renewal" });
+      sendError(res, err);
     }
   });
 

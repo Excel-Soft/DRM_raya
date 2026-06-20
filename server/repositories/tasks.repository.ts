@@ -2,6 +2,7 @@ import { db, pool } from "../db";
 import { tasks, users, projects, type Task, type InsertTask } from "@shared/schema";
 import { eq, and, sql, or, desc, lte, gte, isNotNull, ilike, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { quotedUuidList } from "../utils/sql-safety";
 
 export type TaskWithOwner = Task & {
   owner: typeof users.$inferSelect;
@@ -359,7 +360,7 @@ export class TasksRepository {
     const isAdmin = (filters.roleId || "").toLowerCase() === "admin";
     if (!isAdmin) {
       if (filters.filterUserIds && filters.filterUserIds.length > 0) {
-        const ids = filters.filterUserIds.map(id => `'${id}'`).join(",");
+        const ids = quotedUuidList(filters.filterUserIds);
         conditions.push(sql`tasks.owner_user_id = ANY(ARRAY[${sql.raw(ids)}]::uuid[])`);
       } else if (filters.userId && filters.roleId !== "sales_manager") {
         conditions.push(or(eq(tasks.ownerUserId, filters.userId), eq(tasks.assignedToUserId, filters.userId)));

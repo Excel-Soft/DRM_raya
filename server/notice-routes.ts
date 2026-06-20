@@ -1,10 +1,13 @@
 import { Router } from "express";
+import { z } from "zod";
 import { db } from "./db";
 import { notices, insertNoticeSchema, users, noticeAssignments } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { authMiddleware } from "./auth.middleware";
 import { isManagerialRole } from "./utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
+import { ValidationService } from "./services/validation.service";
+import { sendError, unauthorized, forbidden, notFound } from "./utils/api-error";
 
 const router = Router();
 
@@ -15,6 +18,18 @@ function getUserRole(req: any): string | undefined {
 function canManage(req: any): boolean {
   return isManagerialRole(getUserRole(req));
 }
+
+// Allow-listed fields for a notice update. Unknown keys are stripped (default
+// z.object behaviour) so a client can never mass-assign protected columns such
+// as assignedByUserId/createdAt. `null` is permitted for the optional
+// assignment columns so the UI can clear an assignment (existing behaviour).
+const noticeUpdateSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(500).optional(),
+  description: z.string().trim().min(1, "Description is required").max(8000).optional(),
+  status: z.enum(["Active", "Inactive", "Archived"]).optional(),
+  assignedToRole: z.string().trim().max(120).nullable().optional(),
+  assignedToDepartment: z.string().trim().max(120).nullable().optional(),
+});
 
 // Get all notices
 router.get("/", authMiddleware, async (req, res) => {
@@ -74,17 +89,18 @@ router.post("/", authMiddleware, async (req, res) => {
 // Update a notice
 router.patch("/:id", authMiddleware, async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-    if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
+    if (!req.user) throw unauthorized();
+    if (!canManage(req)) throw forbidden("Insufficient permissions");
     const { id } = req.params;
+    const updates = ValidationService.parse(noticeUpdateSchema, req.body);
     const [updatedNotice] = await db
       .update(notices)
-      .set({ ...req.body, updatedAt: new Date() })
+      .set({ ...updates, updatedAt: new Date() })
       .where(eq(notices.id, id))
       .returning();
 
     if (!updatedNotice) {
-      return res.status(404).json({ error: "Notice not found" });
+      throw notFound("Notice not found");
     }
     await ActivityLogService.log({
       userId: (req.user as any).userId,
@@ -96,7 +112,7 @@ router.patch("/:id", authMiddleware, async (req, res) => {
     res.json(updatedNotice);
   } catch (error: any) {
     console.error("Error updating notice:", error);
-    res.status(400).json({ error: "Failed to update notice" });
+    sendError(res, error);
   }
 });
 

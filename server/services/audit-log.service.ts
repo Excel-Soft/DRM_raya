@@ -19,6 +19,8 @@ import { recordAuditLog as recordAuditLogImpl, ActivityLogService } from "./acti
 export interface AuditLogInput {
   actorUserId?: string;
   activeRole?: string;
+  /** Alias for `activeRole`. `activeRole` wins when both are provided. */
+  actorRole?: string;
   action: string;
   module?: string;
   entityType: string;
