@@ -23,7 +23,24 @@ import {
   serviceComplaintCreateSchema,
   serviceDropoutCreateSchema,
   serviceRenewalCreateSchema,
+  serviceFollowupCompleteSchema,
+  serviceComplaintResolveSchema,
+  serviceComplaintCloseSchema,
+  serviceComplaintUpdateSchema,
+  serviceDropoutRecoverSchema,
 } from "./validators/service.validators";
+import { getConfigValue } from "./services/service-bridge-config.service";
+import {
+  SERVICE_BRIDGE_DISABLED_MESSAGE,
+  SERVICE_BRIDGE_TARGET_TO_FLAG,
+} from "../shared/service-bridge-constants";
+import {
+  bridgeToGm,
+  bridgeToVas,
+  bridgeToBv,
+  mapServiceBridgeError,
+  type BridgeActor,
+} from "./services/service-bridge.service";
 
 // --- Stage 7 best-effort communication logging helpers ---------------------
 const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,10 +143,11 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/followups/:id/complete", requireActionPermission("service.followup.complete"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const outcome = req.body?.outcome;
-      if (!outcome || !String(outcome).trim()) {
-        return res.status(400).json({ error: "An outcome is required to complete a follow-up." });
+      const dto = serviceFollowupCompleteSchema.safeParse(req.body);
+      if (!dto.success) {
+        return res.status(400).json({ error: dto.error.issues[0]?.message ?? "Invalid request." });
       }
+      const { outcome, note } = dto.data;
       await db.update(serviceFollowups)
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(serviceFollowups.id, req.params.id));
@@ -140,8 +158,8 @@ export function registerServiceCoreRoutes(app: Express) {
           entityId: String(fu.serviceCustomerId),
           customerId: asUuid(fu.customerId),
           channel: mapChannel(fu.method),
-          outcome: validOutcome(req.body?.outcome),
-          notes: req.body?.note ?? undefined,
+          outcome: validOutcome(outcome),
+          notes: note ?? undefined,
           status: "COMPLETED",
           relatedFollowupId: String(fu.id),
         }, { userId: req.user!.userId || (req.user as any)!.id }, req);
@@ -232,7 +250,11 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/complaints/:id", requireActionPermission("service.complaint.update"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { title, description, priority, dueDate } = req.body || {};
+      const dto = serviceComplaintUpdateSchema.safeParse(req.body);
+      if (!dto.success) {
+        return res.status(400).json({ error: dto.error.issues[0]?.message ?? "Invalid request." });
+      }
+      const { title, description, priority, dueDate } = dto.data;
       const result = await pool.query(
         `UPDATE drm.service_complaints
            SET title = COALESCE($2, title),
@@ -279,10 +301,11 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/complaints/:id/resolve", requireActionPermission("service.complaint.resolve"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const { remarks } = req.body || {};
-      if (!remarks || !String(remarks).trim()) {
-        return res.status(400).json({ error: "A resolution remark is required to resolve a complaint." });
+      const dto = serviceComplaintResolveSchema.safeParse(req.body);
+      if (!dto.success) {
+        return res.status(400).json({ error: dto.error.issues[0]?.message ?? "Invalid request." });
       }
+      const remarks = dto.data.remarks;
       const result = await pool.query(
         `UPDATE drm.service_complaints
            SET status = 'resolved'::drm.service_complaint_status,
@@ -318,9 +341,13 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/complaints/:id/close", requireActionPermission("service.complaint.close"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const body = serviceComplaintCloseSchema.safeParse(req.body);
+      if (!body.success) {
+        return res.status(400).json({ error: body.error.issues[0]?.message ?? "Invalid request." });
+      }
+      const provided = body.data.remarks;
       const existing = (await db.select().from(serviceComplaints).where(eq(serviceComplaints.id, req.params.id)))[0];
       if (!existing) return res.status(404).json({ error: "Complaint not found" });
-      const provided = req.body?.remarks;
       const finalRemark = (provided && String(provided).trim()) || existing.remarks;
       if (!finalRemark || !String(finalRemark).trim()) {
         return res.status(400).json({ error: "A resolution note is required before closing a complaint. Resolve it first or provide remarks." });
@@ -334,7 +361,7 @@ export function registerServiceCoreRoutes(app: Express) {
                updated_by = $3,
                updated_at = now()
          WHERE id = $1 RETURNING id`,
-        [req.params.id, req.body?.remarks ?? null, req.user.userId],
+        [req.params.id, provided ?? null, req.user.userId],
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "Complaint not found" });
       res.json({ success: true });
@@ -429,11 +456,12 @@ export function registerServiceCoreRoutes(app: Express) {
   app.patch("/api/service/dropouts/:id/recover", requireActionPermission("service.dropout.recover"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      if (!req.body?.recoveryNote || !String(req.body.recoveryNote).trim()) {
-        return res.status(400).json({ error: "A recovery note is required to recover a dropout." });
+      const dto = serviceDropoutRecoverSchema.safeParse(req.body);
+      if (!dto.success) {
+        return res.status(400).json({ error: dto.error.issues[0]?.message ?? "Invalid request." });
       }
       await db.update(serviceDropouts)
-        .set({ status: "recovered", recoveredAt: new Date(), recoveryNote: String(req.body.recoveryNote).trim() })
+        .set({ status: "recovered", recoveredAt: new Date(), recoveryNote: dto.data.recoveryNote })
         .where(eq(serviceDropouts.id, req.params.id));
       res.json({ success: true });
     } catch (err) {
@@ -539,19 +567,49 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  // Service → GM / VAS / BV bridges.
-  // These do not yet create real linked records. Rather than silently returning a
-  // fake success (which would let the UI believe a GM/VAS/BV record exists), they
-  // fail clearly so callers route through the real GM/VAS/BV modules.
-  app.post("/api/service/gm", async (_req: Request, res: Response) => {
-    res.status(501).json({ error: "Service→GM bridge is not implemented. Create the GM entry via the GM module." });
+  // Service → GM / VAS / BV bridges (Patch 6 Stage 5).
+  // Config-gated and DISABLED by default: when the relevant flag is off the
+  // endpoint returns 403 "Service bridge is not enabled" (never a user-facing
+  // 501) and the UI hides the action. When enabled, BV/VAS create a REAL linked
+  // report via their canonical repositories; the GM bridge records the linkage
+  // (GM entry creation stays owned by the canonical GM module — see
+  // SERVICE_BRIDGE_DECISION.md). Auth required (401 if unauthenticated).
+  const bridgeActor = (req: Request): BridgeActor => ({
+    userId: req.user!.userId || (req.user as any)!.id,
+    role: (req.user as any)?.activeRoleId || req.user?.roleId,
   });
 
-  app.post("/api/service/vas", async (_req: Request, res: Response) => {
-    res.status(501).json({ error: "Service→VAS bridge is not implemented. Create the VAS entry via the VAS module." });
-  });
+  const runBridge = async (
+    req: Request,
+    res: Response,
+    target: "gm" | "vas" | "bv",
+    orchestrator: (input: any, actor: BridgeActor, r: Request) => Promise<any>,
+  ) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const enabled = await getConfigValue(SERVICE_BRIDGE_TARGET_TO_FLAG[target]);
+      if (!enabled) {
+        return res.status(403).json({ error: SERVICE_BRIDGE_DISABLED_MESSAGE });
+      }
+      const reqBody = (req.body ?? {}) as Record<string, any>;
+      const result = await orchestrator(
+        {
+          serviceRecordId: reqBody.serviceCustomerId ?? reqBody.serviceRecordId,
+          override: reqBody.override === true || reqBody.override === "true",
+          overrideReason: reqBody.overrideReason,
+          payload: reqBody,
+        },
+        bridgeActor(req),
+        req,
+      );
+      return res.status(201).json({ success: true, ...result });
+    } catch (err) {
+      if (mapServiceBridgeError(res, err)) return;
+      sendError(res, err);
+    }
+  };
 
-  app.post("/api/service/bv", async (_req: Request, res: Response) => {
-    res.status(501).json({ error: "Service→BV bridge is not implemented. Create the BV entry via the BV module." });
-  });
+  app.post("/api/service/gm", (req: Request, res: Response) => runBridge(req, res, "gm", bridgeToGm));
+  app.post("/api/service/vas", (req: Request, res: Response) => runBridge(req, res, "vas", bridgeToVas));
+  app.post("/api/service/bv", (req: Request, res: Response) => runBridge(req, res, "bv", bridgeToBv));
 }
