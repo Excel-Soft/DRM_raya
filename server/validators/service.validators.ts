@@ -138,3 +138,80 @@ export type ServiceFollowupCreate = z.infer<typeof serviceFollowupCreateSchema>;
 export type ServiceComplaintCreate = z.infer<typeof serviceComplaintCreateSchema>;
 export type ServiceDropoutCreate = z.infer<typeof serviceDropoutCreateSchema>;
 export type ServiceRenewalCreate = z.infer<typeof serviceRenewalCreateSchema>;
+
+// --- Stage 5 lifecycle action validators -----------------------------------
+// These guard the status-changing PATCH endpoints (complete / resolve / close /
+// recover / update). Required-field messages are kept BYTE-FOR-BYTE identical to
+// the pre-existing inline checks, and the routes surface the first issue as
+// `{ error: <message> }` (same shape as before) so no previously-valid request
+// is newly rejected and no error response shape changes.
+
+export const serviceFollowupCompleteSchema = z.object({
+  outcome: z.preprocess(
+    blankToUndef,
+    z
+      .string({ required_error: "An outcome is required to complete a follow-up." })
+      .trim()
+      .min(1, "An outcome is required to complete a follow-up.")
+      .max(64),
+  ),
+  note: optText(),
+});
+
+export const serviceComplaintResolveSchema = z.object({
+  remarks: z.preprocess(
+    blankToUndef,
+    z
+      .string({ required_error: "A resolution remark is required to resolve a complaint." })
+      .trim()
+      .min(1, "A resolution remark is required to resolve a complaint.")
+      .max(4000),
+  ),
+});
+
+// Close's required check is CONTEXTUAL (it may reuse the stored resolution
+// remark), so the schema only validates the body shape; the route keeps the
+// contextual required rule + its exact message.
+export const serviceComplaintCloseSchema = z.object({
+  remarks: optText(),
+});
+
+export const serviceComplaintUpdateSchema = z.object({
+  title: optVarchar(500),
+  description: optText(),
+  priority: optVarchar(32),
+  dueDate: optDate,
+});
+
+export const serviceDropoutRecoverSchema = z.object({
+  recoveryNote: z.preprocess(
+    blankToUndef,
+    z
+      .string({ required_error: "A recovery note is required to recover a dropout." })
+      .trim()
+      .min(1, "A recovery note is required to recover a dropout.")
+      .max(4000),
+  ),
+});
+
+// No PATCH /renewals/:id endpoint exists today; this allow-list is provided for
+// completeness and future wiring (partial of the create columns).
+export const serviceRenewalUpdateSchema = z.object({
+  oldPackageId: optVarchar(128),
+  newPackageId: optVarchar(128),
+  oldGmRecordId: optUuid,
+  newGmRecordId: optUuid,
+  renewalType: z.preprocess(blankToUndef, serviceRenewalType.optional()),
+  oldExpiryDate: optDate,
+  newStartDate: optDate,
+  newExpiryDate: optDate,
+  amount: optMoney,
+  status: optVarchar(32),
+});
+
+export type ServiceFollowupComplete = z.infer<typeof serviceFollowupCompleteSchema>;
+export type ServiceComplaintResolve = z.infer<typeof serviceComplaintResolveSchema>;
+export type ServiceComplaintClose = z.infer<typeof serviceComplaintCloseSchema>;
+export type ServiceComplaintUpdate = z.infer<typeof serviceComplaintUpdateSchema>;
+export type ServiceDropoutRecover = z.infer<typeof serviceDropoutRecoverSchema>;
+export type ServiceRenewalUpdate = z.infer<typeof serviceRenewalUpdateSchema>;
