@@ -40,6 +40,7 @@ import {
 import { requireFinancialPermission, FINANCIAL_ACTIONS } from "./middleware/financial-permission";
 import { withPgTransaction } from "./utils/financial-transaction";
 import { AuditLogService } from "./services/audit-log.service";
+import { requireActionPermission } from "./middleware/action-permission.middleware";
 import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS } from "./utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service";
 import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit";
@@ -1809,7 +1810,7 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // PATCH /api/account/invoices/:id - Update invoice
-  app.patch("/api/account/invoices/:id", async (req, res) => {
+  app.patch("/api/account/invoices/:id", requireActionPermission("invoice.update"), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -1823,6 +1824,11 @@ export function registerAccountRoutes(app: Express) {
       if (writable.total !== undefined) assertNonNegativeAmount(writable.total, "total");
       if (writable.currency !== undefined) assertValidCurrency(writable.currency, "currency");
 
+      const [existing] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
       const [invoice] = await db.update(invoices)
         .set({
           ...(writable as any),
@@ -1835,6 +1841,17 @@ export function registerAccountRoutes(app: Express) {
         return res.status(404).json({ error: "Invoice not found" });
       }
 
+      await AuditLogService.record({
+        actorUserId: (req.user as any)?.userId ?? (req.user as any)?.id,
+        action: "invoice.update",
+        module: "account",
+        entityType: "Invoice",
+        entityId: String(req.params.id),
+        before: { status: existing.status },
+        after: { ...(writable as any) },
+        req,
+      });
+
       res.json(invoice);
     } catch (error) {
       if (error instanceof ApiError) return sendError(res, error);
@@ -1844,15 +1861,27 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // PATCH /api/account/invoices/:id/status - Update invoice status
-  app.patch("/api/account/invoices/:id/status", async (req, res) => {
+  app.patch("/api/account/invoices/:id/status", requireActionPermission("invoice.update_status"), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const { status } = req.body;
-      const updateData: any = { status, updatedAt: new Date() };
+      const statusSchema = z.object({
+        status: z.enum(["Draft", "Pending", "Sent", "Paid", "Overdue", "Cancelled"]),
+      });
+      const parsed = statusSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
+      }
+      const { status } = parsed.data;
 
+      const [existing] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      const updateData: any = { status, updatedAt: new Date() };
       if (status === "Paid") {
         updateData.paidAt = new Date();
       }
@@ -1866,6 +1895,17 @@ export function registerAccountRoutes(app: Express) {
         return res.status(404).json({ error: "Invoice not found" });
       }
 
+      await AuditLogService.recordTransition({
+        actorUserId: (req.user as any)?.userId ?? (req.user as any)?.id,
+        action: "invoice.update_status",
+        module: "account",
+        entityType: "Invoice",
+        entityId: String(req.params.id),
+        previousStatus: existing.status ?? undefined,
+        nextStatus: status,
+        req,
+      });
+
       res.json(invoice);
     } catch (error) {
       console.error("Error updating invoice status:", error);
@@ -1874,7 +1914,7 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // DELETE /api/account/invoices/:id - Delete invoice
-  app.delete("/api/account/invoices/:id", async (req, res) => {
+  app.delete("/api/account/invoices/:id", requireActionPermission("invoice.delete"), async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
@@ -1887,6 +1927,16 @@ export function registerAccountRoutes(app: Express) {
       if (!invoice) {
         return res.status(404).json({ error: "Invoice not found" });
       }
+
+      await AuditLogService.record({
+        actorUserId: (req.user as any)?.userId ?? (req.user as any)?.id,
+        action: "invoice.delete",
+        module: "account",
+        entityType: "Invoice",
+        entityId: String(req.params.id),
+        before: { status: invoice.status, invoiceNumber: (invoice as any).invoiceNumber },
+        req,
+      });
 
       res.json({ success: true });
     } catch (error) {

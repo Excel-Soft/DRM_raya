@@ -8,6 +8,12 @@ import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
 import { errorEnvelope } from "./utils/api-error";
+import { assertSecretsOrExit } from "./config/validate-secrets";
+
+// Validate security-critical secrets before anything binds a port or signs a
+// token. In production this exits(1) on a missing/weak JWT secret; in dev it
+// only warns. Never prints secret values. (PATCH 6 Stage 1, deliverable B.)
+assertSecretsOrExit();
 
 // Prevent pg-pool / network errors from crashing the server
 process.on("unhandledRejection", (reason: any) => {

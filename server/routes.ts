@@ -157,9 +157,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes (public)
   app.use("/api/auth", authRoutes);
 
-  // Attributes routes
-  app.use("/api", attributesRoutes);
-
   // Lightweight DB health check (public)
   // Lightweight DB health check (public)
   const dbHealthHandler = async (_req: Request, res: Response) => {
@@ -267,6 +264,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // URL permission checking (enforces role-based access control)
   app.use(checkUrlPermission);
+
+  // Attributes routes — now behind the global auth + IP + URL-permission chain;
+  // each endpoint is additionally guarded by requireActionPermission (view =
+  // authenticated; create/delete = admin/super_hod, audited).
+  app.use("/api", attributesRoutes);
 
   // AI Assistant routes (protected)
   app.use("/api/ai", aiRoutes);

@@ -1,7 +1,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, mutationRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
     Card,
@@ -69,37 +69,36 @@ export default function AttributesPage() {
         },
     });
 
-    // Add mutation
+    // Add mutation — mutationRequest throws on non-2xx so 401/403 messages
+    // (e.g. "You are not authorized to manage attributes.") surface honestly.
     const addMutation = useMutation({
-        mutationFn: async (name: string) => {
-            const res = await apiRequest("POST", "/api/attributes", {
+        mutationFn: async (name: string) =>
+            mutationRequest("POST", "/api/attributes", {
                 category: selectedCategory,
                 name,
-            });
-            return res.json();
-        },
+            }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/attributes", selectedCategory] });
             setNewItemName("");
             setIsAddOpen(false);
             toast({ title: "Success", description: "Item added successfully" });
         },
-        onError: () => {
-            toast({ title: "Error", description: "Failed to add item", variant: "destructive" });
+        onError: (error: Error) => {
+            toast({ title: "Error", description: error.message || "Failed to add item", variant: "destructive" });
         },
     });
 
     // Delete mutation
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            await apiRequest("DELETE", `/api/attributes/${id}`);
+            await mutationRequest("DELETE", `/api/attributes/${id}`);
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["/api/attributes", selectedCategory] });
             toast({ title: "Success", description: "Item deleted successfully" });
         },
-        onError: () => {
-            toast({ title: "Error", description: "Failed to delete item", variant: "destructive" });
+        onError: (error: Error) => {
+            toast({ title: "Error", description: error.message || "Failed to delete item", variant: "destructive" });
         },
     });
 

@@ -635,6 +635,13 @@ export function AppSidebar() {
          return false;
       }
 
+      // Fail-closed during permission load/error (mirrors the top-level nav):
+      // real admins always retain full nav; everyone else must wait for the DB
+      // permissions to resolve instead of falling back to the hardcoded map.
+      if (subItem.permKey && !isRealAdmin && (permsLoading || permsError)) {
+         return false;
+      }
+
       // If the parent menu or this subitem has a specific permKey, we check the DB
       // Check standard permKey logic
       let hasStandardAccess = hasAccess(menuPermissions, subItem.permKey, userRoleName, rolesToUse);

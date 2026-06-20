@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { isManagerialRole } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission.middleware";
 import { CommunicationService } from "./services/communication.service";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 
@@ -69,7 +70,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.post("/api/service/followups", async (req: Request, res: Response) => {
+  app.post("/api/service/followups", requireActionPermission("service.followup.create"), async (req: Request, res: Response) => {
     try {
       const result = await db.insert(serviceFollowups).values({
         ...req.body,
@@ -95,7 +96,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/followups/:id/complete", async (req: Request, res: Response) => {
+  app.patch("/api/service/followups/:id/complete", requireActionPermission("service.followup.complete"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const outcome = req.body?.outcome;
@@ -138,7 +139,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.post("/api/service/complaints", async (req: Request, res: Response) => {
+  app.post("/api/service/complaints", requireActionPermission("service.complaint.create"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { title } = req.body || {};
@@ -183,7 +184,7 @@ export function registerServiceCoreRoutes(app: Express) {
   });
 
   // General edit (title / description / priority / due date)
-  app.patch("/api/service/complaints/:id", async (req: Request, res: Response) => {
+  app.patch("/api/service/complaints/:id", requireActionPermission("service.complaint.update"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, priority, dueDate } = req.body || {};
@@ -206,7 +207,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/complaints/:id/assign", async (req: Request, res: Response) => {
+  app.patch("/api/service/complaints/:id/assign", requireActionPermission("service.complaint.assign"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { assignedTo } = req.body || {};
@@ -230,7 +231,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/complaints/:id/resolve", async (req: Request, res: Response) => {
+  app.patch("/api/service/complaints/:id/resolve", requireActionPermission("service.complaint.resolve"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { remarks } = req.body || {};
@@ -269,7 +270,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/complaints/:id/close", async (req: Request, res: Response) => {
+  app.patch("/api/service/complaints/:id/close", requireActionPermission("service.complaint.close"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const existing = (await db.select().from(serviceComplaints).where(eq(serviceComplaints.id, req.params.id)))[0];
@@ -298,7 +299,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/complaints/:id/reopen", async (req: Request, res: Response) => {
+  app.patch("/api/service/complaints/:id/reopen", requireActionPermission("service.complaint.reopen"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const result = await pool.query(
@@ -335,7 +336,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.post("/api/service/dropouts", async (req: Request, res: Response) => {
+  app.post("/api/service/dropouts", requireActionPermission("service.dropout.create"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       if (!req.body?.reason || !String(req.body.reason).trim()) {
@@ -364,7 +365,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/service/dropouts/:id/recover", async (req: Request, res: Response) => {
+  app.patch("/api/service/dropouts/:id/recover", requireActionPermission("service.dropout.recover"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       if (!req.body?.recoveryNote || !String(req.body.recoveryNote).trim()) {
@@ -389,7 +390,7 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  app.post("/api/service/renewals", async (req: Request, res: Response) => {
+  app.post("/api/service/renewals", requireActionPermission("service.renewal.create"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const b = req.body || {};
