@@ -1,6 +1,7 @@
 import { db, pool } from "../db";
 import { projectFinancials, projects, customers, productPostingInvoices, InsertProjectFinancial, ProjectFinancial } from "@shared/schema";
 import { eq, desc, ilike, and, or, sql, gte, lte } from "drizzle-orm";
+import { quotedUuidList } from "../utils/sql-safety";
 
 let projectFinancialsSchemaEnsured = false;
 
@@ -109,7 +110,7 @@ export const projectFinancialsRepository = {
     const isAdmin = (params.roleId || "").toLowerCase() === "admin";
     if (!isAdmin) {
       if (params.filterUserIds && params.filterUserIds.length > 0) {
-        const ids = params.filterUserIds.map(id => `'${id}'`).join(",");
+        const ids = quotedUuidList(params.filterUserIds);
         conditions.push(sql`projects.owner_user_id = ANY(ARRAY[${sql.raw(ids)}]::uuid[])`);
       } else if (params.userId && params.roleId !== "sales_manager") {
         const createdByFallback = sql`${sql.identifier("projects")}.created_by = ${params.userId}`;

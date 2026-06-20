@@ -59,6 +59,7 @@ import {
   Cell
 } from "recharts";
 import { apiRequest, getAuthHeader } from "@/lib/queryClient";
+import { downloadAuthedFile } from "@/lib/download";
 import { Link, useLocation, useRoute } from "wouter";
 import {
   Dialog,
@@ -1612,24 +1613,10 @@ function ReportTab({
         format,
         userId: selectedUser,
       });
-      const response = await fetch(`/api/reports/${type}/export?${params}`, {
-        headers: {
-          ...getAuthHeader(),
-        },
-        credentials: "include",
-      });
-
-      if (!response.ok) throw new Error("Export failed");
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${type}_report.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      await downloadAuthedFile(
+        `/api/reports/${type}/export?${params}`,
+        `${type}_report.${format}`,
+      );
 
       toast({
         title: "Export Complete",

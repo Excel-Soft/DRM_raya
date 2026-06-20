@@ -1,6 +1,7 @@
 import { db, pool } from "../db";
 import { projects, tasks, users, customers, productPostingInvoices, type Project, type InsertProject } from "@shared/schema";
 import { eq, and, sql, desc, or, inArray, gte, lte } from "drizzle-orm";
+import { quotedUuidList } from "../utils/sql-safety";
 
 let projectsSchemaEnsured = false;
 
@@ -188,7 +189,7 @@ export class ProjectsRepository {
     if (userId) {
       if (Array.isArray(userId)) {
           if (userId.length > 0) {
-              const idsSql = sql.raw(userId.map(id => `'${id}'`).join(','));
+              const idsSql = sql.raw(quotedUuidList(userId));
               conditions.push(
                 or(
                   inArray(projects.ownerUserId, userId),
@@ -278,7 +279,7 @@ export class ProjectsRepository {
     if (userId) {
       if (Array.isArray(userId)) {
           if (userId.length > 0) {
-              const userIdsSql = sql.raw(`'${userId.join("','")}'`);
+              const userIdsSql = sql.raw(quotedUuidList(userId));
               conditions.push(
                 or(
                   inArray(projects.ownerUserId, userId),

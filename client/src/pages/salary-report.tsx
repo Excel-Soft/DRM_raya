@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
+import { apiRequestJson } from "@/lib/queryClient";
+import { downloadAuthedFile } from "@/lib/download";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -207,18 +208,14 @@ export default function SalaryReport() {
 
   async function handleExport() {
     try {
-      const res = await fetch(`/api/reports/salary/export?${filterParams.toString()}`, {
-        headers: getAuthHeader(), credentials: "include",
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "salary_report.csv";
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
+      await downloadAuthedFile(
+        `/api/reports/salary/export?${filterParams.toString()}`,
+        "salary_report.csv",
+      );
     } catch (err: any) {
-      const m = /403/.test(String(err?.message)) ? "You are not authorized to export salary." : "Export failed.";
+      const m = err?.status === 403 || /403/.test(String(err?.message))
+        ? "You are not authorized to export salary."
+        : "Export failed.";
       toast({ title: "Unable to export", description: m, variant: "destructive" });
     }
   }

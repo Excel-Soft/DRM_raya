@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequestJson, getAuthHeader } from "@/lib/queryClient";
+import { apiRequestJson } from "@/lib/queryClient";
+import { downloadAuthedFile } from "@/lib/download";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -162,23 +163,10 @@ export default function ReportsRawAttendance() {
   async function exportCsv() {
     setExporting(true);
     try {
-      const res = await fetch(`/api/reports/raw-attendance/export?${buildQuery(applied, false)}`, {
-        headers: getAuthHeader(),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const text = (await res.text()) || res.statusText;
-        throw new Error(text);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `raw_attendance_${applied.startDate}_${applied.endDate}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadAuthedFile(
+        `/api/reports/raw-attendance/export?${buildQuery(applied, false)}`,
+        `raw_attendance_${applied.startDate}_${applied.endDate}.csv`,
+      );
     } catch (err: any) {
       toast({ title: "Export failed", description: err?.message || "Could not export CSV.", variant: "destructive" });
     } finally {

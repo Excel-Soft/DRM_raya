@@ -27,6 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getAuthHeader, queryClient } from "@/lib/queryClient";
+import { downloadAuthedFile } from "@/lib/download";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Download, AlertTriangle, CheckCircle2 } from "lucide-react";
 
@@ -120,17 +121,7 @@ export function LeadImportDialog({
 
   async function downloadTemplate() {
     try {
-      const res = await fetch("/api/leads/template", { headers: getAuthHeader() });
-      if (!res.ok) throw new Error("Failed to download template");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "lead-import-template.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await downloadAuthedFile("/api/leads/template", "lead-import-template.csv");
     } catch (e: any) {
       toast({ title: "Template download failed", description: e.message, variant: "destructive" });
     }

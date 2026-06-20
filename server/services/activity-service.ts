@@ -66,6 +66,9 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
 export async function recordAuditLog(data: {
     actorUserId?: string;
     activeRole?: string;
+    /** Alias for `activeRole` — accepted so call sites can pass the actor's
+     *  active role under either name. `activeRole` wins when both are set. */
+    actorRole?: string;
     action: string;
     module?: string;
     entityType: string;
@@ -79,7 +82,7 @@ export async function recordAuditLog(data: {
 }): Promise<void> {
     const context = stripUndefined({
         module: data.module,
-        activeRole: data.activeRole,
+        activeRole: data.activeRole ?? data.actorRole,
         previousStatus: data.previousStatus,
         nextStatus: data.nextStatus,
         before: data.before,
