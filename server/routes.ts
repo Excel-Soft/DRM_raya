@@ -88,6 +88,7 @@ import { communicationRouter } from "./routes/communication-routes";
 import { CommunicationService } from "./services/communication.service";
 import { approvalRouter } from "./routes/approval-routes";
 import { gmSalesWorkflowRouter } from "./routes/gm-sales-workflow-routes";
+import { workflowReconciliationRouter } from "./routes/workflow-reconciliation-routes";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 
 
@@ -394,6 +395,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // created + seeded lazily on first access (db:push is broken repo-wide), so no
   // boot-time ensure is required here.
   app.use("/api/gm-sales-workflow", gmSalesWorkflowRouter);
+
+  // Patch 6 Stage 4 — read-only cross-department workflow reconciliation report.
+  app.use("/api/workflow", workflowReconciliationRouter);
 
   registerPostingDataRoutes(app);
   registerLeadsImportRoutes(app);
