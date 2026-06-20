@@ -15,6 +15,7 @@ import { projectAssignmentsRepository } from "./repositories/project-assignments
 import { taskTimeLogsRepository } from "./repositories/task-time-logs.repository";
 import { taskStatusHistoryRepository } from "./repositories/task-status-history.repository";
 import { taskTemplatesRepository } from "./repositories/task-templates.repository";
+import { changeTaskStatus, changeProjectStatus } from "./services/pms-transition.service";
 import { pool } from "./db";
 import {
   insertProjectSchema,
@@ -30,6 +31,24 @@ import {
   updateTaskTemplateSchema,
 } from "@shared/schema";
 import { z } from "zod";
+
+/**
+ * Collect every role identifier carried on the authenticated user, normalised
+ * into a flat list (activeRoleId → roleId → role → roles[]). The PMS transition
+ * service only consults this when a manager/admin override is explicitly enabled
+ * via config; with the default config the list is unused.
+ */
+function collectActorRoles(user: any): string[] {
+  if (!user) return [];
+  const out: string[] = [];
+  for (const v of [user.activeRoleId, user.roleId, user.role]) {
+    if (v) out.push(String(v));
+  }
+  if (Array.isArray(user.roles)) {
+    for (const r of user.roles) if (r) out.push(String(r));
+  }
+  return out;
+}
 
 function getStatsPeriodRange(period?: string) {
   if (!period) return { from: undefined, to: undefined };
@@ -969,32 +988,25 @@ function getPeriodRange(periodRaw: string) {
         return res.status(400).json({ error: "Invalid status" });
       }
 
-      const existing = await tasksRepository.findById(req.params.id);
-      const fromStatus = existing?.status;
-
-      const result = await tasksRepository.updateStatus(
-        req.params.id,
-        status,
-        req.user.userId
-      );
+      // Route through the central PMS transition service (Patch 6 Stage 4). With
+      // the default config this preserves the legacy behaviour exactly: the
+      // owner/assignee permission check (same 403 message), the status-history
+      // record, and the 200 body (the updated task). The service additionally
+      // records best-effort audit + notification.
+      const result = await changeTaskStatus({
+        taskId: req.params.id,
+        toStatus: status,
+        actorUserId: req.user.userId,
+        actorRoles: collectActorRoles(req.user),
+        reason: req.body?.reason ?? null,
+        notes: req.body?.notes ?? null,
+        remarks: req.body?.remarks ?? null,
+        evidenceCount: Array.isArray(req.body?.evidence) ? req.body.evidence.length : undefined,
+        req,
+      });
 
       if (!result.success) {
-        return res.status(403).json({ error: result.error });
-      }
-
-      if (fromStatus && result.task?.status && fromStatus !== result.task.status) {
-        try {
-          await taskStatusHistoryRepository.create({
-            taskId: req.params.id,
-            userId: req.user.userId,
-            fromStatus,
-            toStatus: result.task.status,
-            changedAt: new Date(),
-            notes: null,
-          } as any);
-        } catch (err) {
-          console.error("Failed to record status history", err);
-        }
+        return res.status(result.status || 500).json({ error: result.error });
       }
 
       res.json(result.task);
@@ -1407,13 +1419,24 @@ function getPeriodRange(periodRaw: string) {
         return res.status(400).json({ error: "Status is required" });
       }
 
-      const project = await projectsRepository.findById(req.params.id);
-      if (!project) {
-        return res.status(404).json({ error: "Project not found" });
+      // Route through the central PMS transition service (Patch 6 Stage 4). The
+      // legacy endpoint had no enum validation and no role restriction, so the
+      // permissive default keeps both (same 404 / 200 bodies); strict mode adds
+      // canonical-transition + manager/admin guards. Audit is best-effort.
+      const result = await changeProjectStatus({
+        projectId: req.params.id,
+        toStatus: status,
+        actorUserId: req.user.userId,
+        actorRoles: collectActorRoles(req.user),
+        reason: req.body?.reason ?? null,
+        req,
+      });
+
+      if (!result.success) {
+        return res.status(result.status || 500).json({ error: result.error });
       }
 
-      const updated = await projectsRepository.update(req.params.id, { status });
-      res.json(updated);
+      res.json(result.project);
     } catch (error) {
       console.error("Error updating running project status:", error);
       res.status(500).json({ error: "Failed to update running project status" });
