@@ -80,3 +80,18 @@ With the module OFF (default):
 5. `GET /api/support/tickets` → `404 { "error": "Not Found" }`.
 6. Set both flags to `true`, restart → Support reappears and works normally.
 7. No unrelated sidebar modules disappear.
+
+## Patch 6 Stage 6 — re-verification
+
+Re-verified during Patch 6 Stage 6 (no code changes were needed; the Patch 4
+deactivation remains the single source of truth):
+
+- Backend gate confirmed in `server/routes.ts`: `app.use("/api/support", ...)`
+  short-circuits with `404` before the global auth / IP / permission middleware
+  whenever `isSupportModuleEnabled()` is false. No disabled support handler is
+  reachable.
+- `server/feature-flags.ts` `isSupportModuleEnabled()` returns true only when
+  `SUPPORT_MODULE_ENABLED === "true"` (default OFF).
+- Client gate confirmed in `client/src/App.tsx`: the `/support/*` routes render
+  `SupportInactive` when `VITE_SUPPORT_MODULE_ENABLED !== "true"`.
+- Both flags are non-sensitive boolean config in Replit-managed env — no secrets.
