@@ -14,8 +14,6 @@
  * Cross-scope access returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { fetchUsers, fetchUserById, groupUsersByRole } from "./services/increment.service";
 import {
   PENALTY_STATUSES,
@@ -32,90 +30,27 @@ import {
   monthlyReport,
 } from "./services/penalty.service";
 import { recordAuditLog } from "./services/activity-service";
-
-const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
-const HR_ROLES = ["hr", "hr_manager"];
-
-function getUserId(req: Request): string | undefined {
-  return (req.user as any)?.userId || (req.user as any)?.id;
-}
-function getActiveRole(req: Request): string {
-  return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
-}
-function isFullAccess(role: string): boolean {
-  return FULL_ACCESS_ROLES.includes(role);
-}
-function isHr(role: string): boolean {
-  return HR_ROLES.includes(role) || role.includes("hr");
-}
-function isHod(role: string): boolean {
-  return role === "hod";
-}
-
-// Who can create a penalty: full-access, HOD, and managerial roles.
-function canCreate(role: string): boolean {
-  return isFullAccess(role) || isHod(role) || isManagerialRole(role);
-}
-// Who can approve/reject: full-access and HOD only.
-function canDecide(role: string): boolean {
-  return isFullAccess(role) || isHod(role);
-}
-// Who can void: same authority as approve/reject. Voiding reverses an approval
-// decision, so a managerial creator must NOT be able to void (only delete their
-// own still-PENDING penalties). Full-access + HOD (dept-scoped) only.
-function canVoid(role: string): boolean {
-  return canDecide(role);
-}
-// Who can see reports: full-access, HOD, HR.
-function canViewReports(role: string): boolean {
-  return isFullAccess(role) || isHod(role) || isHr(role);
-}
-
-async function getDepartment(userId: string): Promise<string | null> {
-  try {
-    const { rows } = await pool.query(`select department from drm.users where id::text = $1::text limit 1`, [userId]);
-    return rows[0]?.department ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Returns the list of employee_ids this requester may view, or null for "all".
- *   - full access / HR -> null (all)
- *   - HOD / managerial -> their department (+ self)
- *   - everyone else    -> [self]
- */
-async function getAllowedEmployeeIds(req: Request): Promise<string[] | null> {
-  const myId = getUserId(req);
-  if (!myId) return [];
-  const role = getActiveRole(req);
-  if (isFullAccess(role) || isHr(role)) return null;
-
-  if (isHod(role) || isManagerialRole(role)) {
-    const dept = await getDepartment(String(myId));
-    if (!dept) return [String(myId)];
-    try {
-      const { rows } = await pool.query(
-        `select id from drm.users where department = $1 or id::text = $2::text`,
-        [dept, myId],
-      );
-      const ids = rows.map((r) => String(r.id));
-      ids.push(String(myId));
-      return Array.from(new Set(ids));
-    } catch {
-      return [String(myId)];
-    }
-  }
-  // employee / executive / default: own penalties only
-  return [String(myId)];
-}
-
-async function canViewEmployee(req: Request, employeeId: string): Promise<boolean> {
-  const allowed = await getAllowedEmployeeIds(req);
-  if (allowed === null) return true;
-  return allowed.includes(String(employeeId));
-}
+// PEN-001: penalty permission decisions live in ONE row-aware source.
+import {
+  getUserId,
+  getActiveRole,
+  isFullAccess,
+  isHr,
+  canCreate,
+  canDecide,
+  canVoid,
+  canViewReports,
+  getDepartment,
+  getAllowedEmployeeIds,
+  canViewEmployee,
+} from "./middleware/penalty-permission";
+// PEN-001: request-shape (400) validation, mirrored from the previous inline rules.
+import {
+  penaltyCreateSchema,
+  penaltyUpdateSchema,
+  penaltyDecisionSchema,
+  penaltyVoidSchema,
+} from "./validators/penalty.validators";
 
 function badRequest(res: Response, message: string) {
   return res.status(400).json({ error: "BadRequest", message });
@@ -269,21 +204,9 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to create penalties" });
       }
       const b = req.body ?? {};
-      const employeeId = String(b.employeeId ?? "");
-      const penaltyHead = String(b.penaltyHead ?? "").trim();
-      const reason = String(b.reason ?? "").trim();
-      const penaltyDate = String(b.penaltyDate ?? "").trim();
-      const amount = Number(b.amount);
-
-      if (!employeeId) return badRequest(res, "employeeId is required");
-      if (!penaltyHead) return badRequest(res, "penaltyHead is required");
-      if (!reason) return badRequest(res, "reason is required");
-      if (b.amount === undefined || b.amount === null || b.amount === "" || isNaN(amount) || amount < 0) {
-        return badRequest(res, "amount is required and must be >= 0");
-      }
-      if (!penaltyDate || isNaN(new Date(penaltyDate).getTime())) {
-        return badRequest(res, "penaltyDate is required and must be a valid date");
-      }
+      const parsed = penaltyCreateSchema.safeParse(b);
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0].message);
+      const { employeeId, penaltyHead, reason, penaltyDate, amount } = parsed.data;
 
       // employee must exist + be within caller's scope
       const employee = await fetchUserById(employeeId);
@@ -355,18 +278,8 @@ export function registerPenaltyRoutes(app: Express) {
       }
 
       const b = req.body ?? {};
-      if (b.amount !== undefined && (isNaN(Number(b.amount)) || Number(b.amount) < 0)) {
-        return badRequest(res, "amount must be >= 0");
-      }
-      if (b.penaltyDate !== undefined && isNaN(new Date(String(b.penaltyDate)).getTime())) {
-        return badRequest(res, "penaltyDate must be a valid date");
-      }
-      if (b.penaltyHead !== undefined && !String(b.penaltyHead).trim()) {
-        return badRequest(res, "penaltyHead cannot be empty");
-      }
-      if (b.reason !== undefined && !String(b.reason).trim()) {
-        return badRequest(res, "reason cannot be empty");
-      }
+      const parsed = penaltyUpdateSchema.safeParse(b);
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0].message);
       if (b.employeeId !== undefined) {
         const emp = await fetchUserById(String(b.employeeId));
         if (!emp) return res.status(404).json({ error: "NotFound", message: "Employee not found" });
@@ -423,17 +336,10 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(409).json({ error: "Conflict", message: "Only pending penalties can be approved or rejected" });
       }
       // Accept the spec body shape {approvalStatus} as well as the legacy {decision|status}.
-      const decision = String(
-        req.body?.approvalStatus ?? req.body?.decision ?? req.body?.status ?? "",
-      ).toUpperCase();
-      if (!["APPROVED", "REJECTED"].includes(decision)) {
-        return badRequest(res, "approvalStatus must be APPROVED or REJECTED");
-      }
       // Rejection must be justified — the remarks become part of the audit trail.
-      const hodRemarks = req.body?.hodRemarks ? String(req.body.hodRemarks).trim() : "";
-      if (decision === "REJECTED" && !hodRemarks) {
-        return badRequest(res, "hodRemarks is required when rejecting a penalty");
-      }
+      const parsed = penaltyDecisionSchema.safeParse(req.body ?? {});
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0].message);
+      const { decision, hodRemarks } = parsed.data;
       const updated = await decidePenalty(
         id,
         String(getUserId(req)),
@@ -474,6 +380,14 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(403).json({ error: "Forbidden", message: "You can only acknowledge your own penalty" });
       }
       const updated = await acknowledgePenalty(id);
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.acknowledge",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        req,
+      });
       res.json({ success: true, penalty: updated });
     } catch (err) {
       console.error("[penalty] acknowledge error", err);
@@ -540,8 +454,9 @@ export function registerPenaltyRoutes(app: Express) {
       if (raw.status === "VOIDED") {
         return res.status(409).json({ error: "Conflict", message: "Penalty is already voided" });
       }
-      const reason = req.body?.reason ? String(req.body.reason).trim() : "";
-      if (!reason) return badRequest(res, "reason is required to void a penalty");
+      const parsed = penaltyVoidSchema.safeParse(req.body ?? {});
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0].message);
+      const { reason } = parsed.data;
 
       const updated = await voidPenalty(id, String(getUserId(req)), reason);
       if (!updated) {

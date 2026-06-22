@@ -65,7 +65,7 @@ export function validateRequiredFilter(value: ReportFilterValue, label: string):
  */
 export function safeReportFilename(
   reportName: string,
-  opts?: { from?: string; to?: string; user?: string; branch?: string; ext?: string },
+  opts?: { from?: string; to?: string; user?: string; branch?: string; ext?: string; timestamp?: boolean },
 ): string {
   const slug = (s: string) =>
     s
@@ -78,6 +78,14 @@ export function safeReportFilename(
   if (opts?.branch) parts.push(slug(opts.branch));
   if (opts?.from || opts?.to) {
     parts.push(`${opts?.from || "start"}_to_${opts?.to || "end"}`);
+  }
+  if (opts?.timestamp) {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    parts.push(
+      `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+        `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`,
+    );
   }
   const ext = (opts?.ext || "csv").replace(/[^a-z0-9]/gi, "") || "csv";
   return `${parts.filter(Boolean).join("_")}.${ext}`;

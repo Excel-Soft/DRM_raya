@@ -19,6 +19,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { ActivityLogService } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
 import { isManagerialRole } from "./utils/role-utils";
 import { NotificationService } from "./services/notification-service";
 import { requireReportPermission } from "./middleware/report-permission";
@@ -481,8 +482,21 @@ export async function eventsReportExportHandler(req: Request, res: Response) {
       );
     });
 
+    await ActivityLogService.log({
+      userId: req.user.userId,
+      action: "event_report.export",
+      resourceType: "report",
+      resourceId: "event_report",
+      details: JSON.stringify({ format: "csv", rows: rows.length }),
+    });
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader("Content-Disposition", `attachment; filename="events_report.csv"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${buildExportFilename("event_report", {
+        from: req.query.dateFrom ?? req.query.from,
+        to: req.query.dateTo ?? req.query.to,
+      })}"`,
+    );
     res.send(lines.join("\n"));
   } catch (err) {
     console.error("[events] report export error", err);
