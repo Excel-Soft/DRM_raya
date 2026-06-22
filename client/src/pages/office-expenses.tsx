@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -35,8 +35,8 @@ import {
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
-import { Trash2, FileSpreadsheet, FileText, ChevronDown } from "lucide-react";
+import { apiRequest, apiRequestJson, mutationRequest, queryClient } from "@/lib/queryClient";
+import { Trash2, Pencil, FileSpreadsheet, FileText, ChevronDown } from "lucide-react";
 import { utils, writeFile } from "xlsx";
 import type { OfficeExpense } from "@shared/schema";
 
@@ -62,40 +62,6 @@ const TRANSACTIONAL_HEADS = [
   "10201-3 - Machinery and Equipment",
   "10201-4 - Leasehold Improvements"
 ];
-
-const ACCOUNTING_HEADS = [
-  "10000 - Assets",
-  "30000 - Expenses",
-  "15000 - Liabilities",
-  "20000 - Owner Equity",
-  "25000 - Revenue"
-];
-
-const PARENT_HEADS_MAP: Record<string, string[]> = {
-  "10000 - Assets": [
-    "10100 - Current Assets",
-    "10200 - Non-Current Assets"
-  ],
-  "30000 - Expenses": [
-    "30100 - Administrative Expenses",
-    "30400 - Communication",
-    "30900 - Depreciation & Amortization",
-    "30500 - Employee Salaries & Benefits",
-    "31000 - Financial Expenses",
-    "30200 - Marketing & Advertising"
-  ],
-  "15000 - Liabilities": [
-    "15100 - Current Liabilities",
-    "15200 - Non-Current Liabilities"
-  ],
-  "20000 - Owner Equity": [
-    "20100 - Owner's Equity"
-  ],
-  "25000 - Revenue": [
-    "25200 - DRM MAin",
-    "25100 - Yes Head"
-  ]
-};
 
 const MultiSelectDropdown = ({ options, selected, onChange, placeholder }: { options: string[], selected: string[], onChange: (val: string[]) => void, placeholder: string }) => {
   return (
@@ -151,19 +117,13 @@ export default function OfficeExpenses() {
   const [tempEndDate, setTempEndDate] = useState("");
   const [tempFilterOffice, setTempFilterOffice] = useState<string[]>([]);
   const [tempAccountingHead, setTempAccountingHead] = useState<string[]>([]);
-  const [tempParentHead, setTempParentHead] = useState<string[]>([]);
-  const [tempChildHead, setTempChildHead] = useState<string[]>([]);
-  const [tempTransactionalHead, setTempTransactionalHead] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Applied filter states (used for fetching)
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [filterOffice, setFilterOffice] = useState<string[]>([]);
   const [filterAccountingHead, setFilterAccountingHead] = useState<string[]>([]);
-
-  const availableParentHeads = tempAccountingHead.length > 0 && !tempAccountingHead.includes("all")
-    ? tempAccountingHead.flatMap(head => PARENT_HEADS_MAP[head] || []) 
-    : [];
 
   const [formData, setFormData] = useState({
     expenseHead: "",
@@ -183,14 +143,14 @@ export default function OfficeExpenses() {
   if (filterOffice.length > 0 && !filterOffice.includes("all")) queryParams.set("office", filterOffice.join(","));
   if (filterAccountingHead.length > 0 && !filterAccountingHead.includes("all")) queryParams.set("accountingHead", filterAccountingHead.join(","));
 
-  const { data: expenses = [], isLoading } = useQuery<OfficeExpense[]>({
+  const { data: expenses = [], isLoading, isError } = useQuery<OfficeExpense[]>({
     queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), filterAccountingHead.join(",")],
-    queryFn: () => fetch(`/api/office/expenses?${queryParams}`, { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiRequestJson<OfficeExpense[]>("GET", `/api/office/expenses?${queryParams.toString()}`),
   });
 
   const { data: cheques = [] } = useQuery<any[]>({
     queryKey: ["/api/office/cheques"],
-    queryFn: () => fetch("/api/office/cheques", { headers: getAuthHeader(), credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiRequestJson<any[]>("GET", "/api/office/cheques"),
   });
 
   const unusedCheques = (Array.isArray(cheques) ? cheques : []).filter((c: any) => 
@@ -199,15 +159,31 @@ export default function OfficeExpenses() {
 
   const createMutation = useMutation({
     mutationFn: (data: typeof formData) =>
-      apiRequest("POST", "/api/office/expenses", data),
+      mutationRequest("POST", "/api/office/expenses", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/office/expenses"] });
       setDialogOpen(false);
+      setEditingId(null);
       resetForm();
       toast({ title: "Success", description: "Expense added successfully" });
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to add expense", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: "Error", description: error?.message || "Failed to add expense", variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof formData }) =>
+      mutationRequest("PATCH", `/api/office/expenses/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/office/expenses"] });
+      setDialogOpen(false);
+      setEditingId(null);
+      resetForm();
+      toast({ title: "Saved", description: "Expense updated successfully" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Error", description: error?.message || "Failed to update expense", variant: "destructive" });
     },
   });
 
@@ -256,7 +232,37 @@ export default function OfficeExpenses() {
       toast({ title: "Error", description: "Please fill required fields", variant: "destructive" });
       return;
     }
-    createMutation.mutate(formData);
+    if (!(parseFloat(formData.amount) > 0)) {
+      toast({ title: "Error", description: "Amount must be greater than 0", variant: "destructive" });
+      return;
+    }
+    if (editingId) {
+      updateMutation.mutate({ id: editingId, data: formData });
+    } else {
+      createMutation.mutate(formData);
+    }
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    resetForm();
+    setDialogOpen(true);
+  };
+
+  const openEdit = (expense: OfficeExpense) => {
+    setEditingId(expense.id);
+    setFormData({
+      expenseHead: expense.expenseHead || "",
+      office: expense.office || "",
+      amount: expense.amount || "",
+      currency: expense.currency || "PKR",
+      voucherNumber: expense.voucherNumber || "",
+      chequeNumber: expense.chequeNumber || "",
+      detail: expense.detail || "",
+      fileName: "",
+      fileUrl: expense.fileUrl || "",
+    });
+    setDialogOpen(true);
   };
 
   const handleView = () => {
@@ -272,9 +278,6 @@ export default function OfficeExpenses() {
     setTempEndDate("");
     setTempFilterOffice([]);
     setTempAccountingHead([]);
-    setTempParentHead([]);
-    setTempChildHead([]);
-    setTempTransactionalHead([]);
 
     setStartDate("");
     setEndDate("");
@@ -288,6 +291,36 @@ export default function OfficeExpenses() {
     (currentPage - 1) * rowsPerPage,
     currentPage * rowsPerPage
   );
+
+  // Head filter options derived from real expenseHead values present in the data
+  // (unioned with any currently-selected head so the selection stays visible).
+  const headFilterOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of expensesList) {
+      if (e.expenseHead) set.add(e.expenseHead);
+    }
+    for (const h of tempAccountingHead) {
+      if (h && h !== "all") set.add(h);
+    }
+    return Array.from(set).sort();
+  }, [expensesList, tempAccountingHead]);
+
+  // Create/Edit dialog option lists: the standard enumeration unioned with the
+  // real values already in the data, plus the row's current value when editing
+  // (so an existing expense whose head/office is not in the static list keeps it).
+  const dialogHeadOptions = useMemo(() => {
+    const set = new Set<string>(TRANSACTIONAL_HEADS);
+    for (const e of expensesList) if (e.expenseHead) set.add(e.expenseHead);
+    if (formData.expenseHead) set.add(formData.expenseHead);
+    return Array.from(set);
+  }, [expensesList, formData.expenseHead]);
+
+  const dialogOfficeOptions = useMemo(() => {
+    const set = new Set<string>(OFFICES);
+    for (const e of expensesList) if (e.office) set.add(e.office);
+    if (formData.office) set.add(formData.office);
+    return Array.from(set);
+  }, [expensesList, formData.office]);
 
   const totalAmount = expensesList.reduce((sum, e) => sum + parseFloat(e.amount || "0"), 0);
 
@@ -360,7 +393,7 @@ export default function OfficeExpenses() {
         <div className="bg-white p-5 rounded shadow-sm border border-gray-100">
           <div className="mb-6">
             <Button 
-              onClick={() => setDialogOpen(true)} 
+              onClick={openCreate} 
               className="bg-[#78829d] hover:bg-[#68728c] text-white rounded-[4px] px-5 h-9 text-sm"
             >
               Add Expense
@@ -368,47 +401,17 @@ export default function OfficeExpenses() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-x-6 gap-y-5">
-            {/* Row 1 */}
             <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Accounting Head<span className="text-red-500">*</span></Label>
+              <Label className="text-[13px] font-normal text-gray-700">Select Head</Label>
               <MultiSelectDropdown
-                options={ACCOUNTING_HEADS}
+                options={headFilterOptions}
                 selected={tempAccountingHead}
                 onChange={setTempAccountingHead}
-                placeholder="Select one or more options"
+                placeholder="All heads"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Parent Head <span className="text-red-500">*</span></Label>
-              <MultiSelectDropdown
-                options={availableParentHeads}
-                selected={tempParentHead}
-                onChange={setTempParentHead}
-                placeholder="Select one or more options"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Child Head <span className="text-red-500">*</span></Label>
-              <MultiSelectDropdown
-                options={[]}
-                selected={tempChildHead}
-                onChange={setTempChildHead}
-                placeholder="Select one or more options"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Transactional Head <span className="text-red-500">*</span></Label>
-              <MultiSelectDropdown
-                options={TRANSACTIONAL_HEADS}
-                selected={tempTransactionalHead}
-                onChange={setTempTransactionalHead}
-                placeholder="Select one or more options"
-              />
-            </div>
-
-            {/* Row 2 */}
-            <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Office<span className="text-red-500">*</span>:</Label>
+              <Label className="text-[13px] font-normal text-gray-700">Select Office</Label>
               <MultiSelectDropdown
                 options={OFFICES}
                 selected={tempFilterOffice}
@@ -494,6 +497,10 @@ export default function OfficeExpenses() {
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-6 text-gray-500">Loading...</TableCell>
                   </TableRow>
+                ) : isError ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-6 text-rose-600 text-sm">Failed to load expenses. Please try again.</TableCell>
+                  </TableRow>
                 ) : paginatedExpenses.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-6 text-gray-500 text-sm">No expenses generated yet.</TableCell>
@@ -529,14 +536,24 @@ export default function OfficeExpenses() {
                         -
                       </TableCell>
                       <TableCell className="text-center py-2.5">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => deleteMutation.mutate(expense.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => openEdit(expense)}
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-blue-500" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => deleteMutation.mutate(expense.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
@@ -557,10 +574,10 @@ export default function OfficeExpenses() {
           </div>
         </div>
 
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) { setEditingId(null); resetForm(); } }}>
           <DialogContent className="sm:max-w-[650px] p-0 rounded-md">
             <DialogHeader className="border-b border-gray-100 p-5">
-              <DialogTitle className="text-xl font-medium text-gray-700">Add Expense</DialogTitle>
+              <DialogTitle className="text-xl font-medium text-gray-700">{editingId ? "Edit Expense" : "Add Expense"}</DialogTitle>
             </DialogHeader>
             <div className="p-6 space-y-5">
               
@@ -578,7 +595,7 @@ export default function OfficeExpenses() {
                       <div className="px-3 py-2 border-b border-gray-100 text-[13px] text-gray-500 cursor-text">
                         |Choose...
                       </div>
-                      {TRANSACTIONAL_HEADS.map((h) => (
+                      {dialogHeadOptions.map((h) => (
                         <SelectItem key={h} value={h} className="py-2 text-[13px] text-gray-700">{h}</SelectItem>
                       ))}
                     </SelectContent>
@@ -610,7 +627,7 @@ export default function OfficeExpenses() {
                       <div className="px-3 py-2 border-b border-gray-100 text-[13px] text-gray-500 cursor-text">
                         |Choose...
                       </div>
-                      {OFFICES.map((o) => (
+                      {dialogOfficeOptions.map((o) => (
                         <SelectItem key={o} value={o} className="py-2 text-[13px] text-gray-700">{o}</SelectItem>
                       ))}
                     </SelectContent>
@@ -732,10 +749,10 @@ export default function OfficeExpenses() {
               </Button>
               <Button 
                 onClick={handleSubmit} 
-                disabled={createMutation.isPending}
+                disabled={createMutation.isPending || updateMutation.isPending}
                 className="bg-[#009a54] hover:bg-[#008246] h-10 px-6 font-medium text-white text-sm rounded-[4px]"
               >
-                {createMutation.isPending ? "Saving..." : "Save"}
+                {(createMutation.isPending || updateMutation.isPending) ? "Saving..." : "Save"}
               </Button>
             </DialogFooter>
           </DialogContent>

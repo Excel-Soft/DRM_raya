@@ -17,8 +17,9 @@ import {
 import { ROLES } from "./utils/role-utils";
 import { withFinancialTransaction } from "./utils/financial-transaction";
 import { AuditLogService } from "./services/audit-log.service";
-import { pickWritable } from "./utils/financial-validation";
+import { pickWritable, assertPositiveAmount, assertValidDate } from "./utils/financial-validation";
 import { sendCsvExport } from "./utils/financial-export";
+import { computeTrialBalance } from "./utils/trial-balance";
 
 const router = Router();
 
@@ -386,6 +387,182 @@ router.delete(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Trial Balance (Patch 6 Stage 7) — derived report over ledger_entries +
+// account_heads. Read endpoint is auth-only (mirrors /ledger); the CSV export is
+// RBAC-gated + audited (mirrors /ledger/export). Formula + invariants live in
+// TRIAL_BALANCE_FORMULA.md and the pure helper server/utils/trial-balance.ts.
+// ---------------------------------------------------------------------------
+
+/** Resolve & validate the optional start/end day filters (end is inclusive). */
+function resolveTrialBalanceDates(query: Request["query"]): { start: Date | null; end: Date | null } {
+  const startRaw = query.startDate ? String(query.startDate).trim() : "";
+  const endRaw = query.endDate ? String(query.endDate).trim() : "";
+  let start: Date | null = null;
+  let end: Date | null = null;
+  if (startRaw) {
+    start = new Date(startRaw);
+    if (isNaN(start.getTime())) {
+      throw new ApiError(400, "VALIDATION_ERROR", "startDate is not a valid date.");
+    }
+  }
+  if (endRaw) {
+    end = new Date(endRaw);
+    if (isNaN(end.getTime())) {
+      throw new ApiError(400, "VALIDATION_ERROR", "endDate is not a valid date.");
+    }
+    // Make the end filter inclusive of the whole calendar day.
+    end.setHours(23, 59, 59, 999);
+  }
+  if (start && end && start.getTime() > end.getTime()) {
+    throw new ApiError(400, "VALIDATION_ERROR", "startDate must be on or before endDate.");
+  }
+  return { start, end };
+}
+
+/**
+ * Load the account heads (filtered by category/branch, active only) and every
+ * ledger row for those heads up to `end`. Branch is applied to the heads only —
+ * the heads already scope which ledger rows are pulled, so we do not also filter
+ * ledger by branch (many entries carry a null branch and would be dropped).
+ */
+async function loadTrialBalanceData(query: Request["query"]) {
+  const { start, end } = resolveTrialBalanceDates(query);
+  const accountType = query.accountType ? String(query.accountType).trim() : "";
+  const branch = query.branch ? String(query.branch).trim() : "";
+
+  const accConds: any[] = [eq(accountHeads.isActive, 1)];
+  if (accountType) {
+    const cats = accountType.split(",").map((s) => s.trim()).filter(Boolean);
+    if (cats.length) accConds.push(inArray(accountHeads.category, cats as any));
+  }
+  if (branch) accConds.push(eq(accountHeads.branch, branch));
+
+  const accounts = await db
+    .select({
+      id: accountHeads.id,
+      code: accountHeads.code,
+      name: accountHeads.name,
+      category: accountHeads.category,
+      normalBalance: accountHeads.normalBalance,
+      openingBalance: accountHeads.openingBalance,
+    })
+    .from(accountHeads)
+    .where(and(...accConds))
+    .orderBy(asc(accountHeads.code));
+
+  const headIds = accounts.map((a) => a.id);
+  let ledger: { accountHeadId: string | null; entryType: string; amount: string | null; currency: string | null; date: Date | null }[] = [];
+  if (headIds.length) {
+    const ledConds: any[] = [inArray(ledgerEntries.accountHeadId, headIds)];
+    if (end) ledConds.push(lte(ledgerEntries.date, end));
+    ledger = await db
+      .select({
+        accountHeadId: ledgerEntries.accountHeadId,
+        entryType: ledgerEntries.entryType,
+        amount: ledgerEntries.amount,
+        currency: ledgerEntries.currency,
+        date: ledgerEntries.date,
+      })
+      .from(ledgerEntries)
+      .where(and(...ledConds));
+  }
+
+  return { start, end, accounts, ledger };
+}
+
+// Trial balance report (auth-only read). Totals are computed over the full
+// filtered set; only the returned `rows` are paginated.
+router.get("/trial-balance", async (req: Request, res: Response) => {
+  try {
+    const { start, end, accounts, ledger } = await loadTrialBalanceData(req.query);
+    const includeZeroBalance = String(req.query.includeZeroBalance ?? "") === "true";
+    const result = computeTrialBalance(accounts, ledger, { start, end, includeZeroBalance });
+
+    // Currency safety — never sum across currencies. Surface a warning instead.
+    const currencies = Array.from(
+      new Set(ledger.map((r) => r.currency).filter((c): c is string => !!c)),
+    );
+
+    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+    const limit = Math.min(1000, Math.max(1, parseInt(String(req.query.limit ?? "200"), 10) || 200));
+    const total = result.rows.length;
+    const startIdx = (page - 1) * limit;
+    const paged = result.rows.slice(startIdx, startIdx + limit);
+
+    res.json({
+      rows: paged,
+      totals: result.totals,
+      imbalance: result.imbalance,
+      imbalanceAmount: result.imbalanceAmount,
+      currencyWarning: currencies.length > 1,
+      currencies,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+      filters: {
+        startDate: req.query.startDate ?? null,
+        endDate: req.query.endDate ?? null,
+        branch: req.query.branch ?? null,
+        accountType: req.query.accountType ?? null,
+        includeZeroBalance,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ApiError) return sendError(res, error);
+    console.error("Error building trial balance:", error);
+    sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to build trial balance" });
+  }
+});
+
+// Trial balance CSV export — RBAC-gated + audited. Exports the full filtered set
+// (no pagination), mirroring /ledger/export.
+router.get(
+  "/trial-balance/export",
+  requireFinancialPermission(FINANCIAL_ACTIONS.trialBalanceExport, { roles: STAGE2_FINANCIAL_ROLES }),
+  async (req: Request, res: Response) => {
+    try {
+      const { start, end, accounts, ledger } = await loadTrialBalanceData(req.query);
+      const includeZeroBalance = String(req.query.includeZeroBalance ?? "") === "true";
+      const result = computeTrialBalance(accounts, ledger, { start, end, includeZeroBalance });
+
+      const count = sendCsvExport(res, {
+        module: "trial_balance",
+        range: {
+          from: req.query.startDate ? String(req.query.startDate) : undefined,
+          to: req.query.endDate ? String(req.query.endDate) : undefined,
+        },
+        columns: [
+          { header: "Code", value: (r) => r.code ?? "" },
+          { header: "Account", value: (r) => r.name ?? "" },
+          { header: "Category", value: (r) => r.category ?? "" },
+          { header: "Opening Debit", value: (r) => r.openingDebit },
+          { header: "Opening Credit", value: (r) => r.openingCredit },
+          { header: "Period Debit", value: (r) => r.periodDebit },
+          { header: "Period Credit", value: (r) => r.periodCredit },
+          { header: "Closing Debit", value: (r) => r.closingDebit },
+          { header: "Closing Credit", value: (r) => r.closingCredit },
+        ],
+        rows: result.rows,
+      });
+
+      await AuditLogService.record({
+        actorUserId: getUserId(req),
+        action: FINANCIAL_ACTIONS.trialBalanceExport,
+        module: AUDIT_MODULE,
+        entityType: "trial_balance_export",
+        entityId: "csv",
+        after: { rowCount: count, imbalance: result.imbalance, filters: req.query },
+        req,
+      });
+    } catch (error) {
+      if (error instanceof ApiError && !res.headersSent) return sendError(res, error);
+      console.error("Error exporting trial balance:", error);
+      if (!res.headersSent) {
+        sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to export trial balance" });
+      }
+    }
+  },
+);
+
 // Office Expenses
 router.get("/expenses", async (req: Request, res: Response) => {
   try {
@@ -504,6 +681,10 @@ router.post(
       const userId = getUserId(req);
       const data = insertOfficeExpenseSchema.parse(req.body);
 
+      // Business rules: an expense must be a positive amount on a valid date.
+      assertPositiveAmount(data.amount, "amount");
+      if (data.expenseDate !== undefined) assertValidDate(data.expenseDate, "expenseDate");
+
       const [result] = await db.insert(officeExpenses).values({
         ...data,
         createdByUserId: userId,
@@ -522,6 +703,60 @@ router.post(
       res.status(201).json(result);
     } catch (error) {
       console.error("Error creating expense:", error);
+      sendError(res, error);
+    }
+  },
+);
+
+/** Columns an expense PATCH may modify. System/audit fields are excluded. */
+const EXPENSE_WRITABLE_FIELDS = [
+  "expenseHead", "office", "amount", "currency",
+  "voucherNumber", "chequeNumber", "fileUrl", "detail", "expenseDate",
+];
+
+// Edit an expense — RBAC-gated, mass-assignment guarded, validated, audited
+// with before/after. There is no `status` column, so this is a real edit (not a
+// void); destructive removal stays on DELETE (which requires a reason).
+router.patch(
+  "/expenses/:id",
+  requireFinancialPermission(FINANCIAL_ACTIONS.expenseUpdate, { roles: STAGE2_FINANCIAL_ROLES }),
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updates = pickWritable(req.body ?? {}, EXPENSE_WRITABLE_FIELDS);
+      if (Object.keys(updates).length === 0) {
+        throw new ApiError(400, "VALIDATION_ERROR", "No editable fields were provided.");
+      }
+      if (updates.amount !== undefined) assertPositiveAmount(updates.amount, "amount");
+      if (updates.expenseDate !== undefined) {
+        updates.expenseDate = assertValidDate(updates.expenseDate, "expenseDate");
+      }
+
+      const [before] = await db.select().from(officeExpenses).where(eq(officeExpenses.id, id)).limit(1);
+      if (!before) {
+        throw new ApiError(404, "NOT_FOUND", "Expense not found.");
+      }
+
+      const [updated] = await db
+        .update(officeExpenses)
+        .set(updates)
+        .where(eq(officeExpenses.id, id))
+        .returning();
+
+      await AuditLogService.record({
+        actorUserId: getUserId(req),
+        action: FINANCIAL_ACTIONS.expenseUpdate,
+        module: AUDIT_MODULE,
+        entityType: "office_expense",
+        entityId: String(id),
+        before: { amount: before.amount, currency: before.currency, expenseHead: before.expenseHead, office: before.office, expenseDate: before.expenseDate, detail: before.detail },
+        after: { amount: updated.amount, currency: updated.currency, expenseHead: updated.expenseHead, office: updated.office, expenseDate: updated.expenseDate, detail: updated.detail },
+        req,
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating expense:", error);
       sendError(res, error);
     }
   },
