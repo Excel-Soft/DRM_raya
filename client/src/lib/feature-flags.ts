@@ -17,3 +17,17 @@
 export function isSupportModuleEnabled(): boolean {
   return import.meta.env.VITE_SUPPORT_MODULE_ENABLED === "true";
 }
+
+/**
+ * Patch 6 Stage 9 (Section F — production mock guard): demo / mock-only UI must be
+ * hidden by default and only shown when explicitly enabled via
+ * `VITE_DEMO_MODE_ENABLED=true`. A flag is OFF unless its value is exactly the
+ * string "true"; absence => disabled.
+ *
+ * Client flags only gate what the UI shows. The server remains the real
+ * enforcement: future / unimplemented endpoints return 404/403 and never fake
+ * success. Never treat a client flag as an authorization decision.
+ */
+export function isDemoModeEnabled(): boolean {
+  return import.meta.env.VITE_DEMO_MODE_ENABLED === "true";
+}
