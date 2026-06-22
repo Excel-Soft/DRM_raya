@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { recordAuditLog } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
 
 // ---------------------------------------------------------------------------
 // Permissions (Patch 2 Stage 4) — action-aware, role-based.
@@ -1557,7 +1558,16 @@ function registerSalaryReportRoutes(app: Express) {
         entityType: "salary_report", entityId: "export", after: { rows: rowsRes.rows.length }, req,
       });
       res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", `attachment; filename="salary_report.csv"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${buildExportFilename("salary_report", {
+          from: req.query.year
+            ? `${req.query.year}${req.query.month ? `-${String(req.query.month).padStart(2, "0")}` : ""}`
+            : undefined,
+          branch: req.query.branch,
+          user: req.query.employeeId ?? req.query.userId,
+        })}"`,
+      );
       res.send(lines.join("\n"));
     } catch (err) {
       console.error("Error exporting salary report:", err);

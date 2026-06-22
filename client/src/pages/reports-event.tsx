@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { safeReportFilename } from "@/lib/reportApi";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -174,7 +175,11 @@ export default function EventReport() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `events-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = safeReportFilename("events-report", {
+        from: applied.dateFrom,
+        to: applied.dateTo,
+        timestamp: true,
+      });
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -135,6 +135,7 @@ export default function ReportsDayTarget() {
           from: fetchParams.startDate,
           to: fetchParams.endDate,
           user: fetchParams.userId && fetchParams.userId !== "all" ? fetchParams.userId : undefined,
+          timestamp: true,
         }),
         filters: {
           startDate: fetchParams.startDate,

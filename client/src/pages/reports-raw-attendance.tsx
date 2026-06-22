@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequestJson } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
+import { safeReportFilename } from "@/lib/reportApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -165,7 +166,13 @@ export default function ReportsRawAttendance() {
     try {
       await downloadAuthedFile(
         `/api/reports/raw-attendance/export?${buildQuery(applied, false)}`,
-        `raw_attendance_${applied.startDate}_${applied.endDate}.csv`,
+        safeReportFilename("raw-attendance", {
+          from: applied.startDate,
+          to: applied.endDate,
+          user: applied.userId && applied.userId !== "all" ? applied.userId : undefined,
+          branch: applied.branch || undefined,
+          timestamp: true,
+        }),
       );
     } catch (err: any) {
       toast({ title: "Export failed", description: err?.message || "Could not export CSV.", variant: "destructive" });

@@ -37,6 +37,7 @@ import { isManagerialRole } from "./utils/role-utils";
 import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
 import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
 import { ActivityLogService } from "./services/activity-service";
+import { exportTimestamp } from "./utils/export-filename";
 import { getBvReportData, type BvReportFilters } from "./services/bv-report.service";
 import {
   getDayTargetReport,
@@ -1147,7 +1148,7 @@ router.get(
         limit: 1_000_000,
       });
       const format = (typeof req.query.format === "string" ? req.query.format : "csv").toLowerCase();
-      const suffix = `day_target_${report.filters.startDate}_${report.filters.endDate}`;
+      const suffix = `day_target_${report.filters.startDate}_${report.filters.endDate}_${exportTimestamp()}`;
 
       if (format === "json") {
         res.setHeader("Content-Type", "application/json");
@@ -1243,7 +1244,7 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
     const statusPart = filterResult.filters.status
       ? `_${filterResult.filters.status.toLowerCase()}`
       : "";
-    const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}${userPart}${statusPart}`;
+    const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}${userPart}${statusPart}_${exportTimestamp()}`;
 
     if (format === "csv") {
       const csvContent = buildReportCsv(report);

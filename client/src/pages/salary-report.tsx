@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
+import { safeReportFilename } from "@/lib/reportApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -210,7 +211,14 @@ export default function SalaryReport() {
     try {
       await downloadAuthedFile(
         `/api/reports/salary/export?${filterParams.toString()}`,
-        "salary_report.csv",
+        safeReportFilename("salary-report", {
+          from: filterParams.get("year")
+            ? `${filterParams.get("year")}${filterParams.get("month") ? `-${filterParams.get("month")}` : ""}`
+            : undefined,
+          branch: filterParams.get("branch") || undefined,
+          user: filterParams.get("employeeId") || undefined,
+          timestamp: true,
+        }),
       );
     } catch (err: any) {
       const m = err?.status === 403 || /403/.test(String(err?.message))

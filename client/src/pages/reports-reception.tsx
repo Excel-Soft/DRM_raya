@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { safeReportFilename } from "@/lib/reportApi";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -156,7 +157,13 @@ export default function ReceptionReport() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "reception_report.csv";
+      a.download = safeReportFilename("reception-report", {
+        from: applied.startDate || applied.month,
+        to: applied.endDate,
+        user: applied.user,
+        branch: applied.branch,
+        timestamp: true,
+      });
       document.body.appendChild(a);
       a.click();
       a.remove();

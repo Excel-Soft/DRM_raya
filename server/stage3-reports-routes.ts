@@ -4,6 +4,8 @@ import { requireReportPermission } from "./middleware/report-permission";
 import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { eventsReportHandler, eventsReportExportHandler } from "./events-routes";
+import { ActivityLogService } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
 
@@ -435,8 +437,23 @@ export function registerStage3ReportsRoutes(app: Express) {
           ].join(","));
         }
 
+        await ActivityLogService.log({
+          userId: req.user.userId,
+          action: "reception_report.export",
+          resourceType: "report",
+          resourceId: "reception_report",
+          details: JSON.stringify({ format: "csv", rows: rowsRes.rows.length }),
+        });
         res.setHeader("Content-Type", "text/csv");
-        res.setHeader("Content-Disposition", `attachment; filename="reception_report.csv"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${buildExportFilename("reception_report", {
+            from: req.query.startDate ?? req.query.dateFrom ?? req.query.month,
+            to: req.query.endDate ?? req.query.dateTo,
+            user: req.query.userId ?? req.query.receptionistId,
+            branch: req.query.branch,
+          })}"`,
+        );
         res.send(lines.join("\n"));
       } catch (err) {
         console.error("Error exporting reception report:", err);
@@ -544,8 +561,23 @@ export function registerStage3ReportsRoutes(app: Express) {
           ].join(","));
         }
 
+        await ActivityLogService.log({
+          userId: req.user.userId,
+          action: "raw_attendance.export",
+          resourceType: "report",
+          resourceId: "raw_attendance",
+          details: JSON.stringify({ format: "csv", rows: rowsRes.rows.length }),
+        });
         res.setHeader("Content-Type", "text/csv");
-        res.setHeader("Content-Disposition", `attachment; filename="raw_attendance.csv"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${buildExportFilename("raw_attendance", {
+            from: req.query.startDate,
+            to: req.query.endDate,
+            user: req.query.userId,
+            branch: req.query.branch,
+          })}"`,
+        );
         res.send(lines.join("\n"));
       } catch (err) {
         console.error("Error exporting raw-attendance report:", err);
