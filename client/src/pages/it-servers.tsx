@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { queryClient, apiRequestJson } from "@/lib/queryClient";
 import { Loader2, Search, User, RefreshCw, Plus, Server, Database, Trash2, Globe, HardDrive, Pencil, AlertCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,6 +65,38 @@ const EMPTY_SERVER_FORM: ServerForm = {
   notes: "",
 };
 
+// Patch 6 Stage 6 — controlled domain create form. Only fields that map to real
+// it_domains columns are captured. The cPanel PASSWORD is intentionally omitted:
+// it is a plaintext-only column and the stage forbids storing plaintext secrets.
+interface DomainForm {
+  customerId: string;
+  domainName: string;
+  registryId: string;
+  serverId: string;
+  hostingPackageId: string;
+  activationDate: string;
+  expiryDate: string;
+  cpanelUsername: string;
+}
+
+const EMPTY_DOMAIN_FORM: DomainForm = {
+  customerId: "",
+  domainName: "",
+  registryId: "",
+  serverId: "",
+  hostingPackageId: "",
+  activationDate: "",
+  expiryDate: "",
+  cpanelUsername: "",
+};
+
+const DOMAIN_HOSTNAME_RE =
+  /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+function customerLabel(c: any): string {
+  return c?.companyName || c?.accountName || c?.name || c?.email || c?.id || "Unknown";
+}
+
 export default function ItServers() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isFormVisible, setIsFormVisible] = useState(true);
@@ -78,6 +109,17 @@ export default function ItServers() {
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
   const [serverForm, setServerForm] = useState<ServerForm>(EMPTY_SERVER_FORM);
   const [serverFormError, setServerFormError] = useState<string | null>(null);
+
+  // --- Domain Hosting create form state (Patch 6 Stage 6) ---
+  const [domainForm, setDomainForm] = useState<DomainForm>(EMPTY_DOMAIN_FORM);
+  const [domainFormError, setDomainFormError] = useState<string | null>(null);
+
+  // --- Registry / Hosting Package inline create state ---
+  const [registryName, setRegistryName] = useState("");
+  const [registryUrl, setRegistryUrl] = useState("");
+  const [pkgName, setPkgName] = useState("");
+  const [pkgCapacity, setPkgCapacity] = useState("");
+  const [pkgPrice, setPkgPrice] = useState("");
 
   const {
     data: servers = [],
@@ -115,25 +157,25 @@ export default function ItServers() {
   });
 
   const deleteRegistryMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/it/registries/${id}`);
-    },
+    // apiRequestJson throws on a non-2xx so a 403/404 surfaces honestly instead
+    // of showing a false "deleted" toast.
+    mutationFn: async (id: string) => apiRequestJson("DELETE", `/api/it/registries/${id}`),
     onSuccess: () => {
       toast({ title: "Registry deleted successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/it/registries"] });
     },
-    onError: () => toast({ title: "Failed to delete registry", variant: "destructive" })
+    onError: (err) =>
+      toast({ title: extractErrorMessage(err, "Failed to delete registry"), variant: "destructive" })
   });
 
   const deletePackageMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/it/hosting-packages/${id}`);
-    },
+    mutationFn: async (id: string) => apiRequestJson("DELETE", `/api/it/hosting-packages/${id}`),
     onSuccess: () => {
       toast({ title: "Hosting package deleted successfully" });
       queryClient.invalidateQueries({ queryKey: ["/api/it/hosting-packages"] });
     },
-    onError: () => toast({ title: "Failed to delete package", variant: "destructive" })
+    onError: (err) =>
+      toast({ title: extractErrorMessage(err, "Failed to delete package"), variant: "destructive" })
   });
 
   const saveServerMutation = useMutation({
@@ -165,6 +207,59 @@ export default function ItServers() {
     },
     onError: (err) =>
       toast({ title: extractErrorMessage(err, "Failed to update status"), variant: "destructive" }),
+  });
+
+  // FK-safe customer picker source. /api/customers returns { customers: [...] }
+  // with real customer rows (the search endpoint can yield synthetic ids that
+  // break the it_domains.customer_id FK), so we load real rows here. The default
+  // queryFn joins the key into the URL, so we supply a custom queryFn for params.
+  const { data: customersResp } = useQuery<{ customers: any[] }>({
+    queryKey: ["/api/customers", "domain-picker"],
+    queryFn: () => apiRequestJson("GET", "/api/customers?pageSize=200"),
+  });
+  const customersList = Array.isArray(customersResp?.customers) ? customersResp!.customers : [];
+
+  const saveDomainMutation = useMutation({
+    mutationFn: async (body: Record<string, any>) =>
+      apiRequestJson("POST", "/api/it/domains", body),
+    onSuccess: () => {
+      toast({ title: "Domain added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/domains"] });
+      setDomainForm(EMPTY_DOMAIN_FORM);
+      setDomainFormError(null);
+    },
+    onError: (err) => {
+      const msg = extractErrorMessage(err, "Failed to save domain");
+      setDomainFormError(msg);
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  const createRegistryMutation = useMutation({
+    mutationFn: async (body: Record<string, any>) =>
+      apiRequestJson("POST", "/api/it/registries", body),
+    onSuccess: () => {
+      toast({ title: "Registry added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/registries"] });
+      setRegistryName("");
+      setRegistryUrl("");
+    },
+    onError: (err) =>
+      toast({ title: extractErrorMessage(err, "Failed to add registry"), variant: "destructive" }),
+  });
+
+  const createPackageMutation = useMutation({
+    mutationFn: async (body: Record<string, any>) =>
+      apiRequestJson("POST", "/api/it/hosting-packages", body),
+    onSuccess: () => {
+      toast({ title: "Hosting package added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/hosting-packages"] });
+      setPkgName("");
+      setPkgCapacity("");
+      setPkgPrice("");
+    },
+    onError: (err) =>
+      toast({ title: extractErrorMessage(err, "Failed to add package"), variant: "destructive" }),
   });
 
   const openCreateServer = () => {
@@ -211,6 +306,57 @@ export default function ItServers() {
     });
   };
 
+  const submitDomainForm = () => {
+    const domainName = domainForm.domainName.trim();
+    if (!domainName) {
+      setDomainFormError("Domain name is required");
+      return;
+    }
+    if (!DOMAIN_HOSTNAME_RE.test(domainName)) {
+      setDomainFormError("Enter a valid domain name (e.g. example.com)");
+      return;
+    }
+    if (
+      domainForm.activationDate &&
+      domainForm.expiryDate &&
+      new Date(domainForm.expiryDate) < new Date(domainForm.activationDate)
+    ) {
+      setDomainFormError("Expiry date cannot be before activation date");
+      return;
+    }
+    setDomainFormError(null);
+    const body: Record<string, any> = { domainName };
+    if (domainForm.customerId) body.customerId = domainForm.customerId;
+    if (domainForm.registryId) body.registryId = domainForm.registryId;
+    if (domainForm.serverId) body.serverId = domainForm.serverId;
+    if (domainForm.hostingPackageId) body.hostingPackageId = domainForm.hostingPackageId;
+    if (domainForm.activationDate) body.activationDate = domainForm.activationDate;
+    if (domainForm.expiryDate) body.expiryDate = domainForm.expiryDate;
+    if (domainForm.cpanelUsername.trim()) body.cpanelUsername = domainForm.cpanelUsername.trim();
+    saveDomainMutation.mutate(body);
+  };
+
+  const submitRegistry = () => {
+    const name = registryName.trim();
+    if (!name) {
+      toast({ title: "Registry name is required", variant: "destructive" });
+      return;
+    }
+    createRegistryMutation.mutate({ name, url: registryUrl.trim() || undefined });
+  };
+
+  const submitPackage = () => {
+    const name = pkgName.trim();
+    if (!name) {
+      toast({ title: "Package name is required", variant: "destructive" });
+      return;
+    }
+    const body: Record<string, any> = { name };
+    if (pkgCapacity.trim()) body.capacity = pkgCapacity.trim();
+    if (pkgPrice.trim()) body.price = pkgPrice.trim();
+    createPackageMutation.mutate(body);
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -254,97 +400,131 @@ export default function ItServers() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {/* Row 1 */}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Company Name<span className="text-red-500">*</span></label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input placeholder="Search Company Through Id/Name" className="pl-10 h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100" />
-              </div>
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Company</label>
+              <Select
+                value={domainForm.customerId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, customerId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                  <SelectValue placeholder="Select a company (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {customersList.map((c: any) => c && (
+                    <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
               <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Domain Name<span className="text-red-500">*</span></label>
-              <Input placeholder="Enter domain name" className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100" />
+              <Input
+                placeholder="example.com"
+                value={domainForm.domainName}
+                onChange={(e) => setDomainForm((f) => ({ ...f, domainName: e.target.value }))}
+                className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+              />
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Registry<span className="text-red-500">*</span></label>
-              <Select>
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Registry</label>
+              <Select
+                value={domainForm.registryId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, registryId: v === "none" ? "" : v }))}
+              >
                 <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {registriesList.map((r: any) => r && (
-                    <SelectItem key={r.id || r.name || String(r)} value={r.id || r.name || String(r)}>{r.name || String(r)}</SelectItem>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {registriesList.map((r: any) => r && r.id && (
+                    <SelectItem key={r.id} value={r.id}>{r.name || r.id}</SelectItem>
                   ))}
-                  {registriesList.length === 0 && <SelectItem value="none" disabled>No registries found</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
 
             {/* Row 2 */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">SSL</label>
-                <div className="flex items-center h-11 px-3 border rounded-md bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
-                  <Checkbox id="ssl" className="border-slate-300 dark:border-zinc-800" />
-                  <label htmlFor="ssl" className="ml-2 text-sm text-slate-500 dark:text-zinc-400">Enable SSL</label>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Hosting</label>
-                <Select>
-                  <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {serversList.map((s: any) => s && (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                    {serversList.length === 0 && <SelectItem value="none" disabled>No servers found</SelectItem>}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">First Date<span className="text-red-500">*</span></label>
-              <Input type="date" className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert" />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Activation Date<span className="text-red-500">*</span></label>
-              <Input type="date" className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert" />
-            </div>
-
-            {/* Row 3 */}
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Active Duration<span className="text-red-500">*</span></label>
-              <Select>
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Hosting Server</label>
+              <Select
+                value={domainForm.serverId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, serverId: v === "none" ? "" : v }))}
+              >
                 <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">1 Year</SelectItem>
-                  <SelectItem value="2">2 Years</SelectItem>
-                  <SelectItem value="5">5 Years</SelectItem>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {serversList.map((s: any) => s && s.id && (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Cpanel Username<span className="text-red-500">*</span></label>
-              <Input placeholder="Enter username" className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100" />
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Hosting Package</label>
+              <Select
+                value={domainForm.hostingPackageId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, hostingPackageId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {hostingPackagesList.map((p: any) => p && p.id && (
+                    <SelectItem key={p.id} value={p.id}>{p.name || p.id}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Cpanel Password<span className="text-red-500">*</span></label>
-              <Input type="password" placeholder="Enter password" className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100" />
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">cPanel Username</label>
+              <Input
+                placeholder="Enter username (optional)"
+                value={domainForm.cpanelUsername}
+                onChange={(e) => setDomainForm((f) => ({ ...f, cpanelUsername: e.target.value }))}
+                className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+              />
+            </div>
+
+            {/* Row 3 */}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Activation Date</label>
+              <Input
+                type="date"
+                value={domainForm.activationDate}
+                onChange={(e) => setDomainForm((f) => ({ ...f, activationDate: e.target.value }))}
+                className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Expiry Date</label>
+              <Input
+                type="date"
+                value={domainForm.expiryDate}
+                onChange={(e) => setDomainForm((f) => ({ ...f, expiryDate: e.target.value }))}
+                className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
+              />
             </div>
           </div>
 
+          {domainFormError && (
+            <p className="mt-4 text-sm font-medium text-red-600 dark:text-red-400">{domainFormError}</p>
+          )}
+
           <div className="mt-8">
-            <Button className="h-11 px-8 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all">
-              Submit
+            <Button
+              onClick={submitDomainForm}
+              disabled={saveDomainMutation.isPending}
+              className="h-11 px-8 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all"
+            >
+              {saveDomainMutation.isPending ? "Saving..." : "Submit"}
             </Button>
           </div>
         </CardContent>
@@ -546,6 +726,27 @@ export default function ItServers() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 bg-white dark:bg-zinc-900 flex-1 text-white dark:bg-zinc-900">
+            <div className="flex flex-col gap-2 mb-4 sm:flex-row">
+              <Input
+                value={registryName}
+                onChange={(e) => setRegistryName(e.target.value)}
+                placeholder="Registry name *"
+                className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+              />
+              <Input
+                value={registryUrl}
+                onChange={(e) => setRegistryUrl(e.target.value)}
+                placeholder="URL (optional)"
+                className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+              />
+              <Button
+                onClick={submitRegistry}
+                disabled={createRegistryMutation.isPending}
+                className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+              >
+                {createRegistryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+              </Button>
+            </div>
             <div className="space-y-3">
               {registriesList.map((reg: any, i: number) => reg && (
                 <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0 dark:border-zinc-800">
@@ -568,6 +769,38 @@ export default function ItServers() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 bg-white dark:bg-zinc-900 flex-1 text-white dark:bg-zinc-900">
+            <div className="flex flex-col gap-2 mb-4">
+              <Input
+                value={pkgName}
+                onChange={(e) => setPkgName(e.target.value)}
+                placeholder="Package name *"
+                className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+              />
+              <div className="flex gap-2">
+                <Input
+                  value={pkgCapacity}
+                  onChange={(e) => setPkgCapacity(e.target.value)}
+                  placeholder="Capacity (optional)"
+                  className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={pkgPrice}
+                  onChange={(e) => setPkgPrice(e.target.value)}
+                  placeholder="Price (optional)"
+                  className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                />
+                <Button
+                  onClick={submitPackage}
+                  disabled={createPackageMutation.isPending}
+                  className="h-9 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+                >
+                  {createPackageMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+                </Button>
+              </div>
+            </div>
             <div className="space-y-3">
               {hostingPackagesList.map((pkg: any, i: number) => pkg && (
                 <div key={i} className="flex flex-col gap-0.5 py-2 border-b border-slate-50 last:border-0 dark:border-zinc-800">

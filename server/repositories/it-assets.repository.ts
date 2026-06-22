@@ -147,6 +147,35 @@ export const itAssetsRepository = {
       .returning();
     return row;
   },
+  // Patch 6 Stage 6 — domain duplicate guard (column is UNIQUE; this gives a
+  // clean 409 before hitting the DB constraint).
+  async findDomainByName(name: string) {
+    await ensureItSchema();
+    const target = String(name || "").trim().toLowerCase();
+    if (!target) return null;
+    const rows = await db.select().from(itDomains);
+    return rows.find((r) => (r.domainName || "").trim().toLowerCase() === target) || null;
+  },
+  async getRegistry(id: string) {
+    await ensureItSchema();
+    const [row] = await db.select().from(itRegistries).where(eq(itRegistries.id, id));
+    return row || null;
+  },
+  async getHostingPackage(id: string) {
+    await ensureItSchema();
+    const [row] = await db.select().from(itHostingPackages).where(eq(itHostingPackages.id, id));
+    return row || null;
+  },
+  async createRegistry(data: any) {
+    await ensureItSchema();
+    const [row] = await db.insert(itRegistries).values(data).returning();
+    return row;
+  },
+  async createHostingPackage(data: any) {
+    await ensureItSchema();
+    const [row] = await db.insert(itHostingPackages).values(data).returning();
+    return row;
+  },
   async listRegistries() {
     await ensureItSchema();
     return db.select().from(itRegistries).orderBy(desc(itRegistries.createdAt));

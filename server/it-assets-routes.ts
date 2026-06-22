@@ -45,6 +45,22 @@ function serializeServer(s: any) {
   return { ...s, status: normalizeServerStatus(s?.status) || s?.status || "ACTIVE" };
 }
 
+// Patch 6 Stage 6 — credential safety. The it_domains.cpanel_password and
+// it_registries.credentials columns are plaintext text columns. We never return
+// their values to any client; instead we expose a boolean "set" flag so the UI
+// can show whether a credential exists without leaking it.
+function serializeDomain(d: any) {
+  if (!d) return d;
+  const { cpanelPassword, cpanel_password, ...rest } = d;
+  return { ...rest, cpanelPasswordSet: !!(cpanelPassword ?? cpanel_password) };
+}
+
+function serializeRegistry(r: any) {
+  if (!r) return r;
+  const { credentials, ...rest } = r;
+  return { ...rest, credentialsSet: !!credentials };
+}
+
 // Accept a hostname, a URL (host is extracted), or an IP address.
 function isValidHost(input: string): boolean {
   let host = String(input).trim();
@@ -247,38 +263,144 @@ for (const base of ["/servers", "/server-names"]) {
 }
 
 // Registries
-router.get("/registries", async (req, res) => {
+router.get("/registries", requireRole(...IT_READ_ROLES), async (req, res) => {
   const list = await itAssetsRepository.listRegistries();
-  res.json(list);
+  res.json(list.map(serializeRegistry));
 });
 
-router.delete("/registries/:id", async (req, res) => {
+router.post("/registries", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return res.status(400).json({ error: "Registry name is required" });
+  const url = typeof body.url === "string" && body.url.trim() ? body.url.trim() : null;
+  // SECURITY: do not accept/persist plaintext registry credentials.
+  const userId = actorId(req);
+  const created = await itAssetsRepository.createRegistry({ name, url });
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_registry.create",
+    module: "domain_hosting",
+    entityType: "it_registry",
+    entityId: created.id,
+    after: serializeRegistry(created),
+    req,
+  });
+  res.status(201).json(serializeRegistry(created));
+});
+
+router.delete("/registries/:id", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const existing = await itAssetsRepository.getRegistry(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Registry not found" });
   await itAssetsRepository.deleteRegistry(req.params.id);
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_registry.delete",
+    module: "domain_hosting",
+    entityType: "it_registry",
+    entityId: req.params.id,
+    before: serializeRegistry(existing),
+    req,
+  });
   res.json({ success: true });
 });
 
 // Hosting Packages
-router.get("/hosting-packages", async (req, res) => {
+router.get("/hosting-packages", requireRole(...IT_READ_ROLES), async (req, res) => {
   const list = await itAssetsRepository.listHostingPackages();
   res.json(list);
 });
 
-router.delete("/hosting-packages/:id", async (req, res) => {
+router.post("/hosting-packages", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) return res.status(400).json({ error: "Hosting package name is required" });
+  const capacity =
+    typeof body.capacity === "string" && body.capacity.trim() ? body.capacity.trim() : null;
+  let price: string | null = null;
+  if (body.price != null && String(body.price).trim() !== "") {
+    const n = Number(body.price);
+    if (!Number.isFinite(n) || n < 0)
+      return res.status(400).json({ error: "Price must be a non-negative number" });
+    price = String(n);
+  }
+  const userId = actorId(req);
+  const created = await itAssetsRepository.createHostingPackage({ name, capacity, price });
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_hosting_package.create",
+    module: "domain_hosting",
+    entityType: "it_hosting_package",
+    entityId: created.id,
+    after: created,
+    req,
+  });
+  res.status(201).json(created);
+});
+
+router.delete("/hosting-packages/:id", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const existing = await itAssetsRepository.getHostingPackage(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Hosting package not found" });
   await itAssetsRepository.deleteHostingPackage(req.params.id);
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_hosting_package.delete",
+    module: "domain_hosting",
+    entityType: "it_hosting_package",
+    entityId: req.params.id,
+    before: existing,
+    req,
+  });
   res.json({ success: true });
 });
 
 // Domains
-router.get("/domains", async (req, res) => {
+router.get("/domains", requireRole(...IT_READ_ROLES), async (req, res) => {
   const list = await itAssetsRepository.listDomains();
-  res.json(list);
+  res.json(list.map(serializeDomain));
 });
 
-router.post("/domains", async (req, res) => {
-  const result = insertItDomainSchema.safeParse(req.body);
+router.post("/domains", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const body: Record<string, any> = { ...(req.body || {}) };
+  // SECURITY (Patch 6 Stage 6): never persist plaintext credentials.
+  delete body.cpanelPassword;
+  delete body.cpanel_password;
+
+  const domainName = typeof body.domainName === "string" ? body.domainName.trim() : "";
+  if (!domainName) return res.status(400).json({ error: "Domain name is required" });
+  if (!isValidHost(domainName))
+    return res.status(400).json({ error: "Domain name must be a valid hostname" });
+
+  const dup = await itAssetsRepository.findDomainByName(domainName);
+  if (dup) return res.status(409).json({ error: "A domain with this name already exists" });
+
+  const result = insertItDomainSchema.safeParse({ ...body, domainName });
   if (!result.success) return res.status(400).json(result.error);
-  const domain = await itAssetsRepository.createDomain(result.data);
-  res.json(domain);
+
+  // Defensive: strip any secret that survived schema parsing.
+  const data: any = { ...result.data };
+  delete data.cpanelPassword;
+
+  const userId = actorId(req);
+  let created;
+  try {
+    created = await itAssetsRepository.createDomain(data);
+  } catch (e: any) {
+    if (String(e?.code) === "23505")
+      return res.status(409).json({ error: "A domain with this name already exists" });
+    throw e;
+  }
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_domain.create",
+    module: "domain_hosting",
+    entityType: "it_domain",
+    entityId: created.id,
+    after: serializeDomain(created),
+    req,
+  });
+  res.status(201).json(serializeDomain(created));
 });
 
 // Backups
