@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { apiRequestJson } from "@/lib/queryClient";
 import type { OfficeVas } from "@shared/schema";
 
 export default function OfficeVasPage() {
@@ -26,9 +27,9 @@ export default function OfficeVasPage() {
   if (startDate) queryParams.set("startDate", startDate);
   if (endDate) queryParams.set("endDate", endDate);
 
-  const { data: vasEntries = [], isLoading } = useQuery<OfficeVas[]>({
+  const { data: vasEntries = [], isLoading, isError } = useQuery<OfficeVas[]>({
     queryKey: ["/api/office/vas", startDate, endDate],
-    queryFn: () => fetch(`/api/office/vas?${queryParams}`).then(r => r.json()),
+    queryFn: () => apiRequestJson<OfficeVas[]>("GET", `/api/office/vas?${queryParams.toString()}`),
   });
 
   const handleView = () => {
@@ -103,6 +104,10 @@ export default function OfficeVasPage() {
                 {isLoading ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center py-6 text-gray-500">Loading...</TableCell>
+                  </TableRow>
+                ) : isError ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-6 text-rose-600 text-[13px]">Failed to load VAS records. Please try again.</TableCell>
                   </TableRow>
                 ) : vasEntriesList.length === 0 ? (
                   <TableRow>

@@ -43,3 +43,25 @@ CRUD / Validation / Report-Export / Permission / Audit columns:
 - **Endpoints marked "(verify in Stage 1)"** are inferred from routing/sidebar and
   must be confirmed against the actual backend before any Stage-2 change.
 - No financial workflow, approval logic, role, or schema was modified in Stage 0.
+
+## Patch 6 Stage 7 update (2026-06-22)
+
+The Stage 0 table above is preserved as the original audit snapshot. The
+following reflects the **current** state after Stage 7 (Office Accounts Full
+Closure). See `PATCH6_STAGE7_OFFICE_ACCOUNTS_CHANGELOG.md`,
+`OFFICE_ACCOUNTS_RETAIN_REMOVE_DECISION.md`, `OFFICE_ACCOUNTS_QA_MATRIX.md`, and
+`TRIAL_BALANCE_FORMULA.md`.
+
+| Sub-module | Now | Backend endpoint(s) | CRUD | Validation | Report/Export | Permission | Audit |
+|---|---|---|---|---|---|---|---|
+| Trial Balance Report | **Backend-backed** (was static `console.log`) | `GET /api/office/trial-balance`; `GET /api/office/trial-balance/export` | read | P (date order, inclusive end, currency safety) | P (CSV, gated+audited) | P (export `trial_balance.export`) | P (export) |
+| Office Expenses | **Hardened + editable** | `GET/POST/PATCH/DELETE /api/office/expenses` | P | P (`amount>0`, valid date, mass-assignment guard) | P (CSV/Excel) | P (`expense.create/update/delete`) | P (create/update/delete, before/after) |
+| Office VAS | **Shared helper** (was raw `fetch`) | `GET /api/office/vas` | read | n/a | M | auth-only read | n/a (read) |
+| Account Head | **MERGE → Chart of Accounts** (route redirects) | n/a | — | — | — | — | — |
+| Old Account Head | **REMOVE (route redirects)** | n/a | — | — | — | — | — |
+
+- **No schema changes** in Stage 7 (`db:push` broken on a pre-existing FK type
+  mismatch → additive runtime DDL only; none was needed).
+- Dead/mock UI controls removed: Trial Balance parent/child/office multiselects;
+  Office Expenses Parent/Child/Transactional head filters. Remaining filters map
+  to real columns only.
