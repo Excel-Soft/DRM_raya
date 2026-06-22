@@ -1067,9 +1067,9 @@ export default function DDManagerDashboard() {
                                                     return;
                                                 }
                                                 if (!selectedDoc.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
-                                                    // In absence of rejection API for raw workflow phase, just fallback or mock
-                                                    toast({ title: "Project returned successfully (Mock)", description: "Reason: " + rejectionReason });
-                                                    setVerifyDocModalOpen(false);
+                                                    // No reject API exists for the raw product-posting workflow phase.
+                                                    // Do NOT fake success — surface an honest "not available" message.
+                                                    toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
                                                 } else {
                                                     verifyDocMutation.mutate({ id: selectedDoc.id, action: 'REJECT', reason: rejectionReason });
                                                 }
@@ -1363,7 +1363,7 @@ export default function DDManagerDashboard() {
                                         if (isApproved) {
                                             transitionWorkflowMutation.mutate(selectedDoc.projectId);
                                         } else {
-                                            toast({ title: "Project returned successfully (Mock)", description: "Reason: Data Not Verified" });
+                                            toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
                                         }
                                     } else {
                                         verifyDocMutation.mutate({ 

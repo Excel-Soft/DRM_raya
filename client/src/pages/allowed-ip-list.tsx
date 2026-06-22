@@ -20,6 +20,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Plus, Trash2, Save, Pencil } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -54,6 +64,7 @@ export default function AllowedIpList() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormState>(emptyForm);
+  const [deleteTarget, setDeleteTarget] = useState<AllowedIp | null>(null);
 
   const listQuery = useQuery<AllowedIp[]>({
     queryKey: ["/api/settings/allowed-ips"],
@@ -113,6 +124,7 @@ export default function AllowedIpList() {
     },
     onSuccess: () => {
       invalidate();
+      setDeleteTarget(null);
       toast({ title: "Deleted", description: "Allowed IP removed." });
     },
     onError: (err: Error) => {
@@ -237,8 +249,7 @@ export default function AllowedIpList() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => deleteMutation.mutate(item.id)}
-                          disabled={deleteMutation.isPending}
+                          onClick={() => setDeleteTarget(item)}
                           className="h-7 w-7 bg-[#f56954] hover:bg-[#d73925] text-white rounded-[4px]"
                           data-testid={`button-delete-${item.id}`}
                         >
@@ -322,6 +333,34 @@ export default function AllowedIpList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete allowed IP?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes{" "}
+              <span className="font-semibold">{deleteTarget?.ip_cidr}</span>
+              {deleteTarget?.description ? ` (${deleteTarget.description})` : ""} from the DRM
+              allow-list. Access from this IP/CIDR will no longer be permitted. This action
+              cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
+              }}
+              disabled={deleteMutation.isPending}
+              className="bg-[#d9534f] hover:bg-[#c9302c] text-white"
+              data-testid="button-confirm-delete-ip"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
