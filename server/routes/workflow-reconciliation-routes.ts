@@ -299,6 +299,52 @@ workflowReconciliationRouter.get(
       }));
     });
 
+    // 8. Project status vs workflow phase mismatch (PMS / report vs workflow).
+    //    Only the high-confidence direction is flagged: a project marked
+    //    "Completed" whose PP/Software workflow has NOT reached the terminal
+    //    VERIFICATION_COMPLETE phase. The reverse direction (workflow terminal but
+    //    project not Completed) is intentionally NOT flagged: the workflow handlers
+    //    complete the *task*, not the parent *project*, so "verified but project
+    //    still Active" is the normal end-state and would be pure noise.
+    // NOTE: deliberately selects only columns guaranteed to exist on drm.projects
+    // (id, name, status). It does NOT reference p.department_type — that column is
+    // in shared/schema.ts but absent from some live DBs (db:push is broken), which
+    // makes the loose-mapping checks above fail in those environments. Keeping this
+    // check column-minimal lets it run everywhere.
+    const statusMismatchCheck = (table: string, dept: string) => async (): Promise<ReconIssue[]> => {
+      const { rows } = await pool.query(`
+        select w.project_id, w.current_phase, w.updated_at,
+               p.name, p.status as project_status
+          from ${table} w
+          join drm.projects p on p.id = w.project_id
+         where coalesce(p.is_deleted, false) = false
+           and p.status = 'Completed'
+           and w.current_phase <> 'VERIFICATION_COMPLETE'
+         order by w.updated_at desc
+         limit 500
+      `);
+      return rows.map((r: any) => ({
+        type: "pms_workflow_status_mismatch",
+        severity: "medium" as const,
+        entity: "project",
+        entityId: String(r.project_id),
+        label: r.name || String(r.project_id),
+        detail: `${dept}: project is marked "Completed" but its workflow has not reached Verification Complete (current phase: ${r.current_phase}).`,
+        context: {
+          projectStatus: r.project_status,
+          workflowPhase: r.current_phase,
+        },
+      }));
+    };
+    await runCheck(
+      "status_mismatch_product_posting",
+      statusMismatchCheck("drm.product_posting_workflows", "Product Posting"),
+    );
+    await runCheck(
+      "status_mismatch_software",
+      statusMismatchCheck("drm.software_workflows", "Software"),
+    );
+
     const summary = issues.reduce<Record<string, number>>((acc, i) => {
       acc[i.type] = (acc[i.type] ?? 0) + 1;
       return acc;

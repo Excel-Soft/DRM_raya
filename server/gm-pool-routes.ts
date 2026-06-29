@@ -8,6 +8,7 @@ import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
 import crypto from "crypto";
 import { createProductPostingInvoices } from "./utils/invoice-utils";
 import { generateDefaultInvoicesForGm, generateInvoicesAfterFinalGmApproval } from "./services/gm-invoice-generation.service";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
 import { NotificationService } from "./services/notification-service";
 import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service";
@@ -1006,6 +1007,18 @@ export function registerGmPoolRoutes(app: Express) {
         }
       }
 
+      // Patch 7 Stage 3 — record the GM → Accounts/Invoicing cross-department
+      // hand-off (ledger + audit only; the sales executive is already notified
+      // inline above). Best-effort, post-commit, deduped by event_key.
+      await CrossDepartmentStatusService.onGmApproved({
+        gmId: String(id),
+        companyName: entry.company_name ?? null,
+        fromStatus: "pending_managers",
+        actorUserId: req.user.userId,
+        notify: false,
+        req,
+      });
+
       return res.json({ success: true, message: "GM entry approved by Account Manager! Sales Executive has been notified.", data: entry });
     } catch (error) {
       res.status(500).json({ error: "Failed to approve GM entry" });
@@ -1094,6 +1107,17 @@ export function registerGmPoolRoutes(app: Express) {
             console.error("Failed to send multi-stage approval notification:", notifErr);
           }
         }
+
+        // Patch 7 Stage 3 — record the GM → Accounts/Invoicing cross-department
+        // hand-off on the final (both-managers) approval. Ledger + audit only.
+        await CrossDepartmentStatusService.onGmApproved({
+          gmId: String(id),
+          companyName: entry.company_name ?? null,
+          fromStatus: "pending_managers",
+          actorUserId: req.user.userId,
+          notify: false,
+          req,
+        });
 
         return res.json({ success: true, message: "All approvals complete!", data: entry });
       }
@@ -1188,6 +1212,17 @@ export function registerGmPoolRoutes(app: Express) {
       // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
       // No-op under the default ON_GM_CREATION policy; never throws.
       await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+
+      // Patch 7 Stage 3 — record the GM → Accounts/Invoicing cross-department
+      // hand-off on Super-HOD final approval. Ledger + audit only.
+      await CrossDepartmentStatusService.onGmApproved({
+        gmId: String(id),
+        companyName: result.rows[0]?.company_name ?? null,
+        fromStatus: "pending_super_hod",
+        actorUserId: req.user.userId,
+        notify: false,
+        req,
+      });
 
       res.json({ success: true, message: "Final approval by Super HOD!", data: result.rows[0] });
     } catch (error) {

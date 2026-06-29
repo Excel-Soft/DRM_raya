@@ -137,8 +137,10 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
 
     // Get invoice to determine the correct task type label. The label is still
     // derived from the invoice's free-text project name; only the routing URL
-    // below reads the structured department column.
-    let taskTypeLabel = "Product Listing";
+    // below reads the structured department column. This is the SOFTWARE router,
+    // so the default label is Software-specific (Patch 7 Stage 3 — software labels
+    // must say Software, not Product Posting).
+    let taskTypeLabel = "Software";
     let invNameLower = "";
     if ((project as any).invoiceId) {
       try {
@@ -155,13 +157,17 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
 
     // Choose the executive dashboard URL from the project's stored structured
     // department first. Only fall back to the fragile invoice-name match when the
-    // column is null (legacy projects created before department_type existed).
-    let executiveDashboardUrl = "/product-posting/executive"; // default: PP executive
+    // column is null (legacy projects created before department_type existed). This
+    // is the SOFTWARE router, so a SOFTWARE project routes the executive to the
+    // Software Executive dashboard, not the Product Posting one (Patch 7 Stage 3).
+    let executiveDashboardUrl = "/dashboard/software-executive"; // default: Software executive
     const storedDept = (project as any).departmentType as string | null | undefined;
     if (storedDept === "DND") {
       executiveDashboardUrl = "/dd-executive-dashboard";
-    } else if (storedDept === "PRODUCT_POSTING" || storedDept === "SOFTWARE") {
+    } else if (storedDept === "PRODUCT_POSTING") {
       executiveDashboardUrl = "/product-posting/executive";
+    } else if (storedDept === "SOFTWARE") {
+      executiveDashboardUrl = "/dashboard/software-executive";
     } else if (
       invNameLower.includes("listing") ||
       invNameLower.includes("minisite") ||
@@ -262,6 +268,21 @@ softwareWorkflowRouter.post("/projects/:projectId/assign-task", requireRole("sof
       message: `A ${taskTypeLabel} task has been assigned to you for project '${project.name}'.`,
       type: "INFO",
       targetUrl: executiveDashboardUrl,
+    });
+
+    // Patch 7 Stage 3 — record the PMS → execution cross-department hand-off
+    // (ledger + audit only; the assignee is already notified inline above).
+    await CrossDepartmentStatusService.onPmsTaskAssigned({
+      taskId: String(taskId),
+      projectId: targetProjectId,
+      module: "software",
+      department: (project as any).departmentType || "SOFTWARE",
+      assigneeUserId: assigneeId,
+      actorUserId: managerUserId,
+      projectName: project.name,
+      targetUrl: executiveDashboardUrl,
+      notify: false,
+      req,
     });
 
     res.json({ success: true, taskId });
