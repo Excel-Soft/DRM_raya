@@ -13,9 +13,14 @@ export async function throwIfResNotOk(res: Response) {
       body = null;
     }
     if (res.status === 403) {
+      // Only use a real backend-supplied message; fall back to the friendly
+      // forbidden message when the body has none (extractApiError returns its
+      // generic "Request failed (...)" placeholder).
+      const extracted = body ? extractApiError(body, res.status) : null;
       const msg =
-        (body && extractApiError(body, res.status)) ||
-        "You don't have permission to perform this action.";
+        extracted && extracted !== `Request failed (${res.status})`
+          ? extracted
+          : "You don't have permission to perform this action.";
       throw new Error(msg);
     }
     if (body) {
