@@ -7,6 +7,7 @@
 - [Express middleware array breaks tsc](express-middleware-array-tsc.md) — passing a guard array (not spread) to a route makes req/res infer as implicit any (TS7006); spread it: `router.post("/x", ...guard, h)`.
 - [Workflow route write ordering](workflow-route-write-ordering.md) — related-record writes must go inside applyWithinTx; payload/duplicate validation must be fail-fast route checks before the transition (no DB write on rejection).
 - [drizzle-kit push is broken](db-push-broken-fk.md) — `npm run db:push` fails repo-wide on a pre-existing FK type mismatch; apply schema via runtime `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` or psql, not push.
+- [Patch audit evidence honesty](patch-audit-evidence-honesty.md) — for PATCH* baseline/closure docs: no Complete without executed evidence; label reused prior-session probes P6-LIVE not LIVE; API matrix ≠ browser UAT; tag NMC Affects IDs with real status.
 - [Direct-API RBAC testing](direct-api-rbac-testing.md) — role comes from JWT only (no DB lookup); mint HS256 tokens to test per-role 401/403/allow; /tmp scripts need NODE_PATH.
 - [Raw fetch hides errors](raw-fetch-hides-errors.md) — client list/read queries must use apiRequestJson (throws→isError works); raw `fetch().then(r=>r.json())` parses error bodies as data and shows empty, not an error.
 - [Central workflow audit entityType](central-workflow-audit-entitytype.md) — when centralizing a module's transition, pass auditEntityType=its legacy type or its history view goes blank; conditional flips need executor-thrown rollback, not a pre-read.
