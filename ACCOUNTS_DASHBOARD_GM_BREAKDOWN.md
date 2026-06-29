@@ -3,6 +3,12 @@
 Patch 6 — Stage 3 reference for section K. The Accounts dashboard GM summary with
 Full / Partial / Loan breakdown is **already implemented**.
 
+> **Patch 7 Stage 2 re-verification (2026-06-29):** the endpoint, response shape,
+> and `::text`-cast joins were re-checked and remain accurate. The **access-scoping
+> open item** below is still open and unchanged (tightening it would alter access
+> behaviour and needs management confirmation). No dashboard behaviour was changed
+> in Patch 7 (see `PATCH7_STAGE2_INVOICE_GM_SALES_CHANGELOG.md`).
+
 ## Endpoint
 
 `GET /api/accounts/dashboard/gm-summary` (`server/account-routes.ts`).

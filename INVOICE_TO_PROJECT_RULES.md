@@ -5,6 +5,13 @@ Patch 6 — Stage 3 reference for sections I (approved invoice → project) and 
 implemented** and is idempotent: an approved qualifying invoice creates or links
 **exactly one** root project.
 
+> **Patch 7 Stage 2 re-verification (2026-06-29):** the generation/linking service
+> and triggers were re-checked and remain accurate. Generation runs best-effort on
+> `POST /api/invoices/:id/account-approve` and via the explicit
+> `POST /api/invoices/:invoiceId/generate-project`; one `INVOICE_ROOT` per invoice
+> (retry links, never duplicates). **No project-generation behaviour was changed in
+> Patch 7** (see `PATCH7_STAGE2_INVOICE_GM_SALES_CHANGELOG.md`).
+
 ## Source of truth
 
 | Concern | Location |

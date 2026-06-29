@@ -32,6 +32,9 @@ export const GM_SALES_ACTION_KEYS = {
   GM_APPROVE_HOD: "gm.approve.hod",
   GM_APPROVE_ACCOUNTS: "gm.approve.accounts",
   GM_APPROVE_ADMIN: "gm.approve.admin",
+  GM_APPROVE_SALES_MANAGER: "gm.approve.sales_manager",
+  GM_DELETE: "gm.delete",
+  GM_FIX_STATUS: "gm.fix_status",
   GM_ADD_PARTIAL_RECEIPT: "gm.add_partial_receipt",
   GM_FINALIZE_PARTIAL: "gm.finalize_partial",
   GM_UPDATE_LOAN_RETURN: "gm.update_loan_return",
@@ -56,6 +59,12 @@ const STATIC_ROLE_RULES: Record<string, string[]> = {
   [GM_SALES_ACTION_KEYS.GM_APPROVE_HOD]: [ROLES.HOD, ROLES.SUPER_HOD],
   [GM_SALES_ACTION_KEYS.GM_APPROVE_ACCOUNTS]: [ROLES.ACCOUNT_MANAGER],
   [GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN]: [ROLES.SUPER_HOD],
+  // Patch 7 Stage 2: distinct sales-manager approval stage; delete is a sales-owner
+  // action (matches the gm-pool UI). fix-status is admin-only break-glass (empty set
+  // => only the admin bypass passes).
+  [GM_SALES_ACTION_KEYS.GM_APPROVE_SALES_MANAGER]: [ROLES.SALES_MANAGER],
+  [GM_SALES_ACTION_KEYS.GM_DELETE]: [ROLES.SALES_EXECUTIVE, ROLES.SALES_MANAGER, ROLES.SALES_ASSISTANT_MANAGER],
+  [GM_SALES_ACTION_KEYS.GM_FIX_STATUS]: [],
   [GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT]: [ROLES.SALES_EXECUTIVE, ROLES.SALES_MANAGER, ROLES.ACCOUNT_MANAGER],
   [GM_SALES_ACTION_KEYS.GM_FINALIZE_PARTIAL]: [ROLES.ACCOUNT_MANAGER, ROLES.HOD, ROLES.SUPER_HOD],
   [GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN]: [ROLES.ACCOUNT_MANAGER, ROLES.SALES_MANAGER],
