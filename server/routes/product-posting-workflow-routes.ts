@@ -304,6 +304,21 @@ productPostingWorkflowRouter.post("/projects/:projectId/assign-task", requireRol
       targetUrl: executiveDashboardUrl,
     });
 
+    // Patch 7 Stage 3 — record the PMS → execution cross-department hand-off
+    // (ledger + audit only; the assignee is already notified inline above).
+    await CrossDepartmentStatusService.onPmsTaskAssigned({
+      taskId: String(taskId),
+      projectId: targetProjectId,
+      module: "product-posting",
+      department: subDepartmentType,
+      assigneeUserId: assigneeId,
+      actorUserId: managerUserId,
+      projectName: project.name,
+      targetUrl: executiveDashboardUrl,
+      notify: false,
+      req,
+    });
+
     res.json({ success: true, taskId });
   } catch (error: any) {
     if (mapWorkflowError(res, error)) return;

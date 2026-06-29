@@ -61,3 +61,34 @@ tables read-only to surface:
 - projects `OnHold` with a satisfied listing-QA dependency.
 
 No phase is mutated by the report.
+
+## Patch 7 Stage 3 — additions
+
+Stage 3 made three additive changes here; no phase model or transition was
+rewritten.
+
+- **Software assign-task label + executive routing fix.** In
+  `server/routes/software-workflow-routes.ts` the assignment notification now
+  defaults `taskTypeLabel = "Software"` (was a Product-Posting label) and routes
+  the `SOFTWARE` department to `/dashboard/software-executive`. The other
+  department targets are unchanged: `DND → /dd-executive-dashboard`,
+  `PRODUCT_POSTING → /product-posting/executive`. The Product Posting route was
+  not touched.
+- **Spec-named QA/verification hooks.** The QA → verification hand-offs are now
+  also reachable under their Patch-7 names — `onDepartmentManagerCompleted`,
+  `onQaApproved`, `onVerificationCompleted` — as thin delegates over the existing
+  `onWorkflowManagerCompleted` / `onWorkflowQaCompleted` /
+  `onWorkflowVerificationCompleted` hooks (see
+  `CROSS_DEPARTMENT_STATUS_SERVICE.md`). Behaviour is identical.
+- **Reconciliation check #8** (`pms_workflow_status_mismatch`) was added to
+  `GET /api/workflow/reconciliation` — see `WORKFLOW_RECONCILIATION_REPORT.md`.
+  It flags a project marked `Completed` whose PP/Software workflow has not
+  reached the terminal `VERIFICATION_COMPLETE` phase.
+
+### Note on the workflow timeline component path
+
+The client workflow-timeline component lives at
+`client/src/components/workflow-timeline.tsx` (there is **no**
+`client/src/components/workflow/` sub-directory). Any spec reference to
+`client/src/components/workflow/workflow-timeline.tsx` is a path delta — the
+actual file is the one above.

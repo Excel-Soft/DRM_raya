@@ -98,3 +98,14 @@ There is no project status-history table, so none is written (unchanged).
 
 With all flags at their defaults the service is a transparent pass-through that
 adds only audit + notification side-effects.
+
+## Patch 7 Stage 3 — task-assignment cross-department ledger
+
+When a PMS/workflow task is assigned to an executive, the assign-task routes
+(`server/routes/product-posting-workflow-routes.ts` and
+`server/routes/software-workflow-routes.ts`) now also record the
+PMS → execution hand-off via `CrossDepartmentStatusService.onPmsTaskAssigned`
+(see `CROSS_DEPARTMENT_STATUS_SERVICE.md`). This runs **after** the existing
+workflow transition + assignee notification, is best-effort, and writes only the
+cross-department ledger row + audit event — it does **not** touch `task_status`,
+project status, or the workflow phase, so the state machine above is unchanged.

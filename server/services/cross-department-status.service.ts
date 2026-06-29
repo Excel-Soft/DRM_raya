@@ -559,6 +559,199 @@ export class CrossDepartmentStatusService {
       req: args.req,
     });
   }
+
+  // ===========================================================================
+  // Patch 7 Stage 3 — spec-named public API (WF-001 / AUD-001).
+  //
+  // The hooks above already cover most cross-department hand-offs. The Patch-7
+  // specification names a few of them differently and adds three hand-offs that
+  // had no ledger hook before. To honour the spec WITHOUT duplicating logic or
+  // changing any existing behaviour:
+  //   - spec names that map 1:1 onto an existing hook are THIN DELEGATES
+  //     (onHodInvoiceApproved, onAccountInvoiceApproved, onDepartmentManagerCompleted,
+  //      onQaApproved, onVerificationCompleted);
+  //   - the three genuinely-absent hand-offs are implemented as real best-effort
+  //     ledger writers (onGmApproved, onInvoiceCreated, onPmsTaskAssigned);
+  //   - onServiceStatusChanged generalises onServiceComplaintRaised to any status.
+  // All obey the same hard rules: never mutate business status, dedupe by
+  // event_key, and never throw.
+  // ===========================================================================
+
+  /** GM entry reached FINAL approval (Sales) → Accounts/Invoicing owns the next step. */
+  static onGmApproved(args: {
+    gmId: string;
+    companyName?: string | null;
+    fromStatus?: string | null;
+    actorUserId?: string | null;
+    notify?: boolean;
+    req?: Request;
+  }) {
+    return this.record({
+      sourceModule: "gm",
+      sourceDepartment: "SALES",
+      targetModule: "invoice",
+      targetDepartment: "ACCOUNTS",
+      entityType: "gm_entry",
+      entityId: args.gmId,
+      action: "GM_APPROVED",
+      fromStatus: args.fromStatus ?? "pending_managers",
+      toStatus: "approved",
+      actorUserId: args.actorUserId ?? null,
+      recipientRoles: ["account_manager"],
+      // The GM approval routes already notify the sales executive inline; this is a
+      // ledger + audit record only, so it defaults to no extra notification.
+      notify: args.notify ?? false,
+      notifyMessage: `GM ${args.companyName ? `for "${args.companyName}" ` : ""}was approved and is ready for invoicing.`,
+      notifyType: "SUCCESS",
+      notifyTargetUrl: "/approvals",
+      metadata: { companyName: args.companyName ?? null },
+      req: args.req,
+    });
+  }
+
+  /** An invoice was created/auto-generated (Sales/GM) → HOD review owns the next step. */
+  static onInvoiceCreated(args: {
+    invoiceId: string;
+    gmId?: string | null;
+    projectName?: string | null;
+    companyName?: string | null;
+    fromStatus?: string | null;
+    toStatus?: string | null;
+    actorUserId?: string | null;
+    notify?: boolean;
+    req?: Request;
+  }) {
+    return this.record({
+      sourceModule: "invoice",
+      sourceDepartment: "SALES",
+      targetModule: "invoice",
+      targetDepartment: "HOD",
+      entityType: "invoice",
+      entityId: args.invoiceId,
+      relatedEntityType: args.gmId ? "gm_entry" : null,
+      relatedEntityId: args.gmId ?? null,
+      action: "INVOICE_CREATED",
+      fromStatus: args.fromStatus ?? "GM_APPROVED",
+      toStatus: args.toStatus ?? "PENDING_HOD",
+      actorUserId: args.actorUserId ?? null,
+      recipientRoles: ["hod", "super_hod"],
+      // Auto-generated invoices flow into the existing HOD queue; ledger + audit
+      // only by default to avoid duplicating any inline notification.
+      notify: args.notify ?? false,
+      notifyMessage: `A new invoice ${args.projectName ? `for "${args.projectName}" ` : ""}has been created and awaits HOD review.`,
+      notifyType: "INFO",
+      notifyTargetUrl: "/approvals",
+      metadata: { projectName: args.projectName ?? null, companyName: args.companyName ?? null },
+      req: args.req,
+    });
+  }
+
+  /** A PMS/workflow task was assigned to an executive → execution owns the next step. */
+  static onPmsTaskAssigned(args: {
+    taskId: string;
+    projectId?: string | null;
+    module?: string | null;
+    department?: string | null;
+    assigneeUserId?: string | null;
+    actorUserId?: string | null;
+    projectName?: string | null;
+    targetUrl?: string | null;
+    fromStatus?: string | null;
+    notify?: boolean;
+    req?: Request;
+  }) {
+    const mod = args.module || "pms";
+    const dept = (args.department || "").toUpperCase();
+    return this.record({
+      sourceModule: String(mod),
+      sourceDepartment: dept || "PMS",
+      targetModule: String(mod),
+      targetDepartment: dept || "EXECUTION",
+      entityType: "task",
+      entityId: args.taskId,
+      relatedEntityType: args.projectId ? "project" : null,
+      relatedEntityId: args.projectId ?? null,
+      action: "PMS_TASK_ASSIGNED",
+      fromStatus: args.fromStatus ?? "TASK_ASSIGNMENT",
+      toStatus: "RUNNING_PROJECT",
+      actorUserId: args.actorUserId ?? null,
+      recipientUserIds: args.assigneeUserId ? [args.assigneeUserId] : [],
+      // The assign-task routes already notify the assignee inline; ledger + audit only.
+      notify: args.notify ?? false,
+      notifyMessage: `A task ${args.projectName ? `for "${args.projectName}" ` : ""}has been assigned to you.`,
+      notifyType: "INFO",
+      notifyTargetUrl: args.targetUrl ?? "/approvals",
+      req: args.req,
+    });
+  }
+
+  // ---- Spec-name delegates over existing hooks (no behaviour change) ----
+
+  /** Spec alias of {@link onInvoiceHodApproved}. */
+  static onHodInvoiceApproved(
+    args: Parameters<typeof CrossDepartmentStatusService.onInvoiceHodApproved>[0],
+  ) {
+    return this.onInvoiceHodApproved(args);
+  }
+
+  /** Spec alias of {@link onInvoiceAccountApproved}. */
+  static onAccountInvoiceApproved(
+    args: Parameters<typeof CrossDepartmentStatusService.onInvoiceAccountApproved>[0],
+  ) {
+    return this.onInvoiceAccountApproved(args);
+  }
+
+  /** Spec alias of {@link onWorkflowManagerCompleted}. */
+  static onDepartmentManagerCompleted(
+    args: Parameters<typeof CrossDepartmentStatusService.onWorkflowManagerCompleted>[0],
+  ) {
+    return this.onWorkflowManagerCompleted(args);
+  }
+
+  /** Spec alias of {@link onWorkflowQaCompleted}. */
+  static onQaApproved(
+    args: Parameters<typeof CrossDepartmentStatusService.onWorkflowQaCompleted>[0],
+  ) {
+    return this.onWorkflowQaCompleted(args);
+  }
+
+  /** Spec alias of {@link onWorkflowVerificationCompleted}. */
+  static onVerificationCompleted(
+    args: Parameters<typeof CrossDepartmentStatusService.onWorkflowVerificationCompleted>[0],
+  ) {
+    return this.onWorkflowVerificationCompleted(args);
+  }
+
+  /** Generic service-department status change. Generalises {@link onServiceComplaintRaised}. */
+  static onServiceStatusChanged(args: {
+    complaintId: string;
+    fromStatus?: string | null;
+    toStatus: string;
+    assignedTo?: string | null;
+    actorUserId?: string | null;
+    notify?: boolean;
+    req?: Request;
+  }) {
+    return this.record({
+      sourceModule: "service",
+      sourceDepartment: "SERVICE",
+      targetModule: "service",
+      targetDepartment: "SERVICE",
+      entityType: "service_complaint",
+      entityId: args.complaintId,
+      action: "SERVICE_STATUS_CHANGED",
+      fromStatus: args.fromStatus ?? null,
+      toStatus: args.toStatus,
+      actorUserId: args.actorUserId ?? null,
+      recipientUserIds: args.assignedTo ? [args.assignedTo] : [],
+      recipientRoles: args.assignedTo ? [] : ["service_manager"],
+      notify: args.notify ?? false,
+      notifyMessage: `A service complaint status changed to ${args.toStatus}.`,
+      notifyType: "INFO",
+      notifyTargetUrl: "/approvals",
+      req: args.req,
+    });
+  }
 }
 
 export default CrossDepartmentStatusService;

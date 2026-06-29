@@ -30,8 +30,18 @@ GET /api/workflow/reconciliation
 | `approved_gm_without_invoice` | medium | `gm_entries.status in ('Approved','Completed')` with no `product_posting_invoices` row sharing its `gm_id`. |
 | `partial_gm_with_pending_balance` | low | Partial-payment GM (`is_partial_payment = 1`), approved, where `amount_usd − Σ gm_partial_receipts.amount_usd > 0.01`. |
 | `loan_gm_without_terms_or_approval` | high | Loan GM (`is_loan = 1`), approved, with no `gm_loan_terms` row or `admin_approval_status <> 'APPROVED'`. |
+| `pms_workflow_status_mismatch` | medium | Project `status = 'Completed'` whose PP **or** Software workflow has not reached the terminal `VERIFICATION_COMPLETE` phase (run-check names `status_mismatch_product_posting` / `status_mismatch_software`). |
 
 Each check is capped at 500 rows.
+
+### Note on `pms_workflow_status_mismatch` (Patch 7 Stage 3)
+
+Only the **high-confidence** direction is flagged: a project marked `Completed`
+while its workflow is not yet terminal. The reverse direction (workflow
+`VERIFICATION_COMPLETE` but project not `Completed`) is **intentionally not**
+flagged — the workflow handlers complete the *task*, not the parent *project*, so
+"verified but project still `Active`" is the normal end-state and flagging it
+would produce mass false positives.
 
 ## Threshold config
 
