@@ -93,6 +93,18 @@ export const ACTION_PERMISSIONS: Record<string, ActionPolicy> = {
     entityType: "Attribute",
     message: "You are not authorized to manage attributes.",
   },
+  // UPDATE mirrors create/delete authority. No attributes-update endpoint exists
+  // today (the Attributes admin page is create/delete only); the key is defined so
+  // any future edit route can be guarded consistently (PATCH 7 SEC-001).
+  "attributes.update": {
+    module: "attributes",
+    description: "Update an attribute/reference value.",
+    roles: FULL_ACCESS_ROLES,
+    adminOverride: true,
+    audit: true,
+    entityType: "Attribute",
+    message: "You are not authorized to manage attributes.",
+  },
 
   // ── Account invoices ─────────────────────────────────────────────────────
   "invoice.update_status": {

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { isSupportModuleEnabled } from "@/lib/feature-flags";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -115,10 +116,10 @@ export default function DDExecutiveDashboard() {
     });
 
     // Fetch summary stats
-    const { data: summaryStats } = useQuery({ queryKey: ["/api/dd-executive/summary", topSellingFilter], queryFn: async () => { const res = await fetch(`/api/dd-executive/summary?period=${topSellingFilter}`, { credentials: "include" }); if (!res.ok) throw new Error("Failed"); return res.json(); } });
+    const { data: summaryStats } = useQuery({ queryKey: ["/api/dd-executive/summary", topSellingFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/summary?period=${topSellingFilter}`) });
     const { data: dbTaskListData } = useQuery({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
-    const { data: dailyReportData } = useQuery({ queryKey: ["/api/dd-executive/daily-report", dailyReportFilter], queryFn: async () => { const res = await fetch(`/api/dd-executive/daily-report?period=${dailyReportFilter}`, { credentials: "include" }); if (!res.ok) throw new Error("Failed"); return res.json(); } });
-    const { data: monthlyCompleteData } = useQuery({ queryKey: ["/api/dd-executive/monthly-complete", monthlyCompleteFilter], queryFn: async () => { const res = await fetch(`/api/dd-executive/monthly-complete?period=${monthlyCompleteFilter}`, { credentials: "include" }); if (!res.ok) throw new Error("Failed"); return res.json(); } });
+    const { data: dailyReportData } = useQuery({ queryKey: ["/api/dd-executive/daily-report", dailyReportFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/daily-report?period=${dailyReportFilter}`) });
+    const { data: monthlyCompleteData } = useQuery({ queryKey: ["/api/dd-executive/monthly-complete", monthlyCompleteFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/monthly-complete?period=${monthlyCompleteFilter}`) });
 
     // Stage 3: removed the localStorage 'software_tasks' merge. That key's only
     // writer (the team-workspace screen) was migrated to the backend, leaving this
@@ -139,31 +140,21 @@ export default function DDExecutiveDashboard() {
     });
 
     const createTaskMutation = useMutation({
-        mutationFn: async (newTask: typeof taskDetails) => {
-            const res = await fetch("/api/pms/tasks", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    projectId: selectedTask?.projectId,
-                    title: newTask.title,
-                    description: newTask.detail,
-                    assignedToUserId: newTask.assigneeId,
-                    dueDate: newTask.dueDate ? new Date(newTask.dueDate).toISOString() : new Date().toISOString(),
-                    priority: "Medium",
-                    category: "Work",
-                    status: "ToDo",
-                    notes: JSON.stringify({
-                        duration: newTask.duration,
-                        links: newTask.links
-                    })
-                }),
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || err.details || "Failed to create task");
-            }
-            return res.json();
-        },
+        mutationFn: async (newTask: typeof taskDetails) =>
+            apiRequestJson("POST", "/api/pms/tasks", {
+                projectId: selectedTask?.projectId,
+                title: newTask.title,
+                description: newTask.detail,
+                assignedToUserId: newTask.assigneeId,
+                dueDate: newTask.dueDate ? new Date(newTask.dueDate).toISOString() : new Date().toISOString(),
+                priority: "Medium",
+                category: "Work",
+                status: "ToDo",
+                notes: JSON.stringify({
+                    duration: newTask.duration,
+                    links: newTask.links
+                })
+            }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
             queryClient.invalidateQueries({ queryKey: ["/api/dd-executive/summary"] });

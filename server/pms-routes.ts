@@ -106,6 +106,24 @@ export function registerPmsRoutes(app: Express) {
 
   const isElevatedRole = (roleId?: string) => isManagerialRole(roleId);
 
+  // PATCH 7 SEC-003: fail-closed ownership/role guards for GENERIC PMS writes.
+  // These close broken-access-control gaps (any authenticated user mutating any
+  // task / deciding any approval) WITHOUT widening who may change status — the
+  // status path stays owner-enforced inside tasksRepository.updateStatus().
+  const canManageTask = (task: any, user: any): boolean => {
+    if (!task || !user) return false;
+    if (isManagerialRole(user.roleId)) return true;
+    const uid = user.userId;
+    return task.ownerUserId === uid || task.assignedToUserId === uid;
+  };
+  const canDecideApproval = (approval: any, user: any): boolean => {
+    if (!approval || !user) return false;
+    if (isManagerialRole(user.roleId)) return true;
+    const approverId =
+      (approval as any).approverUserId ?? (approval as any).approver_user_id ?? null;
+    return Boolean(approverId) && approverId === user.userId;
+  };
+
 function getPeriodRange(periodRaw: string) {
   const period = periodRaw?.toUpperCase() || "TD";
   const now = new Date();
@@ -888,6 +906,11 @@ function getPeriodRange(periodRaw: string) {
         return res.status(404).json({ error: "Task not found" });
       }
 
+      // PATCH 7 SEC-003: only the task owner, assignee, or a manager may edit.
+      if (!canManageTask(existing, req.user)) {
+        return res.status(403).json({ error: "Only the task owner, assignee, or a manager can update this task." });
+      }
+
       // If updating status, enforce owner-only rule
       if (req.body.status && req.body.status !== existing.status) {
         const result = await tasksRepository.updateStatus(
@@ -934,6 +957,11 @@ function getPeriodRange(periodRaw: string) {
 
       if (!existing) {
         return res.status(404).json({ error: "Task not found" });
+      }
+
+      // PATCH 7 SEC-003: only the task owner, assignee, or a manager may edit.
+      if (!canManageTask(existing, req.user)) {
+        return res.status(403).json({ error: "Only the task owner, assignee, or a manager can update this task." });
       }
 
       // If updating status, enforce owner-only rule
@@ -1555,6 +1583,11 @@ function getPeriodRange(periodRaw: string) {
       const approval = await projectApprovalsRepository.findById(req.params.id);
       if (!approval) return res.status(404).json({ error: "Approval not found" });
 
+      // PATCH 7 SEC-003: only a manager or the designated approver may decide.
+      if (!canDecideApproval(approval, req.user)) {
+        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
+      }
+
       const updated = await projectApprovalsRepository.approve(req.params.id, req.user.userId);
       res.json(updated);
     } catch (error) {
@@ -1572,6 +1605,11 @@ function getPeriodRange(periodRaw: string) {
       const { comment } = req.body || {};
       const approval = await projectApprovalsRepository.findById(req.params.id);
       if (!approval) return res.status(404).json({ error: "Approval not found" });
+
+      // PATCH 7 SEC-003: only a manager or the designated approver may decide.
+      if (!canDecideApproval(approval, req.user)) {
+        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
+      }
 
       const updated = await projectApprovalsRepository.reject(req.params.id, req.user.userId, comment || null);
       res.json(updated);
@@ -1627,6 +1665,14 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      // PATCH 7 SEC-003: fail-closed approver/role guard (defense-in-depth; this
+      // duplicate route is shadowed by the earlier registration but guarded too).
+      const existingApproval = await projectApprovalsRepository.findById(req.params.id);
+      if (!existingApproval) return res.status(404).json({ error: "Approval not found" });
+      if (!canDecideApproval(existingApproval, req.user)) {
+        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
+      }
+
       const approval = await projectApprovalsRepository.approve(req.params.id, req.user.userId);
       res.json(approval);
     } catch (error) {
@@ -1645,6 +1691,13 @@ function getPeriodRange(periodRaw: string) {
       const { reason } = req.body;
       if (!reason) {
         return res.status(400).json({ error: "Rejection reason is required" });
+      }
+
+      // PATCH 7 SEC-003: fail-closed approver/role guard (defense-in-depth).
+      const existingApproval = await projectApprovalsRepository.findById(req.params.id);
+      if (!existingApproval) return res.status(404).json({ error: "Approval not found" });
+      if (!canDecideApproval(existingApproval, req.user)) {
+        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
       }
 
       const approval = await projectApprovalsRepository.reject(req.params.id, req.user.userId, reason);
