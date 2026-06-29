@@ -2,7 +2,26 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 export async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
+    // Parse the standard error envelope ({ success:false, error:{ code, message } })
+    // or legacy { error } / { message } shapes so callers surface a clean, friendly
+    // message instead of a raw "<status>: <json blob>" string. 403s get an explicit
+    // friendly forbidden message when the backend doesn't supply one. (PATCH 7 API-001)
+    let body: any = null;
+    try {
+      body = await res.clone().json();
+    } catch {
+      body = null;
+    }
+    if (res.status === 403) {
+      const msg =
+        (body && extractApiError(body, res.status)) ||
+        "You don't have permission to perform this action.";
+      throw new Error(msg);
+    }
+    if (body) {
+      throw new Error(extractApiError(body, res.status));
+    }
+    const text = (await res.text().catch(() => "")) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
 }
