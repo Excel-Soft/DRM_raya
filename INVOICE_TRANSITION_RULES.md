@@ -5,6 +5,14 @@ state machine, role-gated transitions, validation, and duplicate prevention are
 **already implemented**. Raw status updates are not accepted: status only moves
 through dedicated transition endpoints that run through the service layer.
 
+> **Patch 7 Stage 2 re-verification (2026-06-29):** the invoice routes and the
+> transition service below were re-checked against the code and remain accurate.
+> Each transition is `requireRole`-gated (`invoice-routes.ts`); the manual creator
+> path uses `requireManualInvoiceCreator()`; `generate-project` is role-gated to
+> account_manager / admin / product_posting_manager. **No invoice behaviour was
+> changed in Patch 7** — that stage only hardened GM-route role guards (see
+> `PATCH7_STAGE2_INVOICE_GM_SALES_CHANGELOG.md`).
+
 ## Source of truth
 
 | Concern | Location |

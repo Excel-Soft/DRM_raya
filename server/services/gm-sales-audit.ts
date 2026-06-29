@@ -21,6 +21,7 @@ export const GM_SALES_AUDIT_ACTIONS = {
   GM_SUBMIT: "gm.submit",
   GM_APPROVE: "gm.approve",
   GM_REJECT: "gm.reject",
+  GM_FIX_STATUS: "gm.fix_status",
   GM_PARTIAL_RECEIPT_ADD: "gm.partial_receipt_add",
   GM_PARTIAL_FINAL_APPROVE: "gm.partial_final_approve",
   GM_LOAN_TERMS_ADD: "gm.loan_terms_add",

@@ -776,7 +776,7 @@ export function registerGmPoolRoutes(app: Express) {
 
 
 
-  router.patch("/gm-pool/:id", async (req, res) => {
+  router.patch("/gm-pool/:id", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_EDIT, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       const parsed = updateSchema.parse(req.body);
 
@@ -826,6 +826,12 @@ export function registerGmPoolRoutes(app: Express) {
         fields.push(`status = $${fields.length + 1}`);
         values.push(parsed.status);
       }
+      // hod_status / accountant_status are lightweight Done/Pending tracking flags
+      // surfaced in the Lead Pools table. They are SEPARATE from the formal approval
+      // state machine (approval_status / account_manager_status / super_hod_status /
+      // final_status) — those columns are not part of updateSchema and are never
+      // writable here; they move only via the dedicated approval routes. Writing these
+      // tracking flags is gated by the GM_EDIT role guard added to this route.
       if (parsed.hodStatus !== undefined) {
         fields.push(`hod_status = $${fields.length + 1}`);
         values.push(parsed.hodStatus);
@@ -863,24 +869,37 @@ export function registerGmPoolRoutes(app: Express) {
 
   // ========== MULTI-STAGE APPROVAL ENDPOINTS ==========
 
-  router.post("/gm-pool/:id/fix-status", async (req, res) => {
+  // Patch 7 Stage 2: raw approval_status override is an admin-only break-glass tool
+  // (no UI caller). Guarded fail-closed (only the admin bypass passes GM_FIX_STATUS,
+  // whose allowed-role set is empty) and the successful override is audited.
+  router.post("/gm-pool/:id/fix-status", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_FIX_STATUS, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const { approval_status } = req.body;
       if (!approval_status) return res.status(400).json({ error: "approval_status required" });
+      const beforeRes = await pool.query(`SELECT approval_status FROM drm.gm_entries WHERE id = $1`, [id]);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
         [id, approval_status]
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "Entry not found" });
+      await recordGmSalesAudit({
+        action: GM_SALES_AUDIT_ACTIONS.GM_FIX_STATUS,
+        entityType: "gm_entry",
+        entityId: String(id),
+        previousStatus: beforeRes.rows[0]?.approval_status,
+        nextStatus: String(approval_status),
+        reason: "Admin break-glass approval_status override",
+        req,
+      });
       res.json({ success: true, data: result.rows[0] });
     } catch (err) {
       res.status(500).json({ error: "Failed to fix status" });
     }
   });
 
-  router.post("/gm-pool/:id/hod-approve", async (req, res) => {
+  router.post("/gm-pool/:id/hod-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -919,7 +938,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/hod-reject", async (req, res) => {
+  router.post("/gm-pool/:id/hod-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -939,7 +958,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/account-manager-approve", async (req, res) => {
+  router.post("/gm-pool/:id/account-manager-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ACCOUNTS, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -993,7 +1012,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/account-manager-reject", async (req, res) => {
+  router.post("/gm-pool/:id/account-manager-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ACCOUNTS, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1013,7 +1032,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/sales-manager-approve", async (req, res) => {
+  router.post("/gm-pool/:id/sales-manager-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_SALES_MANAGER, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1084,7 +1103,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/sales-manager-reject", async (req, res) => {
+  router.post("/gm-pool/:id/sales-manager-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_SALES_MANAGER, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1152,7 +1171,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/super-hod-approve", async (req, res) => {
+  router.post("/gm-pool/:id/super-hod-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1176,7 +1195,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/super-hod-reject", async (req, res) => {
+  router.post("/gm-pool/:id/super-hod-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1192,7 +1211,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.patch("/gm-pool/:id/super-hod-update", async (req, res) => {
+  router.patch("/gm-pool/:id/super-hod-update", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1224,7 +1243,7 @@ export function registerGmPoolRoutes(app: Express) {
   // ─── UPDATE REQUEST WORKFLOW ──────────────────────────────────────────────
 
   // Sales Executive requests an update/change → goes to Super HOD for approval
-  router.post("/gm-pool/:id/request-update", async (req, res) => {
+  router.post("/gm-pool/:id/request-update", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_SUBMIT, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1252,8 +1271,13 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  // Super HOD approves the update request → Delete option becomes visible
-  router.post("/gm-pool/:id/super-hod-approve", async (req, res) => {
+  // Super HOD approves the update request → Delete option becomes visible.
+  // NOTE (Patch 7 Stage 2): this duplicate path is SHADOWED by the final-approval
+  // handler registered earlier (same method+path), so Express never reaches it.
+  // The live super-HOD update-request approve/reject is served under /api/hod/.
+  // Guarded defensively (admin/super_hod) so it cannot become a hole if the route
+  // order ever changes; transition SQL is left untouched.
+  router.post("/gm-pool/:id/super-hod-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1276,8 +1300,10 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  // Super HOD rejects the update request → Both options hidden
-  router.post("/gm-pool/:id/super-hod-reject", async (req, res) => {
+  // Super HOD rejects the update request → Both options hidden.
+  // NOTE (Patch 7 Stage 2): shadowed duplicate (see super-hod-approve note above);
+  // guarded defensively without changing transition SQL.
+  router.post("/gm-pool/:id/super-hod-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1304,7 +1330,7 @@ export function registerGmPoolRoutes(app: Express) {
 
 
   // 1. Sales Executive requests withdrawal → goes to HOD
-  router.post("/gm-pool/:id/request-withdraw", async (req, res) => {
+  router.post("/gm-pool/:id/request-withdraw", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_SUBMIT, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1344,7 +1370,7 @@ export function registerGmPoolRoutes(app: Express) {
   });
 
   // 2. HOD approves withdrawal → entry becomes Withdrawn
-  router.post("/gm-pool/:id/withdraw-approve", async (req, res) => {
+  router.post("/gm-pool/:id/withdraw-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1368,7 +1394,7 @@ export function registerGmPoolRoutes(app: Express) {
   });
 
   // 3. HOD rejects withdrawal → request cleared
-  router.post("/gm-pool/:id/withdraw-reject", async (req, res) => {
+  router.post("/gm-pool/:id/withdraw-reject", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1408,7 +1434,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.post("/gm-pool/:id/withdraw", async (req, res) => {
+  router.post("/gm-pool/:id/withdraw", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
@@ -1423,7 +1449,7 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.delete("/gm-pool/:id", async (req, res) => {
+  router.delete("/gm-pool/:id", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_DELETE, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
