@@ -41,3 +41,20 @@ Confirm both:
 
 **Current default until confirmed:** legacy filters rejected. Config-backed — a
 confirmed decision needs no code change, only the decision.
+
+## Patch 7 re-verification (2026-06-30)
+
+Runtime re-verification this stage; **no metric or filter change made**.
+
+- **Canonical source confirmed (runtime):** `/reports/bv` (report) returns 3 and
+  `/bv-reports` (list/create sink) returns 3 — both read the same canonical
+  `drm.bv_reports` table, so records created via the BV form appear in the report.
+- **Metrics computed, not hardcoded (runtime):** `successRate = 33.33` derives
+  from the live data (1 Approved of 3); `followUpsCompleted` and `missedLeads` are
+  returned as **`null` by design** (no source column) rather than fabricated.
+- **Export honours the user filter (runtime):** `?userId=<id>` yields a server
+  `Content-Disposition` filename embedding `_user-<id-prefix>` and a row set ≤ the
+  unfiltered export — the filter is applied, not cosmetic. The `bv_report_` prefix
+  and timestamp suffix are preserved.
+- Item F (metric definitions; legacy `package`/`method` filters retired → 400)
+  remains **pending management confirmation**; default unchanged.
