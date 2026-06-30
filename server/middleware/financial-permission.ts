@@ -56,6 +56,9 @@ export const FINANCIAL_ACTIONS = {
   businessCustomerCreate: "business_customer.create",
   businessCustomerDelete: "business_customer.delete",
   dollarTransaction: "dollar_system.transaction",
+  donationCreate: "donation.create",
+  tempGmCreate: "temp_gm.create",
+  dollarBuyerCreate: "dollar_buyer.create",
 } as const;
 
 export type FinancialPermissionOptions = ActionPermissionOptions;

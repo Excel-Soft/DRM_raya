@@ -60,3 +60,37 @@ authenticated user without that role.
 | X2 | No console-only buttons | Generate / Export / Save / Edit all hit real endpoints. |
 | X3 | No mock-only data | Trial Balance and Expenses render DB-sourced rows; removed mock filter arrays. |
 | X4 | Audit coverage | create/update/delete on expenses and trial-balance export all write `AuditLogService` records. |
+
+## Patch 7 Stage 5 — AB Report & legacy finance gating (2026-06-30)
+
+Roles: **Financial** = `[admin, account_manager]` (`FINANCIAL_WRITE_ROLES`);
+**Non-financial** = any other authenticated user.
+
+### AB Report (`/account/ab-report` → `GET /api/account/ab-report/stats`)
+
+| # | Scenario | Steps | Expected |
+|---|---|---|---|
+| AB1 | Endpoint loads | GET as Financial | **200** (previously 500). Real aggregate rows. |
+| AB2 | No fabricated PKR | Inspect `closing[]` + `meta` | "Total Dollar (USD)" row shows `$<usd>`; `meta.dollarConversion.rateSource = "unavailable"`, `pkrRate = null`, `pkrTotal = null`. No `*280`. |
+| AB3 | Date window | GET with `dateFrom`/`dateTo` | 200; figures scoped to the range (`created_at` on all three CTE tables). |
+| AB4 | Loan count correct | Data with `is_loan = 1` rows | Loan count/amount reflect integer `is_loan = 1` (no `integer = boolean` crash). |
+
+### Dollar System (`/account/dollar-system` → `GET /api/account/dollar-system/list`)
+
+| # | Scenario | Steps | Expected |
+|---|---|---|---|
+| DS1 | Page loads | GET the list (with/without dates) | **200** (previously 500). Wallet stats + Full/Partial/Loan lists return. |
+| DS2 | Integer flags | Data with loan/partial rows | `is_loan`/`is_partial_payment` compared as integers (`= 1/0`); no `integer = boolean` crash. |
+
+### Legacy financial write gating (writes only; reads unchanged)
+
+| # | Endpoint | As Non-financial | As Financial |
+|---|---|---|---|
+| FG1 | `POST /api/account/donations` | **403** (`finance:donation.create` denied) | passes guard → handler validates body |
+| FG2 | `POST /api/account/temp-gm` | **403** (`finance:temp_gm.create` denied) | passes guard → handler validates body |
+| FG3 | `POST /api/account/buyers` | **403** (`finance:dollar_buyer.create` denied) | passes guard → handler validates body |
+| FG4 | `POST /api/account/dollar-system/transaction` | (already gated) | rate stored as supplied or **NULL** — never `277`; wallet ref unique. |
+
+> Note: temp-GM creation is currently restricted to `[admin, account_manager]`.
+> If a broader requester set is required by the business, widen the policy at the
+> call site (`requireFinancialPermission(..., { roles })`).

@@ -1607,7 +1607,7 @@ export function registerAccountRoutes(app: Express) {
 
 
   // POST /api/account/donations
-  app.post("/api/account/donations", async (req, res) => {
+  app.post("/api/account/donations", requireFinancialPermission(FINANCIAL_ACTIONS.donationCreate), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       // Actual columns: donor_name, amount, date, notes
@@ -2102,7 +2102,7 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // POST /api/account/temp-gm - Create new temporary GM entry
-  app.post("/api/account/temp-gm", async (req, res) => {
+  app.post("/api/account/temp-gm", requireFinancialPermission(FINANCIAL_ACTIONS.tempGmCreate), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { companyName, personName, amount, amountType = 'PKR', reason, comment } = req.body;
@@ -2506,8 +2506,8 @@ export function registerAccountRoutes(app: Express) {
             COALESCE(SUM(amount_pkr) FILTER (WHERE entry_type IN ('Standard', 'GM')), 0) as client_amount,
             COUNT(*) FILTER (WHERE entry_type = 'Cheque') as cheque_count,
             COALESCE(SUM(amount_pkr) FILTER (WHERE entry_type = 'Cheque'), 0) as cheque_amount,
-            COUNT(*) FILTER (WHERE is_loan = true) as loan_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE is_loan = true), 0) as loan_amount,
+            COUNT(*) FILTER (WHERE is_loan = 1) as loan_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE is_loan = 1), 0) as loan_amount,
             COALESCE(SUM(customer_dollar), 0) as total_dollar_balance,
             COALESCE(SUM(amount_usd), 0) as total_dollar_buy
           FROM drm.gm_entries
@@ -2518,7 +2518,7 @@ export function registerAccountRoutes(app: Express) {
             COUNT(*) as temp_count,
             COALESCE(SUM(amount), 0) as temp_amount
           FROM drm.temp_gm_entries
-          WHERE coalesce(is_deleted, false) = false ${dateWhere.replace('$1', '$1').replace('$2', '$2')}
+          WHERE 1=1 ${dateWhere.replace('$1', '$1').replace('$2', '$2')}
         ),
         refund_stats AS (
           SELECT 
@@ -2533,7 +2533,13 @@ export function registerAccountRoutes(app: Express) {
       
       // Calculate derived values
       const sum_pkr = Number(stats.client_amount) + Number(stats.cheque_amount) + Number(stats.loan_amount);
-      const total_dollar_pkr = Number(stats.total_dollar_buy) * 280; // Rough mock rate if not available
+      // ACC-LEGACY-001 (Patch 7 Stage 5): the dollar buy figure is stored in USD
+      // and there is no reliable PKR conversion rate available at this aggregate
+      // level. Previously this multiplied by a hardcoded `280` and presented the
+      // invented PKR number as real. We now report the real USD total honestly and
+      // expose conversion metadata instead of fabricating a rate.
+      const total_dollar_usd = Number(stats.total_dollar_buy);
+      const dollarPkrRate: number | null = null;
       const cash_in_hand = sum_pkr - Number(stats.refund_amount);
 
       res.json({
@@ -2573,9 +2579,18 @@ export function registerAccountRoutes(app: Express) {
           { label: "Loan Recovered", type: "P", val: Number(stats.loan_amount).toLocaleString() },
           { label: "Sum", type: "P", val: sum_pkr.toLocaleString(), color: "text-blue-500", border: true },
           { label: "Refund Amount", type: "P", val: Number(stats.refund_amount).toLocaleString() },
-          { label: "Total Dollar", type: "P", val: total_dollar_pkr.toLocaleString(), color: "text-rose-400" },
+          { label: "Total Dollar (USD)", type: "P", val: `$${total_dollar_usd.toLocaleString()}`, color: "text-rose-400" },
           { label: "Cash In Hand", type: "P", val: cash_in_hand.toLocaleString(), color: "text-emerald-500", bold: true },
-        ]
+        ],
+        meta: {
+          dollarConversion: {
+            usdTotal: total_dollar_usd,
+            pkrRate: dollarPkrRate,
+            pkrTotal: dollarPkrRate === null ? null : total_dollar_usd * dollarPkrRate,
+            rateSource: dollarPkrRate === null ? "unavailable" : "stored",
+            note: "Dollar totals are shown in USD; no stored PKR conversion rate is applied.",
+          },
+        },
       });
     } catch (error) {
       console.error("Error fetching AB report stats:", error);
@@ -2604,8 +2619,8 @@ export function registerAccountRoutes(app: Express) {
           SELECT
             COALESCE(SUM(amount_usd), 0) as gm_usd,
             COALESCE(SUM(amount_pkr), 0) as gm_pkr,
-            COALESCE(SUM(amount_usd) FILTER (WHERE is_loan = true), 0) as loan_usd,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE is_loan = true), 0) as loan_pkr,
+            COALESCE(SUM(amount_usd) FILTER (WHERE is_loan = 1), 0) as loan_usd,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE is_loan = 1), 0) as loan_pkr,
             COALESCE(SUM(amount_pkr) FILTER (WHERE entry_type = 'Recovery'), 0) as cash_rec,
             COALESCE(SUM(amount_usd) FILTER (WHERE entry_type = 'Recovery'), 0) as dollar_rec
           FROM drm.gm_entries
@@ -2634,7 +2649,7 @@ export function registerAccountRoutes(app: Express) {
       const fullPayments = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date", company_name as "company", sales_person_name as "salePerson", amount_usd as "dollar", amount_pkr as "pkr", dollar_rate as "rate", extra_discount_usd as "exDisc", alibaba_discount_usd as "abDisc"
         FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false AND (entry_type IN ('Full', 'Standard', 'Service', 'GM') OR (is_loan = false AND is_partial_payment = false)) ${dateWhere}
+        WHERE coalesce(is_deleted, false) = false AND (entry_type IN ('Full', 'Standard', 'Service', 'GM') OR (is_loan = 0 AND is_partial_payment = 0)) ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
@@ -2642,7 +2657,7 @@ export function registerAccountRoutes(app: Express) {
       const partialPayments = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date", company_name as "company", sales_person_name as "salePerson", amount_usd as "dollar", amount_pkr as "pkr", package_type as "package", gm_type as "type"
         FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false AND (entry_type = 'Partial' OR is_partial_payment = true) ${dateWhere}
+        WHERE coalesce(is_deleted, false) = false AND (entry_type = 'Partial' OR is_partial_payment = 1) ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
@@ -2650,7 +2665,7 @@ export function registerAccountRoutes(app: Express) {
       const loans = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date", company_name as "company", sales_person_name as "salePerson", amount_usd as "dollar", amount_pkr as "pkr", is_loan, entry_type
         FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false AND is_loan = true ${dateWhere}
+        WHERE coalesce(is_deleted, false) = false AND is_loan = 1 ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
@@ -2780,6 +2795,16 @@ export function registerAccountRoutes(app: Express) {
         entryType = 'Adjustment';
       }
 
+      // ACC-LEGACY-001: never fabricate an exchange rate. Store the validated
+      // rate when the caller supplies one, otherwise NULL (drm.gm_entries.dollar_rate
+      // is nullable) — previously this defaulted to a hardcoded `277`, writing an
+      // invented market rate into the ledger.
+      const hasRate = rate !== undefined && rate !== null && rate !== "";
+      const storedRate: number | null = hasRate ? Number(rate) : null;
+      // Internal wallet reference. Date.now() alone can collide on rapid calls;
+      // a short random suffix keeps it unique without changing the WLT- convention.
+      const walletRef = `WLT-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
       // Persist the wallet entry inside an explicit transaction boundary.
       // NOTE: the post-response product-posting invoices below are intentionally
       // best-effort and are NOT part of this transaction (no atomicity claim).
@@ -2791,12 +2816,12 @@ export function registerAccountRoutes(app: Express) {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
         RETURNING id
       `, [
-        `WLT-${Date.now()}`, 
+        walletRef, 
         company || 'Wallet Operation', 
         finalAmountPkr,
         finalAmountUsd, 
         finalAmountPkr, 
-        rate || 277, 
+        storedRate, 
         entryType, 
         gmType,
         'Wallet',
@@ -2817,7 +2842,7 @@ export function registerAccountRoutes(app: Express) {
           type,
           amountUsd: finalAmountUsd,
           amountPkr: finalAmountPkr,
-          rate: rate || 277,
+          rate: storedRate,
           company: company || 'Wallet Operation',
         },
         req,
@@ -2863,7 +2888,7 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
-  app.post("/api/account/buyers", async (req, res) => {
+  app.post("/api/account/buyers", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyerCreate), async (req, res) => {
     try {
       const data = insertDollarBuyerSchema.parse(req.body);
       const result = await pool.query(`

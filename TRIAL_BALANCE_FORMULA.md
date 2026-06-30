@@ -87,3 +87,17 @@ just `signed(openingBalance)`. When no `end` is supplied, all ledger rows up to
 The pure helper is intended to be exercised with fixtures (debit/credit-normal
 heads, pre-period vs in-period dating, reversal netting, zero-balance dropping,
 imbalance detection). See `OFFICE_ACCOUNTS_QA_MATRIX.md` for manual scenarios.
+
+## Patch 7 Stage 5 note (2026-06-30)
+
+The trial balance (`/office/trial-balance-report` →
+`GET /api/office/trial-balance`) is **unchanged** in Patch 7 Stage 5 and remains
+as specified above. Verified still backend-backed (no regression).
+
+Do **not** confuse it with the **AB Report** (`/account/ab-report` →
+`GET /api/account/ab-report/stats`), a separate aggregate over `gm_entries` /
+`temp_gm_entries` / `refund_gm_entries`. The AB Report was the endpoint hardened
+this stage (removed a fabricated `*280` PKR rate; now reports real USD plus
+`meta.dollarConversion`; fixed pre-existing SQL type bugs that made it 500). The
+trial-balance formula and its currency-safety rule were not touched. See
+`PATCH7_STAGE5_OFFICE_DOMAIN_CHANGELOG.md`.

@@ -376,7 +376,10 @@ router.post("/domains", requireRole(...IT_WRITE_ROLES), async (req, res) => {
   if (dup) return res.status(409).json({ error: "A domain with this name already exists" });
 
   const result = insertItDomainSchema.safeParse({ ...body, domainName });
-  if (!result.success) return res.status(400).json(result.error);
+  if (!result.success)
+    return res
+      .status(400)
+      .json({ error: result.error.issues[0]?.message ?? "Invalid request." });
 
   // Defensive: strip any secret that survived schema parsing.
   const data: any = { ...result.data };
@@ -404,16 +407,32 @@ router.post("/domains", requireRole(...IT_WRITE_ROLES), async (req, res) => {
 });
 
 // Backups
-router.get("/backups", async (req, res) => {
+router.get("/backups", requireRole(...IT_READ_ROLES), async (req, res) => {
   const list = await itAssetsRepository.listBackups();
   res.json(list);
 });
 
-router.post("/backups", async (req, res) => {
+// Patch 7 Stage 5 — backup creation is a write and must be role-gated and
+// audited like every other domain-hosting write (previously it was only
+// authenticated with no audit trail).
+router.post("/backups", requireRole(...IT_WRITE_ROLES), async (req, res) => {
   const result = insertItBackupSchema.safeParse(req.body);
-  if (!result.success) return res.status(400).json(result.error);
-  const backup = await itAssetsRepository.createBackup(result.data);
-  res.json(backup);
+  if (!result.success)
+    return res
+      .status(400)
+      .json({ error: result.error.issues[0]?.message ?? "Invalid request." });
+  const created = await itAssetsRepository.createBackup(result.data);
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_backup.create",
+    module: "domain_hosting",
+    entityType: "it_backup",
+    entityId: created.id,
+    after: created,
+    req,
+  });
+  res.status(201).json(created);
 });
 
 router.get("/system-report", async (req, res) => {

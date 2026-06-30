@@ -65,3 +65,20 @@ Closure). See `PATCH6_STAGE7_OFFICE_ACCOUNTS_CHANGELOG.md`,
 - Dead/mock UI controls removed: Trial Balance parent/child/office multiselects;
   Office Expenses Parent/Child/Transactional head filters. Remaining filters map
   to real columns only.
+
+## Patch 7 Stage 5 update (2026-06-30)
+
+Gap-closure on three legacy finance endpoints and the secondary Domain/Hosting
+pages. See `PATCH7_STAGE5_OFFICE_DOMAIN_CHANGELOG.md`.
+
+| Sub-module | Now | Backend endpoint(s) | Change this stage |
+|---|---|---|---|
+| AB Report | **Backend-backed + honest** (was 500 + magic rate) | `GET /api/account/ab-report/stats` | Removed magic `*280`; returns real USD total + `meta.dollarConversion` (`rateSource: "unavailable"`); fixed pre-existing SQL type bugs (`is_loan=1`, dropped non-existent `temp_gm_entries.is_deleted` filter) so it returns 200. |
+| Dollar System | **No fabricated rate** | `POST /api/account/dollar-system/transaction` | `rate||277` → validated rate or `NULL`; `WLT-${Date.now()}` → unique `WLT-<ts>-<rand>`. |
+| Donations | **Write permission-gated** | `POST /api/account/donations` | `requireFinancialPermission(finance:donation.create)`. Reads unchanged. |
+| Add Temp GM | **Write permission-gated** | `POST /api/account/temp-gm` | `requireFinancialPermission(finance:temp_gm.create)`. See changelog note re: possibly widening roles. |
+| Dollar buyers | **Write permission-gated** | `POST /api/account/buyers` | `requireFinancialPermission(finance:dollar_buyer.create)`. |
+
+- **No schema changes** (`db:push` broken → additive runtime DDL only; none
+  needed). All affected columns already exist — see
+  `PATCH7_DB_MIGRATION_RECONCILIATION.md`.
