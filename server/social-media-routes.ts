@@ -541,6 +541,57 @@ export async function registerSocialMediaRoutes(app: Express) {
     }
   });
 
+  // GET /dashboard/summary — honest, caller-scoped aggregate counts (NOT paginated).
+  // Reuses buildListQuery so the same RBAC scope and the same filters
+  // (platform/account/approval/publishing/createdBy/scheduled-range/search) as
+  // GET /posts apply. Counts come straight from the real table; never fabricated.
+  app.get("/api/social-media/dashboard/summary", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const { whereSql, params } = await buildListQuery(req);
+      const { rows } = await pool.query(
+        `select
+           count(*)::int as "total",
+           count(*) filter (where p.approval_status = 'DRAFT')::int     as "apDraft",
+           count(*) filter (where p.approval_status = 'PENDING')::int   as "apPending",
+           count(*) filter (where p.approval_status = 'APPROVED')::int  as "apApproved",
+           count(*) filter (where p.approval_status = 'REJECTED')::int  as "apRejected",
+           count(*) filter (where p.publishing_status = 'DRAFT')::int     as "puDraft",
+           count(*) filter (where p.publishing_status = 'SCHEDULED')::int as "puScheduled",
+           count(*) filter (where p.publishing_status = 'READY')::int     as "puReady",
+           count(*) filter (where p.publishing_status = 'PUBLISHED')::int as "puPublished",
+           count(*) filter (where p.publishing_status = 'FAILED')::int    as "puFailed",
+           count(*) filter (where p.publishing_status = 'CANCELLED')::int as "puCancelled",
+           count(*) filter (where p.publishing_status = 'SCHEDULED' and p.scheduled_at >= now())::int as "upcoming"
+         from drm.social_media_posts p
+        where ${whereSql}`,
+        params,
+      );
+      const r: Record<string, number> = rows[0] ?? {};
+      res.json({
+        total: r.total ?? 0,
+        approval: {
+          DRAFT: r.apDraft ?? 0,
+          PENDING: r.apPending ?? 0,
+          APPROVED: r.apApproved ?? 0,
+          REJECTED: r.apRejected ?? 0,
+        },
+        publishing: {
+          DRAFT: r.puDraft ?? 0,
+          SCHEDULED: r.puScheduled ?? 0,
+          READY: r.puReady ?? 0,
+          PUBLISHED: r.puPublished ?? 0,
+          FAILED: r.puFailed ?? 0,
+          CANCELLED: r.puCancelled ?? 0,
+        },
+        upcomingScheduled: r.upcoming ?? 0,
+      });
+    } catch (err) {
+      console.error("[social-media] summary failed:", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to load summary" });
+    }
+  });
+
   // GET /posts/:id — single post (scoped).
   app.get(`${POSTS}/:id`, async (req: Request, res: Response) => {
     try {

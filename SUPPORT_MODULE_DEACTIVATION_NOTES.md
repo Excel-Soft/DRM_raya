@@ -95,3 +95,21 @@ deactivation remains the single source of truth):
 - Client gate confirmed in `client/src/App.tsx`: the `/support/*` routes render
   `SupportInactive` when `VITE_SUPPORT_MODULE_ENABLED !== "true"`.
 - Both flags are non-sensitive boolean config in Replit-managed env — no secrets.
+
+## Patch 7 Stage 6 — explicit flags
+
+Previously the flags were simply **absent**, which already meant "deactivated"
+(a flag is ON only when its value is exactly `"true"`). In Patch 7 Stage 6 both
+flags were set **explicitly to `"false"`** in the Replit-managed **shared**
+environment so the deactivated state is self-documenting and QA is reproducible:
+
+- `SUPPORT_MODULE_ENABLED=false` (shared)
+- `VITE_SUPPORT_MODULE_ENABLED=false` (shared)
+
+Behaviour is unchanged (Support stays OFF); this only makes the intent explicit.
+The shared scope applies to both development and production. To re-enable, follow
+the "Re-enable steps" above (set both to `"true"` and restart so Vite re-inlines
+the client flag).
+
+Re-verified this stage by smoke test (admin JWT): `GET /api/support/tickets`
+returns `404` and the `/api/support/*` prefix is short-circuited before auth.
