@@ -29,3 +29,17 @@ where the route already redirects away from a dead page.
   requires a reason and is audited.
 - **"Remove" without file deletion** is intentional: the redirect makes the dead
   page unreachable while preserving the file as scratch history.
+
+## Patch 7 Stage 5 verification (2026-06-30)
+
+Re-verified the two routing decisions against `client/src/App.tsx`:
+
+- **Account Head → MERGE** (OFF-002): `/office/account-head` still
+  `Redirect`→`/office/chart-of-accounts` (App.tsx). Confirmed closed.
+- **Old Account Head → REMOVE** (OFF-006): `/office/old-account-head` still
+  `Redirect`→`/office/chart-of-accounts` (App.tsx). Confirmed closed.
+
+No retain/remove decisions changed this stage. The Patch 7 Stage 5 work was
+endpoint honesty/permission gaps on **retained** sub-modules (AB Report, Dollar
+System, Donations, Temp GM, Dollar buyers) — see
+`PATCH7_STAGE5_OFFICE_DOMAIN_CHANGELOG.md`.
