@@ -101,6 +101,17 @@ same target requires an **override**, which needs **both** a managerial role
 `superseded`. Missing reason ⇒ 400 `OVERRIDE_REASON_REQUIRED`; non-managerial ⇒
 403 `OVERRIDE_FORBIDDEN`; no override flag ⇒ 409 `BRIDGE_EXISTS`.
 
+## Bridge reports (read side — Patch 7 Stage 4)
+The write endpoints above are config-gated; the **read** endpoints are not.
+`GET /api/service/{gm,vas,bv}-report` query `drm.service_bridge_links` (joined to
+the source service record and LEFT-joined to the canonical target table) so a
+disabled bridge blocks **creation** while previously-linked history stays
+**viewable and auditable**. They are auth-protected, row-scoped via
+`scopedUserIds`, return `{targetModule, items, summary}` (empty ⇒ `200` zeroed,
+never 501), show GM `pending_gm_creation` links honestly, and fall back to a
+links-only view if a target table has drifted. Full contract in
+`SERVICE_REPORT_UPDATE_HOOKS.md`.
+
 ## Audit & notification
 Every successful bridge records an audit event
 (`service_bridge.<target>.create`) via `AuditLogService` and notifies the
