@@ -38,6 +38,7 @@ import {
   bridgeToGm,
   bridgeToVas,
   bridgeToBv,
+  ensureBridgeLinksTable,
   mapServiceBridgeError,
   type BridgeActor,
 } from "./services/service-bridge.service";
@@ -65,6 +66,37 @@ const commSafeIso = (v: any): string | undefined => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 };
+
+// --- Service bridge report helpers -----------------------------------------
+type BridgeReportTarget = "gm" | "vas" | "bv";
+
+function emptyBridgeSummary(target: BridgeReportTarget): Record<string, number> {
+  const base = { total: 0, active: 0, superseded: 0 };
+  return target === "gm"
+    ? { ...base, linked: 0, pending: 0, totalAmountUsd: 0 }
+    : { ...base, totalValueSold: 0 };
+}
+
+function summarizeBridgeReport(target: BridgeReportTarget, rows: any[]): Record<string, number> {
+  const s: any = emptyBridgeSummary(target);
+  s.total = rows.length;
+  for (const r of rows) {
+    if (r.linkStatus === "active") s.active++;
+    else if (r.linkStatus === "superseded") s.superseded++;
+    if (target === "gm") {
+      if (r.targetRecordId) s.linked++;
+      else s.pending++;
+      const amt = Number(r.amountUsd);
+      if (Number.isFinite(amt)) s.totalAmountUsd += amt;
+    } else {
+      const v = Number(r.valueSold);
+      if (Number.isFinite(v)) s.totalValueSold += v;
+    }
+  }
+  if (target === "gm") s.totalAmountUsd = Math.round(s.totalAmountUsd * 100) / 100;
+  else s.totalValueSold = Math.round(s.totalValueSold * 100) / 100;
+  return s;
+}
 
 async function scopedUserIds(req: Request): Promise<string[] | null> {
   const isManager = isManagerialRole((req.user as any).activeRoleId || req.user!.roleId);
@@ -542,29 +574,97 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   });
 
-  // Phase 5: GM / VAS / BV Bridges
-  app.get("/api/service/gm-report", async (req: Request, res: Response) => {
-    try {
-      res.json({ message: "GM Report stub" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to fetch GM report" });
+  // Phase 5: GM / VAS / BV bridge REPORTS (read-only).
+  // These surface the bridge linkage history (drm.service_bridge_links) joined to
+  // the source service record (+ company) and, per target, the canonical report /
+  // entry it produced. Reads are intentionally NOT config-gated: disabling a bridge
+  // blocks CREATION (the POST routes below return 403), but previously-bridged
+  // history must stay viewable. Row-scoped via scopedUserIds (managers see their
+  // department, executives only their own links). Each target join is wrapped so
+  // schema drift on a target table degrades to a links-only view instead of 500ing.
+  const serviceBridgeReport = async (
+    req: Request,
+    res: Response,
+    target: BridgeReportTarget,
+  ): Promise<Response> => {
+    await ensureBridgeLinksTable();
+
+    const userIds = await scopedUserIds(req);
+    const params: any[] = [target];
+    let scopeClause = "";
+    if (Array.isArray(userIds)) {
+      if (userIds.length === 0) {
+        return res.json({ targetModule: target, items: [], summary: emptyBridgeSummary(target) });
+      }
+      params.push(userIds);
+      scopeClause = `AND l.created_by = ANY($2::text[])`;
     }
+
+    const TARGET_JOIN: Record<BridgeReportTarget, { extra: string; from: string }> = {
+      gm: {
+        extra: `, g.status AS "reportStatus", g.company_name AS "reportCompany", g.drm_id AS "drmId", g.amount_usd AS "amountUsd"`,
+        from: `LEFT JOIN drm.gm_entries g ON g.id::text = l.target_record_id`,
+      },
+      vas: {
+        extra: `, r.status AS "reportStatus", r.title AS "reportTitle", r.value_sold AS "valueSold", r.report_date AS "reportDate"`,
+        from: `LEFT JOIN drm.vas_reports r ON r.id::text = l.target_record_id`,
+      },
+      bv: {
+        extra: `, r.status AS "reportStatus", r.title AS "reportTitle", r.value_sold AS "valueSold", r.report_date AS "reportDate"`,
+        from: `LEFT JOIN drm.bv_reports r ON r.id::text = l.target_record_id`,
+      },
+    };
+
+    const buildSql = (withTarget: boolean): string => {
+      const t = TARGET_JOIN[target];
+      return `
+        SELECT
+          l.id                AS "linkId",
+          l.service_record_id AS "serviceRecordId",
+          l.target_record_id  AS "targetRecordId",
+          l.status            AS "linkStatus",
+          l.created_by        AS "createdBy",
+          l.override_reason   AS "overrideReason",
+          l.created_at        AS "linkedAt",
+          (l.metadata->>'handoff') AS "handoff",
+          sc.status           AS "serviceStatus",
+          sc.customer_id      AS "customerId",
+          c.company_name      AS "companyName"
+          ${withTarget ? t.extra : ""}
+        FROM drm.service_bridge_links l
+        LEFT JOIN drm.service_customers sc ON sc.id::text = l.service_record_id
+        LEFT JOIN drm.customers c          ON c.id::text  = sc.customer_id::text
+        ${withTarget ? t.from : ""}
+        WHERE l.target_module = $1 ${scopeClause}
+        ORDER BY l.created_at DESC
+        LIMIT 500`;
+    };
+
+    let rows: any[];
+    try {
+      ({ rows } = await pool.query(buildSql(true), params));
+    } catch (joinErr) {
+      // Target table drift → degrade to a links-only view (never 500 a read).
+      console.error(`[ServiceBridgeReport] ${target} target join failed; links-only fallback`, joinErr);
+      ({ rows } = await pool.query(buildSql(false), params));
+    }
+
+    return res.json({ targetModule: target, items: rows, summary: summarizeBridgeReport(target, rows) });
+  };
+
+  app.get("/api/service/gm-report", async (req: Request, res: Response) => {
+    try { await serviceBridgeReport(req, res, "gm"); }
+    catch (err) { sendError(res, err); }
   });
 
   app.get("/api/service/vas-report", async (req: Request, res: Response) => {
-    try {
-      res.json({ message: "VAS Report stub" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to fetch VAS report" });
-    }
+    try { await serviceBridgeReport(req, res, "vas"); }
+    catch (err) { sendError(res, err); }
   });
 
   app.get("/api/service/bv-report", async (req: Request, res: Response) => {
-    try {
-      res.json({ message: "BV Report stub" });
-    } catch (err) {
-      res.status(500).json({ error: "Failed to fetch BV report" });
-    }
+    try { await serviceBridgeReport(req, res, "bv"); }
+    catch (err) { sendError(res, err); }
   });
 
   // Service → GM / VAS / BV bridges (Patch 6 Stage 5).

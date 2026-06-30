@@ -94,3 +94,11 @@ Currently wired:
 entity timeline with channel icons, outcome/status badges and follow-up-due
 markers, plus channel / outcome / user / date filters. It is embedded in the
 customer follow-up dialog and is reusable for any future detail view.
+
+## Patch 7 Stage 4 verification
+Re-verified unchanged and complete: `/api/communications` list, per-entity
+`timeline`, `reminders/due` and `reminders/overdue` are all backed by real
+`CommunicationService` queries (not stubs), validators fail-closed with no silent
+fallback, and **no external WhatsApp/SMS/email provider** is called — channels
+are recorded as metadata only. No code change in Stage 4; this module was
+confirmed complete, not rebuilt.

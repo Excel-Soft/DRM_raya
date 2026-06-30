@@ -1,11 +1,12 @@
 import { Express, Request, Response } from "express";
 
-import { db } from "./db";
+import { db, pool } from "./db";
 import {
   serviceCustomers,
   serviceActivities,
   serviceTargets,
   serviceFollowups,
+  serviceRenewals,
   appointments,
   users,
   serviceComplaints,
@@ -14,6 +15,7 @@ import {
 import { eq, and, sql, gte, lte, desc } from "drizzle-orm";
 import { startOfMonth, endOfMonth, eachDayOfInterval, format } from "date-fns";
 import { computeExpiryState } from "./utils/service-expiry";
+import { ensureBridgeLinksTable } from "./services/service-bridge.service";
 
 export function registerServiceManagerRoutes(app: Express) {
   // Manager Stats / Top Cards
@@ -33,9 +35,17 @@ export function registerServiceManagerRoutes(app: Express) {
         // the status field conceptually implies renewal vs new.
       }
 
-      // Total revenue placeholder (requires sum of invoices/gm matching the service)
+      // Total revenue = sum of recorded service-renewal amounts, the only
+      // defensible revenue source the service module owns today. Opaque metrics
+      // (vm/kwa/psa/sponsorBrand) have no source table and remain an honest 0
+      // rather than an invented formula.
+      const revenueRows = await db
+        .select({ totalRevenue: sql<number>`COALESCE(SUM(${serviceRenewals.amount}), 0)::float` })
+        .from(serviceRenewals);
+      const totalRevenue = revenueRows[0]?.totalRevenue ?? 0;
+
       res.json({
-        totalRevenue: 0,
+        totalRevenue,
         new: newCount,
         renew: renewCount,
         expire: expireCount,
@@ -82,8 +92,32 @@ export function registerServiceManagerRoutes(app: Express) {
       // Return a list of users involved in "service" department and their targets
       const serviceUsers = await db.select().from(users).where(eq(users.department, "Service")); // Assuming 'Service' exists
 
+      // Active service→GM / service→BV bridge counts per creator. These are sourced
+      // directly from drm.service_bridge_links (the bridge owns this data), so they
+      // are defensible. The remaining queue metrics (total/target/achieve/remain/
+      // aMinus/prediction) have no service-scoped source table yet and stay 0.
+      const bridgeCounts: Record<string, { gm: number; bv: number }> = {};
+      try {
+        await ensureBridgeLinksTable();
+        const { rows } = await pool.query<{ createdBy: string; targetModule: string; n: number }>(
+          `SELECT created_by AS "createdBy", target_module AS "targetModule", COUNT(*)::int AS n
+             FROM drm.service_bridge_links
+            WHERE status = 'active' AND target_module IN ('gm','bv') AND created_by IS NOT NULL
+            GROUP BY created_by, target_module`,
+        );
+        for (const r of rows) {
+          const key = String(r.createdBy);
+          if (!bridgeCounts[key]) bridgeCounts[key] = { gm: 0, bv: 0 };
+          if (r.targetModule === "gm") bridgeCounts[key].gm = r.n;
+          else if (r.targetModule === "bv") bridgeCounts[key].bv = r.n;
+        }
+      } catch (bridgeErr) {
+        console.error("[ServiceManager] bridge counts unavailable", bridgeErr);
+      }
+
       const data = [];
       for (const user of serviceUsers) {
+        const counts = bridgeCounts[user.id] || { gm: 0, bv: 0 };
         data.push({
           user: user.fullName || user.username,
           total: 0,
@@ -92,8 +126,8 @@ export function registerServiceManagerRoutes(app: Express) {
           remain: 0,
           aMinus: 0,
           prediction: 0,
-          gm: 0,
-          bv: 0
+          gm: counts.gm,
+          bv: counts.bv
         });
       }
 
@@ -111,15 +145,25 @@ export function registerServiceManagerRoutes(app: Express) {
       const start = startOfMonth(now);
       const end = endOfMonth(now);
 
-      // Example stub: Return array of `{ date, count }`
       const dailyMap: Record<string, number> = {};
-      
       eachDayOfInterval({ start, end }).forEach(day => {
         dailyMap[format(day, 'yyyy-MM-dd')] = 0;
       });
 
-      // You could populate dailyMap by running group-by queries on serviceActivities or serviceCustomers createdAt
-      
+      // Populate from real service-activity volume for the current month.
+      const dailyCounts = await db
+        .select({
+          day: sql<string>`to_char(${serviceActivities.activityDate}, 'YYYY-MM-DD')`,
+          count: sql<number>`count(${serviceActivities.id})::int`,
+        })
+        .from(serviceActivities)
+        .where(and(gte(serviceActivities.activityDate, start), lte(serviceActivities.activityDate, end)))
+        .groupBy(sql`to_char(${serviceActivities.activityDate}, 'YYYY-MM-DD')`);
+
+      for (const row of dailyCounts) {
+        if (row.day in dailyMap) dailyMap[row.day] = row.count;
+      }
+
       const responseArray = Object.keys(dailyMap).map(k => ({ date: k, count: dailyMap[k] }));
 
       res.json(responseArray);

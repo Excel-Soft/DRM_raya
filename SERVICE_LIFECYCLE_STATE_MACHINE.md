@@ -104,3 +104,11 @@ Every status change records `SERVICE_CUSTOMER_STATUS_CHANGED` via
 `AuditLogService` (with previous/next status, reason, any warnings, and the
 logical action) and notifies the assignee via `NotificationService`. Both are
 best-effort and never throw.
+
+## Patch 7 Stage 4 verification
+Re-verified unchanged: the machine remains the central, reusable authority and is
+still **not wired to any HTTP route** (the imported app has no status-changing
+endpoint to route through it), so all current HTTP outcomes are unchanged. No
+code change in Stage 4 — this module was confirmed complete, not rebuilt. When a
+status-change endpoint is introduced it should call
+`changeServiceCustomerStatus`.
