@@ -258,6 +258,8 @@ export default function SocialMedia() {
   const [approvalFilter, setApprovalFilter] = useState("all");
   const [publishingFilter, setPublishingFilter] = useState("all");
   const [accountFilter, setAccountFilter] = useState("all");
+  const [scheduledFrom, setScheduledFrom] = useState("");
+  const [scheduledTo, setScheduledTo] = useState("");
   const [page, setPage] = useState(1);
 
   // Dialogs
@@ -285,7 +287,7 @@ export default function SocialMedia() {
 
   useEffect(() => {
     setPage(1);
-  }, [platformFilter, approvalFilter, publishingFilter, accountFilter]);
+  }, [platformFilter, approvalFilter, publishingFilter, accountFilter, scheduledFrom, scheduledTo]);
 
   // Accounts (for the create/edit account picker + the account filter)
   const { data: accountsResp } = useQuery<AccountsResponse>({
@@ -307,13 +309,43 @@ export default function SocialMedia() {
     if (approvalFilter !== "all") p.set("approvalStatus", approvalFilter);
     if (publishingFilter !== "all") p.set("publishingStatus", publishingFilter);
     if (accountFilter !== "all") p.set("socialAccountId", accountFilter);
+    if (scheduledFrom) p.set("scheduledFrom", scheduledFrom);
+    if (scheduledTo) p.set("scheduledTo", `${scheduledTo}T23:59:59`);
     return p.toString();
-  }, [page, searchTerm, platformFilter, approvalFilter, publishingFilter, accountFilter]);
+  }, [page, searchTerm, platformFilter, approvalFilter, publishingFilter, accountFilter, scheduledFrom, scheduledTo]);
 
   const { data: response, isLoading, isError, error } = useQuery<PostsResponse>({
     queryKey: ["/api/social-media/posts", queryString],
     queryFn: () =>
       apiRequestJson<PostsResponse>("GET", `/api/social-media/posts?${queryString}`),
+  });
+
+  // Honest, scoped aggregate counts — same filters as the list (minus pagination).
+  const summaryQueryString = useMemo(() => {
+    const p = new URLSearchParams();
+    if (searchTerm.trim()) p.set("search", searchTerm.trim());
+    if (platformFilter !== "all") p.set("platform", platformFilter);
+    if (approvalFilter !== "all") p.set("approvalStatus", approvalFilter);
+    if (publishingFilter !== "all") p.set("publishingStatus", publishingFilter);
+    if (accountFilter !== "all") p.set("socialAccountId", accountFilter);
+    if (scheduledFrom) p.set("scheduledFrom", scheduledFrom);
+    if (scheduledTo) p.set("scheduledTo", `${scheduledTo}T23:59:59`);
+    return p.toString();
+  }, [searchTerm, platformFilter, approvalFilter, publishingFilter, accountFilter, scheduledFrom, scheduledTo]);
+
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+  } = useQuery<{
+    total: number;
+    approval: Record<string, number>;
+    publishing: Record<string, number>;
+    upcomingScheduled: number;
+  }>({
+    queryKey: ["/api/social-media/dashboard/summary", summaryQueryString],
+    queryFn: () =>
+      apiRequestJson("GET", `/api/social-media/dashboard/summary?${summaryQueryString}`),
   });
 
   const rows = response?.data ?? [];
@@ -324,6 +356,7 @@ export default function SocialMedia() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/social-media/posts"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/social-media/dashboard/summary"] });
   };
 
   // Mutations -----------------------------------------------------------------
@@ -671,6 +704,32 @@ export default function SocialMedia() {
         (manual) — posts are not sent to any external platform.
       </p>
 
+      {/* Real, scoped counts from GET /api/social-media/dashboard/summary —
+          reflect the active filters; never client-derived from a paged list. */}
+      <div className="mb-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: "Total Posts", value: summary?.total, tone: "text-[#495057] dark:text-zinc-200" },
+          { label: "Pending Approval", value: summary?.approval?.PENDING, tone: "text-amber-600 dark:text-amber-400" },
+          { label: "Approved", value: summary?.approval?.APPROVED, tone: "text-emerald-600 dark:text-emerald-400" },
+          { label: "Scheduled", value: summary?.publishing?.SCHEDULED, tone: "text-indigo-600 dark:text-indigo-400" },
+          { label: "Published", value: summary?.publishing?.PUBLISHED, tone: "text-emerald-600 dark:text-emerald-400" },
+          { label: "Upcoming", value: summary?.upcomingScheduled, tone: "text-sky-600 dark:text-sky-400" },
+        ].map((c) => (
+          <div
+            key={c.label}
+            className="bg-white border border-gray-100 rounded-sm shadow-sm px-4 py-3 dark:bg-zinc-900 dark:border-zinc-800"
+            data-testid={`stat-${c.label.toLowerCase().replace(/\s+/g, "-")}`}
+          >
+            <div className="text-[11px] uppercase tracking-wide text-[#6c757d] dark:text-zinc-500">
+              {c.label}
+            </div>
+            <div className={`text-xl font-bold ${c.tone}`}>
+              {summaryLoading ? "…" : summaryError ? "—" : (c.value ?? 0)}
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <Button
           className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 text-[13px] font-medium tracking-wide h-9 shadow-sm rounded-sm gap-1.5"
@@ -736,6 +795,24 @@ export default function SocialMedia() {
               ))}
             </SelectContent>
           </Select>
+          <Input
+            type="date"
+            value={scheduledFrom}
+            onChange={(e) => setScheduledFrom(e.target.value)}
+            className="h-9 w-36 text-[13px]"
+            title="Scheduled from"
+            aria-label="Scheduled from"
+            data-testid="input-scheduled-from"
+          />
+          <Input
+            type="date"
+            value={scheduledTo}
+            onChange={(e) => setScheduledTo(e.target.value)}
+            className="h-9 w-36 text-[13px]"
+            title="Scheduled to"
+            aria-label="Scheduled to"
+            data-testid="input-scheduled-to"
+          />
           <Input
             placeholder="Search"
             value={searchInput}

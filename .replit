@@ -54,6 +54,8 @@ externalPort = 80
 JWT_SECRET = "f99a860b121627ebd035123095e6ae0548c54eefb91dcea0e05ed4bb0203547a341b050877d0f58d97fe8173dd899d59"
 DATABASE_SSL = "false"
 DEBUG_ERRORS = "true"
+SUPPORT_MODULE_ENABLED = "false"
+VITE_SUPPORT_MODULE_ENABLED = "false"
 
 [postMerge]
 path = "scripts/post-merge.sh"
