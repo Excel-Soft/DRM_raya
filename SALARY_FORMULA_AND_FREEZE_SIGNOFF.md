@@ -49,3 +49,22 @@ Confirm all three, or specify the change:
 **Current default until confirmed:** `/30` basis, no late penalty, finalize
 locks. These are flag/config-backed, so a confirmed decision needs no code
 change — only the decision.
+
+## Patch 7 re-verification (2026-06-30)
+
+Runtime re-verification this stage; **no formula or lifecycle change made**.
+
+- **FINALIZE freeze enforced (runtime):** a PATCH to advance the live FINALIZED
+  run (`status` change) returns **409**, and editing a FINALIZED line item returns
+  **409** ("Finalized/locked salary runs cannot be modified" /
+  "only DRAFT/GENERATED lines editable"). The irreversible terminal transition
+  itself is code-verified (`ALLOWED_NEXT.FINALIZED = []`, `LOCKED_STATUSES`); only
+  the **rejection** path was exercised at runtime to avoid an irreversible
+  FINALIZE on real data.
+- **View ↔ export parity (runtime):** salary report list = 6 rows, export = 6 rows
+  over identical filters/scope.
+- **No cross-user leak (runtime):** `sales_executive` salary **view** returns 200
+  but **0 rows** (self-scoped via `resolveScope`) vs admin's 6; salary **export**
+  is denied (403); anonymous is 401.
+- Items E (perDay `/30`, no late penalty, finalize locks) remain **pending
+  management confirmation**; defaults unchanged.

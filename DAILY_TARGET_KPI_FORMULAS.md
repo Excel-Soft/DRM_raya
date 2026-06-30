@@ -33,3 +33,19 @@ Confirm: does "achievement" count **only Approved GMs**?
 
 **Current default until confirmed:** Approved-only. This is config-backed, so a
 confirmed decision needs no code change — only the decision.
+
+## Patch 7 re-verification (2026-06-30)
+
+Runtime re-verification this stage; **no formula change made**.
+
+- **Null-handling confirmed (runtime):** current data has no assigned target in
+  range, so the report returns `assignedTarget = null` and `pending = null` for
+  every employee and surfaces them as **`null`, never `0%`** or a fabricated value.
+  The `pending = max(0, assigned − achieved)` arithmetic and `achievement%`
+  formula remain **code-verified** until target rows exist to exercise them.
+- **Structured export parity (runtime):** the export CSV is a structured report
+  (title + summary-metrics block + detail table), not a flat dump. Its **detail
+  rows (4)** equal the list total (4) **and** the summary `Employee Count` (4) —
+  all three agree over identical filters/scope.
+- Item K (achievement = Approved-GM only) remains **pending management
+  confirmation**; default unchanged.
