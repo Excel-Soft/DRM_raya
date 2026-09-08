@@ -1,0 +1,1 @@
+{"id":"tAZm3xvpE7pBirgioZH1y","status":"PASSED","startedAt":1782846205669,"endedAt":1782846232119,"durationMs":26450,"commands":[{"executionId":"","commandId":"test","shell":"npm test","status":"PASSED","exitCode":0,"durationMs":26447,"logFilePath":"/home/runner/workspace/.local/state/workflow-logs/tAZm3xvpE7pBirgioZH1y/validation.shell.exec.0","externallyManaged":false}]}

@@ -1,0 +1,19 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 test
+> vitest run
+
+[1G[0K⠙[1G[0K[?25l
+ RUN  v4.1.8 /home/runner/workspace
+
+
+ Test Files  15 passed (15)
+      Tests  227 passed (227)
+   Start at  19:50:47
+   Duration  22.21s (transform 2.42s, setup 0ms, import 12.19s, tests 6.54s, environment 1ms)
+
+[?25h[1G[0K⠙[1G[0K[1mnpm[22m [96mnotice[39m
+[1mnpm[22m [96mnotice[39m New [31mmajor[39m version of npm available! [31m10.8.2[39m -> [34m11.18.0[39m
+[1mnpm[22m [96mnotice[39m Changelog: [34mhttps://github.com/npm/cli/releases/tag/v11.18.0[39m
+[1mnpm[22m [96mnotice[39m To update run: [4mnpm install -g npm@11.18.0[24m
+[1mnpm[22m [96mnotice[39m
+[1G[0K⠙[1G[0K

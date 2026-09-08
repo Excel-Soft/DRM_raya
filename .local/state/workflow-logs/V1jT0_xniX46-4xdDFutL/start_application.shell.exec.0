@@ -1,0 +1,14 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> cross-env NODE_ENV=development tsx watch server/index.ts
+
+[1G[0K⠙[1G[0K[db] connecting host=helium port=5432 db=heliumdb user=postgres ssl=off
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+2:46:25 PM [express] IPv6 bind failed (EAFNOSUPPORT); retrying on 0.0.0.0
+2:46:25 PM [express] serving on fixed port 5000
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[AUTH] 401 GET /api/auth/me reason=missing-token header=n cookie=n userId=none
+[2026-07-01T14:49:31.118Z] rid=d856055a-7581-4ee8-8b33-982472d3d67f GET /api/auth/me -> 401 (4ms)
