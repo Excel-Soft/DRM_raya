@@ -1,0 +1,29 @@
+Patch 7 Stage 8: production-readiness, DB-migration, UI/UX, UAT & final sign-off package
+
+Governance closure for WebExcels DRM. Documentation + verification only — no
+feature/business-logic/API/DB-schema changes (additive constraint honored; zero DDL).
+
+Evidence executed this session:
+- Gates: npm run check (tsc) exit 0; npm run build exit 0 (chunk-size warnings only);
+  npm test 227/227 pass (15 files). node v20.20.0 / npm 10.8.2. npm ci not run
+  (Replit-managed deps) — rationale documented.
+- API permission harness (.local/uat8.mjs, since removed): 18/18 — anon 401 on 7
+  protected endpoints; audit viewer admin/super_hod 200 vs hod/account_manager/
+  sales_executive 403; filters + invalid-date 400; forbidden-role 403 on penalty
+  create/approval. Corroborated by server AUTH_MW logs.
+- DB: live drm = 641 tables; db:push broken on pre-existing FK (runtime ensure-DDL is
+  the applied path; boot "schema maintenance completed successfully").
+
+Added 8 governance docs: BUILD_TYPECHECK_REPORT, PRODUCTION_READINESS_CHECKLIST,
+DATABASE_MIGRATION_PLAN, ACTIVE_SCREEN_UI_AUDIT, ROLE_BASED_UAT_MATRIX,
+FINAL_QA_SCENARIOS, REQUIREMENT_EVIDENCE_REGISTER, FINAL_SIGNOFF_REPORT.
+Updated PATCH7_TRACEABILITY_MATRIX.md DB-001 census 528 -> 641.
+
+Architect review fixes applied: corrected the readiness "no secret literals" claim to
+disclose the known dev JWT fallback (prod-blocked by validate-secrets); refreshed the
+stale 528 table count; softened the UI-audit fake-success wording.
+
+Sign-off (51 IDs): 1 Complete (scoped SEC-001), 2 Open (INV-001, UAT-004), 12 In
+Progress, 21 Partial, 1 redirect, 14 NMC. Browser UAT honestly PENDING (not fabricated).
+Recommendation: NOT ready for unconditional sign-off; conditional sign-off for executed
+dimensions, blocked on INV-001, browser UAT, and 14 management confirmations.

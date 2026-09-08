@@ -1,0 +1,303 @@
+
+> rest-express@1.0.0 dev
+> cross-env NODE_ENV=development tsx watch server/index.ts
+
+[1G[0K[db] connecting host=helium port=5432 db=heliumdb user=postgres ssl=off
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+6:53:14 PM [express] IPv6 bind failed (EAFNOSUPPORT); retrying on 0.0.0.0
+6:53:14 PM [express] serving on fixed port 5000
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[AUTH] 401 GET /api/auth/me reason=missing-token header=n cookie=n userId=none
+[2026-06-30T18:53:28.111Z] rid=4b4cce82-bcca-4b08-ba60-9c64e0e0a966 GET /api/auth/me -> 401 (10ms)
+[AUTH] 401 GET /api/social-media/posts reason=missing-token header=n cookie=n userId=none
+[2026-06-30T18:58:47.565Z] rid=82ac759c-d41f-4e3d-ae27-42cd23fe015f GET /api/social-media/posts -> 401 (18ms)
+[AUTH] 401 GET /api/social-media/dashboard/summary reason=missing-token header=n cookie=n userId=none
+[2026-06-30T18:58:47.601Z] rid=73fab22d-dc9e-478b-af22-755bffd4d5cb GET /api/social-media/dashboard/summary -> 401 (3ms)
+[2026-06-30T18:58:47.605Z] rid=614b0988-afd9-4b54-b2fa-faaa9fc62353 GET /api/support/tickets -> 404 (1ms)
+[AUTH_MW] URL=/api/social-media/accounts?page=1&pageSize=5 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:47.951Z] rid=8d421714-948f-4c53-9b11-5dcc017e5674 GET /api/social-media/accounts?page=1&pageSize=5 -> 200 (341ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.471Z] rid=f01f493d-f629-4b8c-b247-ebe85afa1642 POST /api/social-media/posts -> 201 (462ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.479Z] rid=d814bff3-6063-4744-910b-ed85d32f4533 POST /api/social-media/posts -> 400 (4ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.493Z] rid=de2d7de5-cb13-4fd7-a764-8e079b48fc47 POST /api/social-media/posts -> 400 (9ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.499Z] rid=1bdf096c-6fe9-49a1-8a1a-47e537047bdd POST /api/social-media/posts -> 400 (5ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.502Z] rid=499c2cf5-4728-4bf2-9ec4-75f9e8fa5c31 POST /api/social-media/posts -> 400 (3ms)
+[AUTH_MW] URL=/api/social-media/dashboard/summary userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.511Z] rid=36674830-c3fc-47fe-83b6-a952822576af GET /api/social-media/dashboard/summary -> 200 (6ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/submit-approval userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.783Z] rid=775aad6f-3176-4228-85eb-4a97a607668d POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/submit-approval -> 200 (271ms)
+[AUTH_MW] URL=/api/social-media/dashboard/summary userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.794Z] rid=77366c41-6161-4906-bb0e-1e88f5b63533 GET /api/social-media/dashboard/summary -> 200 (7ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/reject userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.801Z] rid=bae12fc2-5117-43a5-bc90-9a368ce26fd1 POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/reject -> 400 (3ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/approve userId=11111111-1111-1111-1111-111111111111 normalizedRole="sales_executive" source=header
+[2026-06-30T18:58:48.924Z] rid=0f9964d1-bab5-4d4f-bc63-ea33c285b657 POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/approve -> 403 (119ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/approve userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[NotificationService] Notification created for user 04921d75-955f-4828-b7c5-dca525aa3d1e
+[2026-06-30T18:58:48.977Z] rid=493bb63e-c1e0-46b0-be34-1161561e6d0f POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/approve -> 200 (46ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:48.987Z] rid=929fad57-7d05-4acd-8e37-f08eede813fe POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish -> 400 (8ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish userId=11111111-1111-1111-1111-111111111111 normalizedRole="sales_executive" source=header
+[2026-06-30T18:58:49.000Z] rid=6078e0cc-afbf-4043-bf0b-aef76e468080 POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish -> 403 (11ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[NotificationService] Notification created for user 04921d75-955f-4828-b7c5-dca525aa3d1e
+[2026-06-30T18:58:49.035Z] rid=599eda09-c18b-451d-9511-d594833d92c7 POST /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d/publish -> 200 (31ms)
+[AUTH_MW] URL=/api/social-media/posts userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.061Z] rid=eb172a73-be84-47e5-9d45-2239f8638d80 POST /api/social-media/posts -> 201 (23ms)
+[AUTH_MW] URL=/api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/submit-approval userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.104Z] rid=75989505-234f-4f4b-9fb1-44cd339000f1 POST /api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/submit-approval -> 200 (40ms)
+[AUTH_MW] URL=/api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/approve userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[NotificationService] Notification created for user 04921d75-955f-4828-b7c5-dca525aa3d1e
+[2026-06-30T18:58:49.153Z] rid=31e8215a-b33c-4bd6-aacc-03e895c290ff POST /api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/approve -> 200 (42ms)
+[AUTH_MW] URL=/api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/schedule userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[NotificationService] Notification created for user 04921d75-955f-4828-b7c5-dca525aa3d1e
+[2026-06-30T18:58:49.205Z] rid=5c50a1ce-9925-4446-9326-4ab9a034e9c2 POST /api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493/schedule -> 200 (50ms)
+[AUTH_MW] URL=/api/social-media/dashboard/summary userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.213Z] rid=255df21a-ad31-48bd-8548-ba3958475bda GET /api/social-media/dashboard/summary -> 200 (7ms)
+[AUTH_MW] URL=/api/social-media/dashboard/summary?scheduledFrom=2026-06-30&scheduledTo=2026-07-05T23:59:59 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.221Z] rid=9b721d90-254a-405c-a8eb-e784718105b0 GET /api/social-media/dashboard/summary?scheduledFrom=2026-06-30&scheduledTo=2026-07-05T23:59:59 -> 200 (7ms)
+[AUTH_MW] URL=/api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493 userId=11111111-1111-1111-1111-111111111111 normalizedRole="sales_executive" source=header
+[2026-06-30T18:58:49.246Z] rid=522490de-947f-4f79-b2ee-e30823428afd DELETE /api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493 -> 403 (25ms)
+[AUTH_MW] URL=/api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.272Z] rid=54762d32-352c-47bc-ab19-127e76f7869c DELETE /api/social-media/posts/21d4c245-dde7-4536-ac85-9299e63af77d -> 200 (26ms)
+[AUTH_MW] URL=/api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:58:49.292Z] rid=27482ebc-aadc-4def-b647-de7cf2f52d5e DELETE /api/social-media/posts/a0a50875-7007-4e15-85b7-c1a68a1a0493 -> 200 (20ms)
+[AUTH] 401 GET /api/health reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:18:17.429Z] rid=6813cae8-257b-4557-8994-c526c4d44459 GET /api/health -> 401 (1ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.583Z] rid=6274b01f-faa3-48f3-8220-f75b1efdf5d2 GET /api/reports/raw-attendance?pageSize=1000 -> 400 (5ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.644Z] rid=ebdf0c92-6ead-4c47-9458-d40a7f227322 GET /api/reports/salary?pageSize=1000 -> 200 (30ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.751Z] rid=d30c8fb6-b445-4a99-a0fc-c2836d91496b GET /api/reports/event?pageSize=1000 -> 200 (98ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.767Z] rid=452f19a6-193a-424f-88d3-a413eb3978b8 GET /api/reports/reception?pageSize=1000 -> 200 (15ms)
+[AUTH_MW] URL=/api/reports/day-target?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.776Z] rid=6dfde495-6e4c-4a4f-9d5c-2c67c4ea5df3 GET /api/reports/day-target?pageSize=1000 -> 400 (3ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.798Z] rid=700a363e-e938-4175-8781-bc03669ddbc8 GET /api/reports/bv -> 200 (16ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.801Z] rid=a77ec303-05a9-46dc-a8e4-3d91d20b6810 GET /api/reports/raw-attendance?pageSize=1000 -> 400 (2ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.811Z] rid=155d4cc1-beea-453d-a099-0fe9bfcdd449 GET /api/reports/raw-attendance/export -> 400 (5ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.816Z] rid=5caf948e-1436-42d9-b171-85966e5bdd80 GET /api/reports/salary?pageSize=1000 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.862Z] rid=62c1575f-0e1d-412c-958b-f417566caa5d GET /api/reports/salary/export -> 200 (44ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.868Z] rid=33fd800e-1f37-4bd4-8d7d-5286747594c2 GET /api/reports/event?pageSize=1000 -> 200 (3ms)
+[AUTH_MW] URL=/api/reports/event/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.882Z] rid=02de1166-5b41-4a7c-bb09-c9f94021001f GET /api/reports/event/export -> 200 (12ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.889Z] rid=ce387a94-422f-4b16-ab72-070a0cb7e3f2 GET /api/reports/reception?pageSize=1000 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/reception/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.901Z] rid=ff2368e5-94ed-423f-8662-511f13f74d09 GET /api/reports/reception/export -> 200 (10ms)
+[AUTH_MW] URL=/api/reports/day-target?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.904Z] rid=5df8647c-f83f-4422-8e92-303c47a14a0e GET /api/reports/day-target?pageSize=1000 -> 400 (1ms)
+[AUTH_MW] URL=/api/reports/day-target/export?format=csv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:33.908Z] rid=0aa1be23-f738-4405-abc3-50650028bd5b GET /api/reports/day-target/export?format=csv -> 400 (1ms)
+[AUTH_MW] URL=/api/reports/raw-attendance userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:view" for role "sales_executive"
+[2026-06-30T19:23:34.175Z] rid=c1e13296-8eb0-4334-abd9-161b991a73c2 GET /api/reports/raw-attendance -> 403 (266ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:export" for role "hod"
+[2026-06-30T19:23:34.181Z] rid=2f737851-2d3a-4099-978a-d8e8ef4dbe08 GET /api/reports/raw-attendance/export -> 403 (4ms)
+[AUTH_MW] URL=/api/reports/raw-attendance userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[2026-06-30T19:23:34.186Z] rid=ffecfe74-a908-46ac-8765-ba30d9309b54 GET /api/reports/raw-attendance -> 400 (3ms)
+[AUTH_MW] URL=/api/reports/raw-attendance userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.190Z] rid=a9b0043b-aae9-4e11-8301-7585be03d803 GET /api/reports/raw-attendance -> 400 (2ms)
+[AUTH_MW] URL=/api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.198Z] rid=1f456661-851d-4b64-8b00-dd66aa509496 PATCH /api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status -> 400 (3ms)
+[AUTH_MW] URL=/api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.219Z] rid=d35c8bdb-51b6-4f3c-8e12-409487519587 PATCH /api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 -> 409 (19ms)
+[AUTH_MW] URL=/api/reports/day-target?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.228Z] rid=7bb1c86a-a786-4708-ac48-8b057710a5f4 GET /api/reports/day-target?pageSize=1000 -> 400 (4ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.233Z] rid=8148a1fd-0c26-46b7-a739-8707545a48d5 GET /api/reports/bv -> 200 (4ms)
+[AUTH_MW] URL=/api/bv-reports userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.443Z] rid=5a1a2f4a-2327-4019-8512-9b34ee82a4d6 GET /api/bv-reports -> 200 (209ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.450Z] rid=ecff1213-e38c-406b-859b-b2093a7ee04d GET /api/reports/bv -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/bv/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.465Z] rid=ed85a470-fd23-46cc-b8ce-cc6295812642 GET /api/reports/bv/export -> 200 (12ms)
+[AUTH_MW] URL=/api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.489Z] rid=0db990db-5b34-4dcc-a399-3fd4db33f020 GET /api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e -> 200 (22ms)
+[AUTH_MW] URL=/api/penalties/22d954dc-6927-4836-b33d-aed083a89306 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.497Z] rid=26b045db-388c-44ee-a8aa-41bcceca4839 PATCH /api/penalties/22d954dc-6927-4836-b33d-aed083a89306 -> 400 (5ms)
+[AUTH_MW] URL=/api/penalties userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:23:34.503Z] rid=648c993c-6b66-432c-bae4-e6aa3707d7ff POST /api/penalties -> 403 (3ms)
+[AUTH_MW] URL=/api/penalties userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.513Z] rid=7ae85044-b29d-45b8-afb3-803438e45196 GET /api/penalties -> 200 (8ms)
+[AUTH_MW] URL=/api/reports/salary userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:23:34.525Z] rid=100b1495-5c03-4eb3-8cfa-5a7e997c8ed8 GET /api/reports/salary -> 200 (9ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:23:34.530Z] rid=25be4076-9d91-49f4-946a-196ee6eff1c5 GET /api/reports/salary/export -> 403 (3ms)
+[AUTH] 401 GET /api/reports/raw-attendance reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:23:34.532Z] rid=19769ed8-2699-4dfd-b8db-3d08ec2b815a GET /api/reports/raw-attendance -> 401 (0ms)
+[AUTH] 401 GET /api/reports/bv reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:23:34.534Z] rid=9f9d0541-c393-4259-a162-ffb3ecf3a042 GET /api/reports/bv -> 401 (1ms)
+[AUTH_MW] URL=/api/reports/reception?month=2026-13 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:23:34.537Z] rid=0c94c9c7-45a5-4979-bfd5-6e031c5ee497 GET /api/reports/reception?month=2026-13 -> 400 (1ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.161Z] rid=6bec9fe1-2bb4-4659-9cfd-55840cf0fbce GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (33ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.191Z] rid=21169b9e-5487-4ffe-99e6-e54ba8dc3653 GET /api/reports/salary?pageSize=1000 -> 200 (10ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.204Z] rid=be5bf1ff-cd1a-401e-8bce-b86c26da8dff GET /api/reports/event?pageSize=1000 -> 200 (9ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.210Z] rid=0730dc01-6d5c-4479-9224-1b3cdd63ae53 GET /api/reports/reception?pageSize=1000 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.262Z] rid=a56e36d4-ab3d-404e-b549-1389fbfb425d GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (47ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.270Z] rid=9b881fa2-626a-4bf2-b93c-0bce11381ebd GET /api/reports/bv -> 200 (7ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.276Z] rid=20570eb2-7012-40ea-b7c4-8bf21c4d1001 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.317Z] rid=28c7f275-9095-4049-89c2-42f884156524 GET /api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 -> 200 (40ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.326Z] rid=52d08fff-ff5c-4eb6-908a-16e26990af3a GET /api/reports/salary?pageSize=1000 -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.339Z] rid=4459037b-9091-42ca-9b88-c05ad2a9dacd GET /api/reports/salary/export -> 200 (12ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.345Z] rid=d9837563-acf6-4ea7-a88c-1bf257502e2c GET /api/reports/event?pageSize=1000 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/event/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.360Z] rid=60907182-ab19-4aed-a8c2-4d70d13ed0de GET /api/reports/event/export -> 200 (14ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.366Z] rid=d58b7276-403e-43f7-8c72-e240a9c78c71 GET /api/reports/reception?pageSize=1000 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/reception/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.380Z] rid=82e54f38-bf24-4711-b037-678b2dddab51 GET /api/reports/reception/export -> 200 (12ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.390Z] rid=63a6f3a1-8b95-49f4-9957-413d2a83cd9b GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (7ms)
+[AUTH_MW] URL=/api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.407Z] rid=29b290be-5e1c-4a46-9e59-d6562deca751 GET /api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 -> 200 (15ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:view" for role "sales_executive"
+[2026-06-30T19:25:44.413Z] rid=20b219b3-3e32-4976-938a-1f183066b3a2 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 403 (4ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:export" for role "hod"
+[2026-06-30T19:25:44.418Z] rid=40b613e2-0549-4b09-ab63-5d3e20e2ebeb GET /api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 -> 403 (3ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[2026-06-30T19:25:44.423Z] rid=a1702e8c-1fbb-4d28-8c25-4db2b5f95dc6 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.429Z] rid=cc2f534d-3ae7-4a17-8c2e-c879cddc40f0 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (4ms)
+[AUTH_MW] URL=/api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.436Z] rid=84a67c4a-3b11-46c2-becb-5ff36c789c51 PATCH /api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status -> 409 (3ms)
+[AUTH_MW] URL=/api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.443Z] rid=f68abcb4-857e-4504-a06c-e22acdaf9730 PATCH /api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 -> 409 (5ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.451Z] rid=5eb778db-f9a8-4813-bfa2-b06ef755ecf5 GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.458Z] rid=6a46ea45-ce31-408d-a0a6-823bc1645855 GET /api/reports/bv -> 200 (3ms)
+[AUTH_MW] URL=/api/bv-reports userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.462Z] rid=a8b64e0e-4874-4ea7-833c-0f60da17a56c GET /api/bv-reports -> 200 (3ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.467Z] rid=a9ce9d5b-5d6f-425e-a360-e51a06be9104 GET /api/reports/bv -> 200 (3ms)
+[AUTH_MW] URL=/api/reports/bv/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.485Z] rid=60cb6738-6572-4f1e-a06e-c0faa66acfa3 GET /api/reports/bv/export -> 200 (15ms)
+[AUTH_MW] URL=/api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.500Z] rid=d3da6a74-bf67-49db-90f9-92b5e9b3d4a4 GET /api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e -> 200 (15ms)
+[AUTH_MW] URL=/api/penalties/22d954dc-6927-4836-b33d-aed083a89306 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.505Z] rid=14e42fce-89e8-4017-b1eb-357311e79ac4 PATCH /api/penalties/22d954dc-6927-4836-b33d-aed083a89306 -> 400 (3ms)
+[AUTH_MW] URL=/api/penalties userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:25:44.511Z] rid=a3eed7d2-eed2-4697-9ce2-e6663fc353ef POST /api/penalties -> 403 (3ms)
+[AUTH_MW] URL=/api/penalties userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.517Z] rid=4048b448-88f4-4ecb-9c0e-442a322dde7a GET /api/penalties -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:25:44.526Z] rid=5d58140b-f0cb-476e-b51f-e01566d7c560 GET /api/reports/salary?pageSize=1000 -> 200 (7ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.532Z] rid=ec0412f3-a5f9-411d-aed6-10425f360205 GET /api/reports/salary?pageSize=1000 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:25:44.536Z] rid=60b7ffce-f659-4884-9f35-8eb00acb6c60 GET /api/reports/salary/export -> 403 (3ms)
+[AUTH] 401 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:25:44.539Z] rid=fdbcdb6b-1b7c-42a5-a843-650c77010744 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 401 (1ms)
+[AUTH] 401 GET /api/reports/bv reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:25:44.540Z] rid=813aa4da-509b-4361-b4c2-7ee14af6eea4 GET /api/reports/bv -> 401 (0ms)
+[AUTH_MW] URL=/api/reports/reception?month=2026-13 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:25:44.545Z] rid=dbb6dc7a-9097-4a93-826b-4bd08a7e6318 GET /api/reports/reception?month=2026-13 -> 400 (3ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:09.999Z] rid=62d65bcd-a763-4c72-8f29-b255fe446396 GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (36ms)
+[AUTH_MW] URL=/api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:10.106Z] rid=31d7723a-ed8e-4b92-b639-8f7997175559 GET /api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 -> 200 (87ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.519Z] rid=b02a7654-e1ac-45ea-b31b-6bb446dfcf23 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (295ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.584Z] rid=29f34727-c7e2-4798-9ff8-e52af85fa6fd GET /api/reports/salary?pageSize=1000 -> 200 (32ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.605Z] rid=828bc37c-2081-4054-a983-b9322f3b5ac2 GET /api/reports/event?pageSize=1000 -> 200 (20ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.623Z] rid=3eae1630-9daf-4ce7-af58-91652707ce15 GET /api/reports/reception?pageSize=1000 -> 200 (14ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.679Z] rid=8bfc18a6-9171-4dc2-a2ed-5b1609a9adfb GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (53ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.686Z] rid=7ac863f6-5665-4fbf-b4e4-0c95fd42997c GET /api/reports/bv -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.693Z] rid=82d446c6-7962-4841-9968-77797e6564d2 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.776Z] rid=c5fd4b01-4b79-4b50-b1a5-e0ce84bbb779 GET /api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 -> 200 (81ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.785Z] rid=5eb69776-0568-49b7-a0ef-fe63c0740e00 GET /api/reports/salary?pageSize=1000 -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.799Z] rid=eb425724-707b-4819-9ee2-2559e5c6c788 GET /api/reports/salary/export -> 200 (11ms)
+[AUTH_MW] URL=/api/reports/event?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.805Z] rid=6a3ef0bd-e9cd-42ce-83fd-9883fb54558d GET /api/reports/event?pageSize=1000 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/event/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.816Z] rid=02c2954d-c9e3-472e-bdbb-7c73a9e4b046 GET /api/reports/event/export -> 200 (10ms)
+[AUTH_MW] URL=/api/reports/reception?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.821Z] rid=4eec513b-b242-414c-afb3-958ad6b7a385 GET /api/reports/reception?pageSize=1000 -> 200 (3ms)
+[AUTH_MW] URL=/api/reports/reception/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.837Z] rid=768e2503-a797-4718-94b0-f685a8b566ab GET /api/reports/reception/export -> 200 (12ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.847Z] rid=8a7c0a1e-d09c-4751-bd4b-3015b2507732 GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.867Z] rid=d427a977-574a-452a-867c-9918fa0f8a9f GET /api/reports/day-target/export?format=csv&startDate=2020-01-01&endDate=2030-12-31 -> 200 (19ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:view" for role "sales_executive"
+[2026-06-30T19:26:55.874Z] rid=bb16cb08-3745-4cfd-8813-ba74d45efc65 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 403 (4ms)
+[AUTH_MW] URL=/api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[ACTION_PERMISSION] Denied action "report:raw_attendance:export" for role "hod"
+[2026-06-30T19:26:55.878Z] rid=8f3b7cba-4387-4a2f-a51b-beda5caa1681 GET /api/reports/raw-attendance/export?startDate=2020-01-01&endDate=2030-12-31 -> 403 (3ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=33333333-3333-3333-3333-333333333333 normalizedRole="hod" source=header
+[2026-06-30T19:26:55.884Z] rid=c4536d61-925e-4e04-869b-d156396e2e7a GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.890Z] rid=196f63f4-61d6-4c72-9a15-91c048c58c41 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 200 (4ms)
+[AUTH_MW] URL=/api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.898Z] rid=a45e86c6-94a7-4568-baa8-c04c83ddb0a5 PATCH /api/salary/runs/a8246fa8-832a-475b-93b8-38b3d4f53172/status -> 409 (4ms)
+[AUTH_MW] URL=/api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.904Z] rid=e7ff73ff-2b73-44f5-8e3b-874ddf0ad3d5 PATCH /api/salary/run-items/64ce439e-6822-4268-8445-e1907eed8429 -> 409 (4ms)
+[AUTH_MW] URL=/api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.912Z] rid=6b92db9d-4d99-4a25-9f6d-44ab5f122e08 GET /api/reports/day-target?startDate=2020-01-01&endDate=2030-12-31&limit=200 -> 200 (6ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.917Z] rid=67509492-5e2a-4fce-a9da-96df844f7b9e GET /api/reports/bv -> 200 (4ms)
+[AUTH_MW] URL=/api/bv-reports userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.921Z] rid=731150d4-55e8-459e-b512-2003f13634f8 GET /api/bv-reports -> 200 (2ms)
+[AUTH_MW] URL=/api/reports/bv userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.927Z] rid=3b7bd99c-e265-4580-9b56-abe0593a7334 GET /api/reports/bv -> 200 (3ms)
+[AUTH_MW] URL=/api/reports/bv/export userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.940Z] rid=8380c08e-e499-430e-be78-f2fe334df859 GET /api/reports/bv/export -> 200 (11ms)
+[AUTH_MW] URL=/api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:55.953Z] rid=faa014bf-4f79-4c5b-991e-1fc7bea5bb7b GET /api/reports/bv/export?userId=04921d75-955f-4828-b7c5-dca525aa3d1e -> 200 (10ms)
+[AUTH_MW] URL=/api/penalties/22d954dc-6927-4836-b33d-aed083a89306 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:56.021Z] rid=b3e4f9fc-7236-47a6-9065-d8a39eb56f14 PATCH /api/penalties/22d954dc-6927-4836-b33d-aed083a89306 -> 400 (66ms)
+[AUTH_MW] URL=/api/penalties userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:26:56.028Z] rid=c158a42d-3d64-4ff2-b3d5-0d356664f59c POST /api/penalties -> 403 (4ms)
+[AUTH_MW] URL=/api/penalties userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:56.034Z] rid=fbd9c17c-de17-4c7c-8971-e23d1e5c6e17 GET /api/penalties -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:26:56.041Z] rid=08954695-c771-4f47-bbb5-84406aba83f9 GET /api/reports/salary?pageSize=1000 -> 200 (5ms)
+[AUTH_MW] URL=/api/reports/salary?pageSize=1000 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:56.046Z] rid=3554bbd0-00e7-4b4f-b073-88accdb7e332 GET /api/reports/salary?pageSize=1000 -> 200 (4ms)
+[AUTH_MW] URL=/api/reports/salary/export userId=44444444-4444-4444-4444-444444444444 normalizedRole="sales_executive" source=header
+[2026-06-30T19:26:56.051Z] rid=569576db-7850-4861-a1e5-d6fa6c44f0d6 GET /api/reports/salary/export -> 403 (3ms)
+[AUTH] 401 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:26:56.052Z] rid=4360a4b9-bd25-4274-ac0b-6eed07f17e24 GET /api/reports/raw-attendance?startDate=2020-01-01&endDate=2030-12-31 -> 401 (0ms)
+[AUTH] 401 GET /api/reports/bv reason=missing-token header=n cookie=n userId=none
+[2026-06-30T19:26:56.054Z] rid=c86d9f62-9032-4282-a859-183aaf2271d8 GET /api/reports/bv -> 401 (1ms)
+[AUTH_MW] URL=/api/reports/reception?month=2026-13 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T19:26:56.057Z] rid=8cf4549e-cd91-4a1c-9a23-5c2cef554c48 GET /api/reports/reception?month=2026-13 -> 400 (1ms)

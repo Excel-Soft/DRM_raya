@@ -1,0 +1,27 @@
+
+> rest-express@1.0.0 dev
+> cross-env NODE_ENV=development tsx watch server/index.ts
+
+[1G[0K[db] connecting host=helium port=5432 db=heliumdb user=postgres ssl=off
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+6:26:34 PM [express] IPv6 bind failed (EAFNOSUPPORT); retrying on 0.0.0.0
+6:26:34 PM [express] serving on fixed port 5000
+[AUTH_MW] URL=/api/account/dollar-system/list userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:26:46.043Z] rid=56e49bf2-e979-49fc-8871-e11dfa025c37 GET /api/account/dollar-system/list -> 200 (328ms)
+[AUTH_MW] URL=/api/account/dollar-system/list?dateFrom=2020-01-01&dateTo=2030-12-31 userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:26:46.090Z] rid=1e958971-a35f-4d0d-8c1d-9a1955963e88 GET /api/account/dollar-system/list?dateFrom=2020-01-01&dateTo=2030-12-31 -> 200 (24ms)
+[AUTH_MW] URL=/api/it/backups userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:26:46.175Z] rid=a6f707b2-4461-403b-933a-9ca4f7ad5e4c POST /api/it/backups -> 201 (46ms)
+[AUTH_MW] URL=/api/it/backups userId=04921d75-955f-4828-b7c5-dca525aa3d1e normalizedRole="admin" source=header
+[2026-06-30T18:27:14.956Z] rid=ae57cf0f-e44e-46ed-ae66-2dc0bb676768 POST /api/it/backups -> 400 (11ms)
+Browserslist: browsers data (caniuse-lite) is 8 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[90m6:51:09 PM[39m [96m[tsx][39m [95mchange[39m in [92m./server/social-media-routes.ts[39m [33mRestarting...[39m
+[90m6:51:14 PM[39m [96m[tsx][39m [33mProcess didn't exit in 5s. Force killing...[39m
+c[db] connecting host=helium port=5432 db=heliumdb user=postgres ssl=off
+[startup] HOD routes mounted at /api/hod
+[accounts] schema maintenance completed successfully
+6:51:23 PM [express] IPv6 bind failed (EAFNOSUPPORT); retrying on 0.0.0.0
+6:51:23 PM [express] serving on fixed port 5000
