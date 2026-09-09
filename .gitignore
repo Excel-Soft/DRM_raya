@@ -37,3 +37,13 @@ temp_env.txt
 
 # Non-essential large assets
 attached_assets/**/*.txt
+
+# Scratch & temporary refactor scripts
+scratch/
+tmp/
+logs/
+*.mjs.metadata.json
+
+# Test/debug scripts at root
+test_scripts/
+markdown_files/
