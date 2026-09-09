@@ -6,7 +6,7 @@ import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { loggerMiddleware } from "./middleware/logger.middleware";
-// import { requestIdMiddleware } from "./middleware/request-id";
+import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
 // import { startOutboxWorker, stopOutboxWorker } from "./services/notification-worker";
@@ -82,7 +82,7 @@ const corsOptions: CorsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-// app.use(requestIdMiddleware);
+app.use(requestIdMiddleware);
 app.use(loggerMiddleware);
 
 (async () => {
