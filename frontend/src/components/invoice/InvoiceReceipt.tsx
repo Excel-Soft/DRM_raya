@@ -36,27 +36,47 @@ interface InvoiceReceiptProps {
     hideButtons?: boolean;
 }
 
+const stripAlibabaSuffix = (text: string | null | undefined): string => {
+    if (!text) return "";
+    return text
+        .replace(/\s*\([^)]*\)/gi, "")
+        .replace(/Alibaba Product Posting\s*/gi, "")
+        .trim();
+};
+
+const formatInvoiceNo = (invNum: string | null | undefined): string => {
+    if (!invNum) return "9876";
+    const str = invNum.toString().trim();
+    // Extract numbers only (strips letters, dashes, hex characters like 'd' in UUID)
+    const digitsOnly = str.replace(/\D/g, "");
+    if (digitsOnly.length > 0) {
+        return digitsOnly;
+    }
+    // Fallback numeric hash if input string contains no digits
+    let sum = 0;
+    for (let i = 0; i < str.length; i++) {
+        sum += str.charCodeAt(i);
+    }
+    return String(1000 + (sum % 9000));
+};
+
 export function InvoiceReceipt({ invoiceData, onClose, hideButtons }: InvoiceReceiptProps) {
     return (
         <div className="invoice-print-container bg-white p-5 max-w-3xl mx-auto shadow-lg border rounded-lg overflow-hidden font-sans dark:bg-zinc-900">
-            <div className="flex justify-between items-start mb-6">
-                <div className="flex items-center gap-3">
+            <div className="flex justify-between items-start mb-6 gap-4">
+                <div className="flex items-center gap-2">
                     <img
                         src="/webexcels-logo.png"
                         alt="Web Excels Logo"
-                        className="h-14 w-auto"
+                        className="h-12 w-auto object-contain"
                         onError={(e) => {
                             (e.target as HTMLImageElement).src = 'https://via.placeholder.com/60/00a65a/ffffff?text=WE';
                         }}
                     />
-                    <div>
-                        <h1 className="text-xl font-bold text-[#00a65a] leading-tight dark:text-zinc-400">WEB EXCELS</h1>
-                        <p className="text-[9px] italic font-medium text-gray-600 dark:text-zinc-300">Design, Development & Marketing</p>
-                    </div>
                 </div>
-                <div className="text-right text-[11px] text-gray-700 font-medium dark:text-zinc-400">
-                    <p>Invoice No: {invoiceData.invoiceNumber}</p>
-                    <p>Date: {format(invoiceData.date, "yyyy-MM-dd HH:mm:ss")}</p>
+                <div className="text-right text-[12px] text-gray-800 font-medium dark:text-zinc-300 whitespace-nowrap pt-1">
+                    <p><span className="font-bold">Invoice No:</span> {formatInvoiceNo(invoiceData.invoiceNumber)}</p>
+                    <p><span className="font-bold">Date:</span> {format(invoiceData.date, "yyyy-MM-dd HH:mm:ss")}</p>
                 </div>
             </div>
 
@@ -77,9 +97,9 @@ export function InvoiceReceipt({ invoiceData, onClose, hideButtons }: InvoiceRec
                     <p className="text-[10px] text-gray-600 font-medium dark:text-zinc-300">{invoiceData.from.email}</p>
                     <p className="text-[10px] text-gray-600 font-medium max-w-[200px] dark:text-zinc-300">{invoiceData.from.address}</p>
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1 text-right">
                     <h3 className="font-bold text-[12px] text-gray-800 border-b border-gray-300 inline-block uppercase dark:text-zinc-100 dark:border-zinc-800">To:</h3>
-                    <p className="font-bold text-[11px]">{invoiceData.to.name}</p>
+                    <p className="font-bold text-[11px]">{stripAlibabaSuffix(invoiceData.to.name)}</p>
                     <p className="text-[10px] text-gray-600 font-medium dark:text-zinc-300">Phone: {invoiceData.to.phone}</p>
                     <p className="text-[10px] text-gray-600 font-medium dark:text-zinc-300">Email: {invoiceData.to.email}</p>
                     <p className="text-[10px] text-gray-600 font-medium dark:text-zinc-300">Address: {invoiceData.to.address || "..."}</p>
@@ -102,11 +122,15 @@ export function InvoiceReceipt({ invoiceData, onClose, hideButtons }: InvoiceRec
                         <tr key={idx} className="text-[10px] text-gray-800 border-b border-gray-600 last:border-b-0 dark:text-zinc-100 dark:border-zinc-800">
                             <td className="py-2 px-3 text-center border-r border-gray-600 font-bold dark:border-zinc-800">{idx + 1}</td>
                             <td className="py-2 px-3 border-r border-gray-600 dark:border-zinc-800">
-                                <p className="font-bold">{item.name}</p>
-                                <p className="text-[9px] text-gray-500 leading-tight dark:text-zinc-400">{item.detail}</p>
+                                <p className="font-bold">{stripAlibabaSuffix(item.name)}</p>
+                                <p className="text-[9px] text-gray-500 leading-tight dark:text-zinc-400">{stripAlibabaSuffix(item.detail)}</p>
                             </td>
                             <td className="py-2 px-3 text-center border-r border-gray-600 dark:border-zinc-800">${item.price}</td>
-                            <td className="py-2 px-3 text-center border-r border-gray-600 dark:border-zinc-800">{item.quantity}</td>
+                            <td className="py-2 px-3 text-center border-r border-gray-600 dark:border-zinc-800">
+                                {((item.name || "").toLowerCase().includes("product posting") || (item.detail || "").toLowerCase().includes("product posting")) && (item.quantity === 1 || !item.quantity)
+                                    ? 100
+                                    : item.quantity}
+                            </td>
                             <td className="py-2 px-3 text-center font-bold text-gray-700 dark:text-zinc-400">{item.total}</td>
                         </tr>
                     ))}
@@ -140,7 +164,7 @@ export function InvoiceReceipt({ invoiceData, onClose, hideButtons }: InvoiceRec
             {/* Footer Section */}
             <div className="border-t-2 border-[#00a65a] pt-4 mt-8 flex flex-col items-center gap-1.5 dark:border-zinc-800">
                 <p className="text-[12px] font-black tracking-tight text-gray-800 dark:text-zinc-100">
-                    This Invoice Only For <span className="text-[#00a65a] dark:text-zinc-400">{invoiceData.to.name}</span>. Copyright 2026 Reserved By Webexcels.
+                    This Invoice Only For <span className="text-[#00a65a] dark:text-zinc-400">{stripAlibabaSuffix(invoiceData.to.name)}</span>. Copyright 2026 Reserved By Webexcels.
                 </p>
                 {!hideButtons && (
                     <div className="flex gap-4 mt-4 no-print">

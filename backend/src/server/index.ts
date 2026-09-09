@@ -1,12 +1,16 @@
-import "./utils/env";
+import "./env";
+import path from "path";
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
-
-import { loggerMiddleware } from "./middleware/logger.middleware";
+import { setupVite, serveStatic, log } from "./vite";
+import { loggerMiddleware } from "./logger.middleware";
 import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
+import { startOutboxWorker, stopOutboxWorker } from "./services/notification-worker";
+import { reconcileDrmIds } from "./services/drm-reconciliation.service";
 import { errorEnvelope } from "./utils/api-error";
 import { assertSecretsOrExit } from "./config/validate-secrets";
 
@@ -27,22 +31,11 @@ process.on("unhandledRejection", (reason: any) => {
 });
 
 const app = express();
-
-app.get("/", (req, res) => {
-  res.send(`
-    <html>
-      <body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f3f4f6; margin: 0;">
-        <div style="text-align: center; background: white; padding: 3rem; border-radius: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-          <h1 style="color: #2563eb; margin-bottom: 1rem;">DRM Backend API</h1>
-          <p style="color: #4b5563; font-size: 1.1rem;">System is online and running successfully. 🚀</p>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
 app.disable("etag");
 app.set("trust proxy", 1);
+// gzip/brotli-negotiated compression for all responses (JS/CSS/JSON). Was
+// entirely absent, so every asset was sent uncompressed over the wire.
+app.use(compression());
 
 declare module 'http' {
   interface IncomingMessage {
@@ -57,6 +50,8 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ limit: "50mb", extended: false }));
 
+// Serve user-uploaded files (e.g. portfolio images) saved to disk by multer routes.
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 const defaultFrontend =
   process.env.FRONTEND_URL ||
@@ -123,9 +118,9 @@ app.use(loggerMiddleware);
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
-    
+    await setupVite(app, server);
   } else {
-    
+    serveStatic(app);
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
@@ -144,7 +139,7 @@ app.use(loggerMiddleware);
     };
     // reusePort is not supported on Windows; enable only where available
     if (process.platform !== "win32") {
-      // listenOptions.reusePort = true;
+      listenOptions.reusePort = true;
     }
     return listenOptions;
   };
@@ -167,20 +162,31 @@ app.use(loggerMiddleware);
     });
 
   try {
-    await tryListen(requestedPort, "0.0.0.0");
+    await tryListen(requestedPort, "::");
   } catch (err: any) {
     // Some sandboxes/hosts don't support IPv6 binding (EAFNOSUPPORT) or the
     // address isn't available (EADDRNOTAVAIL). Fall back to IPv4 so the server
     // still serves on the only non-firewalled port.
     if (err?.code === "EAFNOSUPPORT" || err?.code === "EADDRNOTAVAIL") {
-      console.log(`IPv6 bind failed (${err.code}); retrying on 0.0.0.0`);
+      log(`IPv6 bind failed (${err.code}); retrying on 0.0.0.0`);
       await tryListen(requestedPort, "0.0.0.0");
     } else {
       throw err;
     }
   }
-  console.log(`serving on fixed port ${requestedPort}`);
+  log(`serving on fixed port ${requestedPort}`);
 
   // Start background jobs
   startOverdueJob();
+  startOutboxWorker();
+  reconcileDrmIds().catch((err) => console.error("[server] DRM ID reconciliation failed:", err));
+
+  // Graceful shutdown handling
+  const shutdown = async () => {
+    log("Received shutdown signal. Stopping services...");
+    await stopOutboxWorker();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 })();

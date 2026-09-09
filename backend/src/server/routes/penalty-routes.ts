@@ -14,7 +14,7 @@
  * Cross-scope access returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { fetchUsers, fetchUserById, groupUsersByRole } from "../services/increment.service";
+import { fetchUsers, fetchUserById, groupUsersByRole } from "./services/increment.service";
 import {
   PENALTY_STATUSES,
   PENALTY_HEADS,
@@ -28,8 +28,8 @@ import {
   softDeletePenalty,
   voidPenalty,
   monthlyReport,
-} from "../services/penalty.service";
-import { recordAuditLog } from "../services/activity-service";
+} from "./services/penalty.service";
+import { recordAuditLog } from "./services/activity-service";
 // PEN-001: penalty permission decisions live in ONE row-aware source.
 import {
   getUserId,
@@ -43,14 +43,14 @@ import {
   getDepartment,
   getAllowedEmployeeIds,
   canViewEmployee,
-} from "../middleware/penalty-permission";
+} from "./middleware/penalty-permission";
 // PEN-001: request-shape (400) validation, mirrored from the previous inline rules.
 import {
   penaltyCreateSchema,
   penaltyUpdateSchema,
   penaltyDecisionSchema,
   penaltyVoidSchema,
-} from "../validators/penalty.validators";
+} from "./validators/penalty.validators";
 
 function badRequest(res: Response, message: string) {
   return res.status(400).json({ error: "BadRequest", message });
@@ -215,14 +215,11 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to penalize this employee" });
       }
 
-      // Approval status: only full-access / HOD may set non-PENDING on create.
-      let approvalStatus = String(b.approvalStatus ?? "PENDING").toUpperCase();
-      if (!PENALTY_STATUSES.includes(approvalStatus as any)) {
-        return badRequest(res, `approvalStatus must be one of ${PENALTY_STATUSES.join(", ")}`);
-      }
-      if (approvalStatus !== "PENDING" && !canDecide(role)) {
-        approvalStatus = "PENDING";
-      }
+      // Phase 13 — segregation of duties: a penalty can never be created
+      // pre-approved/pre-rejected, regardless of the creator's role. Every
+      // decision must go through PATCH /:id/approval, which now also blocks
+      // the creator from deciding their own penalty.
+      const approvalStatus = "PENDING";
 
       const created = await createPenalty({
         employeeId,
@@ -328,6 +325,11 @@ export function registerPenaltyRoutes(app: Express) {
       // HOD scoped to their department.
       if (!(await canViewEmployee(req, raw.employeeId))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to decide this penalty" });
+      }
+      // Phase 13 — segregation of duties: the creator cannot decide their own
+      // penalty, regardless of role (including full-access).
+      if (String(raw.createdBy) === String(getUserId(req))) {
+        return res.status(403).json({ error: "Forbidden", message: "You cannot approve or reject a penalty you created." });
       }
       if (raw.status === "VOIDED") {
         return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be approved or rejected" });
@@ -450,6 +452,12 @@ export function registerPenaltyRoutes(app: Express) {
       // HOD is scoped to their own department.
       if (!(await canViewEmployee(req, raw.employeeId))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to void this penalty" });
+      }
+      // Phase 13 — segregation of duties: the creator cannot void their own
+      // penalty either (voiding reverses an approval decision — same trust
+      // boundary as approve/reject).
+      if (String(raw.createdBy) === String(getUserId(req))) {
+        return res.status(403).json({ error: "Forbidden", message: "You cannot void a penalty you created." });
       }
       if (raw.status === "VOIDED") {
         return res.status(409).json({ error: "Conflict", message: "Penalty is already voided" });

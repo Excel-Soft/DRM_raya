@@ -1,23 +1,40 @@
 import { Router, Request, Response } from "express";
-import { tempContactsRepository } from "../repositories/temp-contacts.repository";
+import { tempContactsRepository } from "./repositories/temp-contacts.repository";
 import { insertTempContactSchema } from "@shared/schema";
 import { z } from "zod";
-import { generateDrmId } from "../utils/drm-id-utils";
+import { generateDrmId, resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
 import crypto from "crypto";
-import { pool } from "../db";
+import { pool } from "./db";
+import { ActivityLogService } from "./services/activity-service";
+import { getDepartmentFilterUserIds } from "./dashboard-routes";
+import { isManagerialRole } from "./utils/role-utils";
 
 const TITLES = ["Mr", "Mrs", "Miss", "Ms", "Dr"];
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
 const SOURCES = [
-  "Website",
-  "Referral",
-  "Cold Call",
-  "Social Media",
-  "Trade Show",
-  "Advertisement",
-  "Email Campaign",
-  "Walk-in",
-  "Other",
+  "Facebook",
+  "Instagram",
+  "Twitter",
+  "LinkedIn",
+  "YouTube",
+  "SCCI",
+  "GCCI",
+  "LCCI",
+  "FCCI",
+  "KCCI",
+  "PCCI",
+  "ICCI",
+  "Office Visit",
+  "Google",
+  "others",
+  "Alibaba",
+  "Zain Reference",
+  "Arooj Reference",
+  "Webxl",
+  "Random Visit",
+  "Random Call",
+  "Seminar",
+  "Refer Partner",
 ];
 const SERVICE_TYPES = [
   "Mobile Responsive Website",
@@ -66,7 +83,11 @@ const createTempContactSchema = z.object({
   grade: z.string().min(1, "Grade is required"),
   country: z.string().optional(),
   serviceTypes: z.array(z.string()).default([]),
-});
+}).strict();
+
+const promoteTempContactSchema = z.object({
+  customerId: z.string().min(1, "Customer ID is required for promotion")
+}).strict();
 
 type DuplicateContact = {
   id: string;
@@ -297,10 +318,27 @@ router.get("/meta", (_req: Request, res: Response) => {
 router.get("/", async (req: Request, res: Response) => {
   try {
     const userId = req.user!.userId;
-    const { status, grade, search } = req.query;
+    const { status, grade, search, all } = req.query;
+
+    // Was: a plain substring match on the role name ("manager" inside
+    // "service_manager") treated ANY *_manager role as "see literally every
+    // department's contacts" — a service_manager saw sales executives' temp
+    // contacts too. Now scoped the same way as the rest of the app: a real
+    // department manager sees their own team (via getDepartmentFilterUserIds'
+    // under_works lookup); only true global roles (admin/hod/...) see all.
+    const activeRoleId = (req.user as any)?.activeRoleId || req.user!.roleId;
+    let userIds: string[] | undefined;
+    if (all === "true") {
+      userIds = undefined;
+    } else if (!isManagerialRole(activeRoleId)) {
+      userIds = [userId];
+    } else {
+      const allowed = await getDepartmentFilterUserIds(req);
+      userIds = allowed ?? undefined;
+    }
 
     const contacts = await tempContactsRepository.findAllWithFilters({
-      userId,
+      userIds,
       status: status as string,
       grade: grade as string,
       search: search as string,
@@ -335,6 +373,33 @@ router.get("/no-grade", async (req: Request, res: Response) => {
   }
 });
 
+// Live per-field duplicate check the form calls as the user types/blurs, so
+// "already exists" can show before they ever attempt to submit. Either query
+// param may be omitted — only the fields actually passed get checked.
+router.get("/check-duplicate", async (req: Request, res: Response) => {
+  try {
+    const email = (req.query.email as string) || "";
+    const mobile = (req.query.mobile as string) || "";
+    const duplicates = await findDuplicateContacts(email, mobile);
+    const all = [...duplicates.customers, ...duplicates.tempContacts];
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedMobileDigits = normalizePhone(mobile);
+
+    const emailExists = normalizedEmail
+      ? all.some((c) => c.email && c.email.trim().toLowerCase() === normalizedEmail)
+      : false;
+    const mobileExists = normalizedMobileDigits
+      ? all.some((c) => c.mobile && normalizePhone(c.mobile) === normalizedMobileDigits)
+      : false;
+
+    res.json({ emailExists, mobileExists });
+  } catch (error) {
+    console.error("Error checking temp contact duplicate:", error);
+    res.status(500).json({ error: "Failed to check duplicate" });
+  }
+});
+
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -363,24 +428,32 @@ router.post("/", async (req: Request, res: Response) => {
 
     console.log("[temp-contacts] incoming body", req.body);
 
+    const { title, fullName, email, mobile, comment, source, grade, country, serviceTypes } = req.body ?? {};
     const parsedBody = createTempContactSchema.parse({
-      ...req.body,
-      serviceTypes: Array.isArray(req.body?.serviceTypes) ? req.body.serviceTypes : [],
+      title, fullName, email, mobile, comment, source, grade, country,
+      serviceTypes: Array.isArray(serviceTypes) ? serviceTypes : [],
     });
 
     const duplicates = await findDuplicateContacts(parsedBody.email, parsedBody.mobile);
     const hasDuplicates = duplicates.customers.length > 0 || duplicates.tempContacts.length > 0;
     if (hasDuplicates) {
-      console.warn("[temp-contacts] duplicate detected, creating anyway", duplicates);
+      return res.status(409).json({
+        error: "Duplicate contact",
+        message: "A customer or temporary contact with this email or mobile already exists.",
+        conflicts: duplicates,
+      });
     }
 
-    // Generate DRM ID for lead
-    const drmId = generateDrmId(
-      parsedBody.fullName,
-      parsedBody.country || "Other",
-      parsedBody.fullName,
-      crypto.randomUUID()
-    );
+    // Generate or resolve canonical DRM ID for lead. The Temporary Contact form
+    // never collects a country (no field for it), so this always fell through
+    // to the generic "Other" bucket ("ot..." DRM IDs) — default it to Pakistan
+    // instead, since that's actually true for this business's leads.
+    const drmId = await resolveOrCreateCanonicalDrmId(pool, {
+      companyName: parsedBody.fullName,
+      email: parsedBody.email,
+      phone: parsedBody.mobile,
+      country: parsedBody.country || "Pakistan",
+    });
 
     const validatedData = insertTempContactSchema.parse({
       userId,
@@ -388,7 +461,7 @@ router.post("/", async (req: Request, res: Response) => {
       personName: parsedBody.fullName,
       email: parsedBody.email.trim(),
       mobile: parsedBody.mobile.trim(),
-      country: parsedBody.country || "Other",
+      country: parsedBody.country || "Pakistan",
       drmId: drmId,
       source: parsedBody.source,
       grade: parsedBody.grade,
@@ -399,7 +472,14 @@ router.post("/", async (req: Request, res: Response) => {
     console.log("[temp-contacts] validated insert", validatedData);
 
     const contact = await tempContactsRepository.create(validatedData);
-    res.status(201).json(hasDuplicates ? { ...contact, duplicateWarning: duplicates } : contact);
+    await ActivityLogService.log({
+      userId,
+      action: "TEMP_CONTACT_CREATED",
+      resourceType: "temp_contact",
+      resourceId: contact.id,
+      details: `Name: ${contact.personName}, Grade: ${contact.grade}`,
+    });
+    res.status(201).json(contact);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -415,12 +495,12 @@ router.post("/", async (req: Request, res: Response) => {
 router.post("/:id/promote", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { customerId } = req.body;
     const userId = req.user!.userId;
-
-    if (!customerId) {
-      return res.status(400).json({ error: "Customer ID is required for promotion" });
+    const _promParsed = promoteTempContactSchema.safeParse(req.body);
+    if (!_promParsed.success) {
+      return res.status(400).json({ error: "Customer ID is required for promotion", issues: _promParsed.error.issues });
     }
+    const { customerId } = _promParsed.data;
 
     const contact = await tempContactsRepository.promoteToCustomer(id, customerId, userId, userId);
 
@@ -428,10 +508,56 @@ router.post("/:id/promote", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Temporary contact not found" });
     }
 
+    await ActivityLogService.log({
+      userId,
+      action: "TEMP_CONTACT_PROMOTED",
+      resourceType: "temp_contact",
+      resourceId: id,
+      details: `Promoted to Customer ID: ${customerId}`,
+    });
+
     res.json(contact);
   } catch (error) {
     console.error("Error promoting temp contact:", error);
     res.status(500).json({ error: "Failed to promote temporary contact" });
+  }
+});
+
+// Called by the Add Customer page after it has created the real customer
+// record for this contact (that POST already lands the customer in the
+// converting user's Private Pool). This just links the two records and
+// flips the contact's status so it drops off the "Pending" list.
+router.post("/:id/convert", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user!.userId;
+    const parsed = promoteTempContactSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Customer ID is required", issues: parsed.error.issues });
+    }
+    const { customerId } = parsed.data;
+
+    const result = await tempContactsRepository.markConverted(id, customerId, userId);
+
+    if (result === null) {
+      return res.status(404).json({ error: "Temporary contact not found" });
+    }
+    if (result === "already_processed") {
+      return res.status(409).json({ error: "This contact has already been promoted or rejected" });
+    }
+
+    await ActivityLogService.log({
+      userId,
+      action: "TEMP_CONTACT_CONVERTED",
+      resourceType: "temp_contact",
+      resourceId: id,
+      details: `Converted to Private Pool as Customer ID: ${customerId}`,
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error converting temp contact:", error);
+    res.status(500).json({ error: "Failed to convert temporary contact" });
   }
 });
 
@@ -444,6 +570,13 @@ router.post("/:id/reject", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Temporary contact not found" });
     }
 
+    await ActivityLogService.log({
+      userId: req.user!.userId,
+      action: "TEMP_CONTACT_REJECTED",
+      resourceType: "temp_contact",
+      resourceId: id,
+    });
+
     res.json(contact);
   } catch (error) {
     console.error("Error rejecting temp contact:", error);
@@ -455,6 +588,12 @@ router.delete("/:id", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     await tempContactsRepository.delete(id, req.user!.userId);
+    await ActivityLogService.log({
+      userId: req.user!.userId,
+      action: "TEMP_CONTACT_DELETED",
+      resourceType: "temp_contact",
+      resourceId: id,
+    });
     res.json({ success: true });
   } catch (error) {
     console.error("Error deleting temp contact:", error);

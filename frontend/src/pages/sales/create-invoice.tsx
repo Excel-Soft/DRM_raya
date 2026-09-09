@@ -9,18 +9,18 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2, ChevronsUpDown, Check } from "lucide-react";
 import { format } from "date-fns";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { ChevronsUpDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import html2canvas from "html2canvas";
 import { useReactToPrint } from "react-to-print";
+import { useServiceExecutiveCreateGates } from "@/hooks/use-ui-workflow-config";
 
 interface InvoiceItem {
     id: string;
@@ -91,7 +91,12 @@ export default function CreateInvoice() {
     const receiptRef = useRef<HTMLDivElement>(null);
 
     const userRoleName = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : "")?.toLowerCase().replace(/\s+/g, "_") || "";
-    const canCreateInvoice = userRoleName === "sales_executive";
+    // Service Executive is admitted the same way the Private Pool's invoice
+    // button is gated (useServiceExecutiveCreateGates) — this page enforced
+    // sales_executive only, so a Service Executive with the config flag
+    // enabled could see the button but still hit this page-level denial.
+    const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
+    const canCreateInvoice = userRoleName === "sales_executive" || (userRoleName === "service_executive" && canCreateManualInvoice);
 
     const [items, setItems] = useState<InvoiceItem[]>([
         { id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, totalPkr: 0.5, discount: 0 }

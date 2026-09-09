@@ -56,6 +56,8 @@ import {
   History,
   Timer,
   Trash2,
+  Check,
+  X,
 } from "lucide-react";
 import type { OvertimeRecord } from "@shared/schema";
 
@@ -406,12 +408,24 @@ export default function OvertimeSubmissionPage() {
                       <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{formatDate(record.createdAt)}</td>
                       <td className="py-4 px-4 w-32">
                         {isManager && record.status === 'Pending' ? (
-                          <div className="flex items-center gap-1 justify-center">
-                            <button type="button" onClick={() => approveMutation.mutate(record.id)} disabled={approveMutation.isPending} className="inline-flex items-center gap-1 px-2 h-7 rounded bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-bold transition-colors">
-                              ✓ Approve
+                          <div className="flex items-center gap-1.5 justify-center">
+                            <button
+                              type="button"
+                              onClick={() => approveMutation.mutate(record.id)}
+                              disabled={approveMutation.isPending}
+                              title="Approve"
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-500 hover:text-white dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-500 dark:hover:text-white transition-colors disabled:opacity-50 shadow-sm"
+                            >
+                              <Check className="h-4 w-4" />
                             </button>
-                            <button type="button" onClick={() => rejectMutation.mutate(record.id)} disabled={rejectMutation.isPending} className="inline-flex items-center gap-1 px-2 h-7 rounded bg-red-500 hover:bg-red-600 text-white text-[11px] font-bold transition-colors">
-                              ✕ Reject
+                            <button
+                              type="button"
+                              onClick={() => rejectMutation.mutate(record.id)}
+                              disabled={rejectMutation.isPending}
+                              title="Reject"
+                              className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-red-50 text-red-600 hover:bg-red-500 hover:text-white dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-500 dark:hover:text-white transition-colors disabled:opacity-50 shadow-sm"
+                            >
+                              <X className="h-4 w-4" />
                             </button>
                           </div>
                         ) : (

@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { db } from "../db";
+import { db } from "./db";
 import { 
   meetings, 
   meetingStatusEnum, 
@@ -7,7 +7,7 @@ import {
   customers, 
   notices,
   serviceComplaints
-} from "../../shared/schema";
+} from "../shared/schema";
 import { eq, desc, and, sql, gte, lte, or, inArray, ilike } from "drizzle-orm";
 import { z } from "zod";
 
@@ -135,6 +135,13 @@ router.get("/stats", async (req: Request, res: Response) => {
 router.get("/meetings", async (req: Request, res: Response) => {
   try {
     const status = req.query.status as "expected" | "in_progress" | "ended" | undefined;
+    // Optional filters (additive, backward-compatible — existing callers that
+    // don't pass them are unaffected):
+    //  - personType: distinguishes internal "user" meetings (e.g. HOD scheduling
+    //    with a colleague) from reception's client "contact"/"external" visits.
+    //  - date: restricts to a single calendar day of meetingDate (YYYY-MM-DD).
+    const personType = req.query.personType as "user" | "contact" | "external" | undefined;
+    const dateParam = req.query.date as string | undefined;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 50;
     const offset = (page - 1) * limit;
@@ -142,6 +149,18 @@ router.get("/meetings", async (req: Request, res: Response) => {
     let conditions = [];
     if (status) {
       conditions.push(eq(meetings.status, status));
+    }
+    if (personType) {
+      conditions.push(eq(meetings.personType, personType));
+    }
+    if (dateParam) {
+      const dayStart = new Date(dateParam);
+      if (!isNaN(dayStart.getTime())) {
+        const dayEnd = new Date(dayStart);
+        dayEnd.setDate(dayEnd.getDate() + 1);
+        conditions.push(gte(meetings.meetingDate, dayStart));
+        conditions.push(lte(meetings.meetingDate, dayEnd));
+      }
     }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -151,6 +170,8 @@ router.get("/meetings", async (req: Request, res: Response) => {
         id: meetings.id,
         companyId: meetings.companyId,
         companyName: customers.companyName,
+        personType: meetings.personType,
+        userId: meetings.userId,
         meetingType: meetings.meetingType,
         personName: meetings.personName,
         status: meetings.status,

@@ -1,6 +1,7 @@
 import type { Express } from "express";
-import { attendanceRepository } from "../repositories/attendance.repository";
-import { isManagerialRole } from "../utils/role-utils";
+import { attendanceRepository } from "./repositories/attendance.repository";
+import { isManagerialRole } from "./utils/role-utils";
+import { pool } from "./db";
 
 const normalizeDateRange = (start: Date, end: Date) => {
   const normalizedStart = new Date(start);
@@ -11,6 +12,24 @@ const normalizeDateRange = (start: Date, end: Date) => {
 };
 
 export function registerAttendanceRoutes(app: Express) {
+  // GET /api/attendance/today - Today's check-in/check-out status for the
+  // calling user, independent of whatever date range the Daily Details
+  // filter is currently showing.
+  app.get("/api/attendance/today", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const now = new Date();
+      const { start, end } = normalizeDateRange(now, now);
+      const records = await attendanceRepository.findByUserIdAndDateRange(req.user.userId, start, end);
+      res.json({ record: records[0] || null });
+    } catch (error) {
+      console.error("Error fetching today's attendance:", error);
+      res.status(500).json({ error: "Failed to fetch today's attendance" });
+    }
+  });
+
   // GET /api/attendance - Get attendance records for date range
   app.get("/api/attendance", async (req, res) => {
     try {
@@ -142,7 +161,6 @@ export function registerAttendanceRoutes(app: Express) {
 
       const targetUserId = (isManagerialRole(req.user.roleId) && req.query.userId) ? (req.query.userId as string) : req.user.userId;
       
-      const { pool } = require("./db");
       const userRes = await pool.query('SELECT full_name, basic_salary FROM drm.users WHERE id = $1', [targetUserId]);
       const userData = userRes.rows[0] || {};
       const grossSalary = Number(userData.basic_salary || 0);
@@ -163,7 +181,14 @@ export function registerAttendanceRoutes(app: Express) {
         userName: userData.full_name,
         grossSalary,
         totalCutting: cuttingAmount,
-        totalSalary
+        totalSalary,
+        // Wired from attendance's real late-checkin tracking (computeLateFlags /
+        // getSalaryDetails). Surfaced as informational data only — there is no
+        // defined deduction-per-late-minute rate/policy anywhere in this system,
+        // so it does NOT factor into cuttingAmount/totalSalary above. If/when a
+        // rate is defined, it should be applied here explicitly rather than
+        // assumed.
+        lateMinutes: baseSalaryDetails.totalLateMinutes,
       };
 
       res.json({

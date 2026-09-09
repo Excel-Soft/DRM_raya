@@ -1,15 +1,16 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { Router } from "express";
 import { z } from "zod";
-import { hodRepository } from "../repositories/hod.repository";
-import { projectsRepository } from "../repositories/projects.repository";
-import { pool } from "../db";
-import { isHodAllowed, normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { hodRepository } from "./repositories/hod.repository";
+import { projectsRepository } from "./repositories/projects.repository";
+import { pool } from "./db";
+import { isHodAllowed, normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { registerHodQuickActionRoutes } from "./hod-quick-actions.routes";
-import { createProductPostingInvoices } from "../utils/invoice-utils";
-import { generateDefaultInvoicesForGm } from "../services/gm-invoice-generation.service";
-import { GM_INVOICE_GENERATION_TIMING } from "../../shared/gm-sales-constants";
-import { NotificationService } from "../services/notification-service";
+import { generateInvoicesAfterFinalGmApproval } from "./services/gm-invoice-generation.service";
+import { resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { GM_INVOICE_GENERATION_TIMING } from "../shared/gm-sales-constants";
+import { NotificationService } from "./services/notification-service";
 
 
 const router = Router();
@@ -117,21 +118,41 @@ router.get("/dashboard/important-stats", async (req, res) => {
   try {
     const client = await pool.connect();
     try {
+      // This endpoint is shared by the real HOD/Super HOD dashboards (which
+      // should see company-wide numbers) AND several department-manager
+      // dashboards (SEO/SMM, Product Posting, Verification, QA) that were
+      // previously getting the exact same unscoped, company-wide project
+      // counts under their own department's header. getDepartmentFilterUserIds
+      // returns null only for true global roles — a department manager gets
+      // back their own team's user ids instead.
+      const activeRoleForScope = (req.user as any)?.activeRoleId || req.user?.roleId;
+      const allowedProjectUserIds = isManagerialRole(activeRoleForScope)
+        ? await getDepartmentFilterUserIds(req)
+        : null;
+      const projectScopeParams: any[] = [];
+      let projectScopeSql = "";
+      if (allowedProjectUserIds) {
+        projectScopeParams.push(allowedProjectUserIds);
+        projectScopeSql = `AND (owner_user_id = ANY($1::uuid[]) OR (owner_user_id IS NULL AND created_by = ANY($1::uuid[])))`;
+      }
+
       // Real statistics queries
       const statsQuery = await client.query(`
-        SELECT 
+        SELECT
           COUNT(*) as "total",
           COUNT(CASE WHEN LOWER(status) IN ('completed', 'success', 'approved') THEN 1 END) as "completed",
           COUNT(CASE WHEN LOWER(status) IN ('in progress', 'active') THEN 1 END) as "in_progress",
           COUNT(CASE WHEN LOWER(status) IN ('pending', 'waiting', 'ready_for_qa') THEN 1 END) as "pending",
           COUNT(CASE WHEN (end_date < NOW()) AND LOWER(status) = 'active' THEN 1 END) as "delayed"
         FROM drm.projects
-      `);
+        WHERE 1=1 ${projectScopeSql}
+      `, projectScopeParams);
       const upcomingQuery = await client.query(`
-        SELECT COUNT(*) as count 
-        FROM drm.projects 
+        SELECT COUNT(*) as count
+        FROM drm.projects
         WHERE end_date >= NOW() AND end_date <= NOW() + INTERVAL '7 days'
-      `);
+        ${projectScopeSql}
+      `, projectScopeParams);
 
       // Get GM Verification Pending count
       const gmPendingQuery = await client.query(`
@@ -154,6 +175,14 @@ router.get("/dashboard/important-stats", async (req, res) => {
         WHERE is_active = true
       `);
 
+      // Get real QA-verification-pending count (tasks actually awaiting QA,
+      // not a re-labeled copy of the project "pending" count).
+      const qaVerificationQuery = await client.query(`
+        SELECT COUNT(*) as count
+        FROM drm.tasks
+        WHERE status = 'READY_FOR_QA'
+      `);
+
       const row = statsQuery.rows[0];
       const total = parseInt(row.total || '0');
       const completed = parseInt(row.completed || '0');
@@ -164,6 +193,7 @@ router.get("/dashboard/important-stats", async (req, res) => {
       const gmPending = parseInt(gmPendingQuery.rows[0]?.count || '0');
       const leaves = parseInt(leaveCount.rows[0]?.count || '0');
       const activeUsers = parseInt(activeTeam.rows[0]?.count || '0');
+      const qaVerification = parseInt(qaVerificationQuery.rows[0]?.count || '0');
 
       const stats = {
         delayProjects: delayed,
@@ -171,7 +201,7 @@ router.get("/dashboard/important-stats", async (req, res) => {
         completed: completed,
         inProgress: inProgress,
         pending: pending, // Project Pending
-        qaVerification: pending, // Project QA
+        qaVerification: qaVerification, // Tasks actually in READY_FOR_QA, distinct from "Pending"
         leaveApplication: leaves,
         activeTeam: activeUsers,
         depVerification: gmPending, // GM Verification
@@ -222,7 +252,8 @@ router.use(requireHod);
 
 router.get("/dashboard/summary", async (req, res) => {
   try {
-    const data = await hodRepository.getSummary();
+    const period = typeof req.query.period === "string" ? req.query.period : undefined;
+    const data = await hodRepository.getSummary(period);
     const response = { success: true, data };
     logApi(req, 200, response);
     return res.json(response);
@@ -267,6 +298,18 @@ router.post("/approvals/:id/approve", async (req, res) => {
     }
     const response = { success: true, message: "Approved successfully", data: updated };
     logApi(req, 200, response);
+
+    // Generate 3 default invoices when a GM entry is approved
+    if (updated && (updated as any).source === "gm_entries") {
+      try {
+        const gmId = approvalId;
+        await generateInvoicesAfterFinalGmApproval(gmId, req.user!.userId, req);
+        console.log(`[HOD] Invoices generated for GM ${gmId} after approval`);
+      } catch (invErr) {
+        console.error("[HOD] Invoice generation failed (non-fatal):", invErr);
+      }
+    }
+
     return res.json(response);
 
 
@@ -381,13 +424,16 @@ router.get("/verification/gms", async (req, res) => {
           ge.extra_discount_hod as "extraDiscountHod",
           ge.final_order_usd as "finalOrder",
           ge.is_partial_payment as "isPartial",
+          ge.is_loan as "isLoan",
+          ge.canonical_gm_type as "canonicalGmType",
           ge.status,
           ge.hod_status as "hodStatus",
           ge.accountant_status as "accountantStatus",
           ge.payment_status as "paymentStatus",
           ge.payment_proof_url as "paymentProofUrl",
           ge.installments as "installments",
-          ge.created_at as "createdAt"
+          ge.created_at as "createdAt",
+          ge.updated_at as "updatedAt"
         FROM drm.gm_entries ge
         WHERE (ge.approval_status IS NULL OR ge.approval_status = 'pending_hod')
         ORDER BY ge.created_at DESC
@@ -414,18 +460,81 @@ router.get("/verification/gms", async (req, res) => {
   }
 });
 
+// Phase 3 — the financial fields below (discounts, dollar rate, PKR/USD
+// amounts, installments) previously flowed straight from req.body into the
+// (already-parameterized) UPDATE below with no validation at all.
+const gmVerificationInstallmentSchema = z
+  .object({
+    dollar: z.coerce.number().finite().nonnegative().optional(),
+    pkr: z.coerce.number().finite().nonnegative().optional(),
+    chequeNo: z.string().trim().max(100).optional(),
+    payDate: z.string().trim().max(40).optional(),
+  })
+  .strict();
+
+export const gmVerificationStatusSchema = z
+  .object({
+    status: z.enum(["Approved", "Rejected"]),
+    installments: z.array(gmVerificationInstallmentSchema).max(60).optional(),
+    extraDiscountHod: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    extraDiscountPkr: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    extraDiscount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    alibabaDiscount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    dollarRate: z.coerce.number().finite().positive().max(10_000).optional(),
+    pkr: z.coerce.number().finite().nonnegative().max(1_000_000_000_000).optional(),
+    orderDollar: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    customerDollar: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    notes: z.string().trim().max(2000).optional(),
+    accountType: z.string().trim().max(60).optional(),
+  })
+  .strict();
+
 router.post("/verification/gms/:id/status", async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, installments, extraDiscountHod, extraDiscountPkr, extraDiscount,
-      alibabaDiscount, dollarRate, pkr, orderDollar, customerDollar, notes, accountType } = req.body;
-
-    if (!status || !["Approved", "Rejected"].includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status. Must be 'Approved' or 'Rejected'" });
+    const parsed = gmVerificationStatusSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: "Invalid request payload", details: parsed.error.errors });
     }
+    const { status, installments, extraDiscountHod, extraDiscountPkr, extraDiscount,
+      alibabaDiscount, dollarRate, pkr, orderDollar, customerDollar, notes, accountType } = parsed.data;
 
     const client = await pool.connect();
     try {
+      // Approval is gated server-side (not just in the UI) on Extra Discount HOD
+      // exactly matching the Sales-requested Extra Discount — mirrors the check
+      // in handleSaveGmStatus on the client, but re-validated here against the
+      // entry's own stored extra_discount_usd so it can't be bypassed by a
+      // direct API call that skips or spoofs the client-side check.
+      if (status === "Approved") {
+        const currentRes = await client.query(
+          `SELECT COALESCE(extra_discount_usd, 0)::numeric AS extra_discount_usd FROM drm.gm_entries WHERE id = $1`,
+          [id],
+        );
+        if (currentRes.rows.length === 0) {
+          const response = { success: false, message: "GM entry not found" };
+          logApi(req, 404, response);
+          return res.status(404).json(response);
+        }
+        const requestedDiscount = Number(currentRes.rows[0].extra_discount_usd ?? 0);
+        if (extraDiscountHod === undefined) {
+          const response = {
+            success: false,
+            message: "Extra Discount HOD is required before this GM entry can be approved.",
+          };
+          logApi(req, 400, response);
+          return res.status(400).json(response);
+        }
+        if (Math.abs(extraDiscountHod - requestedDiscount) > 0.01) {
+          const response = {
+            success: false,
+            message: `Extra Discount HOD (${extraDiscountHod}) must exactly match the requested Extra Discount (${requestedDiscount}) before this GM entry can be approved.`,
+          };
+          logApi(req, 400, response);
+          return res.status(400).json(response);
+        }
+      }
+
       // Build dynamic SET clauses for optional fields
       const setClauses: string[] = [
         "status = $1",
@@ -542,6 +651,17 @@ router.post("/verification/gms/:id/status", async (req, res) => {
           }
         } else {
           console.warn(`[HOD] Could not resolve notifyUserId for GM entry ${id}`);
+        }
+      }
+
+      // Generate default invoices when HOD approves an existing GM entry
+      if (status === "Approved" && entry) {
+        try {
+          const creatorId = entry.sales_person_id || entry.created_by || (req.user as any)?.userId;
+          await generateInvoicesAfterFinalGmApproval(String(id), String(creatorId), req);
+          console.log(`[HOD] Invoices generated for GM entry ${id} after HOD approval`);
+        } catch (invErr) {
+          console.error("[HOD] Invoice generation failed (non-fatal):", invErr);
         }
       }
 
@@ -679,7 +799,7 @@ router.get("/verification/update-requests", async (req, res) => {
           ge.company_name as "company",
           ge.sales_person_name as "salePerson",
           ge.amount_usd as "orderDollar",
-          ge.package_name as "package",
+          ge.package_type as "package",
           ge.dollar_rate as "dollarRate",
           ge.amount_pkr as "pkr",
           ge.alibaba_discount_usd as "alibabaDiscount",
@@ -798,6 +918,14 @@ router.post("/verification/withdrawals/:id/approve", async (req, res) => {
       `UPDATE drm.gm_entries
        SET withdrawal_status = 'approved',
            status = 'Withdrawn',
+           approval_status = 'pending_hod',
+           hod_status = 'Pending',
+           account_manager_status = 'pending',
+           super_hod_status = NULL,
+           hod_approved_at = NULL,
+           hod_approved_by = NULL,
+           account_manager_approved_at = NULL,
+           account_manager_approved_by = NULL,
            withdrawal_actioned_by = $2,
            withdrawal_actioned_at = NOW(),
            updated_at = NOW()
@@ -944,6 +1072,12 @@ router.post("/verification/update-requests/:id/action", async (req, res) => {
     try {
       if (type === 'Temp GM') {
         if (status === 'Approved') {
+          const canonicalDrmId = data.drmId || await resolveOrCreateCanonicalDrmId(client, {
+            companyName: data.company,
+            email: data.email,
+            phone: data.phone,
+          });
+
           // Create real GM entry
           await client.query(`
                 INSERT INTO drm.gm_entries (
@@ -958,7 +1092,7 @@ router.post("/verification/update-requests/:id/action", async (req, res) => {
                    $15, 'Pending', 'Approved', $16, $17, 'GM'
                 )
              `, [
-            data.drmId || 'N/A',
+            canonicalDrmId,
             data.memberId,
             data.orderId,
             data.company,
@@ -982,30 +1116,61 @@ router.post("/verification/update-requests/:id/action", async (req, res) => {
           // preserves prior behavior). Best-effort: never throws.
           const creatorRes = await client.query('SELECT created_by_user_id FROM drm.temp_gm_entries WHERE id = $1', [id]);
           const creatorId = creatorRes.rows[0]?.created_by_user_id;
-          if (creatorId) {
-            await generateDefaultInvoicesForGm({
-              gmId: String(id),
-              customerId: data.customerId || null,
-              companyName: data.company,
-              ownerUserId: creatorId,
-              event: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
-              actorUserId: creatorId,
-              req,
-            });
-          }
+          await generateInvoicesAfterFinalGmApproval(String(id), creatorId || (req.user as any)?.userId, req);
 
           // Update temp entry to Approved
-          await client.query('UPDATE drm.temp_gm_entries SET status = $1 WHERE id = $2', ['Approved', id]);
+          await client.query('UPDATE drm.temp_gm_entries SET status = $1, hod_approved_at = NOW(), updated_at = NOW() WHERE id = $2', ['Approved', id]);
 
         } else {
           // Just update status to Rejected
-          await client.query('UPDATE drm.temp_gm_entries SET status = $1 WHERE id = $2', ['Rejected', id]);
+          const rowRes = await client.query('UPDATE drm.temp_gm_entries SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *', ['Rejected', id]);
+          const entry = rowRes.rows[0];
+          if (entry) {
+            const creatorId = entry.created_by_user_id || entry.sales_person_id;
+            const companyName = entry.company_name || data?.company || "Company";
+            const reason = data?.reason || data?.comment || "No reason provided";
+
+            if (creatorId) {
+              await NotificationService.notify({
+                userId: String(creatorId),
+                message: `Your Temp GM entry for '${companyName}' was rejected by HOD. Reason: ${reason}`,
+                type: "ERROR",
+                targetUrl: "/sales/gm-pool",
+              }).catch(() => {});
+            }
+
+            await NotificationService.notifyRole(
+              "admin",
+              `Temp GM entry for '${companyName}' was rejected by HOD. Reason: ${reason}`,
+              "ERROR",
+              { targetUrl: "/hod/verification" }
+            ).catch(() => {});
+          }
         }
       } else if (type === 'Refund GM') {
-        // For Refund GM, we just update the status in refund_gm_entries for now
-        // In a real flow, this might trigger finance logic, but for HOD dashboard we just mark approval
-        await client.query('UPDATE drm.refund_gm_entries SET status = $1, comment = $2 WHERE id = $3',
+        // For Refund GM, update status and notify
+        const rRes = await client.query('UPDATE drm.refund_gm_entries SET status = $1, comment = $2 WHERE id = $3 RETURNING *',
           [status, data.reason || '', id]);
+        const entry = rRes.rows[0];
+        if (status === 'Rejected' && entry) {
+          const creatorId = entry.created_by_user_id || entry.sales_person_id;
+          const companyName = entry.company_name || data?.company || "Company";
+          const reason = data?.reason || data?.comment || "No reason provided";
+          if (creatorId) {
+            await NotificationService.notify({
+              userId: String(creatorId),
+              message: `Your Refund GM entry for '${companyName}' was rejected by HOD. Reason: ${reason}`,
+              type: "ERROR",
+              targetUrl: "/sales/gm-pool",
+            }).catch(() => {});
+          }
+          await NotificationService.notifyRole(
+            "admin",
+            `Refund GM entry for '${companyName}' was rejected by HOD. Reason: ${reason}`,
+            "ERROR",
+            { targetUrl: "/hod/verification" }
+          ).catch(() => {});
+        }
       } else {
         return res.status(400).json({ success: false, message: "Invalid request type" });
       }

@@ -1,11 +1,11 @@
 import type { Express, Request, Response } from "express";
 import type { PoolClient } from "pg";
-import { pool } from "../db";
-import { isManagerialRole, normalizeRole } from "../utils/role-utils";
-import { requireReportPermission } from "../middleware/report-permission";
-import { requireActionPermission } from "../middleware/action-permission";
-import { recordAuditLog } from "../services/activity-service";
-import { attendanceRepository } from "../repositories/attendance.repository";
+import { pool } from "./db";
+import { isManagerialRole, normalizeRole } from "./utils/role-utils";
+import { requireReportPermission } from "./middleware/report-permission";
+import { requireActionPermission } from "./middleware/action-permission";
+import { recordAuditLog } from "./services/activity-service";
+import { attendanceRepository } from "./repositories/attendance.repository";
 
 const ALLOWED_FIELDS = new Set(["status", "check_in", "check_out", "notes", "working_hours"]);
 const VALID_STATUSES = ["Present", "Absent", "Late", "HalfDay", "Leave"];

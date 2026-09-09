@@ -1,8 +1,8 @@
 import { type Request, type Response, type NextFunction } from "express";
 import type { PoolClient } from "pg";
-import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
-import { pool, isDbAvailable, ensureDbAvailable } from "../db";
-import { normalizeRole, ROLES } from "../utils/role-utils";
+import { allowedIpsRepository } from "./repositories/allowed-ips.repository";
+import { pool, isDbAvailable, ensureDbAvailable } from "./db";
+import { normalizeRole, ROLES } from "./utils/role-utils";
 
 // Configuration flag for IP restriction enforcement
 export const IP_RESTRICTION_ENABLED = process.env.IP_RESTRICTION_ENABLED === "true";
@@ -74,7 +74,10 @@ export async function checkUrlPermission(
 
     const method = (req.method || "GET").toUpperCase();
 
-    const permissionsResult = await pool.query(
+    client = await pool.connect();
+    await client.query("SET statement_timeout = 5000");
+
+    const permissionsResult = await client.query(
       "select id, path, allowed_role_ids from drm.url_permissions",
     );
 
@@ -97,9 +100,19 @@ export async function checkUrlPermission(
     });
 
     if (matchingEntries.length === 0) {
+      // No matching rule for this path -> ALLOW (intentional, see below).
+      // The drm.url_permissions table only models menu segments and is
+      // currently unpopulated; the authoritative access control for API routes
+      // is the per-route role guards. Flipping this to a hard default-deny here
+      // would lock every non-admin role out of the entire API. Converting this
+      // to a true default-deny requires first populating url_permissions for
+      // every API route/role (tracked as a follow-up; see STAGE_1B changelog).
       return next();
     }
 
+    // Check if ANY of the matching entries allow the user's role.
+    // An entry allows if its allowed_role_ids is empty OR if the user's
+    // (normalized) role matches an entry in the (normalized) allow list.
     const hasAnyPermission = matchingEntries.some((entry) => {
       if (!entry.allowed_role_ids || entry.allowed_role_ids.length === 0) {
         return true;
@@ -107,6 +120,8 @@ export async function checkUrlPermission(
       return entry.allowed_role_ids.some((role: any) => {
         const roleName = typeof role === 'string' ? role : (role.name || role.id);
         const candidate = String(roleName).toLowerCase();
+        // Match the raw stored value (e.g. numeric role-id strings like "14")
+        // or its normalized role alias against the caller's normalized role.
         return candidate === userRoleId || normalizeRole(candidate) === userRoleId;
       });
     });
@@ -129,6 +144,15 @@ export async function checkUrlPermission(
       error: "ServiceUnavailable",
       message: "Unable to verify permissions (database unavailable).",
     });
+  } finally {
+    try {
+      if (client) {
+        await client.query("SET statement_timeout = DEFAULT");
+        client.release();
+      }
+    } catch (err) {
+      console.error("Error cleaning up permission DB client:", err);
+    }
   }
 }
 

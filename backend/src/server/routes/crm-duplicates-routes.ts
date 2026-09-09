@@ -1,12 +1,12 @@
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { sendError, ApiError } from "../utils/api-error";
-import { AuditLogService } from "../services/audit-log.service";
+import { pool } from "./db";
+import { sendError, ApiError } from "./utils/api-error";
+import { AuditLogService } from "./services/audit-log.service";
 import {
   findDuplicates,
   canOverrideDuplicates,
-} from "../utils/duplicate-policy";
-import { getRequestUserId, getRequestRole } from "../utils/ownership";
+} from "./utils/duplicate-policy";
+import { getRequestUserId, getRequestRole } from "./utils/ownership";
 
 /**
  * Stage 8 — CRM duplicate review & merge workflow.

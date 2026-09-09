@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
-import { poolsRepository, PoolType } from "../repositories/pools.repository";
-import { pool } from "../db";
-import { isManagerialRole } from "../utils/role-utils";
+import { poolsRepository, PoolType } from "./repositories/pools.repository";
+import { pool } from "./db";
+import { isManagerialRole } from "./utils/role-utils";
 
 const router = Router();
 
@@ -14,7 +14,9 @@ router.use((req: Request, res: Response, next) => {
 
 router.get("/", async (req: Request, res: Response) => {
   try {
-    const isManager = isManagerialRole(req.user!.roleId);
+    const userObj = req.user as any;
+    const r = (userObj.role || (Array.isArray(userObj.roles) ? userObj.roles.join(" ") : "")).toLowerCase();
+    const isManager = r.includes("admin") || r.includes("super_hod") || r.includes("hod") || r.includes("manager") || isManagerialRole(req.user!.roleId);
     const userId = (isManager && req.query.userId) ? (req.query.userId as string) : (isManager ? undefined : req.user!.userId);
     const { type, grade, serviceType, search, limit, offset, status, source } = req.query;
     

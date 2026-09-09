@@ -354,7 +354,7 @@ export default function CommissionVerificationPage() {
                                 {!listQuery.isLoading && !listQuery.isError && rows.map((row, idx) => {
                                     const isPending = row.status === "pending";
                                     return (
-                                        <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
+                                        <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                             {activeCols.map(col => {
                                                 if (col.id === "action") {
                                                     return (

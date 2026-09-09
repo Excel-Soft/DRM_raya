@@ -395,6 +395,30 @@ async function ensureGmEntriesPatch5Schema(client: {
   await client.query(
     `ALTER TABLE drm.gm_entries ADD COLUMN IF NOT EXISTS created_by_role text`,
   );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS hod_approved_at TIMESTAMPTZ`,
+  );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
+  );
+  // Add hod_status and hod_approved_at columns to gm_entries.
+  // hod_approved_at: set by HOD approval route already; needed for backfill.
+  await client.query(
+    `ALTER TABLE drm.gm_entries ADD COLUMN IF NOT EXISTS hod_approved_at TIMESTAMPTZ`,
+  );
+  await client.query(
+    `ALTER TABLE drm.gm_entries ADD COLUMN IF NOT EXISTS hod_status text`,
+  );
+  // Backfill hod_status = 'Approved' for rows where HOD already approved
+  // (hod_approved_at IS NOT NULL means HOD approval happened).
+  await client.query(
+    `UPDATE drm.gm_entries SET hod_status = 'Approved' WHERE hod_status IS NULL AND hod_approved_at IS NOT NULL`,
+  );
+  // Explicit FULL/PARTIAL/LOAN classification (mirrors shared/schema.ts canonicalGmType).
+  // Nullable/additive; legacy rows keep deriving their type from is_loan/is_partial_payment.
+  await client.query(
+    `ALTER TABLE drm.gm_entries ADD COLUMN IF NOT EXISTS canonical_gm_type text`,
+  );
 }
 
 /**
@@ -465,6 +489,37 @@ async function ensureGmStage3Schema(client: {
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_gm_loan_terms_return_date ON drm.gm_loan_terms (agreed_return_date)`,
   );
+
+  // --- gm_loan_receivables: outstanding-loan ledger, populated on final loan
+  // GM approval (see gm-pool-routes.ts / account-routes.ts). One row per loan
+  // GM — mirrors migrations/20260725_gm_financial_workflow_hardening.sql, made
+  // idempotent here too since db:push is broken repo-wide and a standalone
+  // migration file isn't guaranteed to have run against every environment.
+  // gm_id is varchar with NO hard FK (same cross-type-FK caveat as
+  // gm_partial_receipts/gm_loan_terms above — gm_entries.id is varchar, not
+  // uuid, so a typed FK would fail to create); existence is validated in the
+  // app layer instead. The migration's original `gm_id UUID REFERENCES
+  // drm.gm_entries(id)` would never actually apply for this reason.
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.gm_loan_receivables (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       gm_id varchar NOT NULL,
+       customer_id UUID REFERENCES drm.customers(id),
+       customer_contribution NUMERIC(14,2) DEFAULT 0,
+       webexcels_contribution NUMERIC(14,2) DEFAULT 0,
+       loan_amount NUMERIC(14,2) NOT NULL,
+       amount_returned NUMERIC(14,2) DEFAULT 0,
+       outstanding_amount NUMERIC(14,2) NOT NULL,
+       return_date DATE NOT NULL,
+       status VARCHAR(50) DEFAULT 'OUTSTANDING',
+       created_by UUID REFERENCES drm.users(id),
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+  );
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_gm_loan_receivables_gm_id ON drm.gm_loan_receivables (gm_id)`,
+  );
 }
 
 /**
@@ -524,6 +579,63 @@ async function ensureInvoiceStage4Schema(client: {
 }
 
 /**
+ * Human-facing `invoice_number` on the canonical product-posting invoice
+ * table. Every screen (HOD/Sales/Account dashboards, InvoiceReceipt) used to
+ * invent its own display id by slicing the internal `id` UUID differently,
+ * so the "same" invoice showed a different, non-unique number depending on
+ * which screen you were on. A DB-level DEFAULT (backed by a sequence) means
+ * every INSERT — Drizzle or raw SQL, existing call site or new — gets a
+ * stable, unique number for free with zero insert-site code changes; the
+ * column is additive/idempotent (ADD COLUMN IF NOT EXISTS) like the rest of
+ * this file, and pre-existing rows are backfilled once, in creation order.
+ */
+async function ensureInvoiceNumberSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE SEQUENCE IF NOT EXISTS drm.product_posting_invoice_number_seq START 1001`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_invoices ADD COLUMN IF NOT EXISTS invoice_number text`,
+  );
+  // Backfill only rows created before this column existed, oldest-first (a
+  // plain UPDATE ... WHERE invoice_number IS NULL has no defined row order,
+  // which handed newer invoices lower numbers than older ones); every INSERT
+  // from here on gets one via the column DEFAULT below, so this is a no-op
+  // after the first run.
+  await client.query(
+    `WITH ordered AS (
+       SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) + 1000 AS rn
+       FROM drm.product_posting_invoices
+       WHERE invoice_number IS NULL
+     )
+     UPDATE drm.product_posting_invoices p
+       SET invoice_number = ordered.rn::text
+       FROM ordered
+       WHERE p.id = ordered.id`,
+  );
+  // Keep the sequence ahead of whatever the backfill just assigned so the
+  // next real INSERT's DEFAULT can't collide with a backfilled number.
+  await client.query(
+    `SELECT setval(
+       'drm.product_posting_invoice_number_seq',
+       GREATEST(1001, (SELECT COALESCE(MAX(invoice_number::int), 1000) FROM drm.product_posting_invoices))
+     )`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_invoices
+       ALTER COLUMN invoice_number SET DEFAULT nextval('drm.product_posting_invoice_number_seq')::text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_invoices ALTER COLUMN invoice_number SET NOT NULL`,
+  );
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_ppi_invoice_number
+       ON drm.product_posting_invoices (invoice_number)`,
+  );
+}
+
+/**
  * Patch 5 Stage 5 — structured invoice->project routing columns on drm.projects
  * (P9) + the project-dependency table (P10). `db:push` is broken repo-wide
  * (pre-existing FK mismatch), so the schema is applied at runtime here. ALL
@@ -547,7 +659,8 @@ async function ensureProjectStage5Schema(client: {
        ADD COLUMN IF NOT EXISTS gm_id text,
        ADD COLUMN IF NOT EXISTS service_type text,
        ADD COLUMN IF NOT EXISTS invoice_type text,
-       ADD COLUMN IF NOT EXISTS project_type text`,
+       ADD COLUMN IF NOT EXISTS project_type text,
+       ADD COLUMN IF NOT EXISTS legacy_source_id text`,
   );
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_projects_gm_id ON drm.projects (gm_id)`,
@@ -562,6 +675,23 @@ async function ensureProjectStage5Schema(client: {
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_invoice_root
        ON drm.projects (invoice_id)
        WHERE invoice_id IS NOT NULL AND project_type = 'INVOICE_ROOT'`,
+  );
+  // Phase 5 — same backstop for the GM-only creation path (no invoice at all):
+  // at most one GM_ROOT project per GM entry.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_gm_root
+       ON drm.projects (gm_id)
+       WHERE gm_id IS NOT NULL AND project_type = 'GM_ROOT'`,
+  );
+  // Phase 5 — quotations/legacy `drm.invoices` sources cannot use the `invoice_id`
+  // column for their own idempotency key: it carries a real FK to
+  // product_posting_invoices(id), so writing a quotation/legacy-invoice id there
+  // would violate that constraint (confirmed by a failing test against the real
+  // DB). `legacy_source_id` is a separate, unconstrained column for exactly this.
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_legacy_source
+       ON drm.projects (legacy_source_id)
+       WHERE legacy_source_id IS NOT NULL AND project_type = 'INVOICE_ROOT'`,
   );
 
   // --- drm.project_dependencies (P10) ---
@@ -590,6 +720,64 @@ async function ensureProjectStage5Schema(client: {
   );
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_project_dependencies_status ON drm.project_dependencies (status)`,
+  );
+}
+
+/**
+ * Professional, unique, sequential project identifier — mirrors
+ * ensureInvoiceNumberSchema's exact pattern (a dedicated sequence rather than
+ * slicing the internal `id` UUID for display, which was neither professional
+ * nor guaranteed unique across projects). Additive + idempotent.
+ */
+async function ensureProjectNumberSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE SEQUENCE IF NOT EXISTS drm.project_number_seq START 1001`,
+  );
+  await client.query(
+    `ALTER TABLE drm.projects ADD COLUMN IF NOT EXISTS project_number text`,
+  );
+  // Backfill any existing rows created before this column existed.
+  await client.query(
+    `UPDATE drm.projects
+       SET project_number = nextval('drm.project_number_seq')::text
+     WHERE project_number IS NULL`,
+  );
+  // Keep the sequence ahead of whatever the backfill just assigned so the
+  // next real INSERT's DEFAULT can't collide with a backfilled number.
+  await client.query(
+    `SELECT setval(
+       'drm.project_number_seq',
+       GREATEST(1001, (SELECT COALESCE(MAX(project_number::int), 1000) FROM drm.projects))
+     )`,
+  );
+  await client.query(
+    `ALTER TABLE drm.projects
+       ALTER COLUMN project_number SET DEFAULT nextval('drm.project_number_seq')::text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.projects ALTER COLUMN project_number SET NOT NULL`,
+  );
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_project_number ON drm.projects (project_number)`,
+  );
+}
+
+/**
+ * Required developer self-review confirmation before a Product Posting task
+ * can be submitted to the manager (mirrors shared/schema.ts's productPostingWorkflows).
+ * Additive/nullable, self-healing at runtime like the rest of this file.
+ */
+async function ensureProductPostingSelfReviewSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.product_posting_workflows ADD COLUMN IF NOT EXISTS self_reviewed_at TIMESTAMPTZ`,
+  );
+  // Miniwebsite "Delivered" signal (display-only, see shared/schema.ts).
+  await client.query(
+    `ALTER TABLE drm.product_posting_workflows ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`,
   );
 }
 
@@ -671,8 +859,11 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureGmEntriesPatch5Schema(client);
         await ensureGmStage3Schema(client);
         await ensureInvoiceStage4Schema(client);
+        await ensureInvoiceNumberSchema(client);
         await ensureProjectStage5Schema(client);
+        await ensureProjectNumberSchema(client);
         await ensureWorkflowStatusHistorySchema(client);
+        await ensureProductPostingSelfReviewSchema(client);
         return;
       } catch (err) {
         lastErr = err;

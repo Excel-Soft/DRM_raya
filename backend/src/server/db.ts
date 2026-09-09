@@ -1,7 +1,7 @@
 import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "@shared/schema";
-import "./utils/env"; // loads env before reading values
+import "./env"; // loads env before reading values
 
 const { Pool } = pg;
 
@@ -167,7 +167,7 @@ export const pool = new Pool({
   connectionString: conn.connectionString,
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 5000,   // Release idle connections quickly
-  max: 20,                   // Increased pool size to handle concurrent dashboard API requests
+  max: 4,                    // Supabase session mode limit is 15; keep low to allow multiple processes
   allowExitOnIdle: true,
   keepAlive: false,          // Disable keepAlive to free connections faster
   ssl: (() => {

@@ -166,10 +166,10 @@ export default function AllowedIpList() {
   const items = listQuery.data ?? [];
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen p-6">
-      <div className="max-w-[1600px] mx-auto bg-white rounded-md shadow-sm border border-slate-200">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen p-6">
+      <div className="max-w-[1600px] mx-auto bg-white dark:bg-zinc-900 rounded-md shadow-sm border border-slate-200 dark:border-zinc-800">
         <div className="flex items-center justify-between p-4 border-b border-slate-100">
-          <h1 className="text-lg font-normal text-[#333]">DRM Allowed IPs</h1>
+          <h1 className="text-lg font-normal text-[#333] dark:text-zinc-300">DRM Allowed IPs</h1>
           <Button
             onClick={handleOpenAdd}
             className="bg-[#00a65a] hover:bg-[#008d4c] text-white h-9 px-4 rounded-[4px] font-medium"
@@ -183,22 +183,22 @@ export default function AllowedIpList() {
         <div className="overflow-x-auto">
           <Table className="w-full text-[13px] whitespace-nowrap">
             <TableHeader>
-              <TableRow className="border-b-0 bg-[#f8f9fa] hover:bg-[#f8f9fa]">
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Allowed IP / CIDR</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Description</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Active</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Created At</TableHead>
-                <TableHead className="py-3 px-4 font-bold text-[#333] text-center">Actions</TableHead>
+              <TableRow className="border-b-0 bg-[#f8f9fa] dark:bg-zinc-900 hover:bg-[#f8f9fa] dark:hover:bg-zinc-900">
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Allowed IP / CIDR</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Description</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Active</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Created At</TableHead>
+                <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-center">Actions</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody className="bg-white">
+            <TableBody className="bg-white dark:bg-zinc-900">
               {listQuery.isLoading ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-slate-500">Loading...</TableCell>
                 </TableRow>
               ) : listQuery.isError ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-[#d9534f]">
+                  <TableCell colSpan={5} className="py-8 text-center text-[#d9534f] dark:text-red-400">
                     Could not load allowed IPs. Please try again.
                   </TableCell>
                 </TableRow>
@@ -210,13 +210,13 @@ export default function AllowedIpList() {
                 </TableRow>
               ) : (
                 items.map((item) => (
-                  <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors" data-testid={`row-allowed-ip-${item.id}`}>
+                  <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors" data-testid={`row-allowed-ip-${item.id}`}>
                     <TableCell className="py-3 px-4">
                       <span className="bg-[#00a65a] text-white px-2 py-0.5 rounded-[4px] text-xs font-medium">
                         {item.ip_cidr}
                       </span>
                     </TableCell>
-                    <TableCell className="py-3 px-4 text-[#555] max-w-[400px] truncate" title={item.description ?? ""}>
+                    <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300 max-w-[400px] truncate" title={item.description ?? ""}>
                       {item.description || "—"}
                     </TableCell>
                     <TableCell className="py-3 px-4">
@@ -232,7 +232,7 @@ export default function AllowedIpList() {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell className="py-3 px-4 text-[#555]">
+                    <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">
                       {item.createdAt ? new Date(item.createdAt).toLocaleString() : "—"}
                     </TableCell>
                     <TableCell className="py-3 px-4 text-center">
@@ -266,16 +266,16 @@ export default function AllowedIpList() {
       </div>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-[500px] p-0 overflow-hidden bg-white rounded-md border-0">
-          <DialogHeader className="p-4 border-b border-slate-100 bg-[#f8f9fa]">
-            <DialogTitle className="text-lg font-medium text-[#333] flex justify-between items-center">
+        <DialogContent className="sm:max-w-[500px] p-0 overflow-hidden bg-white dark:bg-zinc-900 rounded-md border-0">
+          <DialogHeader className="p-4 border-b border-slate-100 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900">
+            <DialogTitle className="text-lg font-medium text-[#333] dark:text-zinc-300 flex justify-between items-center">
               {editingId ? "Edit DRM IP" : "Add DRM IP"}
             </DialogTitle>
           </DialogHeader>
 
           <div className="p-6 space-y-5">
             <div className="space-y-1">
-              <Label className="text-[13px] font-bold text-[#555]">
+              <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">
                 Allowed IP / CIDR <span className="text-red-500">*</span>
               </Label>
               <Input
@@ -291,7 +291,7 @@ export default function AllowedIpList() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-[13px] font-bold text-[#555]">Description</Label>
+              <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Description</Label>
               <Input
                 placeholder="e.g., Gulberg Office, Habib home"
                 value={formData.description}
@@ -307,13 +307,13 @@ export default function AllowedIpList() {
                 onCheckedChange={(v) => setFormData({ ...formData, is_active: v })}
                 data-testid="switch-form-active"
               />
-              <Label className="text-[13px] font-bold text-[#555]">
+              <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">
                 {formData.is_active ? "Active" : "Inactive"}
               </Label>
             </div>
           </div>
 
-          <DialogFooter className="p-4 border-t border-slate-100 bg-[#f8f9fa] flex gap-2 justify-end sm:justify-end">
+          <DialogFooter className="p-4 border-t border-slate-100 dark:border-zinc-800 bg-[#f8f9fa] dark:bg-zinc-900 flex gap-2 justify-end sm:justify-end">
             <Button
               variant="outline"
               onClick={() => setIsDialogOpen(false)}

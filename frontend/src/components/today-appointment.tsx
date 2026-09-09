@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
 import { PlusCircle, ArrowRightCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { AppointmentModal } from "@/components/appointment-modal";
 
@@ -12,7 +12,17 @@ interface Appointment {
   time: string;
 }
 
-export function TodayAppointment({ apiEndpoint = "/api/sales/appointments/today" }: { apiEndpoint?: string }) {
+export function TodayAppointment({
+  apiEndpoint = "/api/sales/appointments/today",
+  renderModal,
+}: {
+  apiEndpoint?: string;
+  /** Optional override for the "create appointment" modal opened by the "+"
+   *  button. Defaults to the shared Sales AppointmentModal — pass this to
+   *  point the create flow at a different department's own endpoints
+   *  (e.g. Service Executive) without touching Sales/Reception's behavior. */
+  renderModal?: (props: { open: boolean; onClose: () => void }) => ReactNode;
+}) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [, navigate] = useLocation();
 
@@ -68,7 +78,9 @@ export function TodayAppointment({ apiEndpoint = "/api/sales/appointments/today"
         </CardContent>
       </Card>
       {isModalOpen && (
-        <AppointmentModal open={isModalOpen} onClose={() => setIsModalOpen(false)} />
+        renderModal
+          ? renderModal({ open: isModalOpen, onClose: () => setIsModalOpen(false) })
+          : <AppointmentModal open={isModalOpen} onClose={() => setIsModalOpen(false)} />
       )
       }
     </>

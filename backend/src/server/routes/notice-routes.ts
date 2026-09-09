@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db } from "../db";
+import { db } from "./db";
 import { notices, insertNoticeSchema, users, noticeAssignments } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
-import { ValidationService } from "../services/validation.service";
-import { sendError, unauthorized, forbidden, notFound } from "../utils/api-error";
+import { authMiddleware } from "./auth.middleware";
+import { isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
+import { ValidationService } from "./services/validation.service";
+import { sendError, unauthorized, forbidden, notFound } from "./utils/api-error";
 
 const router = Router();
 
@@ -29,7 +29,12 @@ const noticeUpdateSchema = z.object({
   status: z.enum(["Active", "Inactive", "Archived"]).optional(),
   assignedToRole: z.string().trim().max(120).nullable().optional(),
   assignedToDepartment: z.string().trim().max(120).nullable().optional(),
-});
+}).strict();
+
+const noticeAssignSchema = z.object({
+  noticeId: z.string().min(1, "noticeId required"),
+  userId: z.string().min(1, "userId required"),
+}).strict();
 
 // Get all notices
 router.get("/", authMiddleware, async (req, res) => {
@@ -66,8 +71,13 @@ router.post("/", authMiddleware, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Not authenticated" });
     if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
     const userId = (req.user as any).userId;
+    const { title, description, status, assignedToRole, assignedToDepartment } = req.body ?? {};
     const validatedData = insertNoticeSchema.parse({
-      ...req.body,
+      title,
+      description,
+      status,
+      assignedToRole,
+      assignedToDepartment,
       assignedByUserId: userId,
     });
 
@@ -141,7 +151,9 @@ router.post("/assign", authMiddleware, async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ error: "Not authenticated" });
     if (!canManage(req)) return res.status(403).json({ error: "Insufficient permissions" });
-    const { noticeId, userId } = req.body;
+    const _assign = noticeAssignSchema.safeParse(req.body);
+    if (!_assign.success) return res.status(400).json({ error: "Invalid payload", issues: _assign.error.issues });
+    const { noticeId, userId } = _assign.data;
     const assignedByUserId = (req.user as any).userId;
     
     await db.insert(noticeAssignments).values({

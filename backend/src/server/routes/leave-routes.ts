@@ -1,12 +1,12 @@
 import type { Express } from "express";
-import { leaveRequestRepository } from "../repositories/leave-request.repository";
+import { leaveRequestRepository } from "./repositories/leave-request.repository";
 import { z } from "zod";
-import { pool } from "../db";
-import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
-import { requireActionPermission } from "../middleware/action-permission";
-import { ActivityLogService } from "../services/activity-service";
-import { sendApiError, sendError, ApiError } from "../utils/api-error";
-import { ValidationService } from "../services/validation.service";
+import { pool } from "./db";
+import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
+import { ActivityLogService } from "./services/activity-service";
+import { sendApiError, sendError, ApiError } from "./utils/api-error";
+import { ValidationService } from "./services/validation.service";
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -14,23 +14,23 @@ function callerRole(req: any): string {
 }
 
 export function registerLeaveRoutes(app: Express) {
-  // GET /api/leave/colleagues - Get colleagues of a specific role
+  // GET /api/leave/colleagues - Get everyone else who can be picked as an
+  // "Alternative Contact" for a leave request. Previously scoped to
+  // same-role colleagues only, which hid most of the company from the
+  // dropdown; an alternative contact can reasonably be anyone.
   app.get("/api/leave/colleagues", async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      const role = req.query.role as string;
-      if (!role) {
-        return res.status(400).json({ error: "Role is required" });
-      }
       const query = `
-        SELECT id, name, full_name, email 
-        FROM drm.users 
-        WHERE (is_active = true OR is_active IS NULL) 
-        AND (role_id = $1 OR role = $1 OR $1 = ANY(roles))
+        SELECT id, name, full_name, email
+        FROM drm.users
+        WHERE (is_active = true OR is_active IS NULL)
+          AND id != $1
+        ORDER BY coalesce(full_name, name) ASC
       `;
-      const result = await pool.query(query, [role]);
+      const result = await pool.query(query, [req.user.userId]);
       const users = result.rows.map(u => ({
         id: u.id,
         fullName: u.name || u.full_name,
@@ -162,6 +162,7 @@ export function registerLeaveRoutes(app: Express) {
         toDate: z.union([z.string(), z.date()]).transform((v) => new Date(v)),
         type: z.union([z.string(), z.array(z.string())]).optional(),
         leaveType: z.union([z.string(), z.array(z.string())]).optional(),
+        duration: z.enum(["Full Day", "Half Day", "Short Leave"]).optional(),
         reason: nullableString.optional(),
         description: nullableString.optional(),
         purpose: nullableString.optional(),
@@ -177,6 +178,7 @@ export function registerLeaveRoutes(app: Express) {
           fromDate: data.fromDate,
           toDate: data.toDate,
           type,
+          duration: data.duration || "Full Day",
           reason: data.reason || data.description || data.purpose || null,
         };
       }).superRefine((data, ctx) => {
@@ -210,6 +212,7 @@ export function registerLeaveRoutes(app: Express) {
         fromDate: parsed.fromDate,
         toDate: parsed.toDate,
         type: parsed.type,
+        duration: parsed.duration,
         reason: parsed.reason,
       });
       res.status(201).json(request);

@@ -111,8 +111,11 @@ export function zodIssues(error: ZodError): Array<{ path: string; message: strin
  *  - anything else  -> 500 INTERNAL_ERROR with a generic message
  */
 export function sendError(res: Response, err: unknown): Response {
-  if (err instanceof ApiError) {
-    return res.status(err.status).json(errorEnvelope(err.code, err.message, err.details));
+  if (err instanceof ApiError || (err && typeof err === 'object' && ('status' in err || 'statusCode' in err))) {
+    const status = (err as any).status || (err as any).statusCode || 500;
+    const code = (err as any).code || "BAD_REQUEST";
+    const message = (err as any).message || "An error occurred";
+    return res.status(status).json(errorEnvelope(code, message, (err as any).details));
   }
 
   if (err instanceof ZodError) {

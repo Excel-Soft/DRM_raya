@@ -2,7 +2,7 @@ import { VerificationManagerWidget } from "@/components/verification-manager-wid
 
 export default function VerificationManagerDashboard() {
     return (
-        <div className="flex flex-col gap-4 p-4 lg:p-6 min-h-screen bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20">
+        <div className="flex flex-col gap-4 p-4 lg:p-6 min-h-screen bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950">
             {/* Breadcrumb Header */}
             <div className="flex items-center gap-2 text-[14px] font-bold tracking-tight mb-2">
                 <span className="text-gray-800 uppercase dark:text-zinc-100">DASHBOARD</span>

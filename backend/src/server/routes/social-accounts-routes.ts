@@ -13,12 +13,62 @@
  * Cross-scope mutation returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
+import { z } from "zod";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
+
+const STATUSES = ["active", "inactive"] as const;
+
+// Phase 3 — z.string().url() only checks the value parses as SOME URL; it does
+// NOT reject non-http(s) schemes (the JS URL constructor happily parses
+// "javascript:alert(1)"). Enforce http(s) explicitly.
+const httpUrl = z
+  .string()
+  .trim()
+  .url("url must be a valid http(s) URL")
+  .refine((v) => /^https?:\/\//i.test(v), "url must be a valid http(s) URL");
+
+const createSocialAccountSchema = z.object({
+  platform: z.string().trim().min(1, "platform is required"),
+  ownerName: z.string().trim().nullable().optional(),
+  accountName: z.string().trim().nullable().optional(),
+  url: httpUrl.nullable().optional(),
+  customerId: z.string().trim().nullable().optional(),
+  projectId: z.string().trim().nullable().optional(),
+  status: z.enum(STATUSES).optional().default("active"),
+}).strict();
+
+const patchSocialAccountSchema = z.object({
+  platform: z.string().trim().min(1, "platform cannot be empty").optional(),
+  ownerName: z.string().trim().nullable().optional(),
+  accountName: z.string().trim().nullable().optional(),
+  url: httpUrl.nullable().optional(),
+  customerId: z.string().trim().nullable().optional(),
+  projectId: z.string().trim().nullable().optional(),
+  status: z.enum(STATUSES).optional(),
+}).strict();
+
+function parseBody<T extends z.ZodTypeAny>(
+  res: Response,
+  schema: T,
+  body: unknown,
+): z.infer<T> | null {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    res.status(400).json({
+      error: "BadRequest",
+      message: result.error.errors[0]?.message ?? "Invalid request body",
+      details: result.error.errors,
+    });
+    return null;
+  }
+  return result.data;
+}
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
+
 
 function getUserId(req: Request): string | undefined {
   return (req.user as any)?.userId || (req.user as any)?.id;
@@ -108,7 +158,8 @@ function canManageRow(req: Request, allowed: string[] | null, createdBy: any): b
   return allowed.includes(String(createdBy));
 }
 
-const STATUSES = ["active", "inactive"];
+const STATUSES_LIST = ["active", "inactive"];
+
 
 const SELECT_COLS = `
   sa.id,
@@ -265,20 +316,9 @@ export function registerSocialAccountHandlers(app: Express, base: string) {
   app.post(base, async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-      const b = req.body ?? {};
 
-      const platform = String(b.platform ?? "").trim();
-      if (!platform) return badRequest(res, "platform is required");
-
-      const url = b.url !== undefined && b.url !== null ? String(b.url).trim() : "";
-      if (url && !isHttpUrl(url)) {
-        return badRequest(res, "url must be a valid http(s) URL");
-      }
-
-      let status = b.status !== undefined ? String(b.status).trim() : "active";
-      if (!STATUSES.includes(status)) {
-        return badRequest(res, `status must be one of ${STATUSES.join(", ")}`);
-      }
+      const b = parseBody(res, createSocialAccountSchema, req.body);
+      if (!b) return;
 
       const { rows } = await pool.query(
         `insert into drm.social_accounts
@@ -286,18 +326,18 @@ export function registerSocialAccountHandlers(app: Express, base: string) {
          values ($1, $2, $3, $4, $5, $6, $7, $8)
          returning id`,
         [
-          b.ownerName ? String(b.ownerName) : null,
-          platform,
-          b.accountName ? String(b.accountName) : null,
-          url || null,
-          b.customerId ? String(b.customerId) : null,
-          b.projectId ? String(b.projectId) : null,
-          status,
+          b.ownerName ?? null,
+          b.platform,
+          b.accountName ?? null,
+          b.url ?? null,
+          b.customerId ?? null,
+          b.projectId ?? null,
+          b.status,
           String(getUserId(req)),
         ],
       );
       const created = await getRowById(String(rows[0].id));
-      await audit(req, "drm.social_account.create", rows[0]?.id, { platform, status });
+      await audit(req, "drm.social_account.create", rows[0]?.id, { platform: b.platform, status: b.status });
       res.status(201).json({ success: true, data: created });
     } catch (err) {
       console.error("[social-accounts] create error", err);
@@ -318,17 +358,8 @@ export function registerSocialAccountHandlers(app: Express, base: string) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this social account" });
       }
 
-      const b = req.body ?? {};
-
-      if (b.platform !== undefined && !String(b.platform).trim()) {
-        return badRequest(res, "platform cannot be empty");
-      }
-      if (b.url !== undefined && b.url !== null && String(b.url).trim() && !isHttpUrl(String(b.url).trim())) {
-        return badRequest(res, "url must be a valid http(s) URL");
-      }
-      if (b.status !== undefined && !STATUSES.includes(String(b.status).trim())) {
-        return badRequest(res, `status must be one of ${STATUSES.join(", ")}`);
-      }
+      const b = parseBody(res, patchSocialAccountSchema, req.body);
+      if (!b) return;
 
       const sets: string[] = [];
       const params: any[] = [];
@@ -337,13 +368,13 @@ export function registerSocialAccountHandlers(app: Express, base: string) {
         sets.push(`${col} = $${params.length}`);
       };
 
-      if (b.ownerName !== undefined) add("owner_name", b.ownerName ? String(b.ownerName) : null);
-      if (b.platform !== undefined) add("platform", String(b.platform).trim());
-      if (b.accountName !== undefined) add("account_name", b.accountName ? String(b.accountName) : null);
-      if (b.url !== undefined) add("url", b.url && String(b.url).trim() ? String(b.url).trim() : null);
-      if (b.customerId !== undefined) add("customer_id", b.customerId ? String(b.customerId) : null);
-      if (b.projectId !== undefined) add("project_id", b.projectId ? String(b.projectId) : null);
-      if (b.status !== undefined) add("status", String(b.status).trim());
+      if (b.ownerName !== undefined) add("owner_name", b.ownerName ?? null);
+      if (b.platform !== undefined) add("platform", b.platform);
+      if (b.accountName !== undefined) add("account_name", b.accountName ?? null);
+      if (b.url !== undefined) add("url", b.url ?? null);
+      if (b.customerId !== undefined) add("customer_id", b.customerId ?? null);
+      if (b.projectId !== undefined) add("project_id", b.projectId ?? null);
+      if (b.status !== undefined) add("status", b.status);
 
       if (sets.length === 0) {
         return badRequest(res, "No editable fields provided");

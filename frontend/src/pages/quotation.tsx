@@ -71,7 +71,7 @@ function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { 
                     variant="outline"
                     role="combobox"
                     aria-expanded={open}
-                    className="w-full justify-between bg-white border-slate-200 h-10 font-normal focus:ring-emerald-500 overflow-hidden text-ellipsis whitespace-nowrap px-3 text-sm"
+                    className="w-full justify-between bg-white dark:bg-zinc-900 border-slate-200 h-10 font-normal focus:ring-emerald-500 overflow-hidden text-ellipsis whitespace-nowrap px-3 text-sm"
                 >
                     <span className="truncate">{item.productId ? flatProducts.find((p: any) => p.id === item.productId)?.name || "Select" : "Select"}</span>
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -371,7 +371,7 @@ export default function QuotationPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-7xl mx-auto bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+      <div className="max-w-7xl mx-auto bg-white dark:bg-zinc-900 rounded-lg shadow-sm border border-slate-200 p-6">
         
         {/* Header */}
         <div className="mb-6">
@@ -384,19 +384,19 @@ export default function QuotationPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Account Holder</label>
-            <Input className="bg-white border-slate-200" value={form.accountHolder} onChange={(e) => setForm({ ...form, accountHolder: e.target.value })} />
+            <Input className="bg-white dark:bg-zinc-900 border-slate-200" value={form.accountHolder} onChange={(e) => setForm({ ...form, accountHolder: e.target.value })} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Company</label>
-            <Input className="bg-white border-slate-200" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
+            <Input className="bg-white dark:bg-zinc-900 border-slate-200" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Email</label>
-            <Input className="bg-white border-slate-200" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <Input className="bg-white dark:bg-zinc-900 border-slate-200" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Contact</label>
-            <Input className="bg-white border-slate-200" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} />
+            <Input className="bg-white dark:bg-zinc-900 border-slate-200" value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} />
           </div>
         </div>
 

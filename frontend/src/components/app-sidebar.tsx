@@ -65,6 +65,7 @@ import {
   ScrollText,
   BookOpen,
   NotebookPen,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Sidebar,
@@ -87,9 +88,8 @@ import {
 } from "@/components/ui/hover-card";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { isSupportModuleEnabled } from "@/lib/feature-flags";
+import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "@/lib/feature-flags";
 import { useState, useEffect } from "react";
-import type { LucideIcon } from "lucide-react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface MenuItem {
@@ -249,7 +249,7 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    title: "Reports", icon: PieChart, permKey: "Report",
+    title: "Reports", icon: PieChart, permKey: "Reports",
     items: [
       { title: "Raw Attendance", url: "/reports/raw-attendance", icon: FileText },
       { title: "Bv Pending RC Only", url: "/reports/bv-pending-rc", icon: FileText },
@@ -380,7 +380,7 @@ const DEPT_NAME_TO_ROLES: Record<string, string[]> = {
   "Target System": ["admin", "sales_manager", "hod", "super_hod"],
   "Daily Reports": ["admin", "super_admin"],
   "Allowed IP": ["admin", "super_admin"],
-  "Report": ["admin", "super_hod", "hod", "service_manager", "service_executive", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager", "it_manager", "reception_manager"],
+  "Reports": ["admin", "super_hod", "hod", "service_manager", "service_executive", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager", "it_manager", "reception_manager", "account_manager"],
   "Increment": ["admin", "super_admin", "super_hod", "hod", "manager", "sales_manager", "sales_assistant_manager", "account_manager", "service_manager", "software_manager", "it_manager", "lead_manager", "marketing_manager", "qa_manager", "verification_manager", "dd_manager", "product_posting_manager", "reception_manager", "seo_smm_manager"],
   "Add Penalty": ["admin", "super_admin", "super_hod", "hod", "hr", "hr_manager", "dd_manager", "dnd_manager", "product_posting_manager", "software_manager"],
 };
@@ -564,7 +564,7 @@ export function AppSidebar() {
     posting_executive: "/product-posting/executive",
     reception_manager: "/dashboard/reception",
     it_manager: "/dashboard/it-manager",
-    developer: "/dashboard/software-executive",
+    developer: "/dashboard/developer",
     software_manager: "/dashboard/software-manager",
     software_executive: "/dashboard/software-executive",
     seo_smm_manager: "/dashboard/seo-smm",
@@ -625,13 +625,21 @@ export function AppSidebar() {
          ...rolesToUse.map(r => r.toLowerCase().replace(/\s+/g, "_"))
       ];
 
-      // Hide Task Creation explicitly for Sales Executive
-      if (subItem.title === "Task Creation" && currentUserRoles.includes("sales_executive")) {
+      // Hide Invoice Pool for reception_manager (sales-only feature)
+      if (subItem.title === "Invoice Pool" && currentUserRoles.includes("reception_manager")) {
          return false;
       }
 
-      // Hide Invoice Pool for reception_manager (sales-only feature)
-      if (subItem.title === "Invoice Pool" && currentUserRoles.includes("reception_manager")) {
+      // MD-22 (Project Owner, 2026-07-27): Bot System / Online Form / FB Post are
+      // mock chat-widget stubs with no real provider behind them — hidden from
+      // every dashboard until each is individually approved and flagged on.
+      if (subItem.title === "Bot system" && !isBotSystemEnabled()) {
+         return false;
+      }
+      if (subItem.title === "Online Form" && !isOnlineFormEnabled()) {
+         return false;
+      }
+      if (subItem.title === "Fb Post" && !isFbPostEnabled()) {
          return false;
       }
 
@@ -641,6 +649,14 @@ export function AppSidebar() {
       if (subItem.permKey && !isRealAdmin && (permsLoading || permsError)) {
          return false;
       }
+
+      // Mirrors the top-level nav's admin exception (line ~592): real admins
+      // always get full nav. Without this, a sub-item whose allowedRoleIds was
+      // explicitly set via the DRM Permission page short-circuits hasAccess()
+      // on a plain role-list match — if the live role state doesn't literally
+      // contain "admin" for any reason, the item silently disappears even for
+      // a real admin, unlike top-level items which never hit that code path.
+      if (subItem.permKey && isRealAdmin) return true;
 
       // If the parent menu or this subitem has a specific permKey, we check the DB
       // Check standard permKey logic
@@ -683,6 +699,9 @@ export function AppSidebar() {
                   if (u === "work-spaces" && subItem.url?.includes("workspace")) return true;
                   if (u === "kwa-add" && subItem.url?.includes("add-kwa")) return true;
                   if (u === "target-day" && subItem.url?.includes("daily")) return true;
+                  if (u === "domain-list" && subItem.url?.includes("domains")) return true;
+                  if (u === "server-settings" && subItem.url?.includes("servers")) return true;
+                  if (u === "domain-backup" && subItem.url?.includes("backup")) return true;
                   
                   // Force GM BV Pool visibility if they have access to LEAD menu
                   if (subItem.url?.includes("gmbv-pool")) return true;

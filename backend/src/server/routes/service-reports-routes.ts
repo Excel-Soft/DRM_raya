@@ -1,9 +1,10 @@
 import { type Express, type Request, type Response } from "express";
-import { serviceReportsRepository, type ServiceListOptions } from "../repositories/service-reports.repository";
-import { serviceDocumentsRepository, type ServiceDocType } from "../repositories/service-documents.repository";
+import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
+import { serviceDocumentsRepository, type ServiceDocType } from "./repositories/service-documents.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "../utils/role-utils";
-import { isServiceGradeKey } from "../utils/service-grade";
+import { isManagerialRole } from "./utils/role-utils";
+import { isServiceGradeKey } from "./utils/service-grade";
+import { ActivityLogService } from "./services/activity-service";
 
 function isValidHttpUrl(value: string): boolean {
   try {
@@ -190,14 +191,25 @@ export async function registerServiceReportsRoutes(app: Express) {
       if (req.body.url && !isValidHttpUrl(String(req.body.url).trim())) {
         return res.status(400).json({ error: "Attachment URL must be a valid http(s) URL." });
       }
-      const updated = await serviceDocumentsRepository.update(req.params.id, {
-        name: req.body.name,
-        url: req.body.url ? String(req.body.url).trim() : undefined,
-        packageName: req.body.packageName,
-        dueDate: req.body.dueDate,
-        remarks: req.body.remarks,
-        userId: req.user.userId,
-      });
+      // Data-scope fix: previously no ownership check at all (any authenticated
+      // caller could update any department's document). Reuses the same
+      // scopedUserIds() helper already used for reads in this file.
+      const allowedUserIds = await scopedUserIds(req);
+      const updated = await serviceDocumentsRepository.update(
+        req.params.id,
+        {
+          name: req.body.name,
+          url: req.body.url ? String(req.body.url).trim() : undefined,
+          packageName: req.body.packageName,
+          dueDate: req.body.dueDate,
+          remarks: req.body.remarks,
+          userId: req.user.userId,
+        },
+        allowedUserIds,
+      );
+      // Non-disclosing: an out-of-scope document and a genuinely missing one
+      // both return 404, so a caller cannot distinguish "not yours" from
+      // "doesn't exist".
       if (!updated) return res.status(404).json({ error: "Document not found" });
       res.json(updated);
     } catch (err) {
@@ -213,8 +225,19 @@ export async function registerServiceReportsRoutes(app: Express) {
       if (!["pending", "verified", "rejected"].includes(status)) {
         return res.status(400).json({ error: "verificationStatus must be pending, verified or rejected." });
       }
-      const updated = await serviceDocumentsRepository.setVerification(req.params.id, status, req.user.userId);
+      // Data-scope fix: same as PATCH above — verify is itself an
+      // approval-like action and previously had no ownership check.
+      const allowedUserIds = await scopedUserIds(req);
+      const updated = await serviceDocumentsRepository.setVerification(req.params.id, status, req.user.userId, allowedUserIds);
       if (!updated) return res.status(404).json({ error: "Document not found" });
+      // Audit fix (P00): this file previously had no audit call anywhere.
+      void ActivityLogService.log({
+        userId: req.user.userId,
+        action: "service_document.verify",
+        resourceType: "service_document",
+        resourceId: req.params.id,
+        details: JSON.stringify({ verificationStatus: status }),
+      });
       res.json(updated);
     } catch (err) {
       console.error("Error verifying service document:", err);
@@ -225,7 +248,17 @@ export async function registerServiceReportsRoutes(app: Express) {
   app.delete("/api/service/documents/:id", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      await serviceDocumentsRepository.remove(req.params.id);
+      // Data-scope fix: same as above — delete previously had no ownership
+      // check and no role gate at all.
+      const allowedUserIds = await scopedUserIds(req);
+      const removed = await serviceDocumentsRepository.remove(req.params.id, allowedUserIds);
+      if (!removed) return res.status(404).json({ error: "Document not found" });
+      void ActivityLogService.log({
+        userId: req.user.userId,
+        action: "service_document.delete",
+        resourceType: "service_document",
+        resourceId: req.params.id,
+      });
       res.json({ success: true });
     } catch (err) {
       console.error("Error deleting service document:", err);

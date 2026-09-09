@@ -1,20 +1,23 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import { CalendarIcon, Search, Loader2 } from "lucide-react";
+import { CalendarIcon, Search, Loader2, LogIn, LogOut, CheckCircle2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { format } from "date-fns";
-import { useQuery } from "@tanstack/react-query";
+import { format, differenceInCalendarDays } from "date-fns";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import { useToast } from "@/hooks/use-toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
 } from "@/components/ui/select";
 
 import { isManagerialRole } from "@/lib/role-utils";
+
+const SELF_ATTENDANCE_VALUE = "__self__";
 
 export default function AttendanceManagement() {
   const user = {
@@ -33,6 +36,44 @@ export default function AttendanceManagement() {
   };
 
   const isManager = isManagerialRole(user?.roleId);
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Today's check-in/check-out status — always for the logged-in user
+  // themselves, independent of whichever employee a manager has selected
+  // in the dropdown above (you can only check yourself in/out).
+  const { data: todayData, isLoading: isLoadingToday } = useQuery<{ record: any | null }>({
+    queryKey: ["/api/attendance/today"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/attendance/today");
+      return res.json();
+    },
+  });
+  const todayRecord = todayData?.record || null;
+
+  const checkInMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/attendance/check-in", {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance"], exact: false });
+      toast({ title: "Checked in" });
+    },
+    onError: () => {
+      toast({ title: "Failed to check in", variant: "destructive" });
+    },
+  });
+
+  const checkOutMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/attendance/check-out", {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/attendance"], exact: false });
+      toast({ title: "Checked out" });
+    },
+    onError: () => {
+      toast({ title: "Failed to check out", variant: "destructive" });
+    },
+  });
 
   // Fetch users for manager dropdown
   const { data: usersData = [] } = useQuery<any[]>({
@@ -46,50 +87,77 @@ export default function AttendanceManagement() {
   });
 
   // Fetch Attendance Records (Daily)
-  const { data: attendanceData, isLoading: isLoadingAttendance } = useQuery<any>({
+  const { data: attendanceData, isLoading: isLoadingAttendance, isError: isErrorAttendance, error: errorAttendance, refetch: refetchAttendance } = useQuery<any>({
     queryKey: ["/api/attendance", { startDate, endDate, userId: selectedUserId }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (startDate) params.append("startDate", startDate.toISOString());
       if (endDate) params.append("endDate", endDate.toISOString());
       if (isManager && selectedUserId) params.append("userId", selectedUserId);
-      
+
       const res = await apiRequest("GET", `/api/attendance?${params.toString()}`);
-      return res.json();
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || "Failed to fetch attendance records");
+      return body;
     }
   });
 
   // Fetch Summary
-  const { data: summaryData, isLoading: isLoadingSummary } = useQuery<any>({
+  const { data: summaryData, isLoading: isLoadingSummary, isError: isErrorSummary, error: errorSummary, refetch: refetchSummary } = useQuery<any>({
     queryKey: ["/api/attendance/summary", { startDate, endDate, userId: selectedUserId }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (startDate) params.append("startDate", startDate.toISOString());
       if (endDate) params.append("endDate", endDate.toISOString());
       if (isManager && selectedUserId) params.append("userId", selectedUserId);
-      
+
       const res = await apiRequest("GET", `/api/attendance/summary?${params.toString()}`);
-      return res.json();
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || "Failed to fetch attendance summary");
+      return body;
     }
   });
 
   // Fetch Salary Details
-  const { data: salaryData, isLoading: isLoadingSalary } = useQuery<any>({
+  const { data: salaryData, isLoading: isLoadingSalary, isError: isErrorSalary, error: errorSalary, refetch: refetchSalary } = useQuery<any>({
     queryKey: ["/api/attendance/salary", { startDate, endDate, userId: selectedUserId }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (startDate) params.append("startDate", startDate.toISOString());
       if (endDate) params.append("endDate", endDate.toISOString());
       if (isManager && selectedUserId) params.append("userId", selectedUserId);
-      
+
       const res = await apiRequest("GET", `/api/attendance/salary?${params.toString()}`);
-      return res.json();
+      const body = await res.json();
+      if (!res.ok) throw new Error(body?.error || "Failed to fetch salary details");
+      return body;
     }
+  });
+
+  // Fetch Leave Requests (Annual Leaves) — always the logged-in user's own,
+  // there is no manager "view employee X's leaves" endpoint today.
+  const { data: leaveRequestsData, isLoading: isLoadingLeaves } = useQuery<any[]>({
+    queryKey: ["/api/leave"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/leave");
+      return res.json();
+    },
+    enabled: activeTab === "annual",
   });
 
   const records = attendanceData?.records || [];
   const summary = summaryData?.summary ? (Array.isArray(summaryData.summary) ? summaryData.summary : [summaryData.summary]) : [];
   const salaryDetails = salaryData?.salaryDetails ? (Array.isArray(salaryData.salaryDetails) ? salaryData.salaryDetails : [salaryData.salaryDetails]) : [];
+
+  const currentYear = new Date().getFullYear();
+  const leaveRequestsThisYear = (leaveRequestsData || []).filter(
+    (lr: any) => new Date(lr.fromDate).getFullYear() === currentYear
+  );
+  const leaveDaySpan = (lr: any) => differenceInCalendarDays(new Date(lr.toDate), new Date(lr.fromDate)) + 1;
+  const availedLeaveDays = leaveRequestsThisYear
+    .filter((lr: any) => lr.status === "Approved")
+    .reduce((sum: number, lr: any) => sum + leaveDaySpan(lr), 0);
+  const pendingLeaveRequests = leaveRequestsThisYear.filter((lr: any) => lr.status === "Pending").length;
 
   return (
     <div className="p-4 bg-[#f8fafc] min-h-screen font-sans dark:bg-zinc-950">
@@ -98,12 +166,15 @@ export default function AttendanceManagement() {
         
         {isManager && (
           <div className="w-64">
-            <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+            <Select
+              value={selectedUserId || SELF_ATTENDANCE_VALUE}
+              onValueChange={(v) => setSelectedUserId(v === SELF_ATTENDANCE_VALUE ? "" : v)}
+            >
               <SelectTrigger className="h-[38px] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
                 <SelectValue placeholder="Select Employee" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={user?.userId || ""}>My Attendance</SelectItem>
+                <SelectItem value={SELF_ATTENDANCE_VALUE}>My Attendance</SelectItem>
                 {usersData.filter(u => u.id !== user?.userId).map((u: any) => (
                   <SelectItem key={u.id} value={u.id}>{u.fullName || u.username}</SelectItem>
                 ))}
@@ -111,6 +182,51 @@ export default function AttendanceManagement() {
             </Select>
           </div>
         )}
+      </div>
+
+      {/* Check-In / Check-Out Card */}
+      <div className="bg-white p-5 rounded-[4px] shadow-sm border border-slate-100 mb-4 flex items-center justify-between gap-4 dark:bg-zinc-900 dark:border-zinc-800">
+        <div>
+          <p className="text-[13px] font-semibold text-slate-600 dark:text-zinc-300">Today, {format(new Date(), 'dd MMM yyyy')}</p>
+          {isLoadingToday ? (
+            <p className="text-[12px] text-slate-400 mt-1">Loading status...</p>
+          ) : todayRecord?.timeIn && todayRecord?.timeOut ? (
+            <p className="text-[12px] text-slate-500 mt-1 dark:text-zinc-400">
+              Checked in at {format(new Date(todayRecord.timeIn), 'hh:mm a')} &middot; Checked out at {format(new Date(todayRecord.timeOut), 'hh:mm a')}
+            </p>
+          ) : todayRecord?.timeIn ? (
+            <p className="text-[12px] text-slate-500 mt-1 dark:text-zinc-400">
+              Checked in at {format(new Date(todayRecord.timeIn), 'hh:mm a')} &middot; not checked out yet
+            </p>
+          ) : (
+            <p className="text-[12px] text-slate-500 mt-1 dark:text-zinc-400">You haven't checked in today.</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {todayRecord?.timeIn && todayRecord?.timeOut ? (
+            <span className="flex items-center gap-1.5 text-[13px] font-bold text-[#059669]">
+              <CheckCircle2 className="h-4 w-4" /> Day complete
+            </span>
+          ) : todayRecord?.timeIn ? (
+            <button
+              className="bg-amber-500 hover:bg-amber-600 text-white text-[13px] font-bold px-6 py-2 rounded-[4px] shadow-sm transition-colors h-[38px] flex items-center gap-2 disabled:opacity-60"
+              disabled={checkOutMutation.isPending}
+              onClick={() => checkOutMutation.mutate()}
+            >
+              {checkOutMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+              Check Out
+            </button>
+          ) : (
+            <button
+              className="bg-[#059669] hover:bg-[#047857] text-white text-[13px] font-bold px-6 py-2 rounded-[4px] shadow-sm transition-colors h-[38px] flex items-center gap-2 disabled:opacity-60"
+              disabled={checkInMutation.isPending || isLoadingToday}
+              onClick={() => checkInMutation.mutate()}
+            >
+              {checkInMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+              Check In
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Date Filters Card */}
@@ -152,7 +268,14 @@ export default function AttendanceManagement() {
           </Popover>
         </div>
         <div>
-          <button className="bg-[#059669] hover:bg-[#047857] text-white text-[14px] font-bold px-8 py-2 rounded-[4px] shadow-sm transition-colors h-[38px] flex items-center gap-2">
+          <button
+            className="bg-[#059669] hover:bg-[#047857] text-white text-[14px] font-bold px-8 py-2 rounded-[4px] shadow-sm transition-colors h-[38px] flex items-center gap-2"
+            onClick={() => {
+              refetchAttendance();
+              refetchSummary();
+              refetchSalary();
+            }}
+          >
             <Search className="h-4 w-4" /> Search
           </button>
         </div>
@@ -228,14 +351,16 @@ export default function AttendanceManagement() {
                 <tbody>
                   {isLoadingAttendance ? (
                     <tr><td colSpan={4} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                  ) : isErrorAttendance ? (
+                    <tr><td colSpan={4} className="py-10 text-center text-red-500">{(errorAttendance as Error)?.message || "Failed to load attendance records."}</td></tr>
                   ) : records.length === 0 ? (
                     <tr><td colSpan={4} className="py-10 text-center text-slate-400">No records found.</td></tr>
                   ) : (
                     records.map((r: any, idx: number) => (
                       <tr key={r.id || idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.checkIn || '05:00 AM'}</td>
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.checkOut || '05:00 AM'}</td>
-                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.status || 'Absent'}</td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.timeIn ? format(new Date(r.timeIn), 'hh:mm a') : '-'}</td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.timeOut ? format(new Date(r.timeOut), 'hh:mm a') : '-'}</td>
+                        <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.status || 'Absent'}{r.isLate ? ` (${r.lateMinutes}m late)` : ''}</td>
                         <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{r.date ? format(new Date(r.date), 'dd-MM-yyyy') : '-'}</td>
                       </tr>
                     ))
@@ -249,67 +374,39 @@ export default function AttendanceManagement() {
         {/* Tab Content: Monthly Details */}
         {activeTab === 'monthly' && (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[1500px]">
+            <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
                 <tr className="border-b border-slate-100 bg-white dark:bg-zinc-900 dark:border-zinc-800">
                   <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">User Name</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Salary</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Paid Leave</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Earn Days</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Absents</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Absents RS</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Late Min</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Late Coming</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Cutting Min</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Min RS</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Per Day</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Loan</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Penalty</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">VAS</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">5% Bonus</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">AB Bonus</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Project Bonus</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">PPP Bonus</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">PP Bonus</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">OT RS</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Cutting</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Salary</th>
-                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Month / Year</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Days</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Working Days</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Present</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Late</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Half Day</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Leave</th>
+                  <th className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Absent</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoadingSummary ? (
-                   <tr><td colSpan={23} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                   <tr><td colSpan={8} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                ) : isErrorSummary ? (
+                  <tr><td colSpan={8} className="py-10 text-center text-red-500">{(errorSummary as Error)?.message || "Failed to load summary."}</td></tr>
                 ) : summary.length === 0 ? (
-                  <tr><td colSpan={23} className="py-10 text-center text-slate-400">No summary found.</td></tr>
+                  <tr><td colSpan={8} className="py-10 text-center text-slate-400">No summary found.</td></tr>
                 ) : (
                   summary.map((s: any, idx: number) => (
-                    <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-slate-50/30 dark:border-zinc-800">
+                    <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors bg-slate-50/30 dark:bg-zinc-900 dark:border-zinc-800">
                       <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">
-                        {s.userName || user?.fullName || "User"}<br /><span className="text-[10px] text-slate-300 font-normal">Main User</span>
+                        {user?.fullName || "User"}
                       </td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{Number(s.grossSalary || 0).toLocaleString()}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.paidLeaves || 2}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">26 -<br />21=5</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.absents || 19}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{Number(s.totalCutting || 0).toLocaleString()}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.lateMinutes || 0}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100"></td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">(0 -<br />120) +<br />=-120</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{Number((s.grossSalary || 0) / 30).toFixed(0)}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.loanAmount || "0-0"}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.penaltyAmount || ""}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.vasAmount || 0}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.bonusAmount || 0}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{s.overtimeAmount || 0}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{Number(s.totalCutting || 0).toLocaleString()}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{Number(s.totalSalary || 0).toLocaleString()}</td>
-                      <td className="py-4 px-3 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{format(new Date(), 'M/ yyyy')}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.totalDays ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.workingDays ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.present ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.late ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.halfDay ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.leave ?? 0}</td>
+                      <td className="py-4 px-3 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{s.absent ?? 0}</td>
                     </tr>
                   ))
                 )}
@@ -324,18 +421,15 @@ export default function AttendanceManagement() {
             <table className="w-full text-left border-collapse min-w-[1200px]">
               <thead>
                 <tr className="border-b border-slate-100 bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">#</th>
                   <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">User Name</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Date</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Period</th>
                   <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Gross Salary</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">VAS</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">5% Bonus</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">AB Bonus</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Project Bonus</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">PPP Bonus</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">PP Bonus</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">OT RS</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Reward</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Working Days</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days Present</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days Late</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days Absent</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days On Leave</th>
+                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Late Minutes</th>
                   <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Cutting</th>
                   <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Salary</th>
                   <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] text-left dark:text-zinc-100">Status</th>
@@ -343,28 +437,31 @@ export default function AttendanceManagement() {
               </thead>
               <tbody>
                 {isLoadingSalary ? (
-                  <tr><td colSpan={15} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                  <tr><td colSpan={12} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                ) : isErrorSalary ? (
+                  <tr><td colSpan={12} className="py-10 text-center text-red-500">{(errorSalary as Error)?.message || "Failed to load salary details."}</td></tr>
                 ) : salaryDetails.length === 0 ? (
-                  <tr><td colSpan={15} className="py-10 text-center text-slate-400">No records found.</td></tr>
+                  <tr><td colSpan={12} className="py-10 text-center text-slate-400">No records found.</td></tr>
                 ) : (
                   salaryDetails.map((sd: any, idx: number) => (
                     <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                      <td className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">{7655 - idx * 276}</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] flex items-center gap-1 dark:text-zinc-100">{sd.userName || user?.fullName || "User"} <span className="text-[10px] text-slate-300 font-normal">Main User</span></td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{(sd.month || new Date().getMonth() + 1).toString().padStart(2, '0')}-{sd.year || new Date().getFullYear()}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.userName || user?.fullName || "User"}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">
+                        {startDate ? format(startDate, 'dd MMM') : format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'dd MMM')}
+                        {' – '}
+                        {endDate ? format(endDate, 'dd MMM yyyy') : format(new Date(), 'dd MMM yyyy')}
+                      </td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] font-bold dark:text-zinc-100">{Number(sd.grossSalary || 0).toLocaleString()}</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.vasAmount || 0}</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.bonusAmount || 0}</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">0</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.overtimeAmount || 0}</td>
-                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.rewardAmount || 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.totalWorkingDays ?? 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.daysPresent ?? 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.daysLate ?? 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.daysAbsent ?? 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.daysOnLeave ?? 0}</td>
+                      <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{sd.lateMinutes ?? sd.totalLateMinutes ?? 0}</td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] dark:text-zinc-100">{Number(sd.totalCutting || 0).toLocaleString()}</td>
                       <td className="py-4 px-4 text-[13px] text-[#1e3a5f] font-bold dark:text-zinc-100">{Number(sd.totalSalary || 0).toLocaleString()}</td>
                       <td className="py-4 px-4 text-left">
-                        <button 
+                        <button
                           onClick={() => handlePaymentToggle(idx)}
                           className={`px-3 py-1.5 rounded-[4px] text-[11px] font-bold text-white transition-colors cursor-pointer border-none shadow-sm ${
                             paymentStatuses[idx] ? "bg-[#059669] hover:bg-[#047857]" : "bg-amber-500 hover:bg-amber-600"
@@ -383,35 +480,68 @@ export default function AttendanceManagement() {
 
         {/* Tab Content: Annual Leaves */}
         {activeTab === 'annual' && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[1000px]">
-              <thead>
-                <tr className="border-b border-slate-100 bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">#</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">User ID</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Total Leaves</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Availed Leaves</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">CM Leaves</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Paid/Unpaid Leaves</th>
-                  <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Balance Leaves Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">1</td>
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">55</td>
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">24</td>
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">60</td>
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">21</td>
-                  <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">2/19-21</td>
-                  <td className="py-4 px-4 text-left">
-                    <span className="px-2 py-1 rounded-[4px] text-[10px] font-bold bg-[#fecdd3] text-[#be123c] dark:bg-zinc-900">
-                      Not Eligible
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Approved Days Used ({currentYear})</p>
+                <p className="text-[20px] font-bold text-[#1e3a5f] dark:text-zinc-100">{availedLeaveDays}</p>
+              </div>
+              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Pending Requests</p>
+                <p className="text-[20px] font-bold text-amber-500">{pendingLeaveRequests}</p>
+              </div>
+              <div className="border border-slate-100 rounded-[4px] p-3 dark:border-zinc-800">
+                <p className="text-[11px] text-slate-500 dark:text-zinc-400">Total Requests ({currentYear})</p>
+                <p className="text-[20px] font-bold text-[#1e3a5f] dark:text-zinc-100">{leaveRequestsThisYear.length}</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b border-slate-100 bg-white dark:bg-zinc-900 dark:border-zinc-800">
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">From</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">To</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Days</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Type</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Duration</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] dark:text-zinc-100">Reason</th>
+                    <th className="py-4 px-4 text-[13px] font-bold text-[#1e3a5f] text-left dark:text-zinc-100">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isLoadingLeaves ? (
+                    <tr><td colSpan={7} className="py-10 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-300" /></td></tr>
+                  ) : leaveRequestsThisYear.length === 0 ? (
+                    <tr><td colSpan={7} className="py-10 text-center text-slate-400">No leave requests this year.</td></tr>
+                  ) : (
+                    leaveRequestsThisYear.map((lr: any) => {
+                      const statusColors: Record<string, string> = {
+                        Approved: "bg-emerald-100 text-emerald-700",
+                        Pending: "bg-amber-100 text-amber-700",
+                        Rejected: "bg-rose-100 text-rose-700",
+                        Cancelled: "bg-slate-100 text-slate-600",
+                      };
+                      return (
+                        <tr key={lr.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors bg-white dark:bg-zinc-900 dark:border-zinc-800">
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{format(new Date(lr.fromDate), 'dd MMM yyyy')}</td>
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{format(new Date(lr.toDate), 'dd MMM yyyy')}</td>
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{leaveDaySpan(lr)}</td>
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{lr.type || "-"}</td>
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400">{lr.duration || "Full Day"}</td>
+                          <td className="py-4 px-4 text-[13px] text-slate-500 dark:text-zinc-400 truncate max-w-[240px]">{lr.reason || "-"}</td>
+                          <td className="py-4 px-4 text-left">
+                            <span className={`px-2 py-1 rounded-[4px] text-[10px] font-bold dark:bg-zinc-900 ${statusColors[lr.status] || "bg-slate-100 text-slate-600"}`}>
+                              {lr.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
             <div className="p-4 mt-2">
               <p className="text-[12px] font-bold text-slate-600 dark:text-zinc-300">Note: <span className="font-medium">You are eligible for quarterly leaves if you have not availed any leaves in the last 4 months. If you joined this year, you must have completed at least 4 months to be eligible. If you wish to combine leaves, approval from your Manager, HOD, and CEO is required.</span></p>
             </div>

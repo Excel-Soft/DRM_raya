@@ -25,10 +25,10 @@ export function ServiceQuickEntriesCard() {
                         return (
                             <Link key={action.label} href={action.href}>
                                 <div
-                                    className="flex items-center justify-between px-3 py-2 bg-slate-50/50 hover:bg-slate-100 border border-slate-100 rounded cursor-pointer transition-colors group dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                    className="flex items-center justify-between px-3 py-2 bg-slate-50/50 hover:bg-slate-100 border border-slate-100 rounded cursor-pointer transition-colors group dark:bg-zinc-900 dark:border-zinc-800 dark:hover:bg-zinc-800"
                                     data-testid={`button-quick-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
                                 >
-                                    <span className="text-[12px] font-semibold text-slate-600 group-hover:text-slate-800 tracking-tight dark:text-zinc-300">{action.label}</span>
+                                    <span className="text-[12px] font-semibold text-slate-600 group-hover:text-slate-800 tracking-tight dark:text-zinc-300 dark:group-hover:text-zinc-100">{action.label}</span>
                                     <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#059669]" />
                                 </div>
                             </Link>

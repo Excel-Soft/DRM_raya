@@ -12,9 +12,10 @@ export default function ViewTarget() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<string>("");
+  const [showAllQuarters, setShowAllQuarters] = useState(false);
 
   const { data: allTargets = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/target-system/user-targets"],
+    queryKey: [showAllQuarters ? "/api/target-system/user-targets" : "/api/target-system/user-targets?current=true"],
   });
 
   const { data: usersRes } = useQuery<any>({
@@ -53,8 +54,24 @@ export default function ViewTarget() {
 
   return (
     <div className="p-6">
-      <div className="mb-6 flex items-center font-bold text-lg uppercase">
+      <div className="mb-6 flex items-center justify-between font-bold text-lg uppercase flex-wrap gap-2">
         <span className="text-[#2b3553] dark:text-zinc-100">TARGET SYSTEM</span>
+        <div className="flex items-center text-xs font-normal normal-case rounded-sm border overflow-hidden">
+          <button
+            type="button"
+            className={`px-3 py-1.5 ${!showAllQuarters ? "bg-[#00a65a] text-white" : "bg-white dark:bg-zinc-900 text-gray-600 dark:text-zinc-400"}`}
+            onClick={() => setShowAllQuarters(false)}
+          >
+            Current Quarter
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 ${showAllQuarters ? "bg-[#00a65a] text-white" : "bg-white dark:bg-zinc-900 text-gray-600 dark:text-zinc-400"}`}
+            onClick={() => setShowAllQuarters(true)}
+          >
+            All History
+          </button>
+        </div>
       </div>
 
       <div className="bg-white p-4 rounded-sm shadow-sm border mb-6 dark:bg-zinc-900">
@@ -94,19 +111,19 @@ export default function ViewTarget() {
               <Table>
                 <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                   <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                    <TableHead className="font-bold text-black">Target Name</TableHead>
-                    <TableHead className="font-bold text-black text-center">Category</TableHead>
-                    <TableHead className="font-bold text-black text-center">Target</TableHead>
-                    <TableHead className="font-bold text-black text-center">Price</TableHead>
-                    <TableHead className="font-bold text-black text-center">Bonns</TableHead>
-                    <TableHead className="font-bold text-black text-center">Vas</TableHead>
-                    <TableHead className="font-bold text-black text-center">Kwa</TableHead>
-                    <TableHead className="font-bold text-black text-center">Reward</TableHead>
-                    <TableHead className="font-bold text-black text-center">Total</TableHead>
-                    <TableHead className="font-bold text-black text-center">Start Date</TableHead>
-                    <TableHead className="font-bold text-black text-center">End Date</TableHead>
-                    <TableHead className="font-bold text-black text-center">Sign Date</TableHead>
-                    <TableHead className="font-bold text-black text-center">Action</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonns</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Vas</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Start Date</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">End Date</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Sign Date</TableHead>
+                    <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

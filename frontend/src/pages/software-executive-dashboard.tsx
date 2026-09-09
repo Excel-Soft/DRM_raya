@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowRightCircle, ArrowRightLeft, ChevronDown, ChevronLeft, ChevronRight,
-  Link2, Loader2, MapPin, Settings, Users,
+  Link2, Loader2, MapPin, Settings, Users, Eye, Tag,
   CheckCircle2, Clock, CalendarDays, Activity, Briefcase
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,7 +16,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useQuery } from "@tanstack/react-query";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient, throwIfResNotOk } from "@/lib/queryClient";
+import { useLocation } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 import ServicePrivatePool from "@/pages/service-private-pool";
 
 
@@ -67,20 +73,36 @@ const activityLabels: Record<string, string> = {
 };
 
 export default function SoftwareExecutiveDashboard() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [assignedTab, setAssignedTab] = useState<AssignedTab>("today");
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [showAddOvertime, setShowAddOvertime] = useState(false);
 
-  // Fetch summary stats using the same executive endpoint to guarantee data parity
-  const { data: summaryStats } = useQuery({ queryKey: ["/api/dd-executive/summary"] });
-  const { data: dailyReportData } = useQuery({ queryKey: ["/api/dd-executive/daily-report"] });
-  const { data: monthlyCompleteData } = useQuery({ queryKey: ["/api/dd-executive/monthly-complete"] });
-  const { data: taskListData } = useQuery({ queryKey: [`/api/dd-executive/tasks/${assignedTab}`] });
+  // ── Task execution modal state (real backend wiring against /api/software/*) ──
+  const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [actionDialogOpen, setActionDialogOpen] = useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkLabel, setLinkLabel] = useState("");
+  const [overtimeMinutes, setOvertimeMinutes] = useState("30");
+  const [overtimeReason, setOvertimeReason] = useState("");
+  const [outputNotes, setOutputNotes] = useState("");
 
   const [topSellingFilter, setTopSellingFilter] = useState("LD");
   const [dailyReportFilter, setDailyReportFilter] = useState("daily");
   const [monthlyCompleteFilter, setMonthlyCompleteFilter] = useState("WK");
   const [activitiesFilter, setActivitiesFilter] = useState("TD");
+
+  // Fetch summary stats using the same executive endpoint to guarantee data parity.
+  // All three below already have a working `period` query param server-side
+  // (dd-executive-routes.ts) — the dropdowns just weren't passing it, so
+  // picking LD/WK/MH/QU (or daily/weekly/monthly) never changed anything.
+  const { data: summaryStats } = useQuery({ queryKey: [`/api/dd-executive/summary?period=${topSellingFilter}`] });
+  const { data: dailyReportData } = useQuery({ queryKey: [`/api/dd-executive/daily-report?period=${dailyReportFilter}`] });
+  const { data: monthlyCompleteData } = useQuery({ queryKey: [`/api/dd-executive/monthly-complete?period=${monthlyCompleteFilter}`] });
+  const { data: taskListData } = useQuery({ queryKey: [`/api/dd-executive/tasks/${assignedTab}`] });
 
   const { data: activityPlanData } = useQuery({
     queryKey: [`/api/sales/activity-plan?period=${activitiesFilter}`]
@@ -170,8 +192,86 @@ export default function SoftwareExecutiveDashboard() {
   // Stage 3: removed the localStorage 'software_tasks' loader/writer. That key was
   // never rendered here (the displayed list comes from /api/dd-executive/tasks/:tab)
   // and its only producer (the team-workspace screen) was migrated to the backend.
-  const handleMoveToWaiting = (_taskId: string) => {
-    setAssignedTab("waiting");
+
+  // ── Task execution mutations, mirroring the working Posting Executive pattern ──
+  // (server/routes/software-workflow-routes.ts, mounted at /api/software) ──
+  const refreshExecutions = () => {
+    queryClient.invalidateQueries({ queryKey: [`/api/dd-executive/tasks/${assignedTab}`] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dd-executive/summary"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dd-executive/daily-report"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/software/my-executions"] });
+  };
+
+  const startTimerMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const res = await apiRequest("POST", `/api/software/tasks/${taskId}/timers/start`, {});
+      await throwIfResNotOk(res);
+      return res;
+    },
+    onSuccess: refreshExecutions,
+    onError: (error: any) => toast({ title: "Could not start timer", description: error.message, variant: "destructive" }),
+  });
+
+  const stopTimerMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const res = await apiRequest("POST", `/api/software/tasks/${taskId}/timers/stop`, {});
+      await throwIfResNotOk(res);
+      return res;
+    },
+    onSuccess: refreshExecutions,
+    onError: (error: any) => toast({ title: "Could not stop timer", description: error.message, variant: "destructive" }),
+  });
+
+  const addLinkMutation = useMutation({
+    mutationFn: async ({ taskId, url, label }: { taskId: string; url: string; label: string }) => {
+      const res = await apiRequest("POST", `/api/software/tasks/${taskId}/evidence-links`, { url, label });
+      await throwIfResNotOk(res);
+      return res;
+    },
+    onSuccess: () => {
+      refreshExecutions();
+      setLinkUrl("");
+      setLinkLabel("");
+      toast({ title: "Link saved", description: "Evidence link uploaded successfully." });
+    },
+    onError: (error: any) => toast({ title: "Could not save link", description: error.message, variant: "destructive" }),
+  });
+
+  const overtimeMutation = useMutation({
+    mutationFn: async ({ taskId, requestedMinutes, reason }: { taskId: string; requestedMinutes: number; reason: string }) => {
+      const res = await apiRequest("POST", `/api/software/tasks/${taskId}/request-overtime`, { requestedMinutes, reason });
+      await throwIfResNotOk(res);
+      return res;
+    },
+    onSuccess: () => {
+      refreshExecutions();
+      setOvertimeDialogOpen(false);
+      setOvertimeMinutes("30");
+      setOvertimeReason("");
+      toast({ title: "Overtime requested", description: "Your manager has been notified." });
+    },
+    onError: (error: any) => toast({ title: "Could not request overtime", description: error.message, variant: "destructive" }),
+  });
+
+  const submitMutation = useMutation({
+    mutationFn: async ({ taskId, notes }: { taskId: string; notes: string }) => {
+      const res = await apiRequest("POST", `/api/software/tasks/${taskId}/submit-to-manager`, { outputNotes: notes });
+      await throwIfResNotOk(res);
+      return res;
+    },
+    onSuccess: () => {
+      refreshExecutions();
+      setOutputNotes("");
+      setActionDialogOpen(false);
+      toast({ title: "Work submitted", description: "Task submitted for manager review." });
+    },
+    onError: (error: any) => toast({ title: "Could not submit work", description: error.message, variant: "destructive" }),
+  });
+
+  const openTaskAction = (task: any) => {
+    setSelectedTask(task);
+    setOutputNotes("");
+    setActionDialogOpen(true);
   };
 
   if (viewMode === "private-pool") {
@@ -226,7 +326,7 @@ export default function SoftwareExecutiveDashboard() {
             <h1 className="text-[21px] font-bold uppercase tracking-tight text-[#2f4058] dark:text-zinc-100">To Do List</h1>
           </div>
 
-          <section className="rounded-md bg-white px-4 py-4 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+          <section className="rounded-md bg-white dark:bg-zinc-900 px-4 py-4 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
             <h2 className="mb-5 text-[17px] font-semibold text-[#31435d] dark:text-zinc-100">Create To Do List</h2>
 
             {todoMessage ? (
@@ -407,7 +507,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
           </section>
 
-          <section className="rounded-md bg-white px-4 py-6 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+          <section className="rounded-md bg-white dark:bg-zinc-900 px-4 py-6 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
             <h2 className="mb-5 text-[17px] font-semibold text-[#31435d] dark:text-zinc-100">To Do List Task</h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
               {[
@@ -454,7 +554,7 @@ export default function SoftwareExecutiveDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-white text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
+                <tr className="bg-white dark:bg-zinc-900 text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
                   {["#P-ID", "Projects", "Date", "Status", "Total", "Pay", "Due", "Team"].map((item) => (
                     <th key={item} className="px-4 py-4 first:w-[7%]">
                       {item}
@@ -464,7 +564,7 @@ export default function SoftwareExecutiveDashboard() {
               </thead>
               <tbody>
                 <tr className="h-4" />
-                <tr className="bg-white dark:bg-zinc-900">
+                <tr className="bg-white dark:bg-zinc-900 dark:bg-zinc-900">
                   <td className="px-4 py-5 align-middle">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#35c78e] text-[18px] font-bold text-white">
                       703
@@ -526,7 +626,7 @@ export default function SoftwareExecutiveDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-white text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
+                <tr className="bg-white dark:bg-zinc-900 text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
                   {["#P-ID", "Projects", "Status", "Hod", "Dep", "Date", "Action"].map((item) => (
                     <th key={item} className="px-4 py-4 first:w-[7%]">
                       {item}
@@ -568,7 +668,7 @@ export default function SoftwareExecutiveDashboard() {
                     depMuted: true,
                   },
                 ].map((row) => (
-                  <tr key={row.id} className="border-t-[18px] border-t-[#f5f6fb] bg-white dark:bg-zinc-900">
+                  <tr key={row.id} className="border-t-[18px] border-t-[#f5f6fb] bg-white dark:bg-zinc-900 dark:bg-zinc-900">
                     <td className="px-4 py-5 align-middle">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#35c78e] text-[18px] font-bold text-white">
                         {row.id}
@@ -635,7 +735,7 @@ export default function SoftwareExecutiveDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-white text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
+                <tr className="bg-white dark:bg-zinc-900 text-left text-[15px] font-semibold text-[#334761] dark:bg-zinc-900 dark:text-zinc-100">
                   {["#P-ID", "Projects", "Date", "Status", "Task Time", "Spent Time", "Link"].map((item) => (
                     <th key={item} className="px-4 py-4 first:w-[7%]">
                       {item}
@@ -652,7 +752,7 @@ export default function SoftwareExecutiveDashboard() {
                   { id: "9939", project: "Dynamic Website", company: "SOCKER TEAMSPORT", date: "09 Mar 2026", taskTime: "8:0", spentTime: "0:0:0" },
                   { id: "9399", project: "Alibaba Minisite", company: "MOZLAN SPORTS", date: "03 Apr 2026", taskTime: "8:0", spentTime: "0:0:0" },
                 ].map((row, index) => (
-                  <tr key={`${row.id}-${index}`} className="border-t-[18px] border-t-[#f5f6fb] bg-white dark:bg-zinc-900">
+                  <tr key={`${row.id}-${index}`} className="border-t-[18px] border-t-[#f5f6fb] bg-white dark:bg-zinc-900 dark:bg-zinc-900">
                     <td className="px-4 py-5 align-middle">
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#35c78e] text-[18px] font-bold text-white">
                         {row.id}
@@ -725,7 +825,7 @@ export default function SoftwareExecutiveDashboard() {
           </div>
 
           {showAddOvertime ? (
-            <section className="rounded-md bg-white px-4 py-4 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+            <section className="rounded-md bg-white dark:bg-zinc-900 px-4 py-4 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <div>
                   <label className="mb-2 block text-[15px] font-medium text-[#2f4058] dark:text-zinc-100">Task</label>
@@ -762,7 +862,7 @@ export default function SoftwareExecutiveDashboard() {
             </section>
           ) : null}
 
-          <section className="rounded-md bg-white px-4 py-6 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+          <section className="rounded-md bg-white dark:bg-zinc-900 px-4 py-6 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
             <div className="flex items-start justify-between">
               <div className="text-[16px] text-[#2f4058] dark:text-zinc-100">
                 <div>Show</div>
@@ -804,10 +904,10 @@ export default function SoftwareExecutiveDashboard() {
             <div className="flex items-center justify-between pt-5">
               <div className="text-[16px] text-[#2f4058] dark:text-zinc-100">Showing 0 to 0 of 0 entries</div>
               <div className="flex overflow-hidden rounded-[4px] border border-[#cfd7e3] dark:border-zinc-800">
-                <button type="button" className="bg-white px-4 py-3 text-[16px] text-[#c5cfdd] dark:bg-zinc-900">
+                <button type="button" className="bg-white dark:bg-zinc-900 px-4 py-3 text-[16px] text-[#c5cfdd] dark:bg-zinc-900">
                   Previous
                 </button>
-                <button type="button" className="border-l border-[#cfd7e3] bg-white px-4 py-3 text-[16px] text-[#c5cfdd] dark:bg-zinc-900 dark:border-zinc-800">
+                <button type="button" className="border-l border-[#cfd7e3] bg-white dark:bg-zinc-900 px-4 py-3 text-[16px] text-[#c5cfdd] dark:bg-zinc-900 dark:border-zinc-800">
                   Next
                 </button>
               </div>
@@ -909,7 +1009,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
           ) : null}
 
-          <section className="rounded-md bg-white px-3 py-3 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+          <section className="rounded-md bg-white dark:bg-zinc-900 px-3 py-3 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_405px]">
               <div className="space-y-8">
                 <div>
@@ -1048,7 +1148,7 @@ export default function SoftwareExecutiveDashboard() {
                 </button>
               </div>
 
-              <div className="border border-[#e2e7ef] bg-white p-3 dark:bg-zinc-900 dark:border-zinc-800">
+              <div className="border border-[#e2e7ef] bg-white dark:bg-zinc-900 p-3 dark:bg-zinc-900 dark:border-zinc-800">
                 <h3 className="mb-3 text-[17px] font-semibold text-[#31435d] dark:text-zinc-100">Tags</h3>
                 <input
                   type="text"
@@ -1085,7 +1185,7 @@ export default function SoftwareExecutiveDashboard() {
 
           {showCompanyTypeInput ? (
             <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 px-4 pt-6">
-              <div className="w-full max-w-[640px] overflow-hidden rounded-[8px] bg-white shadow-2xl dark:bg-zinc-900">
+              <div className="w-full max-w-[640px] overflow-hidden rounded-[8px] bg-white dark:bg-zinc-900 shadow-2xl dark:bg-zinc-900">
                 <div className="flex items-center justify-between border-b border-[#e7ebf2] px-6 py-4 dark:border-zinc-800">
                   <h2 className="text-[20px] font-semibold text-[#4b5563] dark:text-zinc-400">Add Busines Type</h2>
                   <button
@@ -1166,7 +1266,7 @@ export default function SoftwareExecutiveDashboard() {
           <div className="space-y-6">
             
             {/* Top Stats Cards Container */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-[17px] font-bold text-slate-800">Top Selling</h2>
                 <Select value={topSellingFilter} onValueChange={setTopSellingFilter}>
@@ -1189,7 +1289,7 @@ export default function SoftwareExecutiveDashboard() {
                   { label: "Running", value: (summaryStats as any)?.runningTasks?.toString() || "0", icon: MapPin, color: "bg-[#14b8a6]" },
                   { label: "Complete", value: (summaryStats as any)?.completeTasks?.toString() || "0", icon: Settings, color: "bg-[#d946ef]" },
                 ].map(({ label, value, icon: Icon, color }) => (
-                  <div key={label} className="bg-white border border-slate-50 rounded-[20px] p-5 shadow-[0_2px_10px_rgba(0,0,0,0.03)] flex flex-col items-start hover:-translate-y-0.5 transition-transform">
+                  <div key={label} className="bg-white dark:bg-zinc-900 border border-slate-50 rounded-[20px] p-5 shadow-[0_2px_10px_rgba(0,0,0,0.03)] flex flex-col items-start hover:-translate-y-0.5 transition-transform">
                     <div className={cn("w-11 h-11 rounded-[14px] flex items-center justify-center text-white mb-4", color)}>
                       <Icon className="w-5 h-5" />
                     </div>
@@ -1201,7 +1301,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
 
             {/* Assigned Project */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                 <h2 className="text-[17px] font-bold text-slate-800">Assigned Project</h2>
                 <div className="flex bg-slate-50 p-1 rounded-full border border-slate-100">
@@ -1244,7 +1344,7 @@ export default function SoftwareExecutiveDashboard() {
                   <tbody>
                     {(taskListData as any[])?.length > 0 ? (
                       (taskListData as any[]).map((task, index) => (
-                        <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                        <tr key={task.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50 dark:hover:bg-zinc-800">
                           <td className="py-4 px-4 text-[13px] font-bold text-slate-500">{index + 1}</td>
                           <td className="py-4 px-4 text-[13px] font-bold text-slate-600">{task.company}</td>
                           <td className="py-4 px-4 text-[13px] font-medium text-slate-500">{task.task}</td>
@@ -1263,16 +1363,22 @@ export default function SoftwareExecutiveDashboard() {
                           </td>
                           <td className="py-4 px-4 text-[13px] font-medium text-slate-500">{task.dueDate || "-"}</td>
                           <td className="py-4 px-4">
-                            {assignedTab === "today" ? (
-                              <button 
-                                onClick={() => handleMoveToWaiting(task.id)}
-                                className="text-[12px] font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors"
+                            <div className="flex items-center gap-2">
+                              <button
+                                title="View in PMS Project Status"
+                                onClick={() => setLocation(task.projectId ? `/pms/status?projectId=${task.projectId}` : "/pms/status")}
+                                className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-emerald-50 transition-colors"
                               >
-                                Move to Waiting
+                                <Eye className="w-4 h-4 text-emerald-600" />
                               </button>
-                            ) : (
-                              <span className="text-[12px] text-slate-400 italic font-medium">Waiting...</span>
-                            )}
+                              <button
+                                title="Task actions"
+                                onClick={() => openTaskAction(task)}
+                                className="h-8 w-8 flex items-center justify-center rounded-full hover:bg-emerald-50 transition-colors"
+                              >
+                                <Settings className="w-4 h-4 text-emerald-600" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1289,7 +1395,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
 
             {/* Daily Report */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-[17px] font-bold text-slate-800">Daily Report</h2>
                 <Select value={dailyReportFilter} onValueChange={setDailyReportFilter}>
@@ -1307,7 +1413,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
 
             {/* Monthly Complete Project */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-[17px] font-bold text-slate-800">Monthly Complete Project</h2>
                 <Select value={monthlyCompleteFilter} onValueChange={setMonthlyCompleteFilter}>
@@ -1331,13 +1437,13 @@ export default function SoftwareExecutiveDashboard() {
             
             {/* Banner */}
             <div className="bg-[#517a68] rounded-[24px] p-8 text-white relative overflow-hidden shadow-[0_2px_10px_rgba(0,0,0,0.05)] h-[200px] flex flex-col justify-center">
-              <div className="absolute right-0 top-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+              <div className="absolute right-0 top-0 w-64 h-64 bg-white dark:bg-zinc-900/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
               <div className="text-[11px] font-bold text-emerald-100 tracking-wider uppercase mb-2 relative z-10">Software Dept</div>
               <h3 className="text-[28px] font-bold leading-[1.15] relative z-10">Accelerate Your<br/>Development Cycle</h3>
             </div>
 
             {/* Activities */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-[16px] font-bold text-slate-800">Activities</h2>
                 <Select value={activitiesFilter} onValueChange={setActivitiesFilter}>
@@ -1384,24 +1490,27 @@ export default function SoftwareExecutiveDashboard() {
             </div>
 
             {/* Projects Overview */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <h2 className="text-[16px] font-bold text-slate-800 mb-4">Projects Overview</h2>
               <div className="grid grid-cols-2 gap-3">
                 {[
-                  { name: "Running Project", id: "running-projects" },
-                  { name: "Pending Project", id: "pending-projects" },
-                  { name: "Project Task", id: "project-task" },
-                  { name: "Over Time", id: "overtime" },
-                  { name: "Leave Application", id: "leave-application" },
-                  { name: "Attendance", id: "attendance" },
-                  { name: "Add Uae Customer", id: "add-uae-customer" },
-                  { name: "Private Pool", id: "private-pool" },
+                  { name: "Running Project", href: "/pms/running-projects" },
+                  { name: "Pending Project", href: "/pms/approvals" },
+                  { name: "Project Task", href: "/pms/tasks" },
+                  { name: "Over Time", href: "/hr/overtime" },
+                  { name: "Leave Application", href: "/hr/leave-request" },
+                  { name: "Attendance", href: "/hr/attendance" },
+                  { name: "Add Uae Customer", href: "/sales/add-customer" },
+                  { name: "Private Pool", id: "private-pool" as ViewMode },
                 ].map((item) => (
-                  <button 
-                    key={item.id}
+                  <button
+                    key={item.name}
                     onClick={() => {
-                      if (item.id === "overtime") setShowAddOvertime(false);
-                      setViewMode(item.id as ViewMode);
+                      if (item.id) {
+                        setViewMode(item.id);
+                      } else if (item.href) {
+                        setLocation(item.href);
+                      }
                     }}
                     className="flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors rounded-xl px-4 py-3 text-[12px] font-bold text-slate-600"
                   >
@@ -1413,7 +1522,7 @@ export default function SoftwareExecutiveDashboard() {
             </div>
 
             {/* Important */}
-            <div className="bg-white rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+            <div className="bg-white dark:bg-zinc-900 rounded-[24px] p-6 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
               <h2 className="text-[16px] font-bold text-slate-800 mb-4">Important</h2>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-3 text-[12px]">
@@ -1432,7 +1541,7 @@ export default function SoftwareExecutiveDashboard() {
                   <span className="font-bold text-slate-600">Login Time</span>
                   <span className="font-bold text-emerald-600">{(summaryStats as any)?.important?.loginTime || "Not Marked"}</span>
                 </div>
-                <button 
+                <button
                   onClick={() => setViewMode("todo-list")}
                   className="col-span-2 flex items-center justify-between bg-emerald-50 hover:bg-emerald-100 transition-colors rounded-xl px-4 py-3 text-[12px]"
                 >
@@ -1445,6 +1554,116 @@ export default function SoftwareExecutiveDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Add Evidence Link Dialog */}
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>Add Output Link</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input placeholder="https://..." value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} />
+            <Input placeholder="Label" value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} />
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 w-full font-bold h-10"
+              disabled={!selectedTask?.id || !linkUrl || addLinkMutation.isPending}
+              onClick={() => addLinkMutation.mutate({ taskId: selectedTask.id, url: linkUrl, label: linkLabel })}
+            >
+              {addLinkMutation.isPending ? "Saving..." : "Save Link"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Request Overtime Dialog */}
+      <Dialog open={overtimeDialogOpen} onOpenChange={setOvertimeDialogOpen}>
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>Request Overtime</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input type="number" min="1" value={overtimeMinutes} onChange={(e) => setOvertimeMinutes(e.target.value)} />
+            <Textarea placeholder="Reason for overtime" value={overtimeReason} onChange={(e) => setOvertimeReason(e.target.value)} />
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 w-full font-bold h-10"
+              disabled={!selectedTask?.id || !overtimeReason || overtimeMutation.isPending}
+              onClick={() => overtimeMutation.mutate({ taskId: selectedTask.id, requestedMinutes: Number(overtimeMinutes) || 0, reason: overtimeReason })}
+            >
+              {overtimeMutation.isPending ? "Requesting..." : "Request Overtime"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Master Task Action Dialog: timer, evidence links, overtime, submit-to-manager */}
+      <Dialog open={actionDialogOpen} onOpenChange={setActionDialogOpen}>
+        <DialogContent className="max-w-[500px] p-0 overflow-hidden border-none bg-white dark:bg-zinc-900 rounded-xl shadow-2xl">
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30">
+            <DialogTitle className="text-[16px] font-bold text-gray-700 flex items-center gap-2">
+              <Settings className="w-4 h-4" /> TASK ACTIONS
+            </DialogTitle>
+          </div>
+
+          <div className="p-6 space-y-6">
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+              <h4 className="text-[13px] font-bold text-gray-800">{selectedTask?.company || "N/A"}</h4>
+              <p className="text-[11px] text-gray-500">{selectedTask?.task || "N/A"}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                className="h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[13px]"
+                disabled={!selectedTask?.id || startTimerMutation.isPending}
+                onClick={() => startTimerMutation.mutate(selectedTask.id)}
+              >
+                {startTimerMutation.isPending ? "Starting..." : "Start Timer"}
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10 border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-[13px]"
+                disabled={!selectedTask?.id || stopTimerMutation.isPending}
+                onClick={() => stopTimerMutation.mutate(selectedTask.id)}
+              >
+                {stopTimerMutation.isPending ? "Stopping..." : "Stop Timer"}
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                variant="outline"
+                className="h-12 flex items-center gap-3 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 text-gray-700 font-bold text-[13px]"
+                onClick={() => setLinkDialogOpen(true)}
+              >
+                <Tag className="w-4 h-4 text-emerald-600" /> Add Link
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 flex items-center gap-3 border-gray-200 hover:border-rose-200 hover:bg-rose-50 text-gray-700 font-bold text-[13px]"
+                onClick={() => setOvertimeDialogOpen(true)}
+              >
+                <Clock className="w-4 h-4 text-rose-500" /> Overtime
+              </Button>
+            </div>
+
+            <div className="pt-4 border-t space-y-4">
+              <h4 className="text-[13px] font-bold text-gray-700">Submit Work to Manager</h4>
+              <Textarea
+                className="w-full border-gray-200 rounded-lg text-[12px] min-h-[80px]"
+                placeholder="Type notes here..."
+                value={outputNotes}
+                onChange={(e) => setOutputNotes(e.target.value)}
+              />
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700 w-full font-black h-11 rounded-xl shadow-lg active:scale-95 transition-all text-white"
+                disabled={!selectedTask?.id || submitMutation.isPending}
+                onClick={() => submitMutation.mutate({ taskId: selectedTask.id, notes: outputNotes })}
+              >
+                {submitMutation.isPending ? "Submitting..." : "Submit Work"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1461,7 +1680,7 @@ function Selector({
   return (
     <div
       className={cn(
-        "relative flex items-center rounded-[4px] border border-[#cfd7e3] bg-white dark:bg-zinc-900 px-4 pr-10 text-[#405269]",
+        "relative flex items-center rounded-[4px] border border-[#cfd7e3] bg-white dark:bg-zinc-900 dark:bg-zinc-900 px-4 pr-10 text-[#405269]",
         compact ? "h-[34px] min-w-[80px] text-[15px]" : "h-[36px] min-w-[86px] text-[15px]",
         wide && "min-w-[170px]",
       )}
@@ -1492,7 +1711,7 @@ function DashboardTable({ headers, data }: { headers: string[], data?: any[] }) 
         <tbody>
           {data && data.length > 0 ? (
             data.map((row, i) => (
-              <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 last:border-0">
+              <tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 last:border-0">
                 <td className="py-3 px-4">
                   <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 font-bold flex items-center justify-center text-[14px] uppercase mx-auto">
                     {row.name?.charAt(0) || "N"}
@@ -1590,7 +1809,7 @@ function FakeSelect({
       <select
         value={value}
         onChange={(event) => onSelect(event.target.value)}
-        className="h-[44px] w-full appearance-none rounded-[4px] border border-[#cfd7e3] bg-white px-4 text-[15px] text-[#31435d] outline-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+        className="h-[44px] w-full appearance-none rounded-[4px] border border-[#cfd7e3] bg-white dark:bg-zinc-900 px-4 text-[15px] text-[#31435d] outline-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -1613,7 +1832,7 @@ function RightBox({
   control?: React.ReactNode;
 }) {
   return (
-    <section className="rounded-md bg-white shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
+    <section className="rounded-md bg-white dark:bg-zinc-900 shadow-[0_0_0_1px_rgba(226,232,240,0.55)] dark:bg-zinc-900">
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <h2 className="text-[17px] font-semibold text-[#4a5667] dark:text-zinc-400">{title}</h2>
         {control}

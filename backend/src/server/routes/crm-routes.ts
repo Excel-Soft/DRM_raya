@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db, pool } from "../db";
+import { db, pool } from "./db";
 import {
   customers,
   activities,
@@ -13,9 +13,10 @@ import {
   tempContacts,
   gmPoolEntries,
   insertCustomerSchema,
-  insertProjectSchema,
 } from "@shared/schema";
 import { eq, and, or, ilike, gte, lte, desc, asc, sql } from "drizzle-orm";
+import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
+import { resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
 
 const router = Router();
 
@@ -115,7 +116,8 @@ router.get("/customers/search", async (req, res) => {
 
     let customerCondition = q ? or(
       ilike(customers.companyName, `%${q}%`),
-      ilike(customers.accountName, `%${q}%`)
+      ilike(customers.accountName, `%${q}%`),
+      ilike(customers.drmId, `%${q}%`)
     ) : undefined;
 
     if (poolOnly && userId) {
@@ -132,6 +134,7 @@ router.get("/customers/search", async (req, res) => {
         id: customers.id,
         companyName: customers.companyName,
         accountName: customers.accountName,
+        drmId: customers.drmId,
       })
       .from(customers)
       .where(customerCondition)
@@ -151,16 +154,17 @@ router.get("/customers/search", async (req, res) => {
         .select({
           id: gmEntries.id,
           companyName: gmEntries.companyName,
+          drmId: gmEntries.drmId,
         })
         .from(gmEntries)
-        .where(q ? ilike(gmEntries.companyName, `%${q}%`) : undefined)
+        .where(q ? or(ilike(gmEntries.companyName, `%${q}%`), ilike(gmEntries.drmId, `%${q}%`)) : undefined)
         .orderBy(desc(gmEntries.createdAt))
         .limit(remaining * 2);
 
       for (const g of gmRaw) {
         const key = (g.companyName || "").toLowerCase();
         if (key && !seen.has(key)) {
-          results.push({ id: g.id, companyName: g.companyName, accountName: g.companyName });
+          results.push({ id: g.id, companyName: g.companyName, accountName: g.companyName, drmId: g.drmId });
           seen.add(key);
           if (results.length >= limit) break;
         }
@@ -169,30 +173,43 @@ router.get("/customers/search", async (req, res) => {
     }
 
     // 3. Search temp_contacts if still needed
-    if (results.length < limit && !poolOnly) {
+    if (results.length < limit) {
       const remaining = limit - results.length;
+      const tempConditions = [];
+      if (q) {
+        tempConditions.push(or(
+          ilike(tempContacts.personName, `%${q}%`),
+          ilike(tempContacts.email, `%${q}%`),
+          ilike(tempContacts.mobile, `%${q}%`),
+          ilike(tempContacts.drmId, `%${q}%`)
+        ));
+      }
+      if (poolOnly && userId) {
+        tempConditions.push(eq(tempContacts.userId, userId));
+      }
+
       const tempMatches = await db
         .select({
           id: tempContacts.id,
           personName: tempContacts.personName,
+          title: tempContacts.title,
+          email: tempContacts.email,
+          drmId: tempContacts.drmId,
         })
         .from(tempContacts)
-        .where(q ? or(
-          ilike(tempContacts.personName, `%${q}%`),
-          ilike(tempContacts.email, `%${q}%`)
-        ) : undefined)
+        .where(tempConditions.length > 0 ? and(...tempConditions) : undefined)
         .orderBy(desc(tempContacts.createdAt))
         .limit(remaining * 2);
 
-      console.log(`[Search Debug] tempMatches raw found: ${tempMatches.length}`);
-
       for (const t of tempMatches) {
-        const key = (t.personName || "").toLowerCase();
+        const displayName = `${t.title ? t.title + '. ' : ''}${t.personName || 'Temp Contact'}`;
+        const key = displayName.toLowerCase();
         if (key && !seen.has(key)) {
           results.push({
             id: t.id,
-            companyName: t.personName,
-            accountName: t.personName,
+            companyName: `${displayName} (Temp)`,
+            accountName: t.email ? `${t.email} (Temp)` : `${displayName} (Temp)`,
+            drmId: t.drmId,
           });
           seen.add(key);
           if (results.length >= limit) break;
@@ -207,6 +224,60 @@ router.get("/customers/search", async (req, res) => {
   } catch (error) {
     console.error("Error searching customers:", error);
     return res.status(500).json({ error: "Failed to search customers" });
+  }
+});
+
+// GET /customers/:id/gm-profile — contact info + most recent GM entry's
+// package/pricing, fetched once when a company is selected in Add GM (not
+// per search keystroke, unlike /customers/search above). Lets the form
+// auto-load a returning customer's details as an editable suggestion rather
+// than the user starting from a blank package/PKR every time.
+router.get("/customers/:id/gm-profile", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [customer] = await db
+      .select({
+        id: customers.id,
+        companyName: customers.companyName,
+        accountName: customers.accountName,
+        email: customers.email,
+        phone: customers.phone,
+        mobile: customers.mobile,
+        region: customers.region,
+        city: customers.city,
+        address: customers.address,
+      })
+      .from(customers)
+      .where(eq(customers.id, id))
+      .limit(1);
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
+
+    // customer_id on gm_entries isn't part of the Drizzle schema object
+    // (added additively at the DB level, per this codebase's usual pattern) —
+    // raw query rather than the query builder.
+    const { rows: lastGmRows } = await pool.query(
+      `SELECT package_type AS "packageType", amount_pkr AS "amountPkr", dollar_rate AS "dollarRate"
+         FROM drm.gm_entries
+        WHERE customer_id = $1 AND coalesce(is_deleted, false) = false
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [id],
+    );
+    const lastGm = lastGmRows[0];
+
+    return res.json({
+      customer,
+      lastGm: lastGm
+        ? {
+            packageName: lastGm.packageType,
+            amountPkr: lastGm.amountPkr,
+            dollarRate: lastGm.dollarRate,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("Error loading customer GM profile:", error);
+    return res.status(500).json({ error: "Failed to load customer profile" });
   }
 });
 
@@ -233,7 +304,7 @@ router.post("/customers/check-duplicate", async (req, res) => {
     }
 
     const conditions = [];
-    if (company) conditions.push(ilike(customers.companyName, `%${company}%`));
+    if (company) conditions.push(or(ilike(customers.companyName, `%${company}%`), ilike(customers.drmId, `%${company}%`))!);
     if (email) conditions.push(ilike(customers.email, `%${email}%`));
     if (phone) conditions.push(ilike(customers.phone, `%${phone}%`));
 
@@ -242,6 +313,18 @@ router.post("/customers/check-duplicate", async (req, res) => {
       .from(customers)
       .where(or(...conditions))
       .limit(20);
+
+    for (const d of duplicates as any[]) {
+      if (!d.drmId) {
+        d.drmId = await resolveOrCreateCanonicalDrmId(pool, {
+          customerId: d.id,
+          companyName: d.companyName,
+          email: d.email,
+          phone: d.phone,
+          country: d.country,
+        });
+      }
+    }
 
     res.json({
       duplicates,
@@ -525,7 +608,7 @@ router.get("/queue-sales", async (req, res) => {
   }
 });
 
-router.get("/gm-pool", async (req, res) => {
+router.get("/gm-pool", requireFinancialPermission(FINANCIAL_ACTIONS.gmEntriesView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
   try {
     const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
     const { from, to } = parseDateRange(req.query.dateFrom as string, req.query.dateTo as string);
@@ -656,19 +739,11 @@ router.get("/projects", async (req, res) => {
   }
 });
 
-router.post("/projects", async (req, res) => {
-  try {
-    const validatedData = insertProjectSchema.parse(req.body);
-    const [newProject] = await db.insert(projects).values(validatedData).returning();
-    res.status(201).json(newProject);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Invalid request data", details: error.errors });
-    }
-    console.error("Error creating project:", error);
-    res.status(500).json({ error: "Failed to create project" });
-  }
-});
+// Phase 5 — removed: this was a generic, unvalidated-by-workflow raw
+// `db.insert(projects)` with no existing-project check and no frontend caller
+// anywhere in client/src (confirmed dead). Project creation now always goes
+// through server/services/invoice-to-project.service.ts's idempotent
+// create-or-link functions.
 
 // Related Customers endpoints
 router.get("/related-customers", async (req, res) => {

@@ -17,12 +17,13 @@
  * { data, total, page, pageSize }. Real rows or empty — never fabricated.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { ActivityLogService } from "../services/activity-service";
-import { buildExportFilename } from "../utils/export-filename";
-import { isManagerialRole } from "../utils/role-utils";
-import { NotificationService } from "../services/notification-service";
-import { requireReportPermission } from "../middleware/report-permission";
+import { pool } from "./db";
+import { ActivityLogService } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
+import { isManagerialRole } from "./utils/role-utils";
+import { NotificationService } from "./services/notification-service";
+import { requireReportPermission } from "./middleware/report-permission";
+import { safePage, safePageSize } from "./utils/sql-safety";
 
 // Fire-and-forget duty-assignment notification (uses the shared notification
 // abstraction). Never throws into the request path.
@@ -112,6 +113,7 @@ export async function ensureEventsTables(): Promise<void> {
       amount numeric(12,2) NOT NULL DEFAULT 0,
       attendee_count integer NOT NULL DEFAULT 0,
       map_url text,
+      location text,
       status text NOT NULL DEFAULT 'Draft',
       notes text,
       created_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
@@ -121,6 +123,7 @@ export async function ensureEventsTables(): Promise<void> {
       deleted_at timestamptz
     )
   `);
+  await pool.query(`ALTER TABLE drm.events ADD COLUMN IF NOT EXISTS location text`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_events_event_date ON drm.events (event_date)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_events_status ON drm.events (status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_events_created_at ON drm.events (created_at)`);
@@ -200,6 +203,7 @@ function mapEvent(r: any) {
     amount: r.amount === null || r.amount === undefined ? 0 : Number(r.amount),
     attendeeCount: r.attendee_count === null || r.attendee_count === undefined ? 0 : Number(r.attendee_count),
     mapUrl: r.map_url ?? null,
+    location: r.location ?? null,
     status: r.status,
     notes: r.notes ?? null,
     createdBy: r.created_by ?? null,
@@ -539,8 +543,8 @@ export async function registerEventsRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-      const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-      const pageSize = Math.max(1, Number(req.query.pageSize ?? 25) || 25);
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 25, 100);
       const offset = (page - 1) * pageSize;
 
       const where: string[] = ["e.deleted_at IS NULL"];
@@ -644,6 +648,7 @@ export async function registerEventsRoutes(app: Express) {
       if (mapUrl !== undefined && mapUrl !== null && String(mapUrl).trim() !== "" && !isHttpUrl(String(mapUrl))) {
         return badRequest(res, "map_url must be a valid http(s) URL");
       }
+      const location = b.location;
 
       let status: EventStatus = "Draft";
       if (b.status !== undefined && b.status !== null && b.status !== "") {
@@ -655,8 +660,8 @@ export async function registerEventsRoutes(app: Express) {
       const { rows } = await pool.query(
         `INSERT INTO drm.events
           (name, event_type, event_date, start_time, end_time, venue, amount,
-           attendee_count, map_url, status, notes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           attendee_count, map_url, location, status, notes, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING *`,
         [
           name,
@@ -668,6 +673,7 @@ export async function registerEventsRoutes(app: Express) {
           amount,
           attendeeCount,
           mapUrl ? String(mapUrl) : null,
+          location ? String(location) : null,
           status,
           b.notes ? String(b.notes) : null,
           getUserId(req) ?? null,
@@ -811,6 +817,7 @@ export async function registerEventsRoutes(app: Express) {
       if (b.amount !== undefined) addSet("amount", b.amount === null || b.amount === "" ? 0 : Number(b.amount));
       if (attendeeProvided) addSet("attendee_count", Number(attendeeRaw));
       if (mapUrlProvided) addSet("map_url", mapUrl ? String(mapUrl) : null);
+      if (b.location !== undefined) addSet("location", b.location ? String(b.location) : null);
       if (statusVal !== undefined) addSet("status", statusVal);
       if (b.notes !== undefined) addSet("notes", b.notes ? String(b.notes) : null);
 

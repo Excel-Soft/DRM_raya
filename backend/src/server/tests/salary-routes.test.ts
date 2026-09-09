@@ -27,9 +27,9 @@
 import express, { type Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../db";
-import { registerRoutes } from "../routes";
-import { authService } from "../auth.service";
+import { pool } from "./db";
+import { registerRoutes } from "./routes";
+import { authService } from "./auth.service";
 import {
   computeSalaryLine,
   salaryClassForRole,
@@ -334,9 +334,9 @@ async function seedUser(role: string, department: string | null): Promise<Seeded
   const username = `__saltest_${role}_${suffix}`;
   const email = `${username}@example.invalid`;
   const r = await pool.query(
-    `INSERT INTO drm.users (username, email, role_id, role, department, is_active)
-     VALUES ($1, $2, $3, $3, $4, true) RETURNING id`,
-    [username, email, role, department],
+    `INSERT INTO drm.users (username, email, role_id, role, department, is_active, full_name, password_hash)
+     VALUES ($1, $2, $3, $3, $4, true, $5, $6) RETURNING id`,
+    [username, email, role, department, `Full Name ${username}`, "test_hash"],
   );
   const id = String(r.rows[0].id);
   createdUserIds.push(id);
@@ -579,6 +579,27 @@ describe("salary money-path safety (DB-backed, Task #35)", () => {
       .patch(`/api/salary/runs/${second.runId}/status`)
       .set(auth(adminUser.token))
       .send({ status: "FINALIZED" });
+    expect(res.status).toBe(409);
+    expect(res.body.employees).toContain("Test Employee");
+  });
+
+  it("Phase 13: blocks creating a second DRAFT/GENERATED run for an employee who already has one in progress", async () => {
+    if (!dbAvailable || !app) return;
+    const month = 12, year = 2099;
+
+    // First run for the employee in this period — left at DRAFT (never finalized).
+    await seedRun({
+      status: "DRAFT", month, year, department: DEPT_A,
+      employee: empUser, employeeName: "Test Employee",
+    });
+
+    // A second create for the same employee + period must now be rejected —
+    // previously only a FINALIZED/LOCKED conflict was blocked, so two
+    // DRAFT/GENERATED runs could coexist.
+    const res = await request(app)
+      .post("/api/salary/runs")
+      .set(auth(adminUser.token))
+      .send({ month, year, mode: "DRAFT", employeeId: empUser.id });
     expect(res.status).toBe(409);
     expect(res.body.employees).toContain("Test Employee");
   });

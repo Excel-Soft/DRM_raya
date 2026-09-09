@@ -8,7 +8,7 @@ import {
   safeOffset,
   makeOrderBy,
 } from "./utils/sql-safety";
-import { ApiError } from "../utils/api-error";
+import { ApiError } from "./utils/api-error";
 
 const UUID_A = "11111111-1111-4111-8111-111111111111";
 const UUID_B = "22222222-2222-4222-8222-222222222222";

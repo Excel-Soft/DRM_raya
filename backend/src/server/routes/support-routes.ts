@@ -1,8 +1,8 @@
 import type { Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { ticketsRepository } from "../repositories/tickets.repository";
-import { supportMessagesRepository } from "../repositories/support-messages.repository";
-import { channelConfigRepository } from "../repositories/channel-config.repository";
+import { authMiddleware, requireRole } from "./auth.middleware";
+import { ticketsRepository } from "./repositories/tickets.repository";
+import { supportMessagesRepository } from "./repositories/support-messages.repository";
+import { channelConfigRepository } from "./repositories/channel-config.repository";
 import { 
   insertSupportTicketSchema, 
   insertSupportMessageSchema,
@@ -18,6 +18,11 @@ export function registerSupportRoutes(app: Express) {
 
   // Auth is enforced globally in `server/routes.ts` (or via MOCK_AUTH when enabled).
   app.use("/api/support", authMiddleware);
+  // Phase 11 — restrict to the roles the seeded permission row
+  // ("Support Module API", server/seed-settings.ts) already implies; before
+  // this, any authenticated user of any role could call these endpoints
+  // once the module flag was enabled.
+  app.use("/api/support", requireRole("sales_executive", "assistant_manager", "manager", "hod", "admin"));
 
   // ===== TICKET ENDPOINTS =====
 
@@ -72,10 +77,13 @@ export function registerSupportRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // Validate request body
-      const validated = insertSupportTicketSchema.parse(req.body);
+      // createdBy is server-derived from the authenticated caller, never
+      // trusted from the request body (Phase 11 — created_by is NOT NULL
+      // at the DB layer; also closes a client-spoofing gap).
+      const validated = insertSupportTicketSchema.omit({ createdBy: true }).parse(req.body);
+      const createdBy = (req.user as any).userId || (req.user as any).id;
 
-      const ticket = await ticketsRepository.create(validated);
+      const ticket = await ticketsRepository.create({ ...validated, createdBy });
 
       res.status(201).json(ticket);
     } catch (error) {

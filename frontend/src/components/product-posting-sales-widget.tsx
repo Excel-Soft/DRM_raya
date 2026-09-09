@@ -65,6 +65,7 @@ export function ProductPostingSalesWidget() {
     const { toast } = useToast();
     const [isOpen, setIsOpen] = useState(false);
     const [amount, setAmount] = useState("");
+    const [isFree, setIsFree] = useState(false);
     const [invoiceType, setInvoiceType] = useState<InvoiceType | "">("");
     const [companyName, setCompanyName] = useState("");
     const [customerId, setCustomerId] = useState("");
@@ -91,7 +92,7 @@ export function ProductPostingSalesWidget() {
     const customers = (customersData as any)?.data || [];
 
     const createInvoiceMutation = useMutation({
-        mutationFn: async (data: { amount: string, invoiceType: InvoiceType, companyName: string, customerId: string }) => {
+        mutationFn: async (data: { amount: string, invoiceType: InvoiceType, companyName: string, customerId: string, paymentMethod?: string }) => {
             const res = await apiRequest("POST", "/api/invoices", data);
             await throwIfResNotOk(res);
         },
@@ -99,6 +100,7 @@ export function ProductPostingSalesWidget() {
             queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
             setIsOpen(false);
             setAmount("");
+            setIsFree(false);
             setInvoiceType("");
             setCompanyName("");
             setCustomerId("");
@@ -106,6 +108,20 @@ export function ProductPostingSalesWidget() {
         },
         onError: (err) => {
             toast({ title: "Could not create invoice", description: readApiError(err), variant: "destructive" });
+        }
+    });
+
+    const resubmitMutation = useMutation({
+        mutationFn: async (id: string) => {
+            const res = await apiRequest("POST", `/api/invoices/${id}/resubmit`, {});
+            await throwIfResNotOk(res);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            toast({ title: "Resubmitted", description: "Sent back to HOD for approval." });
+        },
+        onError: (err) => {
+            toast({ title: "Could not resubmit", description: readApiError(err), variant: "destructive" });
         }
     });
 
@@ -213,21 +229,34 @@ export function ProductPostingSalesWidget() {
                                     min="0.01"
                                     step="0.01"
                                     placeholder="e.g. 500"
-                                    value={amount}
+                                    value={isFree ? "0" : amount}
+                                    disabled={isFree}
                                     onChange={(e) => setAmount(e.target.value)}
                                 />
+                                <div className="flex items-center gap-2 pt-1">
+                                    <input
+                                        type="checkbox"
+                                        id="isFree"
+                                        checked={isFree}
+                                        onChange={(e) => setIsFree(e.target.checked)}
+                                    />
+                                    <Label htmlFor="isFree" className="cursor-pointer font-normal text-sm">
+                                        Mark as Free ($0)
+                                    </Label>
+                                </div>
                             </div>
                             <Button
                                 onClick={() => {
                                     if (!invoiceType) return;
                                     createInvoiceMutation.mutate({
-                                        amount: amount,
+                                        amount: isFree ? "0" : amount,
                                         invoiceType: invoiceType,
                                         companyName: companyName,
                                         customerId: customerId,
+                                        paymentMethod: isFree ? "free" : undefined,
                                     });
                                 }}
-                                disabled={createInvoiceMutation.isPending || !customerId || !amount || !invoiceType}
+                                disabled={createInvoiceMutation.isPending || !customerId || (!isFree && !amount) || !invoiceType}
                             >
                                 {createInvoiceMutation.isPending ? "Creating..." : "Submit Invoice"}
                             </Button>
@@ -245,7 +274,7 @@ export function ProductPostingSalesWidget() {
                         invoices.map((inv: Invoice) => (
                             <div key={inv.id} className="flex flex-col p-3 border-b hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
                                 <div className="flex justify-between items-center mb-2">
-                                    <span className="text-sm font-semibold">{inv.projectName || `INV-${inv.id.substring(0, 6)}`}</span>
+                                    <span className="text-sm font-semibold">{(inv as any).invoiceNumber || (inv as any).invoice_number || inv.projectName || (inv.id ? `INV-${inv.id.substring(0, 6).toUpperCase()}` : "Invoice")}</span>
                                     <Badge variant={
                                         inv.status === "APPROVED" ? "default" :
                                             inv.status === "REJECTED" ? "destructive" : "secondary"
@@ -261,9 +290,20 @@ export function ProductPostingSalesWidget() {
                                     {new Date(inv.createdAt).toLocaleDateString()}
                                 </div>
                                 {inv.status === "REJECTED" && (
-                                    <div className="mt-2 text-xs text-red-500 flex items-center gap-1">
-                                        <AlertCircle className="h-3 w-3" />
-                                        Action required: Check notifications for reason.
+                                    <div className="mt-2 flex items-center justify-between gap-2">
+                                        <div className="text-xs text-red-500 flex items-center gap-1">
+                                            <AlertCircle className="h-3 w-3" />
+                                            Rejected — check notifications for the reason.
+                                        </div>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs shrink-0"
+                                            disabled={resubmitMutation.isPending}
+                                            onClick={() => resubmitMutation.mutate(inv.id)}
+                                        >
+                                            {resubmitMutation.isPending ? "Resubmitting..." : "Resubmit to HOD"}
+                                        </Button>
                                     </div>
                                 )}
 

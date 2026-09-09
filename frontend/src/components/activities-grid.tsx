@@ -54,7 +54,7 @@ export function ActivitiesGrid() {
   const [dateTo, setDateTo] = useState("");
   const [activeDateFilter, setActiveDateFilter] = useState({ from: "", to: "" });
 
-  const queryUrl = activeDateFilter.from && activeDateFilter.to 
+  const queryUrl = activeDateFilter.from && activeDateFilter.to
     ? `/api/sales/activity-plan?from=${activeDateFilter.from}&to=${activeDateFilter.to}`
     : `/api/sales/activity-plan?period=${period}`;
 
@@ -79,15 +79,15 @@ export function ActivitiesGrid() {
       <div className="flex flex-row items-center justify-between gap-2 p-4 pb-2">
         <h3 className="text-lg font-bold text-slate-700 dark:text-zinc-400">Activities</h3>
         <div className="flex items-center">
-          <Input 
-            type="date" 
-            className="w-[140px] rounded-none border-r-0 h-9" 
+          <Input
+            type="date"
+            className="w-[140px] rounded-none border-r-0 h-9"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
           />
-          <Input 
-            type="date" 
-            className="w-[140px] rounded-none h-9" 
+          <Input
+            type="date"
+            className="w-[140px] rounded-none h-9"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
           />

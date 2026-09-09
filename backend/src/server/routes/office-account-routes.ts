@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { db } from "../db";
+import { db } from "./db";
 import { 
   accountHeads, officeExpenses, officeVas, cheques, businessCustomers, invoices, customers,
   ledgerEntries, journalVouchers, journalVoucherLines,
@@ -9,28 +9,27 @@ import {
 } from "@shared/schema";
 import { eq, desc, asc, and, gte, lte, ilike, or, notIlike, inArray, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { sendError, sendApiError, ApiError, badRequest, conflict, notFound } from "../utils/api-error";
+import { sendError, sendApiError, ApiError, badRequest, conflict, notFound } from "./utils/api-error";
 import {
   requireFinancialPermission,
   FINANCIAL_ACTIONS,
-} from "../middleware/financial-permission";
-import { ROLES } from "../utils/role-utils";
-import { withFinancialTransaction } from "../utils/financial-transaction";
-import { AuditLogService } from "../services/audit-log.service";
-import { pickWritable, assertPositiveAmount, assertValidDate } from "../utils/financial-validation";
-import { sendCsvExport } from "../utils/financial-export";
-import { computeTrialBalance } from "../utils/trial-balance";
+  STAGE2_FINANCIAL_ROLES,
+} from "./middleware/financial-permission";
+import { ROLES } from "./utils/role-utils";
+import { withFinancialTransaction } from "./utils/financial-transaction";
+import { AuditLogService } from "./services/audit-log.service";
+import { pickWritable, assertPositiveAmount, assertValidDate } from "./utils/financial-validation";
+import { sendCsvExport } from "./utils/financial-export";
+import { computeTrialBalance } from "./utils/trial-balance";
 
 const router = Router();
 
 const AUDIT_MODULE = "office_accounts";
 
-/**
- * Stage 2 write/post/export role policy (Patch 4 spec G). Wider than the Stage 1
- * default ([admin, account_manager]) so a Super HOD can manage Office Accounts.
- * Ordinary users still cannot create/post/reverse/export (fails closed).
- */
-const STAGE2_FINANCIAL_ROLES = [ROLES.ADMIN, ROLES.ACCOUNT_MANAGER, ROLES.SUPER_HOD];
+// Stage 2 write/post/export role policy (Patch 4 spec G) — canonical
+// definition moved to server/middleware/financial-permission.ts
+// (`STAGE2_FINANCIAL_ROLES`/`FINANCIAL_VIEW_ROLES`) so it has exactly one
+// source of truth; imported above rather than redefined here.
 
 function getUserId(req: Request): string {
   return (req.user as any)?.id || (req.user as any)?.userId || "system";
@@ -128,7 +127,7 @@ function buildAccountHeadConditions(query: Request["query"]) {
 
 // List — backward-compatible array shape (consumed by chart-of-accounts.tsx and
 // office-trial-balance.tsx). Optional filters: category, type, status, parent, q.
-router.get("/account-heads", async (req: Request, res: Response) => {
+router.get("/account-heads", requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const conditions = buildAccountHeadConditions(req.query);
     const results = await db
@@ -473,7 +472,7 @@ async function loadTrialBalanceData(query: Request["query"]) {
 
 // Trial balance report (auth-only read). Totals are computed over the full
 // filtered set; only the returned `rows` are paginated.
-router.get("/trial-balance", async (req: Request, res: Response) => {
+router.get("/trial-balance", requireFinancialPermission(FINANCIAL_ACTIONS.trialBalanceView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const { start, end, accounts, ledger } = await loadTrialBalanceData(req.query);
     const includeZeroBalance = String(req.query.includeZeroBalance ?? "") === "true";
@@ -1394,7 +1393,7 @@ const manualJournalSchema = z.object({
 // --- Journal Vouchers -------------------------------------------------------
 
 // List vouchers (filters: status, branch, q on voucher_no, date range).
-router.get("/journal-vouchers", async (req: Request, res: Response) => {
+router.get("/journal-vouchers", requireFinancialPermission(FINANCIAL_ACTIONS.journalVoucherView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const { status, branch, q, startDate, endDate } = req.query;
     const conditions: any[] = [];
@@ -1418,7 +1417,7 @@ router.get("/journal-vouchers", async (req: Request, res: Response) => {
 });
 
 // Voucher detail with its lines.
-router.get("/journal-vouchers/:id", async (req: Request, res: Response) => {
+router.get("/journal-vouchers/:id", requireFinancialPermission(FINANCIAL_ACTIONS.journalVoucherView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const [voucher] = await db.select().from(journalVouchers).where(eq(journalVouchers.id, id)).limit(1);
@@ -1703,7 +1702,7 @@ function buildLedgerConditions(query: Request["query"]) {
 
 // List ledger rows (chronological) joined to their account head, with the
 // amount split into debit/credit for the frontend's running-balance table.
-router.get("/ledger", async (req: Request, res: Response) => {
+router.get("/ledger", requireFinancialPermission(FINANCIAL_ACTIONS.ledgerView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const conditions = buildLedgerConditions(req.query);
     const rows = await db
@@ -1726,7 +1725,7 @@ router.get("/ledger", async (req: Request, res: Response) => {
         accountHeadName: accountHeads.name,
       })
       .from(ledgerEntries)
-      .leftJoin(accountHeads, eq(ledgerEntries.accountHeadId, accountHeads.id))
+      .leftJoin(accountHeads, sql`${ledgerEntries.accountHeadId} = ${accountHeads.id}::text`)
       .where(and(...conditions))
       .orderBy(asc(ledgerEntries.date), asc(ledgerEntries.createdAt));
 
@@ -1743,7 +1742,7 @@ router.get("/ledger", async (req: Request, res: Response) => {
 });
 
 // Totals + per-account-head breakdown over the filtered set.
-router.get("/ledger/summary", async (req: Request, res: Response) => {
+router.get("/ledger/summary", requireFinancialPermission(FINANCIAL_ACTIONS.ledgerView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
   try {
     const conditions = buildLedgerConditions(req.query);
     const rows = await db
@@ -1755,7 +1754,7 @@ router.get("/ledger/summary", async (req: Request, res: Response) => {
         accountHeadName: accountHeads.name,
       })
       .from(ledgerEntries)
-      .leftJoin(accountHeads, eq(ledgerEntries.accountHeadId, accountHeads.id))
+      .leftJoin(accountHeads, sql`${ledgerEntries.accountHeadId} = ${accountHeads.id}::text`)
       .where(and(...conditions));
 
     let totalDebit = 0;
@@ -1822,7 +1821,7 @@ router.get(
           remarks: ledgerEntries.remarks,
         })
         .from(ledgerEntries)
-        .leftJoin(accountHeads, eq(ledgerEntries.accountHeadId, accountHeads.id))
+        .leftJoin(accountHeads, sql`${ledgerEntries.accountHeadId} = ${accountHeads.id}::text`)
         .where(and(...conditions))
         .orderBy(asc(ledgerEntries.date), asc(ledgerEntries.createdAt));
 

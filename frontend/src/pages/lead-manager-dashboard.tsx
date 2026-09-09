@@ -1,4 +1,3 @@
-import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -22,12 +21,15 @@ import {
   Info,
   X
 } from "lucide-react";
-import { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+// Same company type list used by the standalone Add Customer page (client/src/pages/add-customer.tsx),
+// reused here so "Add UAE Customer" doesn't invent a parallel business rule.
+const COMPANY_TYPES = ["Private Limited", "Public Limited", "Partnership", "Sole Proprietorship", "LLC", "Other"];
 
 export default function LeadManagerDashboard() {
   const [currentView, setCurrentView] = useState<"dashboard" | "duplication" | "add-customer" | "temporary" | "view-uae" | "add-uae" | "followup-report" | "project-report">("dashboard");
@@ -35,16 +37,83 @@ export default function LeadManagerDashboard() {
   const [tagSearch, setTagSearch] = useState("");
   const [topSellingFilter, setTopSellingFilter] = useState("TD");
   const [leadSearch, setLeadSearch] = useState("");
+  const [leadsPage, setLeadsPage] = useState(1);
+  const LEADS_PAGE_SIZE = 10;
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadSource, setUploadSource] = useState<string>("");
+  const [isUploadingExcel, setIsUploadingExcel] = useState(false);
   const [, setLocation] = useLocation();
   
   const [dupCompany, setDupCompany] = useState("");
   const [dupEmail, setDupEmail] = useState("");
   const [hasStartedCheck, setHasStartedCheck] = useState(false);
+
+  // View UAE Customer filters
+  const [uaeSearch, setUaeSearch] = useState("");
+  const [uaeCompanyTypeFilter, setUaeCompanyTypeFilter] = useState("");
+  const [uaeStartDate, setUaeStartDate] = useState("");
+  const [uaeEndDate, setUaeEndDate] = useState("");
   
   const [assigningUserId, setAssigningUserId] = useState<Record<string, string>>({});
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const handleExcelUpload = async () => {
+    if (!uploadFile) {
+      toast({ title: "Error", description: "Please select an Excel file to upload.", variant: "destructive" });
+      return;
+    }
+    setIsUploadingExcel(true);
+    try {
+      // Step 1: preview the file through the real import pipeline (parses,
+      // auto-maps columns, and runs duplicate detection against existing leads).
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      const previewRes = await fetch("/api/leads/import/preview", { method: "POST", body: formData });
+      const preview = await previewRes.json();
+      if (!previewRes.ok) throw new Error(preview.error || "Could not read the uploaded file");
+
+      const rowsToCommit = (preview.rows || [])
+        .filter((r: any) => r.valid && !r.duplicate)
+        .map((r: any) => ({
+          rowNumber: r.rowNumber,
+          ...r.data,
+          source: r.data?.source || uploadSource || undefined,
+        }));
+
+      if (rowsToCommit.length === 0) {
+        toast({
+          title: "Nothing to import",
+          description: `${preview.counts?.duplicates || 0} duplicate(s) and ${preview.counts?.invalid || 0} invalid row(s) found. No new leads were added.`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Step 2: commit the valid, non-duplicate rows as real leads.
+      const commitRes = await fetch("/api/leads/import/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: uploadFile.name, rows: rowsToCommit }),
+      });
+      const commitResult = await commitRes.json();
+      if (!commitRes.ok) throw new Error(commitResult.error || "Failed to import leads");
+
+      toast({
+        title: "Success",
+        description: `Imported ${commitResult.inserted} lead(s). Skipped ${commitResult.skippedDuplicates} duplicate(s), ${commitResult.invalid} invalid row(s).`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers?pageSize=1000"] });
+      setShowUploadModal(false);
+      setUploadFile(null);
+      setUploadSource("");
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "Failed to upload leads.", variant: "destructive" });
+    } finally {
+      setIsUploadingExcel(false);
+    }
+  };
 
   const assignLeadMutation = useMutation({
     mutationFn: async ({ leadId, userId }: { leadId: string, userId: string }) => {
@@ -64,13 +133,15 @@ export default function LeadManagerDashboard() {
   const [transferModalLeadId, setTransferModalLeadId] = useState<string | null>(null);
   const [transferType, setTransferType] = useState<"user" | "city" | "country">("user");
   const [transferTarget, setTransferTarget] = useState<string>("");
+  const [transferReason, setTransferReason] = useState<string>("");
 
   const transferLeadMutation = useMutation({
-    mutationFn: async ({ leadId, type, target }: { leadId: string, type: string, target: string }) => {
+    mutationFn: async ({ leadId, type, target, reason }: { leadId: string, type: string, target: string, reason: string }) => {
       const payload: any = {};
       if (type === "user") payload.ownerUserId = target;
-      if (type === "city") Object.assign(payload, { city: target, ownerUserId: null }); 
+      if (type === "city") Object.assign(payload, { city: target, ownerUserId: null });
       if (type === "country") Object.assign(payload, { country: target, ownerUserId: null });
+      if (reason.trim()) payload.reason = reason.trim();
 
       const res = await apiRequest("PATCH", `/api/sales/leads/${leadId}`, payload);
       if (!res.ok) throw new Error("Failed to transfer lead");
@@ -80,6 +151,7 @@ export default function LeadManagerDashboard() {
       toast({ title: "Success", description: "Lead transferred successfully." });
       queryClient.invalidateQueries({ queryKey: ["/api/customers?pageSize=1000"] });
       setTransferModalLeadId(null);
+      setTransferReason("");
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -108,11 +180,27 @@ export default function LeadManagerDashboard() {
     lead.createdBy?.toLowerCase().includes(leadSearch.toLowerCase()) ||
     lead.ownerUserId?.toLowerCase().includes(leadSearch.toLowerCase())
   );
-  
-  const { data: activitiesData, isLoading: isLoadingActivities } = useQuery<{ data: { rows: any[] } }>({
-    queryKey: ["/api/dashboard/activities"],
+  const leadsTotalPages = Math.max(1, Math.ceil(filteredLeads.length / LEADS_PAGE_SIZE));
+  const currentLeadsPage = Math.min(leadsPage, leadsTotalPages);
+  const pagedLeads = filteredLeads.slice(
+    (currentLeadsPage - 1) * LEADS_PAGE_SIZE,
+    currentLeadsPage * LEADS_PAGE_SIZE,
+  );
+  const handleLeadSearchChange = (value: string) => {
+    setLeadSearch(value);
+    setLeadsPage(1);
+  };
+
+  const [teamWorkStart, setTeamWorkStart] = useState("");
+  const [teamWorkEnd, setTeamWorkEnd] = useState("");
+  const teamWorkQuery = new URLSearchParams();
+  if (teamWorkStart) teamWorkQuery.set("start", teamWorkStart);
+  if (teamWorkEnd) teamWorkQuery.set("end", teamWorkEnd);
+  const teamWorkQueryString = teamWorkQuery.toString();
+  const { data: teamWorkRes, isLoading: isLoadingActivities } = useQuery<{ data: { items: any[] } }>({
+    queryKey: [`/api/dashboard/team-work-performance${teamWorkQueryString ? `?${teamWorkQueryString}` : ""}`],
   });
-  const teamActivities = activitiesData?.data?.rows || [];
+  const teamActivities = teamWorkRes?.data?.items || [];
 
   const { data: followupsRes, isLoading: isLoadingFollowups } = useQuery<{ data: { items: any[] } }>({
     queryKey: ["/api/dashboard/followups?pageSize=50"],
@@ -170,10 +258,99 @@ export default function LeadManagerDashboard() {
     addCustomerMutation.mutate(addCustomerData);
   };
 
-  // Calculate Totals for Top Selling
-  const totalLeadsCount = allLeads.length;
-  const distributedLeadsCount = allLeads.filter((l: any) => l.ownerUserId).length;
-  const distributeLeadsCount = allLeads.filter((l: any) => !l.ownerUserId).length;
+  // --- ADD UAE CUSTOMER: wired into the same /api/sales/customers endpoint
+  // used by the standalone Add Customer page, with region/country locked to UAE.
+  const [uaeCustomerData, setUaeCustomerData] = useState({
+    companyName: "", companyType: "", city: "", landline: "", mobile: "",
+    title: "", personName: "", personalMobile: "", website: "", email: "", address: "", googleMap: "",
+  });
+
+  const addUaeCustomerMutation = useMutation({
+    mutationFn: async (data: typeof uaeCustomerData) => {
+      const notesParts = [
+        data.landline ? `Landline: ${data.landline}` : "",
+        data.googleMap ? `Google Map: ${data.googleMap}` : "",
+      ].filter(Boolean);
+      const res = await fetch("/api/sales/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company: data.companyName,
+          accountHolder: data.personName?.trim() || data.companyName,
+          email: data.email,
+          phone: data.mobile,
+          mobile: data.personalMobile,
+          region: "UAE",
+          country: "UAE",
+          city: data.city,
+          address: data.address,
+          website: data.website,
+          companyType: data.companyType,
+          title: data.title,
+          personName: data.personName,
+          grade: "C",
+          source: "Add UAE Customer",
+          lastNote: notesParts.length ? notesParts.join(" | ") : undefined,
+        }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || result?.success === false) throw new Error(result.message || result.error || "Failed to add UAE customer");
+      return result;
+    },
+    onSuccess: () => {
+      toast({ title: "Success", description: "UAE customer created successfully." });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers?pageSize=1000"] });
+      setUaeCustomerData({ companyName: "", companyType: "", city: "", landline: "", mobile: "", title: "", personName: "", personalMobile: "", website: "", email: "", address: "", googleMap: "" });
+      setCurrentView("dashboard");
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  });
+
+  const handleUaeSubmit = () => {
+    if (!uaeCustomerData.companyName.trim()) {
+      toast({ title: "Validation Error", description: "Company name is required.", variant: "destructive" });
+      return;
+    }
+    if (!uaeCustomerData.city.trim()) {
+      toast({ title: "Validation Error", description: "City is required.", variant: "destructive" });
+      return;
+    }
+    if (!uaeCustomerData.mobile.trim()) {
+      toast({ title: "Validation Error", description: "Mobile No is required.", variant: "destructive" });
+      return;
+    }
+    if (!uaeCustomerData.email.trim()) {
+      toast({ title: "Validation Error", description: "Email is required.", variant: "destructive" });
+      return;
+    }
+    addUaeCustomerMutation.mutate(uaeCustomerData);
+  };
+
+  // Calculate Totals for Top Selling — scoped to the selected period. The
+  // dropdown previously only changed the "Updated for today/this week/this
+  // month" caption text; the counts themselves always came from every lead
+  // regardless of which period was picked.
+  const topSellingPeriodStart = useMemo(() => {
+    const start = new Date();
+    if (topSellingFilter === "1W") {
+      start.setDate(start.getDate() - 6);
+    } else if (topSellingFilter === "1M") {
+      start.setDate(start.getDate() - 29);
+    }
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }, [topSellingFilter]);
+
+  const topSellingLeads = useMemo(
+    () => allLeads.filter((l: any) => l.createdAt && new Date(l.createdAt) >= topSellingPeriodStart),
+    [allLeads, topSellingPeriodStart]
+  );
+
+  const totalLeadsCount = topSellingLeads.length;
+  const distributedLeadsCount = topSellingLeads.filter((l: any) => l.ownerUserId).length;
+  const distributeLeadsCount = topSellingLeads.filter((l: any) => !l.ownerUserId).length;
 
   const services = [
     "Mobile Responsive Website", "E-Commerce Store", "Alibaba Services", 
@@ -525,22 +702,24 @@ export default function LeadManagerDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Company name *</label>
-                  <Input placeholder="Enter Company name" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.companyName} onChange={e => setUaeCustomerData({ ...uaeCustomerData, companyName: e.target.value })} placeholder="Enter Company name" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Country /Region *</label>
                   <div className="relative">
-                    <select className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white font-bold text-slate-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                      <option selected>UAE</option><option>PK</option><option>USA</option>
+                    <select disabled value="UAE" className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-slate-50 font-bold text-slate-700 cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
+                      <option value="UAE">UAE</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   </div>
+                  <p className="text-[11px] text-slate-400">Locked to UAE on this screen.</p>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Company type</label>
                   <div className="relative">
-                    <select className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                      <option>Choose...</option>
+                    <select value={uaeCustomerData.companyType} onChange={e => setUaeCustomerData({ ...uaeCustomerData, companyType: e.target.value })} className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white dark:bg-zinc-900 dark:border-zinc-800">
+                      <option value="">Choose...</option>
+                      {COMPANY_TYPES.map(type => (<option key={type} value={type}>{type}</option>))}
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   </div>
@@ -549,20 +728,15 @@ export default function LeadManagerDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">City *</label>
-                  <div className="relative">
-                    <select className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                      <option>Choose...</option>
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  </div>
+                  <Input value={uaeCustomerData.city} onChange={e => setUaeCustomerData({ ...uaeCustomerData, city: e.target.value })} placeholder="Enter city" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Landline No * (+971-X-XXXXXXX)</label>
-                  <Input placeholder="Enter landline number" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Landline No (+971-X-XXXXXXX)</label>
+                  <Input value={uaeCustomerData.landline} onChange={e => setUaeCustomerData({ ...uaeCustomerData, landline: e.target.value })} placeholder="Enter landline number" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Mobile No * (+971-XX-1234567)</label>
-                  <Input placeholder="Enter company mobile no" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.mobile} onChange={e => setUaeCustomerData({ ...uaeCustomerData, mobile: e.target.value })} placeholder="Enter company mobile no" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
               </div>
             </Card>
@@ -572,41 +746,41 @@ export default function LeadManagerDashboard() {
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Title</label>
                   <div className="relative">
-                    <select className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                      <option>Choose...</option><option>Mr</option><option>Ms</option><option>Dr</option>
+                    <select value={uaeCustomerData.title} onChange={e => setUaeCustomerData({ ...uaeCustomerData, title: e.target.value })} className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none bg-white dark:bg-zinc-900 dark:border-zinc-800">
+                      <option value="">Choose...</option><option value="Mr">Mr</option><option value="Mrs">Mrs</option><option value="Ms">Ms</option><option value="Dr">Dr</option><option value="Prof">Prof</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Person Full Name</label>
-                  <Input placeholder="Enter Person name" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.personName} onChange={e => setUaeCustomerData({ ...uaeCustomerData, personName: e.target.value })} placeholder="Enter Person name" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Personal Mobile No</label>
-                  <Input placeholder="123456789" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.personalMobile} onChange={e => setUaeCustomerData({ ...uaeCustomerData, personalMobile: e.target.value })} placeholder="123456789" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Website</label>
-                  <Input placeholder="www.name.com" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.website} onChange={e => setUaeCustomerData({ ...uaeCustomerData, website: e.target.value })} placeholder="www.name.com" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Email *</label>
-                  <Input placeholder="Enter Company E-mail" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.email} onChange={e => setUaeCustomerData({ ...uaeCustomerData, email: e.target.value })} placeholder="Enter Company E-mail" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Address</label>
-                  <Input placeholder="" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
+                  <Input value={uaeCustomerData.address} onChange={e => setUaeCustomerData({ ...uaeCustomerData, address: e.target.value })} placeholder="" className="h-10 border-slate-200 rounded text-sm dark:border-zinc-800" />
                 </div>
               </div>
               <div className="space-y-1.5">
                 <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Google Map</label>
-                <textarea className="w-full h-20 border border-slate-200 rounded p-3 text-sm outline-none resize-none dark:border-zinc-800" />
+                <textarea value={uaeCustomerData.googleMap} onChange={e => setUaeCustomerData({ ...uaeCustomerData, googleMap: e.target.value })} className="w-full h-20 border border-slate-200 rounded p-3 text-sm outline-none resize-none dark:border-zinc-800" />
               </div>
               <div className="mt-6">
-                <Button onClick={() => setCurrentView("dashboard")} className="bg-[#008d4c] hover:bg-[#00733e] text-white font-bold h-10 px-8 rounded border-none">Submit form</Button>
+                <Button onClick={handleUaeSubmit} disabled={addUaeCustomerMutation.isPending} className="bg-[#008d4c] hover:bg-[#00733e] text-white font-bold h-10 px-8 rounded border-none">{addUaeCustomerMutation.isPending ? "Submitting..." : "Submit form"}</Button>
               </div>
             </Card>
           </div>
@@ -639,23 +813,105 @@ export default function LeadManagerDashboard() {
 
   // --- VIEW UAE CUSTOMER ---
   if (currentView === "view-uae") {
+    const uaeAllCustomers = allLeads.filter((l: any) => {
+      const region = ((l.country || l.region || "") as string).toString().trim().toUpperCase();
+      return region === "UAE";
+    });
+    const uaeCustomers = uaeAllCustomers.filter((l: any) => {
+      if (uaeSearch && !(l.companyName || "").toLowerCase().includes(uaeSearch.toLowerCase())) return false;
+      if (uaeCompanyTypeFilter && l.companyType !== uaeCompanyTypeFilter) return false;
+      if (uaeStartDate && new Date(l.createdAt) < new Date(uaeStartDate)) return false;
+      if (uaeEndDate && new Date(l.createdAt) > new Date(uaeEndDate + "T23:59:59")) return false;
+      return true;
+    });
+
+    const handleExportUaeCsv = () => {
+      const headers = ["Company", "Person", "Email", "Phone", "City", "Company Type", "Created Date"];
+      const rows = uaeCustomers.map((c: any) => [
+        c.companyName || "", c.accountName || c.personName || "", c.email || "", c.phone || "",
+        c.city || "", c.companyType || "", c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "",
+      ]);
+      const escape = (v: any) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const csv = [headers, ...rows].map(r => r.map(escape).join(",")).join("\n") + "\n";
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "uae-customers.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    };
+
     return (
       <div className="flex flex-col gap-6 p-6 min-h-screen bg-[#f4f7f6] dark:bg-zinc-950">
          <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold text-slate-800 uppercase tracking-tight dark:text-zinc-100">VIEW UAE CUSTOMER</h1>
-            <Button size="sm" className="bg-[#008d4c] hover:bg-[#00733e] text-white font-bold h-9 px-4 rounded border-none shadow-sm flex items-center gap-2">Uae Customer Csv <Download className="w-3.5 h-3.5" /></Button>
+            <Button onClick={handleExportUaeCsv} size="sm" className="bg-[#008d4c] hover:bg-[#00733e] text-white font-bold h-9 px-4 rounded border-none shadow-sm flex items-center gap-2">Uae Customer Csv <Download className="w-3.5 h-3.5" /></Button>
          </div>
          <Card className="border-none shadow-sm rounded-lg bg-white p-6 dark:bg-zinc-900">
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-              {[ ["Person", "All"], ["Country", "All"], ["Company Type", "All"], ["Tags", "All"], ["Start Date", "date"], ["End Date", "date"] ].map(([l, p], i) => (
-                <div key={i} className="space-y-1.5 text-[12px]"><label className="font-bold text-slate-700 dark:text-zinc-400">{l}</label>{p === "date" ? ( <Input type="date" className="h-9 border-slate-200 text-xs rounded px-2 dark:border-zinc-800" /> ) : ( <div className="relative"><select className="w-full h-9 border border-slate-200 rounded px-2 text-xs font-bold text-slate-600 appearance-none bg-white outline-none dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"><option>{p}</option></select><ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" /></div> )}</div>
-              ))}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-1.5 text-[12px]">
+                <label className="font-bold text-slate-700 dark:text-zinc-400">Company</label>
+                <Input value={uaeSearch} onChange={e => setUaeSearch(e.target.value)} placeholder="Search company..." className="h-9 border-slate-200 text-xs rounded px-2 dark:border-zinc-800" />
+              </div>
+              <div className="space-y-1.5 text-[12px]">
+                <label className="font-bold text-slate-700 dark:text-zinc-400">Company Type</label>
+                <div className="relative">
+                  <select value={uaeCompanyTypeFilter} onChange={e => setUaeCompanyTypeFilter(e.target.value)} className="w-full h-9 border border-slate-200 rounded px-2 text-xs font-bold text-slate-600 appearance-none bg-white outline-none dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
+                    <option value="">All</option>
+                    {COMPANY_TYPES.map(type => (<option key={type} value={type}>{type}</option>))}
+                  </select>
+                  <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                </div>
+              </div>
+              <div className="space-y-1.5 text-[12px]">
+                <label className="font-bold text-slate-700 dark:text-zinc-400">Start Date</label>
+                <Input type="date" value={uaeStartDate} onChange={e => setUaeStartDate(e.target.value)} className="h-9 border-slate-200 text-xs rounded px-2 dark:border-zinc-800" />
+              </div>
+              <div className="space-y-1.5 text-[12px]">
+                <label className="font-bold text-slate-700 dark:text-zinc-400">End Date</label>
+                <Input type="date" value={uaeEndDate} onChange={e => setUaeEndDate(e.target.value)} className="h-9 border-slate-200 text-xs rounded px-2 dark:border-zinc-800" />
+              </div>
             </div>
-            <div className="mt-4"><Button className="bg-[#008d4c] hover:bg-[#00733e] text-white font-bold h-10 px-8 rounded border-none shadow-sm text-sm">View</Button><Button onClick={() => setCurrentView("dashboard")} variant="ghost" className="text-slate-400 font-bold text-sm ml-2">Back</Button></div>
+            <div className="mt-4"><Button onClick={() => setCurrentView("dashboard")} variant="ghost" className="text-slate-400 font-bold text-sm">Back</Button></div>
          </Card>
          <Card className="border-none shadow-sm rounded-lg bg-white overflow-hidden dark:bg-zinc-900">
-            <CardHeader className="py-2.5 px-4 border-b"><CardTitle className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">GM View</CardTitle></CardHeader>
-            <CardContent className="p-4 pt-6 text-[12px]"><div className="flex justify-between items-center mb-6"><div className="flex items-center gap-2">Show <span className="border px-2 rounded font-bold h-7 flex items-center bg-white cursor-pointer dark:bg-zinc-900">10 <ChevronDown className="w-3 h-3 ml-1" /></span> entries</div><div className="flex items-center gap-2">Search: <Input className="h-8 w-48 border-slate-200 dark:border-zinc-800" /></div></div><Table><TableHeader className="bg-[#e2f3ee] dark:bg-zinc-900"><TableRow className="h-10 hover:bg-transparent">{["#", "Company", "Package", "Method", "BV", "Person", "Rc/New", "Date"].map(h => ( <TableHead key={h} className="font-bold text-slate-800 h-10 px-4 dark:text-zinc-100">{h}</TableHead> ))}</TableRow></TableHeader><TableBody><TableRow><TableCell className="px-4 py-3">trusmile surgical</TableCell><TableCell className="px-4 py-3">1000</TableCell><TableCell className="px-4 py-3">364</TableCell><TableCell className="px-4 py-3">364</TableCell><TableCell className="px-4 py-3">364</TableCell><TableCell className="px-4 py-3">364</TableCell><TableCell className="px-4 py-3">364</TableCell><TableCell className="px-4 py-3 whitespace-nowrap">2021-07-13 17:08:25</TableCell></TableRow></TableBody></Table><div className="mt-4 flex items-center justify-between border-t pt-4"><p className="text-[12px] text-slate-500 dark:text-zinc-400">Showing 1 to 1 of 1 entries</p><div className="flex"><Button variant="outline" className="h-9 rounded-l px-4 text-xs font-bold text-slate-400">Previous</Button><Button className="h-9 bg-[#008d4c] text-white border-none px-4 text-xs font-bold">1</Button><Button variant="outline" className="h-9 rounded-r px-4 text-xs font-bold text-slate-400 border-l-0">Next</Button></div></div></CardContent>
+            <CardHeader className="py-2.5 px-4 border-b"><CardTitle className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">UAE Customers</CardTitle></CardHeader>
+            <CardContent className="p-4 pt-6 text-[12px]">
+              <Table>
+                <TableHeader className="bg-[#e2f3ee] dark:bg-zinc-900">
+                  <TableRow className="h-10 hover:bg-transparent">
+                    {["#", "Company", "Person", "Email / Phone", "City", "Company Type", "Created Date"].map(h => (
+                      <TableHead key={h} className="font-bold text-slate-800 h-10 px-4 dark:text-zinc-100">{h}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoadingCustomers ? (
+                    <TableRow><TableCell colSpan={7} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading UAE customers...</TableCell></TableRow>
+                  ) : uaeCustomers.length === 0 ? (
+                    <TableRow><TableCell colSpan={7} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">{uaeAllCustomers.length === 0 ? "No UAE customers yet." : "No UAE customers match the current filters."}</TableCell></TableRow>
+                  ) : (
+                    uaeCustomers.map((c: any, i: number) => (
+                      <TableRow key={c.id} className="hover:bg-slate-50 border-b border-slate-100 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                        <TableCell className="px-4 py-3">{i + 1}</TableCell>
+                        <TableCell className="px-4 py-3 text-emerald-600 font-bold whitespace-nowrap">{c.companyName || "N/A"}</TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">{c.accountName || c.personName || "N/A"}</TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">{c.email || "No Email"} <br /> <span className="text-[10px] text-slate-400">{c.phone || "No Phone"}</span></TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">{c.city || "N/A"}</TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">{c.companyType || "N/A"}</TableCell>
+                        <TableCell className="px-4 py-3 whitespace-nowrap">{c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "N/A"}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+              <div className="mt-4 flex items-center justify-between border-t pt-4">
+                <p className="text-[12px] text-slate-500 dark:text-zinc-400">Showing {uaeCustomers.length} of {uaeAllCustomers.length} UAE customer(s)</p>
+              </div>
+            </CardContent>
          </Card>
       </div>
     );
@@ -812,7 +1068,7 @@ export default function LeadManagerDashboard() {
                   <div className="mt-1 inline-flex h-12 w-14 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">10</div>
                   <div className="mt-1">entries</div>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-slate-500 ml-auto dark:text-zinc-400">Search: <Input value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} className="h-10 w-52 rounded-xl border-slate-200 bg-slate-50/60 shadow-none dark:border-zinc-800" placeholder="Search leads..." /></div>
+                <div className="flex items-center gap-2 text-sm text-slate-500 ml-auto dark:text-zinc-400">Search: <Input value={leadSearch} onChange={(e) => handleLeadSearchChange(e.target.value)} className="h-10 w-52 rounded-xl border-slate-200 bg-slate-50/60 shadow-none dark:border-zinc-800" placeholder="Search leads..." /></div>
               </div>
               <div className="overflow-x-auto rounded-[18px] border border-slate-100 dark:border-zinc-800">
               <Table>
@@ -829,13 +1085,13 @@ export default function LeadManagerDashboard() {
                       <TableCell colSpan={10} className="text-center py-8 text-slate-500 font-bold dark:text-zinc-400">No leads found matching your search. Add some to get started!</TableCell>
                     </TableRow>
                   ) : (
-                    filteredLeads.map((lead: any, idx: number) => {
+                    pagedLeads.map((lead: any, idx: number) => {
                       const createDate = new Date(lead.createdAt);
                       const daysAgo = Math.floor((Date.now() - createDate.getTime()) / (1000 * 60 * 60 * 24));
-                      
+
                       return (
                         <TableRow key={lead.id} className="h-16 hover:bg-[#f8fbfa] dark:hover:bg-zinc-800">
-                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell>{(currentLeadsPage - 1) * LEADS_PAGE_SIZE + idx + 1}</TableCell>
                           <TableCell className="text-emerald-600 font-bold whitespace-nowrap">{lead.companyName}</TableCell>
                           <TableCell><Badge className="bg-blue-100 text-blue-700 border-none max-w-[100px] truncate">{lead.createdBy || "System"}</Badge></TableCell>
                           <TableCell className="whitespace-nowrap text-slate-600 dark:text-zinc-300"><Clock className="inline w-3.5 h-3.5 mr-1" />{createDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</TableCell>
@@ -853,11 +1109,29 @@ export default function LeadManagerDashboard() {
               </Table>
               </div>
               <div className="mt-4 flex items-center justify-between">
-                <p className="text-[13px] text-slate-500 dark:text-zinc-400">Showing 1 to {filteredLeads.length} of {filteredLeads.length} entries</p>
+                <p className="text-[13px] text-slate-500 dark:text-zinc-400">
+                  {filteredLeads.length === 0
+                    ? "Showing 0 entries"
+                    : `Showing ${(currentLeadsPage - 1) * LEADS_PAGE_SIZE + 1} to ${Math.min(currentLeadsPage * LEADS_PAGE_SIZE, filteredLeads.length)} of ${filteredLeads.length} entries`}
+                </p>
                 <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                  <Button variant="ghost" className="h-10 rounded-none px-5 text-slate-400">Previous</Button>
-                  <Button className="h-10 rounded-none bg-[#008d4c] px-4 text-white border-none hover:bg-[#00733e]">1</Button>
-                  <Button variant="ghost" className="h-10 rounded-none px-5 text-slate-400">Next</Button>
+                  <Button
+                    variant="ghost"
+                    className="h-10 rounded-none px-5 text-slate-400 disabled:opacity-40"
+                    disabled={currentLeadsPage <= 1}
+                    onClick={() => setLeadsPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button className="h-10 rounded-none bg-[#008d4c] px-4 text-white border-none hover:bg-[#00733e]">{currentLeadsPage}</Button>
+                  <Button
+                    variant="ghost"
+                    className="h-10 rounded-none px-5 text-slate-400 disabled:opacity-40"
+                    disabled={currentLeadsPage >= leadsTotalPages}
+                    onClick={() => setLeadsPage((p) => Math.min(leadsTotalPages, p + 1))}
+                  >
+                    Next
+                  </Button>
                 </div>
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-zinc-800">
@@ -1037,40 +1311,42 @@ export default function LeadManagerDashboard() {
         <Card className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] dark:bg-zinc-900">
           <CardHeader className="py-4 px-5 border-b border-slate-100 flex items-center justify-between dark:border-zinc-800">
             <CardTitle className="text-[15px] font-bold text-slate-800 dark:text-zinc-100">Team Work Performance</CardTitle>
-            <div className="flex gap-2"><Input className="h-10 w-36 rounded-xl bg-slate-50/60 text-[12px] border-slate-200 dark:border-zinc-800" placeholder="Start Date" /><Input className="h-10 w-36 rounded-xl bg-slate-50/60 text-[12px] border-slate-200 dark:border-zinc-800" placeholder="End Date" /></div>
+            <div className="flex gap-2">
+              <Input type="date" value={teamWorkStart} onChange={(e) => setTeamWorkStart(e.target.value)} className="h-10 w-36 rounded-xl bg-slate-50/60 text-[12px] border-slate-200 dark:border-zinc-800" placeholder="Start Date" />
+              <Input type="date" value={teamWorkEnd} onChange={(e) => setTeamWorkEnd(e.target.value)} className="h-10 w-36 rounded-xl bg-slate-50/60 text-[12px] border-slate-200 dark:border-zinc-800" placeholder="End Date" />
+            </div>
           </CardHeader>
           <CardContent className="p-5 pt-4">
             <Badge className="bg-[#f0f1f4] text-slate-700 font-bold mb-4 rounded-full px-4 py-2 shadow-none dark:bg-zinc-900 dark:text-zinc-400">All Team</Badge>
             <div className="overflow-x-auto border-t border-slate-100 pt-4 dark:border-zinc-800">
               <Table>
                 <TableHeader className="bg-[#dcf3ea] dark:bg-zinc-900">
-                  <TableRow className="h-12">{["Name", "Leads", "Update Leads", "Follow", "Not Follow", "A- Customer", "B+ Customer", "B Customer", "B- Customer", "Call Connected", "Not Response", "Appointment", "Meeting"].map(h => (<TableHead key={h} className="font-bold text-slate-800 text-[11px] px-4 whitespace-nowrap dark:text-zinc-100">{h}</TableHead>))}</TableRow>
+                  <TableRow className="h-12">{["Name", "Leads", "Follow", "Not Follow", "A- Customer", "B+ Customer", "B Customer", "B- Customer", "Call Connected", "Not Response", "Appointment", "Meeting"].map(h => (<TableHead key={h} className="font-bold text-slate-800 text-[11px] px-4 whitespace-nowrap dark:text-zinc-100">{h}</TableHead>))}</TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoadingActivities ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading Performance Metrics...</TableCell>
+                      <TableCell colSpan={12} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading Performance Metrics...</TableCell>
                     </TableRow>
                   ) : teamActivities.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">No activity recorded for this period.</TableCell>
+                      <TableCell colSpan={12} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">No activity recorded for this period.</TableCell>
                     </TableRow>
                   ) : (
                     teamActivities.map((row: any) => (
                       <TableRow key={row.userId} className="hover:bg-slate-50 border-b border-slate-100 text-slate-600 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                         <TableCell className="px-4 py-3 text-[12px] font-bold">{row.name}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.mobile?.done + row.methods?.whatsapp?.done + row.methods?.email?.done}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.email?.done}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.whatsapp?.done}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">0</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px] font-bold text-red-500">{row.methods?.aMinus?.done || 0}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px] font-bold text-[#00a65a] dark:text-zinc-400">{row.methods?.bPlus?.done || 0}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">0</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">0</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.mobile?.done || 0}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">0</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.appointment?.done || 0}</TableCell>
-                        <TableCell className="px-4 py-3 text-[12px]">{row.methods?.meeting?.done || 0}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.leads}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.follow}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.notFollow}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px] font-bold text-red-500">{row.aMinusCustomer}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px] font-bold text-[#00a65a] dark:text-zinc-400">{row.bPlusCustomer}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.bCustomer}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.bMinusCustomer}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.callConnected}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.notResponse}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.appointment}</TableCell>
+                        <TableCell className="px-4 py-3 text-[12px]">{row.meeting}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -1095,7 +1371,11 @@ export default function LeadManagerDashboard() {
               <div className="space-y-2">
                 <label className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">Source</label>
                 <div className="relative">
-                  <select className="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm appearance-none outline-none bg-white text-slate-500 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800">
+                  <select
+                    value={uploadSource}
+                    onChange={(e) => setUploadSource(e.target.value)}
+                    className="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm appearance-none outline-none bg-white text-slate-500 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
+                  >
                     <option value="">Choose...</option>
                     <option>LinkedIn</option>
                     <option>Facebook</option>
@@ -1108,12 +1388,19 @@ export default function LeadManagerDashboard() {
               </div>
               <div className="space-y-2">
                 <label className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">File</label>
-                <input type="file" accept=".xlsx,.xls,.csv" className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-slate-300 file:text-sm file:font-bold file:bg-white file:text-slate-700 hover:file:bg-slate-50 border border-slate-200 rounded-lg cursor-pointer dark:text-zinc-400 dark:border-zinc-800" />
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-slate-300 file:text-sm file:font-bold file:bg-white file:text-slate-700 hover:file:bg-slate-50 dark:file:bg-zinc-800 dark:file:text-zinc-300 border border-slate-200 rounded-lg cursor-pointer dark:text-zinc-400 dark:border-zinc-800"
+                />
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t bg-slate-50 dark:bg-zinc-900">
               <Button variant="outline" onClick={() => setShowUploadModal(false)} className="h-10 px-6 font-bold text-slate-600 border-slate-300 dark:text-zinc-300 dark:border-zinc-800">Close</Button>
-              <Button onClick={() => { setShowUploadModal(false); toast({ title: "Success", description: "Leads uploaded successfully." }); }} className="h-10 px-6 bg-[#008d4c] hover:bg-[#00733e] text-white font-bold border-none">Save</Button>
+              <Button onClick={handleExcelUpload} disabled={isUploadingExcel} className="h-10 px-6 bg-[#008d4c] hover:bg-[#00733e] text-white font-bold border-none">
+                {isUploadingExcel ? "Uploading..." : "Save"}
+              </Button>
             </div>
           </div>
         </div>
@@ -1184,9 +1471,19 @@ export default function LeadManagerDashboard() {
                   </p>
                 )}
               </div>
-              <div className="pt-2">
+              <div>
+                <label className="text-sm font-bold text-slate-700 block mb-2 dark:text-zinc-400">Note / Reason (optional)</label>
+                <textarea
+                  value={transferReason}
+                  onChange={e => setTransferReason(e.target.value)}
+                  placeholder="Why is this lead being transferred?"
+                  rows={2}
+                  className="w-full bg-slate-50 border-slate-200 text-[13px] font-medium rounded-xl outline-none px-4 py-2.5 border shadow-sm focus:border-emerald-500 focus:bg-white transition-colors resize-none dark:bg-zinc-900 dark:border-zinc-800"
+                />
+              </div>
+              <div className="pt-2">
                 <Button 
-                  onClick={() => transferTarget && transferLeadMutation.mutate({ leadId: transferModalLeadId, type: transferType, target: transferTarget })} 
+                  onClick={() => transferTarget && transferLeadMutation.mutate({ leadId: transferModalLeadId, type: transferType, target: transferTarget, reason: transferReason })} 
                   disabled={!transferTarget || transferLeadMutation.isPending} 
                   className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-sm transition-all active:scale-[0.98]"
                 >

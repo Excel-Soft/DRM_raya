@@ -197,49 +197,49 @@ export default function EventReport() {
   };
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-6">
 
         {/* Header */}
-        <h1 className="text-[17px] font-bold text-[#555] uppercase tracking-wide">
+        <h1 className="text-[17px] font-bold text-[#555] dark:text-zinc-300 uppercase tracking-wide">
           WEB EXCELS EVENTS REPORT
         </h1>
 
         {/* Filter Card */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Start Date</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Start Date</Label>
                 <Input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">End Date</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">End Date</Label>
                 <Input
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Event Type</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Event Type</Label>
                 <Input
                   placeholder="Filter by event type..."
                   value={type}
                   onChange={(e) => setType(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Status</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Status</Label>
                 <Select value={status} onValueChange={setStatus}>
-                  <SelectTrigger className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus:ring-0">
+                  <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
                     <SelectValue placeholder="All" />
                   </SelectTrigger>
                   <SelectContent>
@@ -251,21 +251,21 @@ export default function EventReport() {
                 </Select>
               </div>
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Venue</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Venue</Label>
                 <Input
                   placeholder="Filter by venue..."
                   value={venue}
                   onChange={(e) => setVenue(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Speaker</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Speaker</Label>
                 <Input
                   placeholder="Filter by speaker..."
                   value={speaker}
                   onChange={(e) => setSpeaker(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
             </div>
@@ -282,15 +282,15 @@ export default function EventReport() {
         </Card>
 
         {/* Data Table Card */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-[15px] font-bold text-[#555]">Event List</h2>
+              <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300">Event List</h2>
               <Button
                 onClick={handleExport}
                 disabled={!applied || exporting}
                 variant="outline"
-                className="h-8 px-4 text-xs font-semibold border-slate-300 text-[#555]"
+                className="h-8 px-4 text-xs font-semibold border-slate-300 text-[#555] dark:text-zinc-300"
               >
                 <Download className="w-3.5 h-3.5 mr-2" />
                 {exporting ? "Exporting..." : "Export CSV"}
@@ -300,9 +300,9 @@ export default function EventReport() {
             {/* Toolbar */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-[#555]">Show</span>
+                <span className="text-xs text-[#555] dark:text-zinc-300">Show</span>
                 <Select value={entries} onValueChange={setEntries}>
-                  <SelectTrigger className="h-8 w-[70px] bg-white border-slate-300 text-xs text-[#555] focus:ring-0">
+                  <SelectTrigger className="h-8 w-[70px] bg-white dark:bg-zinc-900 border-slate-300 text-xs text-[#555] dark:text-zinc-300 focus:ring-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -312,39 +312,39 @@ export default function EventReport() {
                     <SelectItem value="100">100</SelectItem>
                   </SelectContent>
                 </Select>
-                <span className="text-xs text-[#555]">entries</span>
+                <span className="text-xs text-[#555] dark:text-zinc-300">entries</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-[#555]">Search:</span>
+                <span className="text-xs text-[#555] dark:text-zinc-300">Search:</span>
                 <Input
                   value={tableSearch}
                   onChange={(e) => setTableSearch(e.target.value)}
-                  className="h-8 w-[200px] bg-white border-slate-300 text-xs focus-visible:ring-0"
+                  className="h-8 w-[200px] bg-white dark:bg-zinc-900 border-slate-300 text-xs focus-visible:ring-0"
                 />
               </div>
             </div>
 
             {/* Table */}
-            <div className="overflow-x-auto border border-slate-100 rounded-sm">
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-sm">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6]">
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">#</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Event Name</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Type</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Event Date</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Start</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">End</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Venue</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Speakers</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Duties</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Attendance</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-right text-xs">Amount</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Status</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] text-left text-xs">Created By</TableHead>
+                  <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6] dark:bg-zinc-900 dark:hover:bg-zinc-900">
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">#</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Event Name</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Type</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Event Date</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Start</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">End</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Venue</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Speakers</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Duties</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Attendance</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Amount</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Status</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Created By</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {!applied ? (
                     <TableRow>
                       <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
@@ -360,7 +360,7 @@ export default function EventReport() {
                   ) : query.isError ? (
                     <TableRow>
                       <TableCell colSpan={13} className="text-center py-8">
-                        <div className="text-[#d9534f] mb-2">Could not load the events report. Please try again.</div>
+                        <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the events report. Please try again.</div>
                         <Button size="sm" variant="outline" onClick={() => query.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                       </TableCell>
                     </TableRow>
@@ -372,30 +372,30 @@ export default function EventReport() {
                     </TableRow>
                   ) : (
                     rows.map((item, idx) => (
-                      <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
-                        <TableCell className="py-4 px-3 text-[#555]">{idx + 1}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.eventName || item.name || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.eventType || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{fmtDate(item.eventDate)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{fmtTime(item.startTime)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{fmtTime(item.endTime)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.venue || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{speakerNames(item.speakers)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] text-right">{item.dutyCount ?? 0}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] text-right">{item.attendeeCount ?? 0}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] text-right">{fmtAmount(item.amount)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.status || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555]">{item.createdByName || "-"}</TableCell>
+                      <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.eventName || item.name || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.eventType || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtDate(item.eventDate)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.startTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.endTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.venue || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{speakerNames(item.speakers)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{item.dutyCount ?? 0}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{item.attendeeCount ?? 0}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{fmtAmount(item.amount)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.createdByName || "-"}</TableCell>
                       </TableRow>
                     ))
                   )}
                 </TableBody>
                 {applied && !query.isLoading && !query.isError && filtered.length > 0 && (
                   <tfoot>
-                    <TableRow className="border-t-2 border-slate-200 bg-[#f1f5f3] font-bold">
-                      <TableCell colSpan={9} className="py-3 px-3 text-[#333] text-right">TOTALS</TableCell>
-                      <TableCell className="py-3 px-3 text-[#333] text-right">{totals.attendance}</TableCell>
-                      <TableCell className="py-3 px-3 text-[#333] text-right">{fmtAmount(totals.cost)}</TableCell>
+                    <TableRow className="border-t-2 border-slate-200 dark:border-zinc-800 bg-[#f1f5f3] dark:bg-zinc-900 font-bold">
+                      <TableCell colSpan={9} className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">TOTALS</TableCell>
+                      <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">{totals.attendance}</TableCell>
+                      <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">{fmtAmount(totals.cost)}</TableCell>
                       <TableCell colSpan={2} className="py-3 px-3" />
                     </TableRow>
                   </tfoot>
@@ -405,7 +405,7 @@ export default function EventReport() {
 
             {/* Info */}
             <div className="flex items-center justify-between mt-4">
-              <div className="text-xs text-[#555]">
+              <div className="text-xs text-[#555] dark:text-zinc-300">
                 Showing {rows.length} of {filtered.length} entries
               </div>
             </div>

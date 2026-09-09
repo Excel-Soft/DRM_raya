@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { format } from "date-fns";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { LoanAdminQueuePanel } from "@/components/gm/LoanAdminQueuePanel";
@@ -26,8 +27,6 @@ import {
     LogOut,
     Search,
     ChevronRight,
-    Plus,
-    Calendar,
     Filter,
     Send,
 } from "lucide-react";
@@ -601,9 +600,9 @@ export default function SuperHODDashboard() {
     });
 
     const { data: importantStats, isLoading: importantLoading, isError: importantError, error: e2 } = useQuery<ImportantStats>({
-        queryKey: ["/api/hod/dashboard/important-stats"],
+        queryKey: ["/api/hod/dashboard/important-stats", topSellingFilter],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/hod/dashboard/important-stats");
+            const res = await apiRequest("GET", `/api/hod/dashboard/important-stats?period=${topSellingFilter}`);
             const json = await res.json();
             if (!res.ok) throw new Error(json.message || "Failed to load important stats");
             return json.data || { activities: {} };
@@ -611,22 +610,46 @@ export default function SuperHODDashboard() {
     });
 
     const { data: dailyReport, isLoading: dailyLoading, isError: dailyError, error: e3 } = useQuery<DailyReportEntry[]>({
-        queryKey: ["/api/hod/daily-report"],
+        queryKey: ["/api/hod/daily-report", dailyReportFilter],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/hod/daily-report");
+            const res = await apiRequest("GET", `/api/hod/daily-report?period=${dailyReportFilter}`);
             const json = await res.json();
             if (!res.ok) throw new Error(json.message || "Failed to load daily report");
             return json.data || [];
         }
     });
 
+    // The server's date-range logic only distinguishes "LD" (30 days) from
+    // everything else (7 days) — there's no separate TD/MO behavior, so both
+    // map onto the 7-day bucket and only "MO" reaches the 30-day one.
+    const projectDeadlineServerFilter = projectDeadlineFilter === "MO" ? "LD" : "WK";
     const { data: projectDeadlines, isLoading: deadlinesLoading, isError: deadlinesError, error: e4 } = useQuery<ProjectDeadline[]>({
-        queryKey: ["/api/hod/dashboard/project-deadlines"],
+        queryKey: ["/api/hod/dashboard/project-deadlines", projectDeadlineServerFilter],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/hod/dashboard/project-deadlines");
+            const res = await apiRequest("GET", `/api/hod/dashboard/project-deadlines?filter=${projectDeadlineServerFilter}`);
             const json = await res.json();
             if (!res.ok) throw new Error(json.message || "Failed to load project deadlines");
             return json.data || [];
+        }
+    });
+
+    const { data: todayMeetings } = useQuery<{ items: any[] }>({
+        queryKey: ["/api/dashboard/daily-team-meeting"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/dashboard/daily-team-meeting");
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.message || "Failed to load today's meetings");
+            return json.data || { items: [] };
+        }
+    });
+
+    const { data: activitiesStats } = useQuery<ImportantStats>({
+        queryKey: ["/api/hod/dashboard/important-stats", "activities", activitiesFilter],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/hod/dashboard/important-stats?period=${activitiesFilter}`);
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.message || "Failed to load activities stats");
+            return json.data || { activities: {} };
         }
     });
 
@@ -651,12 +674,13 @@ export default function SuperHODDashboard() {
     });
 
     const { data: gmApprovals, isError: gmError, isLoading: gmLoading, error: e7 } = useQuery<any[]>({
-        queryKey: ["/api/hod/verification/gms"],
+        queryKey: ["/api/gm-pool/pending-super-hod"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/hod/verification/gms");
+            const res = await apiRequest("GET", "/api/gm-pool/pending-super-hod");
             const json = await res.json();
-            if (!res.ok) throw new Error(json.message || "Failed to load gm approvals");
-            return json.data || [];
+            if (!res.ok) throw new Error(json.error || json.message || "Failed to load gm approvals");
+            // The pending-super-hod endpoint returns { entries: [...] }
+            return json.entries || [];
         }
     });
 
@@ -751,17 +775,6 @@ export default function SuperHODDashboard() {
                         <span className="text-slate-300">/</span>
                         <span className="text-slate-500 font-medium text-[11px] dark:text-zinc-400">SUPER HOD</span>
                     </motion.div>
-                    <motion.div
-                        initial={{ x: 20, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        className="flex items-center gap-4"
-                    >
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md cursor-pointer hover:bg-slate-200 transition-colors dark:bg-zinc-900">
-                            <Calendar className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
-                            <span className="text-xs font-semibold text-slate-600 uppercase dark:text-zinc-300">Today</span>
-                            <ChevronRight className="h-3 w-3 text-slate-400 rotate-90" />
-                        </div>
-                    </motion.div>
                 </div>
 
                 <motion.div
@@ -783,6 +796,7 @@ export default function SuperHODDashboard() {
                                     <SelectContent>
                                         <SelectItem value="LD">LD</SelectItem>
                                         <SelectItem value="WK">WK</SelectItem>
+                                        <SelectItem value="MH">MH</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -816,7 +830,7 @@ export default function SuperHODDashboard() {
                         </motion.div>
 
                         {/* Verification Of Project Section */}
-                        <motion.div variants={itemVariants}>
+                        <motion.div variants={itemVariants} id="verification-of-project">
                             <Card className="border-none shadow-sm overflow-hidden">
                                 <CardHeader className="pb-0 pt-4 px-6 bg-white dark:bg-zinc-900">
                                     <Tabs defaultValue="gm-approval" className="w-full">
@@ -893,9 +907,16 @@ export default function SuperHODDashboard() {
                                                             <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                                                 <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
                                                                 <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.userName}</TableCell>
-                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.leaveType}</TableCell>
+                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.type}</TableCell>
                                                                 <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{new Date(row.fromDate).toLocaleDateString()} - {new Date(row.toDate).toLocaleDateString()}</TableCell>
-                                                                <TableCell className="text-right"><Badge className="text-[10px] bg-amber-500 hover:bg-amber-600">PENDING</Badge></TableCell>
+                                                                <TableCell className="text-right">
+                                                                    <Badge className={cn(
+                                                                        "text-[10px]",
+                                                                        row.status === "Approved" ? "bg-emerald-500 hover:bg-emerald-600" :
+                                                                        row.status === "Rejected" ? "bg-red-500 hover:bg-red-600" :
+                                                                        "bg-amber-500 hover:bg-amber-600"
+                                                                    )}>{(row.status || "Pending").toUpperCase()}</Badge>
+                                                                </TableCell>
                                                             </TableRow>
                                                         ))}
                                                     </TableBody>
@@ -905,12 +926,12 @@ export default function SuperHODDashboard() {
                                             <TabsContent value="gm-approval" className="m-0">
                                                 <div className="overflow-x-auto">
                                                     <Table>
-                                                        <TableHeader><TableRow className="border-none hover:bg-transparent">{['No#', 'Drm Id', 'Company', 'Sale Person', 'Service Person', 'Package', 'Type', 'Dollar', 'Dollar Rate', 'Pkr', 'Extra Discount', 'Total Discount', 'Status', 'Create Date', 'Accountant', 'Webxl Behalf', 'Approved By HOD', 'Action'].map((head) => (
+                                                        <TableHeader><TableRow className="border-none hover:bg-transparent">{['No#', 'Drm Id', 'Company', 'Sale Person', 'Service Person', 'Package', 'Type', 'Dollar', 'Dollar Rate', 'Pkr', 'Extra Discount', 'Total Discount', 'Status', 'Create Date', 'HOD Date', 'Last Updation Date', 'Accountant', 'Webxl Behalf', 'Approved By HOD', 'Action'].map((head) => (
                                                             <TableHead key={head} className="text-[11px] font-bold text-slate-600 uppercase tracking-tight py-4 whitespace-nowrap dark:text-zinc-300">{head}</TableHead>
                                                         ))}</TableRow></TableHeader>
                                                         <TableBody>
                                                             {gmApprovals?.length === 0 ? (
-                                                                <TableRow><TableCell colSpan={18} className="text-center py-12 text-slate-400 font-medium">No pending GM approvals</TableCell></TableRow>
+                                                                <TableRow><TableCell colSpan={20} className="text-center py-12 text-slate-400 font-medium">No pending GM approvals</TableCell></TableRow>
                                                             ) : (() => {
                                                                 const data = gmApprovals || [];
                                                                 const paginated = data.slice((gmPage - 1) * ITEMS_PER_PAGE, gmPage * ITEMS_PER_PAGE);
@@ -920,24 +941,26 @@ export default function SuperHODDashboard() {
                                                                     const totalDisc = extraDisc + alibabaDisc;
 
                                                                     return (
-                                                                        <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                                            <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(gmPage - 1) * ITEMS_PER_PAGE + idx + 1}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.drmId}</TableCell>
-                                                                            <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.company}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.salePerson}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.servicePerson || "-"}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.package}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.type}</TableCell>
-                                                                            <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">${row.orderDollar}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.dollarRate}</TableCell>
-                                                                            <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.pkr}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">${extraDisc}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">${totalDisc}</TableCell>
+                                                                            <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{(gmPage - 1) * ITEMS_PER_PAGE + idx + 1}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.drm_id || row.drmId}</TableCell>
+                                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.company_name || row.company}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.sales_person_name || row.salePerson}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.added_by_name || row.servicePerson || "-"}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.package_type || row.package}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.entry_type || row.type}</TableCell>
+                                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">${row.amount_usd ?? row.orderDollar}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.dollar_rate || row.dollarRate}</TableCell>
+                                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.amount_pkr ?? row.pkr}</TableCell>
+                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">${Math.round(extraDisc)}</TableCell>
+                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">${Math.round(totalDisc)}</TableCell>
                                                                             <TableCell><Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-600 border-blue-100 uppercase">{row.status}</Badge></TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-"}</TableCell>
-                                                                            <TableCell><Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-100 uppercase dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">{row.accountantStatus || "Pending"}</Badge></TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.isPartial ? "Partial GM" : "Full GM"}</TableCell>
-                                                                            <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.hodStatus || "N/A"}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.created_at || row.createdAt ? format(new Date(row.created_at || row.createdAt), "dd/MM/yyyy HH:mm:ss a") : "-"}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.hod_approved_at || row.hodApprovedAt || row.approved_at || row.approvedAt ? format(new Date(row.hod_approved_at || row.hodApprovedAt || row.approved_at || row.approvedAt), "dd/MM/yyyy HH:mm:ss a") : "N/A"}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.updated_at || row.updatedAt ? format(new Date(row.updated_at || row.updatedAt), "dd/MM/yyyy HH:mm:ss a") : "-"}</TableCell>
+                                                                                <TableCell><Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-100 uppercase dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">{row.accountant_status || row.accountantStatus || "Pending"}</Badge></TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.is_partial_payment || row.isPartial ? "Partial GM" : "Full GM"}</TableCell>
+                                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.hod_status || row.hodStatus || "N/A"}</TableCell>
                                                                             <TableCell>
                                                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50" onClick={() => {
                                                                                     setSelectedRequest({ ...row, companyName: row.company, isGmApproval: true });
@@ -1003,9 +1026,9 @@ export default function SuperHODDashboard() {
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.type}</TableCell>
                                                                     <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">${row.orderDollar}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.dollarRate}</TableCell>
-                                                                    <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.pkr}</TableCell>
+                                                                    <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.pkr != null ? Math.round(Number(row.pkr)) : "-"}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.discount}</TableCell>
-                                                                    <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.extraDiscount}</TableCell>
+                                                                    <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.extraDiscount != null ? Math.round(Number(row.extraDiscount)) : "-"}</TableCell>
                                                                     <TableCell className="text-xs font-medium text-slate-600 whitespace-nowrap dark:text-zinc-300">{row.totalDiscount}</TableCell>
                                                                     <TableCell>
                                                                         <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-600 border-amber-100 uppercase whitespace-nowrap">{row.status}</Badge>
@@ -1211,28 +1234,15 @@ export default function SuperHODDashboard() {
                                         className="object-cover w-full h-full opacity-80 group-hover:scale-105 transition-transform duration-500"
                                     />
                                 </div>
-                                <div className="absolute inset-y-0 left-2 flex items-center">
-                                    <Button size="icon" variant="ghost" className="h-6 w-6 rounded-full bg-white hover:bg-white text-white dark:bg-zinc-900 dark:hover:bg-zinc-800">
-                                        <ChevronRight className="h-4 w-4 rotate-180" />
-                                    </Button>
-                                </div>
-                                <div className="absolute inset-y-0 right-2 flex items-center">
-                                    <Button size="icon" variant="ghost" className="h-6 w-6 rounded-full bg-white hover:bg-white text-white dark:bg-zinc-900 dark:hover:bg-zinc-800">
-                                        <ChevronRight className="h-4 w-4" />
-                                    </Button>
-                                </div>
                             </Card>
                         </div>
 
                         {/* Today Meeting */}
                         <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <h2 className="text-sm font-bold text-slate-800 tracking-tight dark:text-zinc-100">Today Meeting</h2>
-                                <Plus className="h-4 w-4 text-emerald-600 cursor-pointer hover:scale-110 transition-transform" />
-                            </div>
+                            <h2 className="text-sm font-bold text-slate-800 tracking-tight dark:text-zinc-100">Today Meeting</h2>
                             <Card className="border-none shadow-sm overflow-hidden">
                                 <Table>
-                                    <TableHeader className="bg-slate-50/50">
+                                    <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
                                         <TableRow className="hover:bg-transparent border-none">
                                             <TableHead className="h-7 text-[10px] font-bold text-slate-500 uppercase py-2 pl-4 dark:text-zinc-400">Person</TableHead>
                                             <TableHead className="h-7 text-[10px] font-bold text-slate-500 uppercase py-2 dark:text-zinc-400">Detail</TableHead>
@@ -1240,9 +1250,21 @@ export default function SuperHODDashboard() {
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        <TableRow>
-                                            <TableCell colSpan={3} className="text-center py-6 text-[11px] text-slate-400 font-medium">No meetings scheduled today</TableCell>
-                                        </TableRow>
+                                        {(todayMeetings?.items?.length ?? 0) === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={3} className="text-center py-6 text-[11px] text-slate-400 font-medium">No meetings scheduled today</TableCell>
+                                            </TableRow>
+                                        ) : (
+                                            todayMeetings!.items.map((m) => (
+                                                <TableRow key={m.id} className="hover:bg-transparent border-none">
+                                                    <TableCell className="text-[11px] font-semibold text-slate-700 py-2 pl-4 dark:text-zinc-300">{m.userName}</TableCell>
+                                                    <TableCell className="text-[11px] text-slate-500 py-2 dark:text-zinc-400">{m.notes || "-"}</TableCell>
+                                                    <TableCell className="text-[11px] text-slate-500 py-2 text-right pr-4 dark:text-zinc-400">
+                                                        {m.startsAt ? new Date(m.startsAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-"}
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))
+                                        )}
                                     </TableBody>
                                 </Table>
                             </Card>
@@ -1259,27 +1281,30 @@ export default function SuperHODDashboard() {
                                     { label: "Qa Verification", value: importantStats?.qaVerification || 0, nav: "/projects?status=qa-verification" },
                                     { label: "Leave Application", value: importantStats?.leaveApplication || 0, nav: "/leave-management", hasArrow: true },
                                     { label: "Loan Application", value: 0, nav: "/hr/loan", hasArrow: true },
-                                    { label: "Add Penalty", value: 0, nav: "#", hasArrow: true },
+                                    { label: "Add Penalty", value: 0, nav: "/drm/add-penalty", hasArrow: true },
                                     { label: "Sale & Service Report", value: 0, nav: "/reports", hasArrow: true },
                                     { label: "Update Sale And Service", value: 0, nav: "/reports", hasArrow: true },
                                     { label: "Annual Leaves Reports", value: 0, nav: "/reports", hasArrow: true },
                                     { label: "Ab Closing Report", value: 0, nav: "/account/ab-report", hasArrow: true },
                                     { label: "In Progress", value: importantStats?.inProgress || 0, nav: "/projects?status=in-progress" },
                                     { label: "Pending", value: importantStats?.pending || 0, nav: "/projects?status=pending" },
-                                    { label: "Dep Verification", value: "4(800)", nav: "#", hasArrow: true },
+                                    { label: "Dep Verification", value: importantStats?.depVerification || 0, nav: "scroll:verification-of-project", hasArrow: true },
                                     { label: "Activet Team", value: importantStats?.activeTeam || 0, nav: "/users" },
-                                    { label: "Late Coming", value: 0, nav: "#", hasArrow: true },
-                                    { label: "Commission Verification", value: 0, nav: "#", hasArrow: true },
-                                    { label: "Increment", value: 0, nav: "#", hasArrow: true },
+                                    { label: "Late Coming", value: 0, nav: "/drm/late-coming", hasArrow: true },
+                                    { label: "Commission Verification", value: 0, nav: "/drm/commission-verification", hasArrow: true },
+                                    { label: "Increment", value: 0, nav: "/drm/increment", hasArrow: true },
                                     { label: "Roles Details", value: 0, nav: "/users", hasArrow: true },
                                     { label: "Daily Added GM Report", value: 0, nav: "/reports", hasArrow: true },
                                 ].map((stat, rowIndex) => (
-                                    <div 
-                                      key={rowIndex} 
+                                    <div
+                                      key={rowIndex}
                                       onClick={() => {
-                                        if (stat.nav && stat.nav !== "#") {
-                                            setLocation(stat.nav);
+                                        if (!stat.nav || stat.nav === "#") return;
+                                        if (stat.nav.startsWith("scroll:")) {
+                                            document.getElementById(stat.nav.slice("scroll:".length))?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                            return;
                                         }
+                                        setLocation(stat.nav);
                                       }}
                                       className="flex flex-1 justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity cursor-pointer dark:border-zinc-800"
                                     >
@@ -1306,11 +1331,11 @@ export default function SuperHODDashboard() {
                             </div>
                             <div className="space-y-4">
                                 {[
-                                    { label: "Total Project", value: importantStats?.activities.totalProjects || 0, color: "bg-emerald-500" },
-                                    { label: "Completed", value: importantStats?.activities.complete || 0, color: "bg-blue-500" },
-                                    { label: "Pending", value: importantStats?.activities.pending || 0, color: "bg-amber-500" },
-                                    { label: "Delay", value: importantStats?.activities.delay || 0, color: "bg-red-500" },
-                                    { label: "Free", value: importantStats?.activities.free || 0, color: "bg-slate-400" },
+                                    { label: "Total Project", value: activitiesStats?.activities?.totalProjects || 0, color: "bg-emerald-500" },
+                                    { label: "Completed", value: activitiesStats?.activities?.complete || 0, color: "bg-blue-500" },
+                                    { label: "Pending", value: activitiesStats?.activities?.pending || 0, color: "bg-amber-500" },
+                                    { label: "Delay", value: activitiesStats?.activities?.delay || 0, color: "bg-red-500" },
+                                    { label: "Free", value: activitiesStats?.activities?.free || 0, color: "bg-slate-400" },
                                 ].map((activity, idx) => (
                                     <div key={idx} className="space-y-1.5">
                                         <div className="flex justify-between items-center text-[11px] font-bold uppercase tracking-tight">
@@ -1320,7 +1345,7 @@ export default function SuperHODDashboard() {
                                         <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden dark:bg-zinc-900">
                                             <div
                                                 className={cn("h-full rounded-full transition-all duration-1000", activity.color)}
-                                                style={{ width: `${(activity.value / (importantStats?.activities.totalProjects || 1)) * 100}%` }}
+                                                style={{ width: `${(activity.value / (activitiesStats?.activities?.totalProjects || 1)) * 100}%` }}
                                             />
                                         </div>
                                     </div>
@@ -1513,7 +1538,7 @@ export default function SuperHODDashboard() {
                                 {/* Snapshot */}
                                 <div className="md:col-span-3 space-y-2">
                                     <Label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider dark:text-zinc-400">Snapshot</Label>
-                                    <div className="h-8 bg-slate-50 border-slate-200 rounded animate-pulse dark:bg-zinc-900 dark:border-zinc-800" />
+                                    <div className="h-8 flex items-center px-3 bg-slate-50 border border-slate-200 rounded text-xs text-slate-400 italic dark:bg-zinc-900 dark:border-zinc-800">No snapshot available</div>
                                 </div>
                             </div>
 

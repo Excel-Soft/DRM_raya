@@ -90,3 +90,74 @@ export function pickWritable<T extends Record<string, any>>(
   }
   return out;
 }
+
+/**
+ * Phase 4 — the legacy `drm.invoices` table (server/account-routes.ts) is a
+ * separate, simple billing-document lifecycle, NOT part of the canonical
+ * HOD/Account approval chain (see `INVOICE_LEGAL_TRANSITIONS` in
+ * shared/gm-sales-constants.ts for that one). It never had its own
+ * transition-legality check: any status could jump to any other. This map
+ * closes that gap without changing the feature's shape.
+ */
+export const LEGACY_INVOICE_STATUSES = [
+  "Draft",
+  "Pending",
+  "Sent",
+  "Paid",
+  "Overdue",
+  "Cancelled",
+] as const;
+
+export type LegacyInvoiceStatus = (typeof LEGACY_INVOICE_STATUSES)[number];
+
+export const LEGACY_INVOICE_LEGAL_TRANSITIONS: Record<LegacyInvoiceStatus, LegacyInvoiceStatus[]> = {
+  Draft: ["Pending", "Sent", "Cancelled"],
+  Pending: ["Sent", "Cancelled"],
+  Sent: ["Paid", "Overdue", "Cancelled"],
+  Overdue: ["Paid", "Cancelled"],
+  Paid: [],
+  Cancelled: [],
+};
+
+/** Throws ApiError(400) unless `from -> to` is a legal legacy-invoice transition. */
+export function assertLegalInvoiceStatusTransition(from: unknown, to: unknown): LegacyInvoiceStatus {
+  const fromStatus = LEGACY_INVOICE_STATUSES.includes(from as LegacyInvoiceStatus)
+    ? (from as LegacyInvoiceStatus)
+    : undefined;
+  const toStatus = LEGACY_INVOICE_STATUSES.includes(to as LegacyInvoiceStatus)
+    ? (to as LegacyInvoiceStatus)
+    : undefined;
+
+  if (!toStatus) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      `status must be one of: ${LEGACY_INVOICE_STATUSES.join(", ")}.`,
+    );
+  }
+  if (fromStatus === toStatus) return toStatus;
+  if (!fromStatus || !LEGACY_INVOICE_LEGAL_TRANSITIONS[fromStatus].includes(toStatus)) {
+    throw new ApiError(
+      400,
+      "ILLEGAL_TRANSITION",
+      `Cannot change invoice status from "${from}" to "${to}".`,
+    );
+  }
+  return toStatus;
+}
+
+/** When moving a legacy invoice to Paid, a payment method must be present (incoming or existing). */
+export function assertPaymentProofForPaid(
+  targetStatus: LegacyInvoiceStatus,
+  fields: { paymentMethod?: unknown; existingPaymentMethod?: unknown },
+): void {
+  if (targetStatus !== "Paid") return;
+  const method = fields.paymentMethod ?? fields.existingPaymentMethod;
+  if (!method || String(method).trim() === "") {
+    throw new ApiError(
+      400,
+      "PAYMENT_PROOF_REQUIRED",
+      "A payment method is required to mark an invoice as Paid.",
+    );
+  }
+}

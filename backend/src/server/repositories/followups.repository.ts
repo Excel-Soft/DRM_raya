@@ -6,7 +6,7 @@ export type FollowUpWithCustomer = FollowUp & {
 };
 
 let ensured = false;
-async function ensureFollowUpsSchema() {
+export async function ensureFollowUpsSchema() {
   if (ensured) return;
   const ddl = `
     alter table follow_ups
@@ -14,6 +14,8 @@ async function ensureFollowUpsSchema() {
       add column if not exists created_by uuid,
       add column if not exists reservation_type text,
       add column if not exists talk_time_seconds int not null default 0,
+      add column if not exists manager_comment text,
+      add column if not exists sm_comment text,
       alter column status set default 'Open',
       alter column created_at set default now(),
       alter column updated_at set default now();
@@ -81,6 +83,8 @@ export class FollowUpsRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       isDeleted: row.is_deleted ?? false,
+      managerComment: row.manager_comment ?? null,
+      smComment: row.sm_comment ?? null,
       customer: {
         id: row.customer_id,
         companyName: row.company_name,

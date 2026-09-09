@@ -1,12 +1,46 @@
 import { Router, type Request, type Response } from "express";
+import { z } from "zod";
 import {
   itAssetsRepository,
   normalizeServerStatus,
   SERVER_STATUSES,
-} from "../repositories/it-assets.repository";
-import { requireRole } from "../middleware/auth.middleware";
-import { AuditLogService } from "../services/audit-log.service";
+} from "./repositories/it-assets.repository";
+import { requireRole } from "./auth.middleware";
+import { AuditLogService } from "./services/audit-log.service";
 import { insertItDomainSchema, insertItBackupSchema } from "@shared/schema";
+
+// Phase 3 — servers/registries/hosting-packages previously used ad hoc
+// per-field `typeof` checks instead of Zod (unlike domains below, which
+// already use insertItDomainSchema). Not a live vulnerability (no mass
+// assignment — every field was already named explicitly), but standardized
+// here for consistency and to reject unexpected fields with `.strict()`.
+export const createServerSchema = z
+  .object({
+    name: z.string().trim().min(1, "Server name is required").max(200),
+    ip: z.string().trim().max(255).optional(),
+    host: z.string().trim().max(255).optional(),
+    provider: z.string().trim().max(200).nullable().optional(),
+    notes: z.string().trim().max(2000).nullable().optional(),
+    status: z.string().trim().max(40).optional(),
+  })
+  .strict();
+
+const updateServerSchema = createServerSchema.partial();
+
+export const registryCreateSchema = z
+  .object({
+    name: z.string().trim().min(1, "Registry name is required").max(200),
+    url: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+export const hostingPackageCreateSchema = z
+  .object({
+    name: z.string().trim().min(1, "Hosting package name is required").max(200),
+    capacity: z.string().trim().max(200).optional(),
+    price: z.coerce.number().finite().nonnegative().optional(),
+  })
+  .strict();
 
 const router = Router();
 
@@ -100,15 +134,16 @@ async function getServerHandler(req: Request, res: Response) {
 }
 
 async function createServerHandler(req: Request, res: Response) {
-  const body = req.body || {};
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const hostRaw =
-    typeof body.ip === "string" ? body.ip : typeof body.host === "string" ? body.host : "";
-  const host = String(hostRaw).trim();
-  const provider = typeof body.provider === "string" ? body.provider.trim() : null;
-  const notes = typeof body.notes === "string" ? body.notes.trim() : null;
+  const parsed = createServerSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parsed.error.errors });
+  }
+  const body = parsed.data;
+  const name = body.name;
+  const host = String(body.ip ?? body.host ?? "").trim();
+  const provider = body.provider ?? null;
+  const notes = body.notes ?? null;
 
-  if (!name) return res.status(400).json({ error: "Server name is required" });
   if (!host) return res.status(400).json({ error: "Host / IP is required" });
   if (!isValidHost(host))
     return res.status(400).json({ error: "Host must be a valid hostname, URL, or IP address" });
@@ -152,20 +187,23 @@ async function updateServerHandler(req: Request, res: Response) {
   if (!existing || existing.deletedAt)
     return res.status(404).json({ error: "Server not found" });
 
-  const body = req.body || {};
+  const parsed = updateServerSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parsed.error.errors });
+  }
+  const body = parsed.data;
   const updates: Record<string, any> = {};
 
-  if (typeof body.name === "string") {
-    const name = body.name.trim();
+  if (body.name !== undefined) {
+    const name = body.name;
     if (!name) return res.status(400).json({ error: "Server name cannot be empty" });
     const dup = await itAssetsRepository.findActiveServerByName(name, id);
     if (dup) return res.status(409).json({ error: "A server with this name already exists" });
     updates.name = name;
   }
 
-  const hostRaw =
-    body.ip !== undefined ? body.ip : body.host !== undefined ? body.host : undefined;
-  if (typeof hostRaw === "string") {
+  const hostRaw = body.ip !== undefined ? body.ip : body.host !== undefined ? body.host : undefined;
+  if (hostRaw !== undefined) {
     const host = hostRaw.trim();
     if (!host) return res.status(400).json({ error: "Host / IP cannot be empty" });
     if (!isValidHost(host))
@@ -173,10 +211,8 @@ async function updateServerHandler(req: Request, res: Response) {
     updates.ip = host;
   }
 
-  if ("provider" in body)
-    updates.provider = typeof body.provider === "string" ? body.provider.trim() : null;
-  if ("notes" in body)
-    updates.notes = typeof body.notes === "string" ? body.notes.trim() : null;
+  if (body.provider !== undefined) updates.provider = body.provider;
+  if (body.notes !== undefined) updates.notes = body.notes;
 
   if (body.status != null && String(body.status).trim() !== "") {
     const ns = normalizeServerStatus(body.status);
@@ -269,10 +305,12 @@ router.get("/registries", requireRole(...IT_READ_ROLES), async (req, res) => {
 });
 
 router.post("/registries", requireRole(...IT_WRITE_ROLES), async (req, res) => {
-  const body = req.body || {};
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name) return res.status(400).json({ error: "Registry name is required" });
-  const url = typeof body.url === "string" && body.url.trim() ? body.url.trim() : null;
+  const parsed = registryCreateSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parsed.error.errors });
+  }
+  const { name } = parsed.data;
+  const url = parsed.data.url && parsed.data.url.length > 0 ? parsed.data.url : null;
   // SECURITY: do not accept/persist plaintext registry credentials.
   const userId = actorId(req);
   const created = await itAssetsRepository.createRegistry({ name, url });
@@ -312,18 +350,13 @@ router.get("/hosting-packages", requireRole(...IT_READ_ROLES), async (req, res) 
 });
 
 router.post("/hosting-packages", requireRole(...IT_WRITE_ROLES), async (req, res) => {
-  const body = req.body || {};
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  if (!name) return res.status(400).json({ error: "Hosting package name is required" });
-  const capacity =
-    typeof body.capacity === "string" && body.capacity.trim() ? body.capacity.trim() : null;
-  let price: string | null = null;
-  if (body.price != null && String(body.price).trim() !== "") {
-    const n = Number(body.price);
-    if (!Number.isFinite(n) || n < 0)
-      return res.status(400).json({ error: "Price must be a non-negative number" });
-    price = String(n);
+  const parsed = hostingPackageCreateSchema.safeParse(req.body || {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request payload", details: parsed.error.errors });
   }
+  const { name } = parsed.data;
+  const capacity = parsed.data.capacity && parsed.data.capacity.length > 0 ? parsed.data.capacity : null;
+  const price = parsed.data.price !== undefined ? String(parsed.data.price) : null;
   const userId = actorId(req);
   const created = await itAssetsRepository.createHostingPackage({ name, capacity, price });
   await AuditLogService.record({
@@ -435,7 +468,120 @@ router.post("/backups", requireRole(...IT_WRITE_ROLES), async (req, res) => {
   res.status(201).json(created);
 });
 
-router.get("/system-report", async (req, res) => {
+router.patch("/domains/:id", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const id = req.params.id;
+  const existing = await itAssetsRepository.listDomains().then(rows => rows.find(r => r.id === id));
+  if (!existing) return res.status(404).json({ error: "Domain not found" });
+
+  const body: Record<string, any> = { ...(req.body || {}) };
+  // SECURITY: never persist plaintext credentials.
+  delete body.cpanelPassword;
+  delete body.cpanel_password;
+
+  const domainName = typeof body.domainName === "string" ? body.domainName.trim() : undefined;
+  if (domainName === "") return res.status(400).json({ error: "Domain name cannot be empty" });
+  if (domainName && !isValidHost(domainName))
+    return res.status(400).json({ error: "Domain name must be a valid hostname" });
+
+  if (domainName && domainName.toLowerCase() !== (existing.domainName || "").toLowerCase()) {
+    const dup = await itAssetsRepository.findDomainByName(domainName);
+    if (dup) return res.status(409).json({ error: "A domain with this name already exists" });
+  }
+
+  const updateData: any = {};
+  if (domainName) updateData.domainName = domainName;
+  if (body.customerId !== undefined) updateData.customerId = body.customerId || null;
+  if (body.registryId !== undefined) updateData.registryId = body.registryId || null;
+  if (body.serverId !== undefined) updateData.serverId = body.serverId || null;
+  if (body.hostingPackageId !== undefined) updateData.hostingPackageId = body.hostingPackageId || null;
+  if (body.cpanelUsername !== undefined) updateData.cpanelUsername = body.cpanelUsername || null;
+  if (body.activationDate !== undefined) updateData.activationDate = body.activationDate ? new Date(body.activationDate) : null;
+  if (body.expiryDate !== undefined) updateData.expiryDate = body.expiryDate ? new Date(body.expiryDate) : null;
+  if (body.sslExpiryDate !== undefined) updateData.sslExpiryDate = body.sslExpiryDate ? new Date(body.sslExpiryDate) : null;
+  if (body.hostingExpiryDate !== undefined) updateData.hostingExpiryDate = body.hostingExpiryDate ? new Date(body.hostingExpiryDate) : null;
+  if (body.status !== undefined) updateData.status = body.status || "Active";
+
+  const userId = actorId(req);
+  const updated = await itAssetsRepository.updateDomain(id, updateData);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_domain.update",
+    module: "domain_hosting",
+    entityType: "it_domain",
+    entityId: id,
+    before: serializeDomain(existing),
+    after: serializeDomain(updated),
+    req,
+  });
+  res.json(serializeDomain(updated));
+});
+
+// Domain follow-up log — real, persisted via the audit trail (no dedicated
+// followup table exists yet; this records who followed up, on which services,
+// and via which reservation channel, queryable the same way every other
+// domain/hosting mutation already is).
+router.post("/domains/:id/followup", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const id = req.params.id;
+  const existing = await itAssetsRepository.listDomains().then(rows => rows.find(r => r.id === id));
+  if (!existing) return res.status(404).json({ error: "Domain not found" });
+
+  const services = Array.isArray(req.body?.services) ? req.body.services.map(String) : [];
+  const reservation = typeof req.body?.reservation === "string" ? req.body.reservation : undefined;
+  if (services.length === 0) return res.status(400).json({ error: "Select at least one service" });
+
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_domain.followup",
+    module: "domain_hosting",
+    entityType: "it_domain",
+    entityId: id,
+    after: { company: existing.company, services, reservation: reservation || null },
+    req,
+  });
+  res.status(201).json({ success: true, services, reservation: reservation || null });
+});
+
+router.delete("/domains/:id", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const id = req.params.id;
+  const existing = await itAssetsRepository.listDomains().then(rows => rows.find(r => r.id === id));
+  if (!existing) return res.status(404).json({ error: "Domain not found" });
+
+  await itAssetsRepository.deleteDomain(id);
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_domain.delete",
+    module: "domain_hosting",
+    entityType: "it_domain",
+    entityId: id,
+    before: serializeDomain(existing),
+    req,
+  });
+  res.json({ success: true });
+});
+
+router.delete("/backups/:id", requireRole(...IT_WRITE_ROLES), async (req, res) => {
+  const id = req.params.id;
+  const list = await itAssetsRepository.listBackups();
+  const existing = list.find(b => b.id === id);
+  if (!existing) return res.status(404).json({ error: "Backup record not found" });
+
+  await itAssetsRepository.deleteBackup(id);
+  const userId = actorId(req);
+  await AuditLogService.record({
+    actorUserId: userId ?? undefined,
+    action: "it_backup.delete",
+    module: "domain_hosting",
+    entityType: "it_backup",
+    entityId: id,
+    before: existing,
+    req,
+  });
+  res.json({ success: true });
+});
+
+router.get("/system-report", requireRole(...IT_READ_ROLES), async (req, res) => {
   const report = await itAssetsRepository.getSystemReport();
   res.json(report);
 });

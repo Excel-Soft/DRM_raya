@@ -45,7 +45,9 @@ export default function SalesAssistantManagerDashboard() {
 
   const [followStartDate, setFollowStartDate] = useState<string>("");
   const [followEndDate, setFollowEndDate] = useState<string>("");
-  const [activeFollowService, setActiveFollowService] = useState<string>("Alibaba Membership");
+  const [activeFollowService, setActiveFollowService] = useState<string>("All");
+  const [activeFollowSubtype, setActiveFollowSubtype] = useState<string>("All");
+  const [activeFollowGrade, setActiveFollowGrade] = useState<string>("All");
   const [followPage, setFollowPage] = useState<number>(1);
   const followPageSize = 10;
 
@@ -108,29 +110,79 @@ export default function SalesAssistantManagerDashboard() {
 
   const handleTabClick = (serviceName: string) => {
     setActiveFollowService(serviceName);
+    setActiveFollowSubtype("All");
+    setActiveFollowGrade("All");
     setFollowPage(1);
   };
 
-  // Compute followData dynamically using applied dates
-  const followData = followupsData
-    .filter((row: any) => {
-      if (appliedFollowStartDate && appliedFollowEndDate) {
-        const rowDate = new Date(row.createdAt);
-        const start = new Date(appliedFollowStartDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(appliedFollowEndDate);
-        end.setHours(23, 59, 59, 999);
-        if (rowDate < start || rowDate > end) return false;
-      }
+  // Calculate counts for each service category
+  const getFollowCount = (serviceName: string) => {
+    if (serviceName === "All") return followupsData.length;
+    return followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === serviceName.toLowerCase()).length;
+  };
+
+  const filteredByServiceAndDate = followupsData.filter((row: any) => {
+    if (activeFollowService && activeFollowService !== "All") {
       const sType = row.serviceType || "Alibaba Membership";
-      return sType === activeFollowService;
+      if (sType.toLowerCase() !== activeFollowService.toLowerCase()) return false;
+    }
+    if (appliedFollowStartDate && appliedFollowEndDate) {
+      const rowDate = row.createdAt ? new Date(row.createdAt) : new Date();
+      const start = new Date(appliedFollowStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(appliedFollowEndDate);
+      end.setHours(23, 59, 59, 999);
+      if (rowDate < start || rowDate > end) return false;
+    }
+    return true;
+  });
+
+  const getSubtypeCount = (subtype: string) => {
+    if (subtype === "All") return filteredByServiceAndDate.filter((r: any) => activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase()).length;
+    return filteredByServiceAndDate.filter((r: any) => {
+      const sType = r.subserviceName || r.serviceType || "General";
+      const matchSub = sType.toLowerCase() === subtype.toLowerCase();
+      const matchGrade = activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase();
+      return matchSub && matchGrade;
+    }).length;
+  };
+
+  const getGradeCount = (grade: string) => {
+    if (grade === "All") return filteredByServiceAndDate.filter((r: any) => activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase()).length;
+    return filteredByServiceAndDate.filter((r: any) => {
+      const g = r.grade || "A";
+      const matchGrade = g.toLowerCase() === grade.toLowerCase();
+      const matchSub = activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase();
+      return matchGrade && matchSub;
+    }).length;
+  };
+
+  const uniqueSubtypes = Array.from(new Set(filteredByServiceAndDate.filter((r: any) => activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase()).map((r: any) => r.subserviceName || r.serviceType || "General"))).filter(Boolean) as string[];
+  const uniqueGrades = Array.from(new Set(filteredByServiceAndDate.filter((r: any) => activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase()).map((r: any) => r.grade || "A"))).filter(Boolean) as string[];
+
+  const uniqueFollowServices = Array.from(new Set(followupsData.map((r: any) => r.serviceType || "Alibaba Membership"))).filter(Boolean) as string[];
+  const standardFollowServices = ["Alibaba Membership", "Alibaba Services", "Design Development", "Domain Hosting"];
+  const allFollowTabServices = Array.from(new Set([...standardFollowServices, ...uniqueFollowServices]));
+
+  // Compute followData dynamically using applied dates + service/subtype/grade filters
+  const followData = filteredByServiceAndDate
+    .filter((row: any) => {
+      if (activeFollowSubtype && activeFollowSubtype !== "All") {
+        const sType = row.subserviceName || row.serviceType || "General";
+        if (sType.toLowerCase() !== activeFollowSubtype.toLowerCase()) return false;
+      }
+      if (activeFollowGrade && activeFollowGrade !== "All") {
+        const g = row.grade || "A";
+        if (g.toLowerCase() !== activeFollowGrade.toLowerCase()) return false;
+      }
+      return true;
     })
     .map((row: any, index: number) => ({
       id: index + 1,
       company: row.company || row.companyName || "Unknown",
-      service: activeFollowService,
-      subtype: row.subserviceName || row.type || "General",
-      grade: row.grade || "A", 
+      service: row.serviceType || "Alibaba Membership",
+      subtype: row.subserviceName || row.serviceType || "General",
+      grade: row.grade || "A",
       purpose: row.purpose || "Follow Up",
       method: row.method || "Call",
       comment: row.notes || "-",
@@ -220,7 +272,7 @@ export default function SalesAssistantManagerDashboard() {
                 </Select>
               </div>
             </div>
-            <div className="p-4 bg-gray-50/50 h-full">
+            <div className="p-4 bg-gray-50/50 dark:bg-zinc-900 h-full">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {(() => {
                   const filteredLeads = allLeads.filter((l: any) => {
@@ -313,9 +365,9 @@ export default function SalesAssistantManagerDashboard() {
                         </div>
                         {row.m}
                       </td>
-                      <td className="py-2 text-center text-gray-600 bg-gray-50/50 dark:text-zinc-300">{row.tgt}</td>
+                      <td className="py-2 text-center text-gray-600 bg-gray-50/50 dark:bg-zinc-900 dark:text-zinc-300">{row.tgt}</td>
                       <td className="py-2 text-center text-gray-600 dark:text-zinc-300">{row.tt}</td>
-                      <td className="py-2 text-center text-gray-600 bg-gray-50/50 dark:text-zinc-300">{row.dt}</td>
+                      <td className="py-2 text-center text-gray-600 bg-gray-50/50 dark:bg-zinc-900 dark:text-zinc-300">{row.dt}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -592,11 +644,68 @@ export default function SalesAssistantManagerDashboard() {
             </div>
           </div>
           <div className="p-4">
-            <div className="grid grid-cols-4 rounded overflow-hidden text-center text-white text-xs font-medium mb-4">
-              <div onClick={() => handleTabClick("Alibaba Membership")} className={`bg-[#38c172] py-2.5 shadow-inner cursor-pointer transition-opacity ${activeFollowService === "Alibaba Membership" ? "opacity-100" : "opacity-60 hover:opacity-80"}`}>Alibaba Membership {followupsData.filter((r: any) => (r.serviceType || "Alibaba Membership") === "Alibaba Membership").length}</div>
-              <div onClick={() => handleTabClick("Alibaba Services")} className={`bg-[#e3342f] py-2.5 shadow-inner cursor-pointer transition-opacity ${activeFollowService === "Alibaba Services" ? "opacity-100" : "opacity-60 hover:opacity-80"}`}>Alibaba Services {followupsData.filter((r: any) => r.serviceType === "Alibaba Services").length}</div>
-              <div onClick={() => handleTabClick("Design Development")} className={`bg-[#3490dc] py-2.5 shadow-inner cursor-pointer transition-opacity ${activeFollowService === "Design Development" ? "opacity-100" : "opacity-60 hover:opacity-80"}`}>Design Development {followupsData.filter((r: any) => r.serviceType === "Design Development").length}</div>
-              <div onClick={() => handleTabClick("Domain Hosting")} className={`bg-[#343a40] py-2.5 shadow-inner cursor-pointer transition-opacity ${activeFollowService === "Domain Hosting" ? "opacity-100" : "opacity-60 hover:opacity-80"}`}>Domain Hosting {followupsData.filter((r: any) => r.serviceType === "Domain Hosting").length}</div>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <div onClick={() => handleTabClick("All")} className={`px-4 py-2 rounded cursor-pointer transition-colors text-white text-xs font-bold shadow-sm ${activeFollowService === "All" ? "bg-slate-700 dark:bg-slate-600" : "bg-slate-500 hover:bg-slate-600 dark:bg-slate-700"}`}>All {getFollowCount("All")}</div>
+              {allFollowTabServices.map((svc) => {
+                const isActive = activeFollowService === svc;
+                let colorClass = "bg-blue-500 hover:bg-blue-600";
+                let activeColorClass = "bg-blue-600";
+                if (svc === "Alibaba Membership") { colorClass = "bg-[#38c172]/80 hover:bg-[#38c172]"; activeColorClass = "bg-[#38c172]"; }
+                else if (svc === "Alibaba Services") { colorClass = "bg-[#e3342f]/80 hover:bg-[#e3342f]"; activeColorClass = "bg-[#e3342f]"; }
+                else if (svc === "Design Development") { colorClass = "bg-[#3490dc]/80 hover:bg-[#3490dc]"; activeColorClass = "bg-[#3490dc]"; }
+                else if (svc === "Domain Hosting") { colorClass = "bg-[#343a40]/80 hover:bg-[#343a40]"; activeColorClass = "bg-[#343a40]"; }
+                return (
+                  <div key={svc} onClick={() => handleTabClick(svc)} className={`px-4 py-2 rounded cursor-pointer transition-colors text-white text-xs font-bold shadow-sm ${isActive ? activeColorClass : colorClass}`}>
+                    {svc} {getFollowCount(svc)}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-4 mb-4">
+              {uniqueSubtypes.length > 0 && (
+                <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-gray-100 p-4 dark:bg-zinc-900 dark:border-zinc-800">
+                  <h3 className="text-[13px] font-bold text-gray-600 mb-3 dark:text-zinc-300">Service Type Summary</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {["All", ...uniqueSubtypes].map(sub => {
+                      const count = getSubtypeCount(sub);
+                      if (count === 0 && sub !== "All") return null;
+                      const isActive = activeFollowSubtype === sub;
+                      return (
+                        <span
+                          key={sub}
+                          onClick={() => setActiveFollowSubtype(sub)}
+                          className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#059669] text-white border border-[#059669]" : "bg-white border border-[#059669] text-[#059669] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"}`}
+                        >
+                          {sub} ({count})
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {uniqueGrades.length > 0 && (
+                <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-gray-100 p-4 dark:bg-zinc-900 dark:border-zinc-800">
+                  <h3 className="text-[13px] font-bold text-gray-600 mb-3 dark:text-zinc-300">Grade Summary</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {["All", ...uniqueGrades].map(grade => {
+                      const count = getGradeCount(grade);
+                      if (count === 0 && grade !== "All") return null;
+                      const isActive = activeFollowGrade === grade;
+                      return (
+                        <span
+                          key={grade}
+                          onClick={() => setActiveFollowGrade(grade)}
+                          className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#1e293b] text-white border border-[#1e293b]" : "bg-white border border-gray-300 text-gray-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"}`}
+                        >
+                          {grade} ({count})
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-between items-center mb-3">
@@ -654,7 +763,7 @@ export default function SalesAssistantManagerDashboard() {
                   ) : (
                     <tr>
                       <td colSpan={12} className="py-6 px-2 text-gray-500 border-b border-gray-100 text-center dark:text-zinc-400 dark:border-zinc-800">
-                        Please Select Filter to see the data
+                        No Data Found for {activeFollowService}
                       </td>
                     </tr>
                   )}

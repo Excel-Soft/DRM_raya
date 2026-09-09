@@ -223,9 +223,9 @@ export const routeRegistry: RouteEntry[] = [
 
   // ── Office Accounts ───────────────────────────────────────────────────
   { path: "/office/trial-balance-report", component: "OfficeTrialBalance", title: "Trial Balance Report", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
-  { path: "/office/old-account-head", component: "OfficeOldAccountHead", title: "Old Account Head", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
+  { path: "/office/old-account-head", component: "OfficeOldAccountHead", title: "Old Account Head", module: "Office Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "Deprecated route; redirects to /office/chart-of-accounts." },
   { path: "/office/chart-of-accounts", component: "ChartOfAccounts", title: "Chart of Account", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF, notes: "Canonical chart-of-accounts route (single declaration)." },
-  { path: "/office/account-head", component: "OfficeAccountHead", title: "Account Head", module: "Office Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "Sidebar entry commented out; route retained for direct/legacy access." },
+  { path: "/office/account-head", component: "OfficeAccountHead", title: "Account Head", module: "Office Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "Deprecated route; redirects to /office/chart-of-accounts." },
   { path: "/office/business-customers", component: "BusinessCustomers", title: "Business Customer", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
   { path: "/office/vas", component: "OfficeVasPage", title: "Office Vas", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
   { path: "/office/expenses", component: "OfficeExpenses", title: "Office Expense", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
@@ -277,8 +277,8 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/training/:category", component: "TrainingCenter", title: "Training Category", module: "Training", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF, notes: "Category param; unknown categories fall back within TrainingCenter." },
 
   // ── Notice / Policies ─────────────────────────────────────────────────
-  { path: "/notice-board", component: "NoticeBoard", title: "Notice Board", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "Notice Board", allowedRoles: ["admin", "super_hod", "reception_manager"] },
-  { path: "/policies", component: "PoliciesSettings", title: "DRM Policies", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "DRM Policies", allowedRoles: ["admin", "super_hod", "reception_manager"] },
+  { path: "/notice-board", component: "NoticeBoard", title: "Notice Board", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "Notice Board", allowedRoles: ["admin", "super_hod", "reception_manager", "account_manager"] },
+  { path: "/policies", component: "PoliciesSettings", title: "DRM Policies", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "DRM Policies", allowedRoles: ["admin", "super_hod", "reception_manager", "account_manager"] },
   { path: "/workspace", component: "Workspace", title: "Workspace", module: "Misc", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
 
   // ── Portfolio ─────────────────────────────────────────────────────────
@@ -311,12 +311,12 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/posting-data/restricted-keywords", component: "PostingData", title: "Restricted Keywords", module: "Product Posting", sidebarVisible: true, sidebarGroup: "Posting Data", permissionKey: "Posting Data", allowedRoles: POSTING },
 
   // ── Target System ─────────────────────────────────────────────────────
-  { path: "/target-system/create", component: "CreateTarget", title: "Create Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
-  { path: "/target-system/set", component: "SetTarget", title: "Set Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
-  { path: "/target-system/view", component: "ViewTarget", title: "View Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
-  { path: "/target-system/daily", component: "DailyTarget", title: "Daily Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
-  { path: "/target-system/add-kwa", component: "AddKwa", title: "Add KWA", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
-  { path: "/target-system/kwa-history", component: "KwaHistory", title: "KWA History", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod"] },
+  { path: "/target-system/create", component: "CreateTarget", title: "Create Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
+  { path: "/target-system/set", component: "SetTarget", title: "Set Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
+  { path: "/target-system/view", component: "ViewTarget", title: "View Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
+  { path: "/target-system/daily", component: "DailyTarget", title: "Daily Target", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
+  { path: "/target-system/add-kwa", component: "AddKwa", title: "Add KWA", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
+  { path: "/target-system/kwa-history", component: "KwaHistory", title: "KWA History", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
 
   // ── Events ────────────────────────────────────────────────────────────
   { path: "/events/add", component: "EventsAdd", title: "Add Event", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager"] },

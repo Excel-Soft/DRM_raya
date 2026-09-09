@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Popover,
@@ -149,6 +149,17 @@ type TrendResponse = {
   data: { labels: string[]; counts: number[]; revenue: number[] };
 };
 
+type Notice = {
+  id: string;
+  title: string;
+  description: string;
+  status: "Active" | "Inactive" | "Archived";
+  assignedToRole?: string | null;
+  assignedToDepartment?: string | null;
+  assignedDate: string;
+  createdAt: string;
+};
+
 const kpiConfig: Array<{ key: KpiKey; label: string; icon: any; color: string; iconBg: string }> = [
   { key: "totalRevenue", label: "Total Revenue", icon: DollarSign, color: "text-emerald-600", iconBg: "bg-emerald-500" },
   { key: "new", label: "New Leads", icon: UserPlus, color: "text-blue-600", iconBg: "bg-blue-500" },
@@ -228,6 +239,23 @@ export default function Dashboard() {
   const [queuePage, setQueuePage] = useState<number>(1);
   const [followUpFilter, setFollowUpFilter] = useState<string>("all");
 
+  // "Team Work Performance" renders as the last, full-width section below the
+  // fold. Defer its fetch until the browser is idle after first paint so it
+  // doesn't compete with the above-the-fold KPI/activity/queue requests.
+  const [belowFoldReady, setBelowFoldReady] = useState(false);
+  useEffect(() => {
+    const ric = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: { timeout: number }) => number)
+      | undefined;
+    const cic = (window as any).cancelIdleCallback as ((id: number) => void) | undefined;
+    if (ric) {
+      const id = ric(() => setBelowFoldReady(true), { timeout: 2000 });
+      return () => cic?.(id);
+    }
+    const id = window.setTimeout(() => setBelowFoldReady(true), 300);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const todayStr = useMemo(() => {
     const d = new Date();
     return d.toISOString().slice(0, 10);
@@ -301,11 +329,16 @@ export default function Dashboard() {
     placeholderData: emptyFollowUps,
   });
 
-  const { data: teamWorkRes = emptyTeamWork, isLoading: loadingTeamWork } = useQuery<TeamWorkResponse>({
+  const { data: teamWorkRes = emptyTeamWork, isLoading: loadingTeamWorkQuery } = useQuery<TeamWorkResponse>({
     queryKey: ["/api/dashboard/team-work-performance"],
     ...commonQueryOptions,
+    enabled: belowFoldReady,
     placeholderData: emptyTeamWork,
   });
+  // Query is disabled until belowFoldReady, which would otherwise make
+  // isLoading report false (no fetch in flight yet) and briefly flash an
+  // empty-state table instead of the loading spinner.
+  const loadingTeamWork = !belowFoldReady || loadingTeamWorkQuery;
 
   const { data: meetingsRes = emptyMeetings, isLoading: loadingMeetings } = useQuery<MeetingsResponse>({
     queryKey: [`/api/dashboard/daily-team-meeting?date=${todayStr}`],
@@ -319,6 +352,12 @@ export default function Dashboard() {
     placeholderData: emptyTrend,
   });
 
+  const { data: noticesRes = [], isLoading: loadingNotices } = useQuery<Notice[]>({
+    queryKey: ["/api/notice-board"],
+    ...commonQueryOptions,
+    placeholderData: [],
+  });
+
   const summary = summaryRes.data;
   const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes.data.rows ?? [];
   const queueItems: QueuePerformanceResponse["data"]["items"] = queueRes.data.items ?? [];
@@ -327,6 +366,15 @@ export default function Dashboard() {
   const teamWorkItems: TeamWorkResponse["data"]["items"] = teamWorkRes.data.items ?? [];
   const trendLabels = trendRes.data.labels ?? [];
   const trendCounts = trendRes.data.counts ?? [];
+
+  const highlightNotices = useMemo(
+    () =>
+      (noticesRes ?? [])
+        .filter((n) => n.status !== "Archived")
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5),
+    [noticesRes],
+  );
 
   const serviceCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -357,8 +405,8 @@ export default function Dashboard() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="WC">WC</SelectItem>
                       <SelectItem value="TD">TD</SelectItem>
+                      <SelectItem value="WC">WC</SelectItem>
                       <SelectItem value="MONTH">Month</SelectItem>
                     </SelectContent>
                   </Select>
@@ -487,9 +535,9 @@ export default function Dashboard() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="MONTH">Month</SelectItem>
-                      <SelectItem value="WC">WC</SelectItem>
                       <SelectItem value="TD">TD</SelectItem>
+                      <SelectItem value="WC">WC</SelectItem>
+                      <SelectItem value="MONTH">Month</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -705,12 +753,45 @@ export default function Dashboard() {
                 <CardTitle>Highlights</CardTitle>
               </CardHeader>
               <CardContent className={denseContent}>
-                <div className="rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white p-3 sm:p-4">
-                  <p className="text-base sm:text-lg font-semibold">Stay on top of your team</p>
-                  <p className="text-sm text-emerald-50 mt-1">
-                    Review KPIs, meetings, and quick entries in one place.
-                  </p>
-                </div>
+                {loadingNotices ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading highlights...
+                  </div>
+                ) : highlightNotices.length === 0 ? (
+                  <div className="rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white p-3 sm:p-4">
+                    <p className="text-base sm:text-lg font-semibold">Stay on top of your team</p>
+                    <p className="text-sm text-emerald-50 mt-1">
+                      Review KPIs, meetings, and quick entries in one place.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-0.5">
+                    {highlightNotices.map((notice) => (
+                      <div
+                        key={notice.id}
+                        className="rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white p-3 sm:p-4"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm sm:text-base font-semibold truncate">{notice.title}</p>
+                          <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0 h-4">
+                            {notice.status}
+                          </Badge>
+                        </div>
+                        {notice.description && (
+                          <p className="text-xs sm:text-sm text-emerald-50 mt-1 line-clamp-2">
+                            {notice.description}
+                          </p>
+                        )}
+                        <p className="text-[10px] text-emerald-100/80 mt-1">
+                          {notice.assignedToRole || notice.assignedToDepartment || "All Staff"}
+                          {" • "}
+                          {notice.createdAt ? new Date(notice.createdAt).toLocaleDateString() : "-"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

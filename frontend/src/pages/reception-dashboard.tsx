@@ -24,8 +24,11 @@ export default function ReceptionDashboard() {
     const { toast } = useToast();
     const [activeMeetingTab, setActiveMeetingTab] = useState("in-process");
     const [meetingSearch, setMeetingSearch] = useState("");
+    const [meetingPage, setMeetingPage] = useState(1);
+    const meetingPageSize = 10;
     const [isMeetingModalOpen, setIsMeetingModalOpen] = useState(false);
     const [meetingFile, setMeetingFile] = useState<File | null>(null);
+    const [lastMeetingId, setLastMeetingId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [selectedCompany, setSelectedCompany] = useState<string>("");
@@ -35,6 +38,8 @@ export default function ReceptionDashboard() {
 
     const [topSellingFilter, setTopSellingFilter] = useState<string>("ld");
     const [expectedClientFilter, setExpectedClientFilter] = useState<string>("expected");
+    const [expectedClientPage, setExpectedClientPage] = useState(1);
+    const expectedClientPageSize = 10;
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -51,12 +56,15 @@ export default function ReceptionDashboard() {
             });
             return;
         }
-        toast({
-            title: "Success",
-            description: "Meeting document securely uploaded."
-        });
-        setMeetingFile(null);
-        setIsMeetingModalOpen(false);
+        if (!lastMeetingId) {
+            toast({
+                title: "Error",
+                description: "Please create a meeting before attaching a document.",
+                variant: "destructive"
+            });
+            return;
+        }
+        attachMeetingFileMutation.mutate({ id: lastMeetingId, file: meetingFile });
     };
 
     const handleModalClose = (open: boolean) => {
@@ -171,14 +179,42 @@ export default function ReceptionDashboard() {
 
     const createMeetingMutation = useMutation({
         mutationFn: async (data: any) => {
-            await apiRequest("POST", "/api/reception/meetings", data);
+            const res = await apiRequest("POST", "/api/reception/meetings", data);
+            return await res.json();
         },
-        onSuccess: () => {
+        onSuccess: (response: any) => {
             queryClient.invalidateQueries({ queryKey: ['/api/reception/meetings'] });
             toast({ title: "Meeting Created", description: `Meeting added to the Expected Client list.` });
             setSelectedCompany("");
             setSelectedPerson("");
             setSelectedService("");
+            setLastMeetingId(response?.data?.id ?? null);
+        }
+    });
+
+    const attachMeetingFileMutation = useMutation({
+        mutationFn: async ({ id, file }: { id: string; file: File }) => {
+            const fileUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+                reader.readAsDataURL(file);
+            });
+            const res = await apiRequest("PATCH", `/api/reception/meetings/${id}/file`, { fileUrl });
+            return await res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['/api/reception/meetings'] });
+            toast({ title: "Success", description: "Meeting document securely uploaded." });
+            setMeetingFile(null);
+            setIsMeetingModalOpen(false);
+        },
+        onError: (error: any) => {
+            toast({
+                title: "Error",
+                description: error?.message || "Failed to attach meeting document.",
+                variant: "destructive"
+            });
         }
     });
 
@@ -208,7 +244,7 @@ export default function ReceptionDashboard() {
     };
 
     return (
-        <div className="p-4 bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 min-h-screen font-sans">
+        <div className="p-4 bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 min-h-screen font-sans">
             {/* Header */}
             <div className="mb-6 flex items-center gap-1.5 text-[15px] font-bold tracking-tight px-2">
                 <span className="text-slate-800 uppercase dark:text-zinc-100">DASHBOARD</span>
@@ -303,7 +339,7 @@ export default function ReceptionDashboard() {
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse">
                                     <thead>
-                                        <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 border-b border-white">
+                                        <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 border-b border-white">
                                             <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tl dark:text-zinc-300">No#</th>
                                             <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
                                             <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</th>
@@ -314,7 +350,7 @@ export default function ReceptionDashboard() {
                                     </thead>
                                     <tbody>
                                         {inProcessClients.map((row: any, idx: number) => (
-                                            <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors dark:border-zinc-800">
+                                            <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
                                                 <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{idx + 1}</td>
                                                 <td className="py-4 px-4 text-[13px] font-semibold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
                                                 <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.service}</td>
@@ -346,14 +382,14 @@ export default function ReceptionDashboard() {
                                     <div className="flex items-center gap-2 text-[13px] text-slate-600 self-end mb-5 dark:text-zinc-300">
                                         <div className="flex flex-col items-end gap-1">
                                             <span>Search:</span>
-                                            <input type="text" value={meetingSearch} onChange={(e) => setMeetingSearch(e.target.value)} className="h-8 w-[180px] text-[13px] border border-slate-200 rounded px-2 outline-none focus:border-[#059669] dark:border-zinc-800" />
+                                            <input type="text" value={meetingSearch} onChange={(e) => { setMeetingSearch(e.target.value); setMeetingPage(1); }} className="h-8 w-[180px] text-[13px] border border-slate-200 rounded px-2 outline-none focus:border-[#059669] dark:border-zinc-800" />
                                         </div>
                                     </div>
                                 </div>
                                 <div className="overflow-x-auto mt-[-10px]">
                                     <table className="w-full text-left border-collapse">
                                         <thead>
-                                            <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 border-b border-white">
+                                            <tr className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 border-b border-white">
                                                 <th className="py-3 px-4 text-[13px] font-bold text-slate-600 rounded-tl dark:text-zinc-300">No#</th>
                                                 <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Company</th>
                                                 <th className="py-3 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</th>
@@ -364,9 +400,11 @@ export default function ReceptionDashboard() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {filteredEndClients.map((row: any, idx: number) => (
-                                                <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors dark:border-zinc-800">
-                                                    <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{idx + 1}</td>
+                                            {filteredEndClients
+                                                .slice((meetingPage - 1) * meetingPageSize, meetingPage * meetingPageSize)
+                                                .map((row: any, idx: number) => (
+                                                <tr key={row.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
+                                                    <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{(meetingPage - 1) * meetingPageSize + idx + 1}</td>
                                                     <td className="py-4 px-4 text-[13px] font-semibold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
                                                     <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{row.service}</td>
                                                     <td className="py-4 px-4 text-[13px] font-medium text-slate-600 dark:text-zinc-300">{row.meeting}</td>
@@ -378,6 +416,29 @@ export default function ReceptionDashboard() {
                                         </tbody>
                                     </table>
                                 </div>
+                                {filteredEndClients.length > meetingPageSize && (
+                                    <div className="flex items-center justify-between mt-2">
+                                        <span className="text-[13px] text-slate-500 dark:text-zinc-400">
+                                            Showing {(meetingPage - 1) * meetingPageSize + 1} to {Math.min(meetingPage * meetingPageSize, filteredEndClients.length)} of {filteredEndClients.length} entries
+                                        </span>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setMeetingPage((p) => Math.max(1, p - 1))}
+                                                disabled={meetingPage === 1}
+                                                className="px-4 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Previous
+                                            </button>
+                                            <button
+                                                onClick={() => setMeetingPage((p) => (p * meetingPageSize < filteredEndClients.length ? p + 1 : p))}
+                                                disabled={meetingPage * meetingPageSize >= filteredEndClients.length}
+                                                className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Next
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -388,7 +449,7 @@ export default function ReceptionDashboard() {
                             <h2 className="text-[15px] font-bold text-slate-700 mt-2 dark:text-zinc-400">
                                 {expectedClientFilter === 'expected' ? 'Daily Expected Client' : 'Event Attendance'}
                             </h2>
-                            <Select value={expectedClientFilter} onValueChange={setExpectedClientFilter}>
+                            <Select value={expectedClientFilter} onValueChange={(v) => { setExpectedClientFilter(v); setExpectedClientPage(1); }}>
                                 <SelectTrigger className="w-[160px] h-9 text-[13px] font-semibold border-slate-200 focus:ring-0 text-slate-600 mt-2 dark:text-zinc-300 dark:border-zinc-800">
                                     <SelectValue />
                                 </SelectTrigger>
@@ -419,9 +480,11 @@ export default function ReceptionDashboard() {
                                             </td>
                                         </tr>
                                     ) : (
-                                        displayExpectedClients.map((row: any, idx: number) => (
+                                        displayExpectedClients
+                                            .slice((expectedClientPage - 1) * expectedClientPageSize, expectedClientPage * expectedClientPageSize)
+                                            .map((row: any, idx: number) => (
                                             <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{idx + 1}</td>
+                                                <td className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{(expectedClientPage - 1) * expectedClientPageSize + idx + 1}</td>
                                                 <td className="py-4 px-4 text-[13px] font-bold text-slate-600 uppercase dark:text-zinc-300">{row.company}</td>
                                                 <td className="py-4 px-4 text-[13px] font-medium text-slate-600 w-[140px] dark:text-zinc-300">{row.meeting}</td>
                                                 <td className="py-4 px-4 text-[13px] font-medium text-slate-500 w-[90px] dark:text-zinc-400">{row.time}</td>
@@ -437,6 +500,29 @@ export default function ReceptionDashboard() {
                                 </tbody>
                             </table>
                         </div>
+                        {displayExpectedClients.length > expectedClientPageSize && (
+                            <div className="flex items-center justify-between mt-3">
+                                <span className="text-[13px] text-slate-500 dark:text-zinc-400">
+                                    Showing {(expectedClientPage - 1) * expectedClientPageSize + 1} to {Math.min(expectedClientPage * expectedClientPageSize, displayExpectedClients.length)} of {displayExpectedClients.length} entries
+                                </span>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setExpectedClientPage((p) => Math.max(1, p - 1))}
+                                        disabled={expectedClientPage === 1}
+                                        className="px-4 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                    >
+                                        Previous
+                                    </button>
+                                    <button
+                                        onClick={() => setExpectedClientPage((p) => (p * expectedClientPageSize < displayExpectedClients.length ? p + 1 : p))}
+                                        disabled={expectedClientPage * expectedClientPageSize >= displayExpectedClients.length}
+                                        className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -483,7 +569,7 @@ export default function ReceptionDashboard() {
                                 ...(isSupportModuleEnabled() ? [{ name: 'Support Tickets', link: '/support/tickets' }] : []),
                             ].map((item, idx) => (
                                 <Link key={idx} href={item.link}>
-                                    <a className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 border border-slate-100 px-3 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors rounded-[2px] block w-full hover:no-underline dark:border-zinc-800 dark:hover:bg-zinc-800">
+                                    <a className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 border border-slate-100 px-3 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-100 transition-colors rounded-[2px] block w-full hover:no-underline dark:border-zinc-800 dark:hover:bg-zinc-800">
                                         <span className="text-[13px] font-medium text-[#1e6199] truncate dark:text-zinc-100">{item.name}</span>
                                         <ChevronRight className="h-3.5 w-3.5 text-slate-400 stroke-[2] shrink-0" />
                                     </a>
@@ -542,7 +628,7 @@ export default function ReceptionDashboard() {
                                             <div className="w-[6px] h-[6px] rounded-full bg-[#059669] shrink-0" />
                                         )}
                                     </div>
-                                    <span className="text-[12px] font-medium text-[#1e3a5f] font-sans tracking-tight leading-tight line-clamp-1 group-hover:text-slate-800 dark:text-zinc-100">{option}</span>
+                                    <span className="text-[12px] font-medium text-[#1e3a5f] font-sans tracking-tight leading-tight line-clamp-1 group-hover:text-slate-800 dark:text-zinc-100 dark:group-hover:text-zinc-100">{option}</span>
                                 </label>
                             ))}
                         </div>
@@ -555,7 +641,7 @@ export default function ReceptionDashboard() {
                     {/* Important Info section matches screenshot placement under 'Add' button */}
                     <div className="bg-white rounded-[10px] shadow-sm border border-slate-100 p-5 mt-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-slate-800 mb-4 dark:text-zinc-100">Important</h3>
-                        <div className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 rounded-md overflow-hidden grid grid-cols-2 divide-x divide-slate-100 shadow-[inset_0_0_2px_rgba(0,0,0,0.05)] text-slate-600 dark:text-zinc-300">
+                        <div className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 rounded-md overflow-hidden grid grid-cols-2 divide-x divide-slate-100 shadow-[inset_0_0_2px_rgba(0,0,0,0.05)] text-slate-600 dark:text-zinc-300">
                             <div className="flex justify-between px-3 py-2.5 bg-slate-100/50">
                                 <span className="text-[12px] font-bold">Notice</span>
                                 <span className="text-[12px] font-medium italic select-all">{stats.noticesCount}</span>
@@ -600,12 +686,12 @@ export default function ReceptionDashboard() {
                     </div>
                     <DialogFooter className="px-6 py-4 border-t border-slate-100 bg-white sm:justify-end flex gap-3 dark:bg-zinc-900 dark:border-zinc-800">
                         <DialogClose asChild>
-                            <button type="button" className="px-5 py-2 min-w-[80px] bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 hover:bg-slate-100 text-[#0f172a] text-[14px] font-bold rounded-[4px] transition-colors shadow-sm dark:hover:bg-zinc-800 dark:text-zinc-400">
+                            <button type="button" className="px-5 py-2 min-w-[80px] bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 hover:bg-slate-100 text-[#0f172a] text-[14px] font-bold rounded-[4px] transition-colors shadow-sm dark:hover:bg-zinc-800 dark:text-zinc-400">
                                 Close
                             </button>
                         </DialogClose>
-                        <button type="button" className="px-5 py-2 min-w-[80px] bg-[#059669] hover:bg-[#047857] text-white text-[14px] font-bold rounded-[4px] transition-colors shadow-sm" onClick={handleSaveMeetingFile}>
-                            Save
+                        <button type="button" disabled={attachMeetingFileMutation.isPending} className="px-5 py-2 min-w-[80px] bg-[#059669] hover:bg-[#047857] text-white text-[14px] font-bold rounded-[4px] transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed" onClick={handleSaveMeetingFile}>
+                            {attachMeetingFileMutation.isPending ? "Saving..." : "Save"}
                         </button>
                     </DialogFooter>
                 </DialogContent>

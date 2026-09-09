@@ -53,6 +53,9 @@ type GmPoolRow = {
   approvalStatus?: string;
   accountManagerStatus?: string;
   finalStatus?: string;
+  hodComment?: string;
+  hodApprovedAt?: string;
+  accountManagerApprovedAt?: string;
   isLoan?: boolean;
   isPartialPayment?: boolean;
   notes?: string;
@@ -114,6 +117,7 @@ type CompanyOption = {
   id: string;
   companyName: string;
   accountName?: string | null;
+  drmId?: string | null;
 };
 
 type FormState = {
@@ -152,21 +156,83 @@ const defaultFormState: FormState = {
   loanMode: "none",
 };
 
+type ApprovalTone = "ok" | "bad" | "warn";
+
+const APPROVAL_TONE_CLASS: Record<ApprovalTone, string> = {
+  ok: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-400",
+  bad: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400",
+  warn: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-400",
+};
+
+// The real approval workflow is driven by `approvalStatus` (pending_hod ->
+// pending_managers -> pending_super_hod -> approved, or a rejected_by_* branch)
+// plus `accountManagerStatus` for the account-manager gate specifically. These
+// are plain DB columns, not role-scoped, so the same label is correct no matter
+// which role (HOD or Account Manager) is viewing the table.
+function getHodApprovalLabel(row: GmPoolRow): { text: string; tone: ApprovalTone } {
+  const approvalStatus = (row.approvalStatus || "").toLowerCase().trim();
+  if (approvalStatus === "rejected_by_hod") return { text: "HOD Rejected", tone: "bad" };
+  if (!approvalStatus || approvalStatus === "pending_hod") return { text: "HOD Pending", tone: "warn" };
+  return { text: "HOD Approved", tone: "ok" };
+}
+
+// The API's own `payDate` field is a hardcoded null placeholder (server/gm-pool-routes.ts).
+// The real pay date lives per-installment inside `installments` (set at HOD verification
+// time, see gmVerificationInstallmentSchema in hod-routes.ts) — show the most recent one.
+function getLatestPayDate(row: GmPoolRow): string {
+  const installments = Array.isArray(row.installments) ? row.installments : [];
+  const payDates = installments
+    .map((inst: any) => inst?.payDate)
+    .filter((d: any): d is string => typeof d === "string" && d.trim().length > 0);
+  if (payDates.length === 0) return "-";
+  return payDates[payDates.length - 1];
+}
+
+function formatRounded(val: any): string {
+  if (val == null || val === "" || val === "-") return "-";
+  const num = Number(val);
+  if (!Number.isFinite(num)) return String(val);
+  return String(Math.round(num));
+}
+
+function getAccountApprovalLabel(row: GmPoolRow): { text: string; tone: ApprovalTone } {
+  const approvalStatus = (row.approvalStatus || "").toLowerCase().trim();
+  const accountManagerStatus = (row.accountManagerStatus || "").toLowerCase().trim();
+  if (accountManagerStatus === "rejected" || approvalStatus === "rejected_by_account_manager") {
+    return { text: "Account Rejected", tone: "bad" };
+  }
+  // account-routes.ts's own approval path moves approvalStatus straight to
+  // pending_super_hod / approved without always touching accountManagerStatus,
+  // so either signal proves the account stage is done.
+  if (
+    accountManagerStatus === "approved" ||
+    approvalStatus === "pending_super_hod" ||
+    approvalStatus === "approved"
+  ) {
+    return { text: "Account Approved", tone: "ok" };
+  }
+  return { text: "Account Pending", tone: "warn" };
+}
+
 function formatCompany(option: CompanyOption) {
   const name = option.companyName || "";
   const account = option.accountName || "";
+  const drm = option.drmId || "";
   const parts = account && account.toLowerCase() !== name.toLowerCase() ? [name, account] : [name];
-  return parts.filter(Boolean).join(" • ");
+  const baseLabel = parts.filter(Boolean).join(" • ");
+  return drm ? `${baseLabel} (${drm})` : baseLabel;
 }
 
 function CompanySearchSelect({
   value,
   onChange,
   error,
+  disabled,
 }: {
   value: { id: string; label: string };
   onChange: (val: { id: string; label: string }) => void;
   error?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -194,24 +260,35 @@ function CompanySearchSelect({
   const options = companies || [];
 
   const selectedLabel = value.label || "";
+  const selectedLabelMatch = selectedLabel.match(/^(.*)\s\(([^()]+)\)$/);
+  const selectedLabelMain = selectedLabelMatch ? selectedLabelMatch[1] : selectedLabel;
+  const selectedDrmId = selectedLabelMatch ? selectedLabelMatch[2] : "";
 
   return (
     <div className="space-y-1">
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open && !disabled} onOpenChange={(next) => !disabled && setOpen(next)}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             role="combobox"
+            disabled={disabled}
             className={cn(
-              "w-full justify-between text-left font-normal",
+              "w-full justify-between items-start text-left font-normal",
               !selectedLabel && "text-muted-foreground",
             )}
           >
-            {selectedLabel || "Search Company"}
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <span className="flex flex-col min-w-0 flex-1 gap-0.5">
+              <span className="truncate text-xs">{selectedLabelMain || "Search Company"}</span>
+              {selectedDrmId ? (
+                <span className="truncate text-[10px] font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                  {selectedDrmId}
+                </span>
+              ) : null}
+            </span>
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50 mt-0.5" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" side="bottom" sideOffset={4} className="p-0 w-[260px]">
+        <PopoverContent align="start" side="bottom" sideOffset={4} className="p-0 w-[280px]">
           <Command shouldFilter={false}>
             <CommandInput
               placeholder="Search Company Through Id/Name"
@@ -241,8 +318,15 @@ function CompanySearchSelect({
                         company.id === value.id ? "opacity-100" : "opacity-0",
                       )}
                     />
-                    <div className="flex flex-col">
-                      <span className="font-medium">{company.companyName}</span>
+                    <div className="flex flex-col w-full">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-medium">{company.companyName}</span>
+                        {company.drmId ? (
+                          <span className="text-[11px] font-mono font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-1 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 shrink-0">
+                            {company.drmId}
+                          </span>
+                        ) : null}
+                      </div>
                       {company.accountName ? (
                         <span className="text-xs text-muted-foreground">
                           {company.accountName}
@@ -256,7 +340,7 @@ function CompanySearchSelect({
           </Command>
         </PopoverContent>
       </Popover>
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="text-xs text-destructive font-semibold mt-1">{error}</p> : null}
     </div>
   );
 }
@@ -269,7 +353,6 @@ export default function GmPoolAddGm() {
   const [search, setSearch] = useState("");
   const [viewRow, setViewRow] = useState<GmPoolRow | null>(null);
   const [editRow, setEditRow] = useState<GmPoolRow | null>(null);
-  const [editDraft, setEditDraft] = useState<Partial<GmPoolRow>>({});
   const [showForm, setShowForm] = useState(false);
   const { canCreateGm } = useServiceExecutiveCreateGates();
   const [withdrawId, setWithdrawId] = useState<string | null>(null);
@@ -286,6 +369,127 @@ export default function GmPoolAddGm() {
     label: "",
   });
   const { toast } = useToast();
+
+  // Auto-load: once a company is selected, fetch its contact info + most
+  // recent GM's package/pricing (once per selection, not per keystroke —
+  // separate from the live search query above).
+  const { data: companyProfile } = useQuery<{
+    customer: { email?: string; phone?: string; mobile?: string; region?: string; city?: string; address?: string };
+    lastGm: { packageName?: string; amountPkr?: string | number; dollarRate?: string | number } | null;
+  }>({
+    queryKey: ["customer-gm-profile", companySelection.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/customers/${companySelection.id}/gm-profile`, {
+        headers: { ...getAuthHeader() },
+        credentials: "include",
+      });
+      if (!res.ok) return { customer: {}, lastGm: null };
+      return res.json();
+    },
+    enabled: !!companySelection.id,
+    staleTime: 60_000,
+  });
+
+  // Prefill the package + PKR amount from the customer's last GM as an
+  // editable suggestion — only when the user hasn't already typed something,
+  // so re-selecting a company never clobbers in-progress input.
+  useEffect(() => {
+    if (!companyProfile?.lastGm) return;
+    const { packageName, amountPkr, dollarRate } = companyProfile.lastGm;
+    setForm((prev) => {
+      if (prev.packageId || prev.pkrAmount || prev.dollarRate) return prev;
+      const matchedPackage = packageName
+        ? packages.find((p) => p.name.toLowerCase() === packageName.toLowerCase())
+        : undefined;
+      return {
+        ...prev,
+        packageId: matchedPackage?.id ?? prev.packageId,
+        pkrAmount: amountPkr != null ? String(amountPkr) : prev.pkrAmount,
+        dollarRate: dollarRate != null ? String(dollarRate) : prev.dollarRate,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyProfile]);
+
+  // Real-time duplicate company check
+  const companyNameToValidate = useMemo(() => {
+    const raw = companySelection.label || form.companyName || "";
+    return raw.split(/•|·/)[0].trim();
+  }, [companySelection.label, form.companyName]);
+
+  const memberIdInput = form.memberId.trim();
+  const orderIdInput = form.orderId.trim();
+
+  const { data: gmDupCheckData } = useQuery<{ memberIdExists?: boolean; orderIdExists?: boolean; companyExists?: boolean }>({
+    queryKey: ["check-gm-duplicates", companyNameToValidate, memberIdInput, orderIdInput, companySelection.id, editRow?.id],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (companyNameToValidate) params.set("companyName", companyNameToValidate);
+      if (memberIdInput) params.set("memberId", memberIdInput);
+      if (orderIdInput) params.set("orderId", orderIdInput);
+      // Editing/resubmitting re-sends this same entry's own Member Id/Order Id —
+      // exclude it so it doesn't permanently "collide with itself".
+      if (editRow?.id) params.set("excludeId", editRow.id);
+      const res = await fetch(`/api/gm-pool/check-duplicate?${params.toString()}`, {
+        headers: { ...getAuthHeader() },
+        credentials: "include",
+      });
+      if (!res.ok) return {};
+      return res.json();
+    },
+    enabled: companyNameToValidate.length >= 2 || memberIdInput.length >= 2 || orderIdInput.length >= 2 || !!companySelection.id,
+    staleTime: 3000,
+  });
+
+  const { data: duplicateCheckData } = useQuery<{ duplicates?: any[]; hasMatches?: boolean }>({
+    queryKey: ["check-duplicate-company-gm", companyNameToValidate, companySelection.id],
+    queryFn: async () => {
+      if (!companyNameToValidate || companyNameToValidate.length < 2) return { duplicates: [], hasMatches: false };
+      const res = await fetch(`/api/check-duplicate?company=${encodeURIComponent(companyNameToValidate)}`, {
+        headers: { ...getAuthHeader() },
+        credentials: "include",
+      });
+      if (!res.ok) return { duplicates: [], hasMatches: false };
+      return res.json();
+    },
+    enabled: companyNameToValidate.length >= 2 || !!companySelection.id,
+    staleTime: 5000,
+  });
+
+  // Selecting an existing company from the search dropdown is the normal,
+  // expected way to add a GM for them — it must NOT be flagged as a duplicate.
+  // The only real problem is this company already having an active GM entry.
+  // The customer-name-collision check only makes sense when the user typed a
+  // fresh name instead of picking one from search (nudges them to search/select
+  // instead of risking a duplicate customer record).
+  const isCompanyDuplicate = useMemo(() => {
+    // Editing/resubmitting never changes the company (the field is locked) —
+    // this company obviously already exists as a customer, so the check is moot.
+    if (editRow) return false;
+    if (gmDupCheckData?.companyExists) return true;
+    if (companySelection.id) return false;
+    if (!companyNameToValidate || companyNameToValidate.length < 2) return false;
+    if (duplicateCheckData?.hasMatches || (duplicateCheckData?.duplicates && duplicateCheckData.duplicates.length > 0)) {
+      return true;
+    }
+    return false;
+  }, [editRow, companySelection.id, gmDupCheckData?.companyExists, companyNameToValidate, duplicateCheckData]);
+
+  const companyDuplicateMessage = useMemo(() => {
+    if (gmDupCheckData?.companyExists) return "This company already has an active GM entry.";
+    if (!companySelection.id) return "A customer with this name already exists — search and select them instead.";
+    return "Company already exists.";
+  }, [gmDupCheckData?.companyExists, companySelection.id]);
+
+  const isMemberIdDuplicate = useMemo(() => {
+    if (!memberIdInput) return false;
+    return !!gmDupCheckData?.memberIdExists;
+  }, [memberIdInput, gmDupCheckData?.memberIdExists]);
+
+  const isOrderIdDuplicate = useMemo(() => {
+    if (!orderIdInput) return false;
+    return !!gmDupCheckData?.orderIdExists;
+  }, [orderIdInput, gmDupCheckData?.orderIdExists]);
 
   // ── Role detection ────────────────────────────────────────────────────────
   const userRole = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
@@ -314,6 +518,19 @@ export default function GmPoolAddGm() {
       return res.json();
     },
   });
+
+  // A company having ANY past GM row must not block a fresh one — only a
+  // still-active one should (matches the server's own duplicate-check
+  // exclusion, gm-pool-routes.ts: rejected/cancelled/withdrawn are not
+  // "active"). Without this, a company whose only GM was ever Rejected or
+  // Withdrawn could never get a new GM again from this form.
+  const hasActiveGmForSelectedCompany = useMemo(() => {
+    if (!companySelection.id || !data?.data) return false;
+    return data.data.some((row) => {
+      const s = (row.status || "").toLowerCase().trim();
+      return s !== "rejected" && s !== "cancelled" && s !== "withdrawn";
+    });
+  }, [companySelection.id, data?.data]);
 
 
 
@@ -352,22 +569,66 @@ export default function GmPoolAddGm() {
 
   // Auto-fill loan dollar when package or loan mode changes
   useEffect(() => {
-    if (selectedPackage && form.loanMode !== "none") {
+    if (!selectedPackage) return;
+
+    if (form.loanMode === "none") {
+      // Full GM: Extra Discount is still stored as an installment row (same
+      // figure as installment mode's row 0), just a single one — kept in sync
+      // whenever PKR Amount/Dollar Rate/Alibaba Discount/Package change.
       setLoanRows((prev) => {
-        // Always update the first row if it's the only one
-        if (prev.length === 1) {
-          const dollarVal = numericValues.finalOrderDollar;
-          const pkrVal = dollarVal * numericValues.dollarRateNum;
-          return [{
-            ...prev[0],
-            dollar: dollarVal.toString(),
-            pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : ""
-          }];
-        }
-        return prev;
+        const dollar = numericValues.extraDollarDiscount;
+        const pkr = dollar * numericValues.dollarRateNum;
+        const row0 = prev[0] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
+        return [{ ...row0, dollar: dollar.toString(), pkrAmount: pkr > 0 ? pkr.toFixed(0) : "" }];
+      });
+      return;
+    }
+
+    if (form.loanMode === "loan") {
+      // Loan GM is always a single row — collapse away any extra rows left
+      // over from switching from Partial GM (which allows Add Row).
+      setLoanRows((prev) => {
+        const dollarVal = numericValues.finalOrderDollar;
+        const pkrVal = dollarVal * numericValues.dollarRateNum;
+        const row0 = prev[0] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
+        return [{
+          ...row0,
+          dollar: dollarVal.toString(),
+          pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : ""
+        }];
+      });
+    } else if (form.loanMode === "installment") {
+      // Installment mode keeps rows 1 & 2 continuously synced to the Extra $
+      // Discount / Customer Dollar amounts — whenever PKR Amount (or Dollar Rate/
+      // Alibaba Discount/Package) changes and recalculates those two figures, these
+      // rows must follow automatically, not just on the first switch into this mode.
+      // Any additional rows the user added manually (index 2+) are left untouched,
+      // and each row's own Cheque No / Pay Date are preserved.
+      setLoanRows((prev) => {
+        const dollar1 = numericValues.extraDollarDiscount;
+        const dollar2 = numericValues.customerDollar;
+        const pkr1 = dollar1 * numericValues.dollarRateNum;
+        const pkr2 = dollar2 * numericValues.dollarRateNum;
+
+        const row0 = prev[0] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
+        const row1 = prev[1] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
+        const rest = prev.slice(2);
+
+        return [
+          { ...row0, dollar: dollar1.toString(), pkrAmount: pkr1 > 0 ? pkr1.toFixed(0) : "" },
+          { ...row1, dollar: dollar2.toString(), pkrAmount: pkr2 > 0 ? pkr2.toFixed(0) : "" },
+          ...rest,
+        ];
       });
     }
-  }, [selectedPackage, form.loanMode, numericValues.finalOrderDollar, numericValues.dollarRateNum]);
+  }, [
+    selectedPackage,
+    form.loanMode,
+    numericValues.finalOrderDollar,
+    numericValues.extraDollarDiscount,
+    numericValues.customerDollar,
+    numericValues.dollarRateNum,
+  ]);
 
   // Auto-update PKR in loan rows when Dollar Rate changes
   useEffect(() => {
@@ -400,9 +661,12 @@ export default function GmPoolAddGm() {
 
   const validateForm = () => {
     const errs: FormErrors = {};
-    if (!companySelection.id) errs.companyName = "Company is required";
+    if (!companySelection.id && !form.companyName) errs.companyName = "Company is required";
+    else if (isCompanyDuplicate) errs.companyName = companyDuplicateMessage;
     if (!form.memberId.trim()) errs.memberId = "Member Id is required";
+    else if (isMemberIdDuplicate) errs.memberId = "Member ID already exists.";
     if (!form.orderId.trim()) errs.orderId = "Order Id is required";
+    else if (isOrderIdDuplicate) errs.orderId = "Order ID already exists.";
     if (!form.packageId.trim() || !selectedPackage) errs.packageId = "Package is required";
 
     const pkrAmountNum = Number(form.pkrAmount);
@@ -417,8 +681,11 @@ export default function GmPoolAddGm() {
     }
     if (alibabaDiscountNum < 0) {
       errs.alibabaDiscount = "Alibaba Discount cannot be negative";
+    } else if (alibabaDiscountNum > (selectedPackage?.orderDollar ?? selectedPackage?.priceUsd ?? 0)) {
+      // Server rejects this same case (gm-pool-routes.ts) — block client-side too
+      // instead of only warning, so a submit can't round-trip into a guaranteed 400.
+      errs.alibabaDiscount = "Alibaba Discount cannot exceed the order dollar amount";
     }
-    // No longer blocking if alibabaDiscountNum > orderDollar
     if (!form.paymentStatus.trim()) errs.paymentStatus = "Payment Status is required";
     if (!form.type.trim()) errs.type = "Type is required";
 
@@ -442,6 +709,16 @@ export default function GmPoolAddGm() {
         // `if (Math.abs(totalLoanDollar - pkgPrice) > 0.01)` will error.
         // I should probably fix this validation to compare against `orderDollar` (which is numericValues.finalOrderDollar).
       }
+
+      // Cheque No and Pay Date are required on every installment row that
+      // actually carries an amount — the form must not submit without them.
+      const rowMissingDetails = loanRows.find((row) => {
+        const hasAmount = (Number(row.dollar) || 0) > 0;
+        return hasAmount && (!row.chequeNo?.trim() || !row.payDate?.trim());
+      });
+      if (rowMissingDetails) {
+        errs.general = "Cheque No and Pay Date are required for every installment row.";
+      }
     }
 
     setErrors(errs);
@@ -455,12 +732,19 @@ export default function GmPoolAddGm() {
     };
   };
 
+  const resetAddGmForm = () => {
+    setForm(defaultFormState);
+    setCompanySelection({ id: "", label: "" });
+    setLoanRows([{ dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }]);
+    setErrors({});
+    setEditRow(null);
+  };
+
   const createMutation = useMutation({
     mutationFn: async (payload: any) => mutationRequest("POST", "/api/gm", payload),
     onSuccess: () => {
       toast({ title: "GM entry created" });
-      setForm(defaultFormState);
-      setCompanySelection({ id: "", label: "" });
+      resetAddGmForm();
       queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
       queryClient.invalidateQueries({ queryKey: ["/api/gm-bv-pool"] });
       setLocation("/customers/gmbv-pool");
@@ -474,6 +758,32 @@ export default function GmPoolAddGm() {
   const handleSubmit = () => {
     const { valid, pkrAmountNum, dollarRateNum, alibabaDiscountNum } = validateForm();
     if (!valid || !selectedPackage) return;
+
+    if (editRow) {
+      editMutation.mutate({
+        id: editRow.id,
+        body: {
+          package: selectedPackage.name,
+          type: form.type.trim(),
+          memberId: form.memberId.trim(),
+          orderId: form.orderId.trim(),
+          orderDollar: numericValues.orderDollar,
+          finalOrderDollar: numericValues.finalOrderDollar,
+          customerDollar: numericValues.customerDollar,
+          dollarRate: dollarRateNum,
+          pkr: pkrAmountNum,
+          alibabaDiscount: alibabaDiscountNum,
+          extraDollarDiscount: numericValues.extraDollarDiscount,
+          extraDiscountPkr: numericValues.extraDiscountPkr,
+          paymentStatus: form.paymentStatus.trim(),
+          dropout: form.dropout.trim() || null,
+          extension: form.extension.trim() || null,
+          detail: form.detail.trim() || null,
+          installments: loanRows.map((row) => ({ ...row, pkr: row.pkrAmount })),
+        },
+      });
+      return;
+    }
 
     const payload = {
       companyId: /^[0-9a-fA-F-]{36}$/.test(companySelection.id) ? companySelection.id : undefined,
@@ -492,9 +802,9 @@ export default function GmPoolAddGm() {
       detail: form.detail.trim() || undefined,
       loanMode: form.loanMode ?? "none",
       paymentProofUrl: null,
-      installments: form.loanMode !== "none"
-        ? loanRows.map(row => ({ ...row, pkr: row.pkrAmount }))
-        : [],
+      // Full GM ("none") now carries its single Extra Discount installment row
+      // too, same as Partial/Loan — no longer force-emptied.
+      installments: loanRows.map(row => ({ ...row, pkr: row.pkrAmount })),
     };
 
     createMutation.mutate(payload);
@@ -556,11 +866,20 @@ export default function GmPoolAddGm() {
 
   const editMutation = useMutation({
     mutationFn: async (payload: { id: string; body: any }) => {
-      return apiRequest("PATCH", `/api/gm-pool/${payload.id}`, payload.body);
+      return mutationRequest<{ success: boolean; resubmitted?: boolean; message?: string }>(
+        "PATCH",
+        `/api/gm-pool/${payload.id}`,
+        payload.body,
+      );
     },
-    onSuccess: () => {
-      toast({ title: "Updated", description: "GM entry updated successfully" });
-      setEditRow(null);
+    onSuccess: (data) => {
+      toast({
+        title: data?.resubmitted ? "Resubmitted to HOD" : "Updated",
+        description: data?.message || "GM entry updated successfully",
+      });
+      resetAddGmForm();
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
     },
     onError: (err: any) => {
       toast({
@@ -597,33 +916,51 @@ export default function GmPoolAddGm() {
     },
   });
 
+  // Opens the same full Add GM form used for creating a new entry, pre-filled
+  // from this row, so Package/PKR Amount/etc. are all genuinely editable
+  // instead of the old cut-down 6-field dialog. Company stays locked (see
+  // CompanySearchSelect's disabled prop below) — resubmitting fixes the GM's
+  // terms, not which customer it belongs to.
   const handleOpenEdit = (row: GmPoolRow) => {
-    setEditRow(row);
-    setEditDraft({
-      package: row.package,
-      type: row.type,
-      orderDollar: row.orderDollar,
-      customerDollar: row.customerDollar,
-      dollarRate: row.dollarRate,
-      pkr: row.pkr,
-      status: row.status,
-    });
-  };
+    const matchedPackage = row.package
+      ? packages.find((p) => p.name.toLowerCase().trim() === String(row.package).toLowerCase().trim())
+      : undefined;
+    const rowInstallments = Array.isArray(row.installments) ? row.installments : [];
 
-  const handleSubmitEdit = () => {
-    if (!editRow?.id) return;
-    editMutation.mutate({
-      id: editRow.id,
-      body: {
-        package: editDraft.package,
-        type: editDraft.type,
-        orderDollar: editDraft.orderDollar ?? null,
-        customerDollar: editDraft.customerDollar ?? null,
-        dollarRate: editDraft.dollarRate ?? null,
-        pkr: editDraft.pkr ?? null,
-        status: editDraft.status,
-      },
+    setEditRow(row);
+    setErrors({});
+    const companyLabel = row.company || row.customerName || "";
+    setCompanySelection({
+      id: "",
+      label: row.drmId ? `${companyLabel} (${row.drmId})` : companyLabel,
     });
+    setForm({
+      ...defaultFormState,
+      companyName: row.company || row.customerName || "",
+      memberId: row.memberId || "",
+      orderId: row.orderId || "",
+      packageId: matchedPackage?.id || "",
+      pkrAmount: row.pkr != null ? String(row.pkr) : "",
+      dollarRate: row.dollarRate != null ? String(row.dollarRate) : "",
+      alibabaDiscount: row.abDiscount != null ? String(row.abDiscount) : "0",
+      paymentStatus: row.paymentStatus || "",
+      type: row.type || "New",
+      dropout: row.dropout || "",
+      extension: (row as any).extension || "",
+      detail: "",
+      loanMode: row.isLoan ? "loan" : row.isPartialPayment ? "installment" : "none",
+    });
+    setLoanRows(
+      rowInstallments.length
+        ? rowInstallments.map((inst: any) => ({
+            dollar: inst?.dollar != null ? String(inst.dollar) : "",
+            pkrAmount: inst?.pkrAmount != null ? String(inst.pkrAmount) : inst?.pkr != null ? String(inst.pkr) : "",
+            chequeNo: inst?.chequeNo || "",
+            payDate: inst?.payDate || "",
+          }))
+        : [{ dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }],
+    );
+    setShowForm(true);
   };
 
   return (
@@ -638,7 +975,14 @@ export default function GmPoolAddGm() {
             <Button
               variant="outline"
               className="ml-auto"
-              onClick={() => setShowForm((prev) => !prev)}
+              onClick={() => {
+                if (showForm) {
+                  resetAddGmForm();
+                  setShowForm(false);
+                } else {
+                  setShowForm(true);
+                }
+              }}
               data-testid="button-toggle-add-gm-form"
             >
               {showForm ? "Hide Add GM" : "Add GM"}
@@ -650,10 +994,24 @@ export default function GmPoolAddGm() {
       {showForm ? (
         <Card className="border border-slate-200 shadow-sm dark:border-zinc-800">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-lg">Add GM</CardTitle>
-            <p className="text-sm text-muted-foreground">Fill the details to add a new GM entry.</p>
+            <CardTitle className="text-lg">
+              {editRow ? (editRow.approvalStatus === "rejected_by_hod" ? "Resubmit GM Entry to HOD" : "Edit GM Entry") : "Add GM"}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {editRow
+                ? editRow.approvalStatus === "rejected_by_hod"
+                  ? "This entry was rejected by the HOD. Fix the details below and resubmit — it will go straight back to the HOD's approval queue."
+                  : "Update key GM fields."
+                : "Fill the details to add a new GM entry."}
+            </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {editRow?.approvalStatus === "rejected_by_hod" && editRow?.hodComment && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
+                <span className="font-semibold">HOD's reason: </span>
+                {editRow.hodComment}
+              </div>
+            )}
             {/* Row 1 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
               <div className="space-y-2">
@@ -664,7 +1022,8 @@ export default function GmPoolAddGm() {
                     setCompanySelection(val);
                     updateField("companyName", val.label);
                   }}
-                  error={errors.companyName}
+                  error={errors.companyName || (isCompanyDuplicate ? companyDuplicateMessage : undefined)}
+                  disabled={!!editRow}
                 />
               </div>
               <div className="space-y-2">
@@ -674,7 +1033,11 @@ export default function GmPoolAddGm() {
                   value={form.memberId}
                   onChange={(e) => updateField("memberId", e.target.value)}
                 />
-                {errors.memberId ? <p className="text-xs text-destructive">{errors.memberId}</p> : null}
+                {errors.memberId || isMemberIdDuplicate ? (
+                  <p className="text-xs text-destructive font-semibold mt-1">
+                    {errors.memberId || "Member ID already exists."}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label>Order Id</Label>
@@ -683,7 +1046,11 @@ export default function GmPoolAddGm() {
                   value={form.orderId}
                   onChange={(e) => updateField("orderId", e.target.value)}
                 />
-                {errors.orderId ? <p className="text-xs text-destructive">{errors.orderId}</p> : null}
+                {errors.orderId || isOrderIdDuplicate ? (
+                  <p className="text-xs text-destructive font-semibold mt-1">
+                    {errors.orderId || "Order ID already exists."}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label>Package</Label>
@@ -731,6 +1098,7 @@ export default function GmPoolAddGm() {
                       : ""
                   }
                 />
+                <p className="text-[11px] text-muted-foreground">What the customer actually pays (PKR ÷ Dollar Rate).</p>
               </div>
               <div className="space-y-1">
                 <Label>AB Dollar</Label>
@@ -759,6 +1127,7 @@ export default function GmPoolAddGm() {
                       : ""
                   }
                 />
+                <p className="text-[11px] text-muted-foreground">Package price minus AB Dollar — what the order should cost, not a PKR conversion.</p>
               </div>
             </div>
 
@@ -815,7 +1184,7 @@ export default function GmPoolAddGm() {
                   className="bg-green-50 border-green-200 font-bold"
                   value={
                     Number.isFinite(numericValues.extraDiscountPkr)
-                      ? numericValues.extraDiscountPkr.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      ? Math.round(numericValues.extraDiscountPkr).toLocaleString()
                       : ""
                   }
                 />
@@ -901,40 +1270,50 @@ export default function GmPoolAddGm() {
               </div>
             </div>
 
-            {/* Loan / Installment */}
-            <div className="flex flex-wrap items-center gap-6">
-              <div className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  id="loan"
-                  name="loanMode"
-                  checked={form.loanMode === "loan"}
-                  onChange={() => updateField("loanMode", "loan")}
-                />
-                <Label htmlFor="loan" className="cursor-pointer">
-                  Loan
-                </Label>
+            {/* Payment Type: Full / Partial / Loan — an explicit, equal-weight choice.
+                Values stay "none"/"installment"/"loan" (form.loanMode) so downstream
+                loan-row/installment logic is unchanged; only the presentation is a real
+                3-way selector instead of two radios plus a "clear to get Full" ghost button. */}
+            <div className="space-y-2">
+              <Label>Payment Type</Label>
+              <div className="flex flex-wrap items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    id="payment-type-full"
+                    name="loanMode"
+                    checked={form.loanMode === "none"}
+                    onChange={() => updateField("loanMode", "none")}
+                  />
+                  <Label htmlFor="payment-type-full" className="cursor-pointer">
+                    Full GM
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    id="payment-type-partial"
+                    name="loanMode"
+                    checked={form.loanMode === "installment"}
+                    onChange={() => updateField("loanMode", "installment")}
+                  />
+                  <Label htmlFor="payment-type-partial" className="cursor-pointer">
+                    Partial GM
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    id="payment-type-loan"
+                    name="loanMode"
+                    checked={form.loanMode === "loan"}
+                    onChange={() => updateField("loanMode", "loan")}
+                  />
+                  <Label htmlFor="payment-type-loan" className="cursor-pointer">
+                    Loan GM
+                  </Label>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="radio"
-                  id="installment"
-                  name="loanMode"
-                  checked={form.loanMode === "installment"}
-                  onChange={() => updateField("loanMode", "installment")}
-                />
-                <Label htmlFor="installment" className="cursor-pointer">
-                  Installment
-                </Label>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="px-2 text-xs text-muted-foreground"
-                onClick={() => updateField("loanMode", "none")}
-              >
-                Clear selection (Full GM)
-              </Button>
             </div>
 
             {form.loanMode !== "none" ? (
@@ -970,7 +1349,39 @@ export default function GmPoolAddGm() {
                             const pkr = val && numericValues.dollarRateNum > 0
                               ? (Number(val) * numericValues.dollarRateNum).toFixed(0)
                               : copy[index].pkrAmount;
+                            const oldDollar = Number(copy[index].dollar) || 0;
+                            const newDollar = Number(val) || 0;
+                            const delta = newDollar - oldDollar;
                             copy[index] = { ...copy[index], dollar: val, pkrAmount: pkr };
+
+                            // For a manually-added 3rd+ row, whatever amount is typed
+                            // here must come out of the currently-largest other row,
+                            // so the total keeps matching Total Order Dollar instead of
+                            // the user having to adjust it themselves.
+                            if (index >= 2 && delta !== 0) {
+                              let largestIdx = -1;
+                              let largestVal = -Infinity;
+                              copy.forEach((r, i) => {
+                                if (i === index) return;
+                                const v = Number(r.dollar) || 0;
+                                if (v > largestVal) { largestVal = v; largestIdx = i; }
+                              });
+                              if (largestIdx !== -1) {
+                                // Round to 2dp — plain floating-point subtraction here
+                                // (e.g. 513.29 - 100) produces junk like
+                                // 413.28999999999996, not a clean 413.29.
+                                const newLargestDollar = Math.max(0, Math.round((largestVal - delta) * 100) / 100);
+                                const newLargestPkr = numericValues.dollarRateNum > 0
+                                  ? (newLargestDollar * numericValues.dollarRateNum).toFixed(0)
+                                  : copy[largestIdx].pkrAmount;
+                                copy[largestIdx] = {
+                                  ...copy[largestIdx],
+                                  dollar: newLargestDollar.toString(),
+                                  pkrAmount: newLargestPkr,
+                                };
+                              }
+                            }
+
                             return copy;
                           });
                         }}
@@ -1024,7 +1435,7 @@ export default function GmPoolAddGm() {
                           }}
                         />
                       </div>
-                      {loanRows.length > 1 && (
+                      {form.loanMode === "installment" && loanRows.length > 1 && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1040,16 +1451,18 @@ export default function GmPoolAddGm() {
                   </div>
                 ))}
                 <div className="flex items-center justify-between pt-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 w-fit"
-                    onClick={() =>
-                      setLoanRows((prev) => [...prev, { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }])
-                    }
-                  >
-                    Add Row
-                  </Button>
+                  {form.loanMode === "installment" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 w-fit"
+                      onClick={() =>
+                        setLoanRows((prev) => [...prev, { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }])
+                      }
+                    >
+                      Add Row
+                    </Button>
+                  )}
                   {errors.general && (
                     <p className="text-sm font-medium text-destructive animate-pulse">
                       {errors.general}
@@ -1070,18 +1483,42 @@ export default function GmPoolAddGm() {
               />
             </div>
 
-            <Button
-              className="bg-emerald-600 hover:bg-emerald-700 w-fit"
-              onClick={handleSubmit}
-              disabled={createMutation.isPending || Boolean(companySelection.id && data?.data && data.data.length > 0)}
-              title={
-                companySelection.id && data?.data && data.data.length > 0
-                  ? "This customer already has GM entries. Cannot add duplicate GM."
-                  : undefined
-              }
-            >
-              {createMutation.isPending ? "Submitting..." : "Submit"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {editRow && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    resetAddGmForm();
+                    setShowForm(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
+              <Button
+                className="bg-emerald-600 hover:bg-emerald-700 w-fit"
+                onClick={handleSubmit}
+                disabled={
+                  createMutation.isPending ||
+                  editMutation.isPending ||
+                  (!editRow && hasActiveGmForSelectedCompany)
+                }
+                title={
+                  !editRow && hasActiveGmForSelectedCompany
+                    ? "This customer already has an active GM entry. Cannot add duplicate GM."
+                    : undefined
+                }
+              >
+                {createMutation.isPending || editMutation.isPending
+                  ? "Submitting..."
+                  : editRow
+                    ? editRow.approvalStatus === "rejected_by_hod"
+                      ? "Resubmit to HOD"
+                      : "Save Changes"
+                    : "Submit"}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : null
@@ -1176,12 +1613,13 @@ export default function GmPoolAddGm() {
                         "Pkr",
                         "Ab Discount",
                         "Extra Discount",
+                        "Extra Pkr Discount",
                         "Dropout",
                         "Status",
                         "Create",
                         "BV Date",
-                        "Accountant",
                         "HOD",
+                        "Accountant",
                         "Alibaba",
                         "Pay Date",
                         "Update Request",
@@ -1215,20 +1653,48 @@ export default function GmPoolAddGm() {
                           <TableCell>{row.orderDollar ?? "-"}</TableCell>
                           <TableCell>{row.customerDollar ?? "-"}</TableCell>
                           <TableCell>{row.dollarRate ?? "-"}</TableCell>
-                          <TableCell>{row.pkr ?? "-"}</TableCell>
+                          <TableCell>{formatRounded(row.pkr)}</TableCell>
                           <TableCell>{row.abDiscount ?? "-"}</TableCell>
-                          <TableCell>{row.extraDiscount ?? "-"}</TableCell>
-                          <TableCell>{row.extraPkrDiscount ?? "-"}</TableCell>
+                          <TableCell>{formatRounded(row.extraDiscount)}</TableCell>
+                          <TableCell>{formatRounded(row.extraPkrDiscount)}</TableCell>
                           <TableCell>{row.dropout ?? "-"}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{row.status || "-"}</Badge>
                           </TableCell>
                           <TableCell>{row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-"}</TableCell>
                           <TableCell>{row.bvDate || "-"}</TableCell>
-                          <TableCell>{row.accountant || "-"}</TableCell>
-                          <TableCell>{row.hod || "-"}</TableCell>
+                          <TableCell>
+                            {(() => {
+                              const { text, tone } = getHodApprovalLabel(row);
+                              return (
+                                <div className="flex flex-col gap-0.5">
+                                  <Badge variant="outline" className={APPROVAL_TONE_CLASS[tone]}>{text}</Badge>
+                                  {tone === "ok" && row.hodApprovedAt && (
+                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                      {new Date(row.hodApprovedAt).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              const { text, tone } = getAccountApprovalLabel(row);
+                              return (
+                                <div className="flex flex-col gap-0.5">
+                                  <Badge variant="outline" className={APPROVAL_TONE_CLASS[tone]}>{text}</Badge>
+                                  {tone === "ok" && row.accountManagerApprovedAt && (
+                                    <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                      {new Date(row.accountManagerApprovedAt).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </TableCell>
                           <TableCell>{row.alibaba || "-"}</TableCell>
-                          <TableCell>{row.payDate || "-"}</TableCell>
+                          <TableCell>{getLatestPayDate(row)}</TableCell>
                           <TableCell className="whitespace-nowrap">
                             {row.updateRequest ? new Date(row.updateRequest).toLocaleDateString() : "-"}
                           </TableCell>
@@ -1265,9 +1731,56 @@ export default function GmPoolAddGm() {
                               {(() => {
                                 const status = (row.approvalStatus || "").toLowerCase().trim();
                                 const finalStatus = (row.finalStatus || "").toLowerCase().trim();
+                                const gmStatus = (row.status || "").toLowerCase().trim();
+                                const hodStatus = (row.hodStatus || "").toLowerCase().trim();
                                 const isApproved = status === "approved" || finalStatus === "approved";
-                                const isPending = !status || status === "pending" || status === "pending_hod" || status === "pending_managers";
-                                const canEdit = isPending || row.updateRequestStatus === "super_hod_approved";
+
+                                const { tone: hodTone } = getHodApprovalLabel(row);
+                                const isHodApproved =
+                                  hodTone === "ok" ||
+                                  hodStatus.includes("approved") ||
+                                  status === "pending_managers" ||
+                                  status === "pending_account" ||
+                                  status === "pending_super_hod" ||
+                                  status === "approved" ||
+                                  finalStatus === "approved" ||
+                                  !!row.hodApprovedAt;
+
+                                const isPending = !status || status === "pending" || status === "pending_hod";
+
+                                const isRejected =
+                                  gmStatus.includes("rejected") ||
+                                  status.includes("rejected") ||
+                                  hodStatus.includes("rejected") ||
+                                  finalStatus.includes("rejected");
+
+                                // HOD approving a withdrawal request resets approval_status to
+                                // pending_hod (server-side, gm-pool-routes.ts withdraw-approve) so
+                                // Sales can fix whatever the withdrawal reason called out and it
+                                // re-enters the normal HOD queue — but the main `status` column is
+                                // left as "Withdrawn" until that edit happens. Recognize that state
+                                // so Edit isn't stuck hidden with only Delete available.
+                                // The `gmStatus === "withdrawn"` check matters: `withdrawal_status`
+                                // itself is never cleared once a withdrawal is ever approved, so
+                                // without it this would stay true forever, on every future pending_hod
+                                // cycle — even long after the entry was already fixed and resubmitted
+                                // once (`gmStatus` moves to "pending" on resubmit; only "withdrawn"
+                                // means genuinely not-yet-fixed).
+                                const isWithdrawnReset =
+                                  row.withdrawalStatus === "approved" && status === "pending_hod" && gmStatus === "withdrawn";
+
+                                // Business Rule (applies to every role, including Admin/Super HOD):
+                                // Once a GM is submitted, Edit is hidden automatically. It ONLY
+                                // reappears if HOD/Super HOD rejects the GM (as "Resubmit to HOD"),
+                                // if a withdrawal request was approved, or if an update request was
+                                // approved.
+                                const canEdit = isRejected || isWithdrawnReset || row.updateRequestStatus === "super_hod_approved";
+
+                                // Editing a HOD-rejected entry (or a withdrawn-and-reset one) resubmits
+                                // it straight back to the HOD queue (server resets approval_status to
+                                // pending_hod) — label it "Resubmit" so that's clear instead of a plain
+                                // "Edit".
+                                const isHodRejected = status === "rejected_by_hod" || isWithdrawnReset;
 
                                 return (
                                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -1275,13 +1788,14 @@ export default function GmPoolAddGm() {
                                     {canEdit && (
                                       <ActionIcon
                                         icon={Pencil}
-                                        label="Edit Entry"
+                                        label={isHodRejected ? "Resubmit to HOD" : "Edit Entry"}
                                         onClick={() => handleOpenEdit(row)}
                                       />
                                     )}
 
-                                    {/* Withdraw (Arrow) */}
-                                    {!isApproved && (
+                                    {/* Withdraw (Arrow): only once HOD has actually acted on the
+                                        entry — approved or rejected — not while still pending. */}
+                                    {(isHodApproved || isRejected) && (
                                       <ActionIcon
                                         icon={ArrowDownToLine}
                                         label="Withdraw"
@@ -1289,8 +1803,8 @@ export default function GmPoolAddGm() {
                                       />
                                     )}
 
-                                    {/* Delete or Update Request */}
-                                    {isPending || row.updateRequestStatus === "super_hod_approved" ? (
+                                    {/* Delete or Update Request: Only allowed BEFORE HOD Approval */}
+                                    {!isHodApproved && (isPending || row.updateRequestStatus === "super_hod_approved") ? (
                                       <ActionIcon
                                         icon={Trash2}
                                         label="Delete Entry"
@@ -1301,9 +1815,7 @@ export default function GmPoolAddGm() {
                                       <span className="text-xs text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                                         Pending Super HOD
                                       </span>
-                                    ) : row.updateRequestStatus === "super_hod_rejected" ? (
-                                      null
-                                    ) : isApproved ? (
+                                    ) : isApproved && row.updateRequestStatus !== "super_hod_approved" ? (
                                       <ActionIcon
                                         icon={Pencil}
                                         label="Request Update"
@@ -1381,104 +1893,7 @@ export default function GmPoolAddGm() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editRow} onOpenChange={(open) => !open && setEditRow(null)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit GM Entry</DialogTitle>
-            <DialogDescription>Update key GM fields.</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="space-y-1">
-              <Label>Package</Label>
-              <Input
-                value={editDraft.package ?? ""}
-                onChange={(e) => setEditDraft((d) => ({ ...d, package: e.target.value }))}
-                placeholder="Package"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Type</Label>
-              <Input
-                value={editDraft.type ?? ""}
-                onChange={(e) => setEditDraft((d) => ({ ...d, type: e.target.value }))}
-                placeholder="Type"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Order Dollar</Label>
-              <Input
-                type="number"
-                value={editDraft.orderDollar ?? ""}
-                onChange={(e) =>
-                  setEditDraft((d) => ({
-                    ...d,
-                    orderDollar: e.target.value === "" ? undefined : Number(e.target.value),
-                  }))
-                }
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Customer Dollar</Label>
-              <Input
-                type="number"
-                value={editDraft.customerDollar ?? ""}
-                onChange={(e) =>
-                  setEditDraft((d) => ({
-                    ...d,
-                    customerDollar: e.target.value === "" ? undefined : Number(e.target.value),
-                  }))
-                }
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Dollar Rate</Label>
-              <Input
-                type="number"
-                value={editDraft.dollarRate ?? ""}
-                onChange={(e) =>
-                  setEditDraft((d) => ({
-                    ...d,
-                    dollarRate: e.target.value === "" ? undefined : Number(e.target.value),
-                  }))
-                }
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>PKR</Label>
-              <Input
-                type="number"
-                value={editDraft.pkr ?? ""}
-                onChange={(e) =>
-                  setEditDraft((d) => ({
-                    ...d,
-                    pkr: e.target.value === "" ? undefined : Number(e.target.value),
-                  }))
-                }
-                placeholder="0"
-              />
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>Status</Label>
-              <Input
-                value={editDraft.status ?? ""}
-                onChange={(e) => setEditDraft((d) => ({ ...d, status: e.target.value }))}
-                placeholder="Status"
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setEditRow(null)} disabled={editMutation.isPending}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmitEdit} disabled={editMutation.isPending}>
-              {editMutation.isPending ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Edit/Resubmit now reuses the full Add GM form above (see handleOpenEdit) */}
 
       {/* Withdraw Request Dialog */}
       <Dialog open={!!withdrawId} onOpenChange={(open) => { if (!open) { setWithdrawId(null); setWithdrawReason(""); } }}>

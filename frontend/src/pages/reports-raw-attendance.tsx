@@ -182,10 +182,10 @@ export default function ReportsRawAttendance() {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-[17px] font-bold text-[#555] uppercase">Raw Attendance Report</h1>
+          <h1 className="text-[17px] font-bold text-[#555] dark:text-zinc-300 uppercase">Raw Attendance Report</h1>
           <Button
             onClick={exportCsv}
             disabled={exporting || reportQuery.isLoading}
@@ -195,7 +195,7 @@ export default function ReportsRawAttendance() {
           </Button>
         </div>
 
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="space-y-1">
@@ -262,23 +262,23 @@ export default function ReportsRawAttendance() {
               </div>
             </div>
 
-            <div className="overflow-x-auto border border-slate-100">
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#fdf3db]">
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Date</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Employee</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Branch</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Department</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Status</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Check In</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Check Out</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Worked (min)</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Late</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Remarks</TableHead>
+                  <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#fdf3db] dark:bg-zinc-900">
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Date</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Employee</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Branch</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Department</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Status</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Check In</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Check Out</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Worked (min)</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Late</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Remarks</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {reportQuery.isLoading ? (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell>
@@ -298,21 +298,21 @@ export default function ReportsRawAttendance() {
                     </TableRow>
                   ) : (
                     rows.map((r) => (
-                      <TableRow key={r.id} className="border-b border-slate-100 hover:bg-[#f1f3f5] transition-colors">
-                        <TableCell className="py-3 px-3 text-[#555]">{fmtDate(r.date)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] font-semibold">{r.employeeName || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{r.branch || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{r.department || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{r.status || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{fmtTime(r.checkIn)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{fmtTime(r.checkOut)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{r.workingMinutes ?? "-"}</TableCell>
+                      <TableRow key={r.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtDate(r.date)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{r.employeeName || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.branch || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.department || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.status || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtTime(r.checkIn)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{fmtTime(r.checkOut)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{r.workingMinutes ?? "-"}</TableCell>
                         <TableCell className="py-3 px-3">
                           {r.isLate
-                            ? <span className="px-2 py-0.5 rounded text-xs font-semibold bg-[#fdecea] text-[#d9534f]">Late</span>
+                            ? <span className="px-2 py-0.5 rounded text-xs font-semibold bg-[#fdecea] text-[#d9534f] dark:bg-red-950 dark:text-red-400">Late</span>
                             : <span className="text-xs text-slate-400">-</span>}
                         </TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] max-w-[240px] truncate" title={r.remarks || ""}>{r.remarks || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 max-w-[240px] truncate" title={r.remarks || ""}>{r.remarks || "-"}</TableCell>
                       </TableRow>
                     ))
                   )}

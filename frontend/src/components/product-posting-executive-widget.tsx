@@ -66,6 +66,7 @@ export function ProductPostingExecutiveWidget() {
     const [overtimeReason, setOvertimeReason] = useState("");
     const [dailyReportPage, setDailyReportPage] = useState(1);
     const [outputNotes, setOutputNotes] = useState("");
+    const [selfReviewConfirmed, setSelfReviewConfirmed] = useState(false);
     const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
     const [confirmAction, setConfirmAction] = useState<"submit" | "task" | null>(null);
     const [actionDialogOpen, setActionDialogOpen] = useState(false);
@@ -97,6 +98,15 @@ export function ProductPostingExecutiveWidget() {
             return res.json();
         }
     });
+
+    const { data: commissionRes } = useQuery({
+        queryKey: ["/api/product-posting/commission/me"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/product-posting/commission/me");
+            return res.json();
+        }
+    });
+    const commission = commissionRes?.data;
 
     const { data: hodDailyReport } = useQuery({
         queryKey: ["/api/hod/daily-report", dailyReportPeriod],
@@ -183,10 +193,11 @@ export function ProductPostingExecutiveWidget() {
 
     const submitMutation = useMutation({
         mutationFn: async ({ taskId, notes }: { taskId: string; notes: string }) =>
-            apiRequest("POST", `/api/product-posting/tasks/${taskId}/submit-to-manager`, { outputNotes: notes }),
+            apiRequest("POST", `/api/product-posting/tasks/${taskId}/submit-to-manager`, { outputNotes: notes, selfReviewConfirmed: true }),
         onSuccess: () => {
             refreshExecutions();
             setOutputNotes("");
+            setSelfReviewConfirmed(false);
         },
     });
 
@@ -229,13 +240,13 @@ export function ProductPostingExecutiveWidget() {
     const activitiesRows = [
         {
             method: "Copy Product",
-            target: activitiesData?.data?.rows?.[0]?.methods?.copy?.target || 90,
+            target: activitiesData?.data?.rows?.[0]?.methods?.copy?.target || 0,
             done: activitiesData?.data?.rows?.[0]?.methods?.copy?.done || 0,
             time: activitiesData?.data?.rows?.[0]?.totals?.timeMinutes || 0,
         },
         {
             method: "New Product",
-            target: activitiesData?.data?.rows?.[0]?.methods?.new?.target || 10,
+            target: activitiesData?.data?.rows?.[0]?.methods?.new?.target || 0,
             done: activitiesData?.data?.rows?.[0]?.methods?.new?.done || 0,
             time: 0,
         },
@@ -520,6 +531,31 @@ export function ProductPostingExecutiveWidget() {
                     </div>
                 </div>
 
+                {/* My Commission — MD-16: slab-based, completed + QA-approved + paid posts only */}
+                <div className="bg-white rounded-lg border shadow-sm dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-4 py-3 border-b">
+                        <h2 className="text-[13px] font-bold text-gray-800 dark:text-zinc-100">My Commission (This Month)</h2>
+                    </div>
+                    <div className="px-4 py-3 grid grid-cols-2 gap-3 text-[12px]">
+                        <div>
+                            <p className="text-gray-500 dark:text-zinc-400">Completed &amp; Paid Posts</p>
+                            <p className="text-[18px] font-bold text-gray-800 dark:text-zinc-100">{commission?.postCount ?? 0}</p>
+                        </div>
+                        <div>
+                            <p className="text-gray-500 dark:text-zinc-400">Tier</p>
+                            <p className="text-[18px] font-bold text-gray-800 dark:text-zinc-100">{commission?.tierName ?? "—"} {commission?.ratePercent ? `(${commission.ratePercent}%)` : ""}</p>
+                        </div>
+                        <div>
+                            <p className="text-gray-500 dark:text-zinc-400">Paid Value</p>
+                            <p className="text-[18px] font-bold text-gray-800 dark:text-zinc-100">${(commission?.paidTotal ?? 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                            <p className="text-gray-500 dark:text-zinc-400">Commission Earned</p>
+                            <p className="text-[18px] font-bold text-[#00a65a]">${(commission?.commissionAmount ?? 0).toLocaleString()}</p>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Projects Overview */}
                 <div className="bg-white rounded-lg border shadow-sm dark:bg-zinc-900">
                     <div className="px-4 py-3 border-b">
@@ -741,41 +777,29 @@ export function ProductPostingExecutiveWidget() {
                         <div className="pt-4 border-t space-y-4">
                             <h4 className="text-[13px] font-bold text-gray-700 dark:text-zinc-400">Submit Work to Manager</h4>
                             <div className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1.5">
-                                        <label className="text-[11px] font-bold text-gray-500 dark:text-zinc-400">Main image uploaded?</label>
-                                        <Select 
-                                            defaultValue="Yes"
-                                            onValueChange={(v) => setOutputNotes(prev => `[Image: ${v}] ${prev}`)}
-                                        >
-                                            <SelectTrigger className="h-9 border-gray-200 text-[12px] dark:border-zinc-800">
-                                                <SelectValue />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="Yes">Yes</SelectItem>
-                                                <SelectItem value="No">No</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <label className="text-[11px] font-bold text-gray-500 dark:text-zinc-400">Work Status</label>
-                                        <div className="bg-amber-50 text-amber-700 h-9 px-3 rounded-lg flex items-center justify-center text-[11px] font-bold border border-amber-100">
-                                            Ready to Review
-                                        </div>
-                                    </div>
-                                </div>
                                 <div className="space-y-1.5">
                                     <label className="text-[11px] font-bold text-gray-500 dark:text-zinc-400">Additional Remarks</label>
-                                    <Textarea 
-                                        className="w-full border-gray-200 rounded-lg text-[12px] min-h-[80px] focus:ring-[#00a65a]/10 dark:border-zinc-800" 
-                                        placeholder="Type notes here..." 
-                                        value={outputNotes} 
-                                        onChange={(e) => setOutputNotes(e.target.value)} 
+                                    <Textarea
+                                        className="w-full border-gray-200 rounded-lg text-[12px] min-h-[80px] focus:ring-[#00a65a]/10 dark:border-zinc-800"
+                                        placeholder="Type notes here..."
+                                        value={outputNotes}
+                                        onChange={(e) => setOutputNotes(e.target.value)}
                                     />
                                 </div>
+                                <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 text-[12px] cursor-pointer dark:border-zinc-800">
+                                    <input
+                                        type="checkbox"
+                                        className="mt-0.5"
+                                        checked={selfReviewConfirmed}
+                                        onChange={(e) => setSelfReviewConfirmed(e.target.checked)}
+                                    />
+                                    <span className="text-gray-700 dark:text-zinc-300">
+                                        I have reviewed my own work (content, images, links) and it is ready for the manager to check.
+                                    </span>
+                                </label>
                                 <Button
                                     className="bg-[#00a65a] hover:bg-[#00a65a]/90 w-full font-black h-11 rounded-xl shadow-lg shadow-emerald-50 active:scale-95 transition-all text-white"
-                                    disabled={!selectedTask?.taskId || submitMutation.isPending}
+                                    disabled={!selectedTask?.taskId || !selfReviewConfirmed || submitMutation.isPending}
                                     onClick={() => {
                                         setConfirmAction("submit");
                                         setConfirmDialogOpen(true);

@@ -148,6 +148,9 @@ export default function PermissionPage() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
+    // ── search
+    const [searchTerm, setSearchTerm] = useState('');
+
     // ── add-permission form
     const [isAddPermOpen, setIsAddPermOpen] = useState(false);
     const [menuHead, setMenuHead] = useState('');
@@ -264,8 +267,18 @@ export default function PermissionPage() {
         return <div className="flex justify-center items-center min-h-screen"><Loader2 className="w-8 h-8 animate-spin text-[#00a65a] dark:text-zinc-400" /></div>;
     }
 
-    const reportModules = permissions?.filter(p => p.name.toLowerCase().includes('report')) || [];
-    const coreModules = permissions?.filter(p => !p.name.toLowerCase().includes('report')) || [];
+    const matchesSearch = (row: PermissionRow) => {
+        const q = searchTerm.trim().toLowerCase();
+        if (!q) return true;
+        if (row.name.toLowerCase().includes(q)) return true;
+        if ((row.permissions || []).some(p => p.name.toLowerCase().includes(q))) return true;
+        if ((row.allowedRoleIds || []).some(r => r.toLowerCase().includes(q))) return true;
+        if (((row.subUrls as any)?.items || []).some((u: string) => u.toLowerCase().includes(q))) return true;
+        return false;
+    };
+    const searchedPermissions = permissions?.filter(matchesSearch) || [];
+    const reportModules = searchedPermissions.filter(p => p.name.toLowerCase().includes('report'));
+    const coreModules = searchedPermissions.filter(p => !p.name.toLowerCase().includes('report'));
 
     const renderRows = (data: PermissionRow[] | undefined) => {
         if (!data || data.length === 0) {
@@ -496,17 +509,35 @@ export default function PermissionPage() {
 
             {/* ── Permissions Table ────────────────────────────── */}
             <Tabs defaultValue="all" className="w-full">
-                <TabsList className="bg-white border border-gray-200 p-1 mb-4 h-11 dark:bg-zinc-900 dark:border-zinc-800">
-                    <TabsTrigger value="all" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6">
-                        All Modules
-                    </TabsTrigger>
-                    <TabsTrigger value="core" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6 border-l border-gray-100 dark:border-zinc-800">
-                        Core Modules
-                    </TabsTrigger>
-                    <TabsTrigger value="reports" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6 border-l border-gray-100 dark:border-zinc-800">
-                        Reports
-                    </TabsTrigger>
-                </TabsList>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                    <TabsList className="bg-white border border-gray-200 p-1 h-11 dark:bg-zinc-900 dark:border-zinc-800">
+                        <TabsTrigger value="all" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6">
+                            All Modules
+                        </TabsTrigger>
+                        <TabsTrigger value="core" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6 border-l border-gray-100 dark:border-zinc-800">
+                            Core Modules
+                        </TabsTrigger>
+                        <TabsTrigger value="reports" className="data-[state=active]:bg-[#00a65a] data-[state=active]:text-white uppercase text-[10px] sm:text-xs font-bold px-4 sm:px-6 border-l border-gray-100 dark:border-zinc-800">
+                            Reports
+                        </TabsTrigger>
+                    </TabsList>
+                    <div className="relative w-full sm:w-64">
+                        <Input
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            placeholder="Search menu, department, role..."
+                            className="h-9 text-sm border-gray-300 dark:border-zinc-800"
+                        />
+                        {searchTerm && (
+                            <button
+                                onClick={() => setSearchTerm('')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        )}
+                    </div>
+                </div>
 
                 <div className="bg-white border border-gray-200 rounded shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
                     <div className="overflow-x-auto">
@@ -527,7 +558,7 @@ export default function PermissionPage() {
                             
                             <TabsContent value="all" asChild>
                                 <tbody className="divide-y divide-gray-100">
-                                    {renderRows(permissions)}
+                                    {renderRows(searchedPermissions)}
                                 </tbody>
                             </TabsContent>
                             

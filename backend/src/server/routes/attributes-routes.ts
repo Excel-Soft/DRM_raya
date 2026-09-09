@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { db } from "../db";
+import { db } from "./db";
 import { attributes } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
-import { requireActionPermission } from "../middleware/action-permission.middleware";
-import { AuditLogService } from "../services/audit-log.service";
+import { requireActionPermission } from "./middleware/action-permission.middleware";
+import { AuditLogService } from "./services/audit-log.service";
 
 const router = Router();
 

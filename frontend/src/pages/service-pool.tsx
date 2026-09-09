@@ -1,12 +1,16 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
-import { getAuthHeader } from "@/lib/queryClient";
+import { Search, Loader2, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
+import { getAuthHeader, apiRequestJson } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 
 type ServicePoolSummary = {
     allInService: number;
@@ -31,7 +35,191 @@ type ServicePoolEntry = {
     updatedAt: string;
 };
 
+type UserOption = { id: string; name?: string | null; full_name?: string | null };
+
+function userLabel(u: UserOption): string {
+    return u.name || u.full_name || u.id;
+}
+
+// Assign / Transfer / Message-Draft used to live on the "Public Pool" page,
+// but that page now shows real unclaimed drm.customers rows (Sales parity,
+// with a Pick/claim action) — this service_pool_entries-specific management
+// dialog belongs here instead, where the entries it operates on actually are.
+function ManagePoolDialog({
+    isOpen,
+    onClose,
+    entry,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    entry: ServicePoolEntry | null;
+}) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [assignTo, setAssignTo] = useState("");
+    const [transferTo, setTransferTo] = useState("");
+    const [channel, setChannel] = useState("whatsapp");
+    const [message, setMessage] = useState("");
+
+    const { data: users } = useQuery<UserOption[]>({
+        queryKey: ["/api/users", { assigned: true }],
+        queryFn: () => apiRequestJson<UserOption[]>("GET", "/api/users?assigned=true"),
+        enabled: isOpen,
+    });
+
+    const userOptions = Array.isArray(users) ? users : [];
+
+    const invalidateList = () =>
+        queryClient.invalidateQueries({ queryKey: ["/api/sales/service-pool/list"] });
+
+    const assignMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("PATCH", `/api/sales/service-pool/${entry!.id}/assign`, {
+                servicePersonId: assignTo,
+            }),
+        onSuccess: () => {
+            toast({ title: "Assigned", description: "Service person assigned to this entry." });
+            setAssignTo("");
+            invalidateList();
+            onClose();
+        },
+        onError: (err: any) => {
+            toast({ title: "Assign failed", description: err?.message || "Could not assign.", variant: "destructive" });
+        },
+    });
+
+    const transferMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("PATCH", `/api/sales/service-pool/${entry!.id}/transfer`, {
+                servicePersonId: transferTo,
+            }),
+        onSuccess: () => {
+            toast({ title: "Transferred", description: "Entry transferred to the selected service person." });
+            setTransferTo("");
+            invalidateList();
+            onClose();
+        },
+        onError: (err: any) => {
+            toast({ title: "Transfer failed", description: err?.message || "Could not transfer.", variant: "destructive" });
+        },
+    });
+
+    const draftMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("POST", `/api/sales/service-pool/${entry!.id}/message-draft`, {
+                channel,
+                message: message.trim(),
+            }),
+        onSuccess: () => {
+            toast({ title: "Draft saved", description: "Message draft recorded (not sent externally)." });
+            setMessage("");
+        },
+        onError: (err: any) => {
+            toast({ title: "Draft failed", description: err?.message || "Could not save draft.", variant: "destructive" });
+        },
+    });
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
+            <DialogContent className="max-w-lg p-6 bg-white gap-6 dark:bg-zinc-900">
+                <DialogHeader>
+                    <DialogTitle className="text-[16px] font-bold text-[#475569] uppercase border-b pb-4 dark:text-zinc-400">
+                        Manage Pool Entry
+                    </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-6">
+                    <div className="text-[13px] text-slate-600 dark:text-zinc-300">
+                        <span className="font-bold">{entry?.companyName || "—"}</span>
+                        <span className="text-slate-400 dark:text-zinc-500"> · {entry?.drmId || "—"}</span>
+                    </div>
+
+                    {/* Assign */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Assign Service Person</label>
+                        <div className="flex gap-2">
+                            <Select value={assignTo} onValueChange={setAssignTo}>
+                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                    <SelectValue placeholder="Choose person..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {userOptions.map((u) => (
+                                        <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px] shrink-0"
+                                disabled={!assignTo || assignMutation.isPending}
+                                onClick={() => assignMutation.mutate()}
+                            >
+                                {assignMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Assign"}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Transfer */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Transfer To</label>
+                        <div className="flex gap-2">
+                            <Select value={transferTo} onValueChange={setTransferTo}>
+                                <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                    <SelectValue placeholder="Choose person..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {userOptions.map((u) => (
+                                        <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px] shrink-0"
+                                disabled={!transferTo || transferMutation.isPending}
+                                onClick={() => transferMutation.mutate()}
+                            >
+                                {transferMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Transfer"}
+                            </Button>
+                        </div>
+                    </div>
+
+                    {/* Message Draft */}
+                    <div className="space-y-2">
+                        <label className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">Message Draft</label>
+                        <Select value={channel} onValueChange={setChannel}>
+                            <SelectTrigger className="h-9 text-[13px] border-slate-200 dark:border-zinc-800">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                                <SelectItem value="email">Email</SelectItem>
+                                <SelectItem value="sms">SMS</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Textarea
+                            value={message}
+                            onChange={(e) => setMessage(e.target.value)}
+                            placeholder="Compose a follow-up message draft..."
+                            className="border-slate-200 text-[13px] min-h-[80px] dark:border-zinc-800"
+                        />
+                        <p className="text-[11px] text-slate-400 dark:text-zinc-500">
+                            Drafts are saved internally only — no external message is sent.
+                        </p>
+                        <Button
+                            className="bg-[#059669] hover:bg-emerald-700 text-white h-9 px-4 text-[13px]"
+                            disabled={!message.trim() || draftMutation.isPending}
+                            onClick={() => draftMutation.mutate()}
+                        >
+                            {draftMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Draft"}
+                        </Button>
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 export default function ServicePool() {
+    const [selectedEntry, setSelectedEntry] = useState<ServicePoolEntry | null>(null);
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState("");
     const [activeFilter, setActiveFilter] = useState<string>("allInService");
@@ -146,12 +334,13 @@ export default function ServicePool() {
                                     <TableHead>TA Person</TableHead>
                                     <TableHead>Acc Holder</TableHead>
                                     <TableHead>Contact No</TableHead>
+                                    <TableHead>Action</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {isLoadingList ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-24 text-center">
+                                        <TableCell colSpan={8} className="h-24 text-center">
                                             <div className="flex items-center justify-center gap-2">
                                                 <Loader2 className="h-4 w-4 animate-spin" />
                                                 Loading results...
@@ -160,7 +349,7 @@ export default function ServicePool() {
                                     </TableRow>
                                 ) : (listData?.items ?? []).length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                                             No records found in this pool.
                                         </TableCell>
                                     </TableRow>
@@ -174,6 +363,15 @@ export default function ServicePool() {
                                             <TableCell>{row.taPersonName || "-"}</TableCell>
                                             <TableCell>{row.accountHolder || "-"}</TableCell>
                                             <TableCell>{row.contactNo || "-"}</TableCell>
+                                            <TableCell>
+                                                <div
+                                                    title="Manage"
+                                                    className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 shadow-sm transition-colors"
+                                                    onClick={() => setSelectedEntry(row)}
+                                                >
+                                                    <ArrowRightCircle className="w-3.5 h-3.5" />
+                                                </div>
+                                            </TableCell>
                                         </TableRow>
                                     ))
                                 )}
@@ -208,6 +406,12 @@ export default function ServicePool() {
                     </div>
                 </CardContent>
             </Card>
+
+            <ManagePoolDialog
+                isOpen={!!selectedEntry}
+                onClose={() => setSelectedEntry(null)}
+                entry={selectedEntry}
+            />
         </div>
     );
 }

@@ -9,6 +9,10 @@ import { mutationRequest, queryClient } from "@/lib/queryClient";
 interface Props {
   gmId: string | null;
   companyName?: string;
+  /** False for a Full GM — it still uses this same receipts ledger to verify
+   *  payment (see enforceLoanPartialFinalApprovalGate), it just isn't eligible
+   *  for the Partial-only "finalize-partial" milestone below. */
+  isPartialPayment: boolean;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }
@@ -38,7 +42,7 @@ const fmt = (n: any) =>
  * validates that the balance is cleared — final approval still flows through the
  * normal HOD / Account Manager routes.
  */
-export function PartialReceiptsDialog({ gmId, companyName, open, onOpenChange }: Props) {
+export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, open, onOpenChange }: Props) {
   const { toast } = useToast();
   const [amountUsd, setAmountUsd] = useState("");
   const [amountPkr, setAmountPkr] = useState("");
@@ -93,7 +97,10 @@ export function PartialReceiptsDialog({ gmId, companyName, open, onOpenChange }:
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Partial Payment Receipts{companyName ? ` — ${companyName}` : ""}</DialogTitle>
+          <DialogTitle>
+            {isPartialPayment ? "Partial Payment Receipts" : "Payment Receipt"}
+            {companyName ? ` — ${companyName}` : ""}
+          </DialogTitle>
         </DialogHeader>
         {isLoading ? (
           <div className="py-8 text-center text-sm text-gray-400">Loading…</div>
@@ -156,14 +163,20 @@ export function PartialReceiptsDialog({ gmId, companyName, open, onOpenChange }:
               <Input placeholder="Reference" value={reference} onChange={(e) => setReference(e.target.value)} />
             </div>
             <div className="flex justify-between">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!summary?.fullyPaid || finalize.isPending}
-                onClick={() => finalize.mutate()}
-              >
-                Mark Fully Paid
-              </Button>
+              {isPartialPayment ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!summary?.fullyPaid || finalize.isPending}
+                  onClick={() => finalize.mutate()}
+                >
+                  Mark Fully Paid
+                </Button>
+              ) : (
+                <span className="text-xs text-muted-foreground self-center">
+                  {summary?.fullyPaid ? "Payment confirmed — ready for final approval." : "Log the full amount to unblock final approval."}
+                </span>
+              )}
               <Button size="sm" disabled={!amountUsd || addReceipt.isPending} onClick={() => addReceipt.mutate()}>
                 Add Receipt
               </Button>

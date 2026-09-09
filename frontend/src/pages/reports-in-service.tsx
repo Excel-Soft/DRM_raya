@@ -160,8 +160,9 @@ export default function ReportsInService() {
                     tickFormatter={(value) => `${value} %`}
                     label={{ value: 'Percentage', angle: -90, position: 'insideRight', offset: -10, style: { fill: '#64748b', fontSize: 12 } }}
                   />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  <Tooltip
+                    cursor={{ fill: 'hsl(var(--muted))' }}
+                    contentStyle={{ borderRadius: '8px', border: 'none', backgroundColor: 'hsl(var(--card))', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                   />
                   <Legend 
                     verticalAlign="top" 

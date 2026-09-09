@@ -11,15 +11,16 @@
  * Alias path: /api/posting-data/link-report   (compatibility with the page URL)
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import {
   listUsersForReport,
   listLinkReport,
   getVerification,
   verifyCommission,
   createLinkReport,
-} from "../services/link-report.service";
+} from "./services/link-report.service";
+import { ActivityLogService } from "./services/activity-service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 
@@ -35,8 +36,15 @@ function isFullAccess(role: string): boolean {
 function isHod(role: string): boolean {
   return role === "hod";
 }
-/** Who may verify commission: full-access, HOD, and managerial roles (not executives). */
-function canVerify(role: string): boolean {
+/**
+ * Who may verify commission: full-access, HOD, and managerial roles (not
+ * executives). Exported (P02-002) so it can be tested directly against
+ * `report-permission.ts`'s `link_report` matrix entry, the same way
+ * `project-report-routes.ts` already exports `canViewProjectReport` for that
+ * purpose — proves the two can't silently drift again, rather than just
+ * asserting they currently happen to agree.
+ */
+export function canVerify(role: string): boolean {
   return isFullAccess(role) || isHod(role) || isManagerialRole(role);
 }
 
@@ -184,6 +192,15 @@ function registerLinkReportRoutes(app: Express, base: string) {
         startDate,
         endDate,
         linkReportIds,
+      });
+      // Audit fix (P00): verify-commission is a financial approval-like action
+      // that previously had no audit trail at all.
+      void ActivityLogService.log({
+        userId: String(myId),
+        action: "link_report.verify_commission",
+        resourceType: "link_report_verification",
+        resourceId: result?.id ? String(result.id) : userId,
+        details: JSON.stringify({ forUserId: userId, startDate, endDate, linkReportIds }),
       });
       res.json({ success: true, verification: result });
     } catch (err: any) {

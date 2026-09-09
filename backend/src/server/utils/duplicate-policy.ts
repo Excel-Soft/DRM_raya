@@ -18,6 +18,7 @@ export type DuplicateRecordType = "customer" | "temp_contact";
 export interface DuplicateMatch {
   recordType: DuplicateRecordType;
   id: string;
+  drmId?: string | null;
   name: string | null;
   email: string | null;
   phone: string | null;
@@ -80,11 +81,11 @@ export async function findDuplicates(
   try {
     const custParams: any[] = [email, phone, company, opts.excludeCustomerId || null];
     const custRes = await pool.query(
-      `select id, company_name, email, phone, mobile,
+      `select id, drm_id, company_name, email, phone, mobile,
               (lower(trim(coalesce(email,''))) = $1 and $1 <> '') as match_email,
               ((regexp_replace(coalesce(phone_normalized, phone, ''), '\\D', '', 'g') = $2
                 or regexp_replace(coalesce(mobile, ''), '\\D', '', 'g') = $2) and $2 <> '') as match_phone,
-              (regexp_replace(lower(coalesce(company_name, '')), '[^a-z0-9]', '', 'g') = $3 and $3 <> '') as match_company
+              ((regexp_replace(lower(coalesce(company_name, '')), '[^a-z0-9]', '', 'g') = $3 or lower(trim(coalesce(drm_id, ''))) = $3) and $3 <> '') as match_company
          from drm.customers
         where coalesce(is_deleted, false) = false
           and ($4::uuid is null or id <> $4::uuid)
@@ -92,7 +93,7 @@ export async function findDuplicates(
             (lower(trim(coalesce(email,''))) = $1 and $1 <> '')
             or ((regexp_replace(coalesce(phone_normalized, phone, ''), '\\D', '', 'g') = $2
                  or regexp_replace(coalesce(mobile, ''), '\\D', '', 'g') = $2) and $2 <> '')
-            or (regexp_replace(lower(coalesce(company_name, '')), '[^a-z0-9]', '', 'g') = $3 and $3 <> '')
+            or ((regexp_replace(lower(coalesce(company_name, '')), '[^a-z0-9]', '', 'g') = $3 or lower(trim(coalesce(drm_id, ''))) = $3) and $3 <> '')
           )
         limit 25`,
       custParams,
@@ -107,6 +108,7 @@ export async function findDuplicates(
       matches.push({
         recordType: "customer",
         id: row.id,
+        drmId: row.drm_id ?? null,
         name: row.company_name ?? null,
         email: row.email ?? null,
         phone: row.phone ?? row.mobile ?? null,
@@ -117,7 +119,7 @@ export async function findDuplicates(
     // Temp contacts have no company column; only email/phone are comparable.
     if (email || phone) {
       const tempRes = await pool.query(
-        `select id, person_name, email, mobile,
+        `select id, drm_id, person_name, email, mobile,
                 (lower(trim(coalesce(email,''))) = $1 and $1 <> '') as match_email
            from drm.temp_contacts
           where (lower(trim(coalesce(email,''))) = $1 and $1 <> '')
@@ -129,6 +131,7 @@ export async function findDuplicates(
         matches.push({
           recordType: "temp_contact",
           id: row.id,
+          drmId: row.drm_id ?? null,
           name: row.person_name ?? null,
           email: row.email ?? null,
           phone: row.mobile ?? null,

@@ -3,6 +3,7 @@ import { tasks } from "../../shared/schema";
 import { eq, and, lt, ne } from "drizzle-orm";
 import { NotificationService } from "../services/notification-service";
 import { ActivityLogService } from "../services/activity-service";
+import { ROLES } from "../../shared/roles";
 
 export async function checkOverdueTasks() {
     try {
@@ -51,15 +52,70 @@ export async function checkOverdueTasks() {
                 }
 
                 // Notify Manager
-                await NotificationService.notify({
-                    userId: "PRODUCT_POSTING_MANAGER_ROLE",
-                    message: `Task '${task.title}' is now overdue.`,
-                    type: "WARNING"
+                await NotificationService.notifyRole(
+                    ROLES.PRODUCT_POSTING_MANAGER,
+                    `Task '${task.title}' is now overdue.`,
+                    "WARNING"
+                );
+            }
+        }
+        // Run loan overdue check as part of the periodic task run
+        await checkOverdueLoans();
+    } catch (error) {
+        console.error("[OverdueChecker] failed to run:", error);
+    }
+}
+
+export async function checkOverdueLoans() {
+    try {
+        const { pool } = await import("../db");
+
+        // Query overdue loans (where return_status is not 'RETURNED' and agreed_return_date is in the past)
+        const overdueLoans = await pool.query(
+            `SELECT t.gm_id, t.agreed_return_date, t.return_status, e.sales_person_id
+             FROM drm.gm_loan_terms t
+             JOIN drm.gm_entries e ON e.id::text = t.gm_id::text
+             WHERE (t.return_status IS DISTINCT FROM 'RETURNED')
+               AND t.agreed_return_date IS NOT NULL
+               AND t.agreed_return_date < CURRENT_DATE`
+        );
+
+        for (const loan of overdueLoans.rows) {
+            const gmId = loan.gm_id;
+            const salesPersonId = loan.sales_person_id;
+
+            // Check if we already logged this loan as overdue to avoid spamming
+            const existingLogs = await ActivityLogService.getLogsForResource("gm_loan", gmId);
+            const alreadyFlagged = existingLogs.some(log => log.action === "LOAN_OVERDUE_FLAGGED");
+
+            if (!alreadyFlagged) {
+                // Log it to prevent duplicate notifications
+                await ActivityLogService.log({
+                    action: "LOAN_OVERDUE_FLAGGED",
+                    resourceType: "gm_loan",
+                    resourceId: gmId,
+                    details: `Loan for GM ${gmId} missed return date of ${loan.agreed_return_date}`
                 });
+
+                // Notify Sales Person (borrower)
+                if (salesPersonId) {
+                    await NotificationService.notify({
+                        userId: salesPersonId,
+                        message: `URGENT: Your loan terms for GM (ID: ${gmId}) are now OVERDUE! Please resolve it with accounts.`,
+                        type: "ERROR"
+                    });
+                }
+
+                // Notify Account Manager
+                await NotificationService.notifyRole(
+                    ROLES.ACCOUNT_MANAGER,
+                    `Loan terms for GM (ID: ${gmId}) are now overdue.`,
+                    "WARNING"
+                );
             }
         }
     } catch (error) {
-        console.error("[OverdueChecker] failed to run:", error);
+        console.error("[OverdueChecker] checkOverdueLoans failed to run:", error);
     }
 }
 

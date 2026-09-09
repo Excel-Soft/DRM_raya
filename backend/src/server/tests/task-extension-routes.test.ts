@@ -11,7 +11,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../db";
+import { pool } from "./db";
 import { taskExecutionRouter } from "./routes/task-execution-routes";
 
 let currentUser: any = null;
@@ -32,10 +32,11 @@ const app = buildApp();
 const RUN_TAG = `__exttest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 const createdUserIds: string[] = [];
 const createdTaskIds: string[] = [];
+const createdProjectIds: string[] = [];
 
 async function seedUser(tag: string): Promise<string> {
   const { rows } = await pool.query(
-    `insert into drm.users (name, full_name, username, email, password, role, role_id, is_active)
+    `insert into drm.users (name, full_name, username, email, password_hash, role, role_id, is_active)
        values ($1, $1, $2, $3, $4, $5, $5, true)
        returning id`,
     [`Ext Test ${tag}`, `${RUN_TAG}_${tag}`, `${RUN_TAG}_${tag}@example.test`, "x", "product_posting_executive"],
@@ -44,12 +45,21 @@ async function seedUser(tag: string): Promise<string> {
   return rows[0].id;
 }
 
-async function seedTask(ownerId: string, assigneeId: string | null): Promise<string> {
+async function seedProject(tag: string): Promise<string> {
   const { rows } = await pool.query(
-    `insert into drm.tasks (title, owner_user_id, assigned_to_user_id)
-       values ($1, $2, $3)
+    `insert into drm.projects (name) values ($1) returning id`,
+    [`${RUN_TAG}_project_${tag}`]
+  );
+  createdProjectIds.push(rows[0].id);
+  return rows[0].id;
+}
+
+async function seedTask(ownerId: string, assigneeId: string | null, projectId: string): Promise<string> {
+  const { rows } = await pool.query(
+    `insert into drm.tasks (title, owner_user_id, assigned_to_user_id, project_id)
+       values ($1, $2, $3, $4)
        returning id`,
-    [`${RUN_TAG}_task`, ownerId, assigneeId],
+    [`${RUN_TAG}_task`, ownerId, assigneeId, projectId],
   );
   createdTaskIds.push(rows[0].id);
   return rows[0].id;
@@ -71,6 +81,9 @@ afterAll(async () => {
   if (createdTaskIds.length) {
     await pool.query(`delete from drm.tasks where id = any($1::uuid[])`, [createdTaskIds]);
   }
+  if (createdProjectIds.length) {
+    await pool.query(`delete from drm.projects where id = any($1::uuid[])`, [createdProjectIds]);
+  }
   if (createdUserIds.length) {
     await pool.query(`delete from drm.users where id = any($1::uuid[])`, [createdUserIds]);
   }
@@ -79,14 +92,16 @@ afterAll(async () => {
 describe("POST /api/tasks/:id/extensions — rejection paths leave no row", () => {
   let executiveId: string;
   let otherId: string;
+  let projectId: string;
 
   beforeAll(async () => {
     executiveId = await seedUser("owner");
     otherId = await seedUser("other");
+    projectId = await seedProject("test");
   });
 
   it("rejects a non-assignee with 403 and writes no extension row", async () => {
-    const taskId = await seedTask(executiveId, executiveId);
+    const taskId = await seedTask(executiveId, executiveId, projectId);
     asExecutive(otherId); // not the assignee
     const res = await request(app)
       .post(`/api/tasks/${taskId}/extensions`)
@@ -97,7 +112,7 @@ describe("POST /api/tasks/:id/extensions — rejection paths leave no row", () =
   });
 
   it("rejects non-positive minutes with 400 and writes no extension row", async () => {
-    const taskId = await seedTask(executiveId, executiveId);
+    const taskId = await seedTask(executiveId, executiveId, projectId);
     asExecutive(executiveId);
     const res = await request(app)
       .post(`/api/tasks/${taskId}/extensions`)
@@ -108,7 +123,7 @@ describe("POST /api/tasks/:id/extensions — rejection paths leave no row", () =
   });
 
   it("rejects an empty reason with 400 and writes no extension row", async () => {
-    const taskId = await seedTask(executiveId, executiveId);
+    const taskId = await seedTask(executiveId, executiveId, projectId);
     asExecutive(executiveId);
     const res = await request(app)
       .post(`/api/tasks/${taskId}/extensions`)
@@ -119,7 +134,7 @@ describe("POST /api/tasks/:id/extensions — rejection paths leave no row", () =
   });
 
   it("rejects a duplicate pending request with 400 and adds no second row", async () => {
-    const taskId = await seedTask(executiveId, executiveId);
+    const taskId = await seedTask(executiveId, executiveId, projectId);
     await pool.query(
       `insert into drm.task_time_extensions (task_id, requested_time_minutes, reason, status)
          values ($1, 15, 'first request', 'PENDING')`,

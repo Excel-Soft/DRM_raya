@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useLocation, useSearch } from "wouter";
+import { apiRequest, throwIfResNotOk } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -112,6 +112,99 @@ export default function SoftwareManagerDashboard() {
     repeatDaily: false,
   });
 
+  // ── Real software-workflow backend wiring ──
+  // `/api/software/manager/queue` = live verification/assignment queue (one row per project
+  // workflow) used to drive the Waiting/Delay/Approved tabs, the assign/verify actions and the
+  // top summary cards.
+  const { data: managerQueueRes, isLoading: isManagerQueueLoading } = useQuery({
+    queryKey: ["/api/software/manager/queue"],
+  });
+  const managerQueueRows: any[] = (managerQueueRes as any)?.data || [];
+
+  // `/api/software/manager/execution-rows` = reporting view (assignee, time spent, evidence,
+  // rework history) reused from the same engine that already powers the QA/Verification queues,
+  // used for Daily Report / Monthly Complete Project.
+  const { data: executionRowsRes, isLoading: isExecutionRowsLoading } = useQuery({
+    queryKey: ["/api/software/manager/execution-rows"],
+  });
+  const executionRows: any[] = (executionRowsRes as any)?.data || [];
+
+  const { data: softwareUsersRes } = useQuery({
+    queryKey: ["/api/users", { role: "all" }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?role=all");
+      return res.json();
+    },
+  });
+  const softwareExecutives: any[] = ((softwareUsersRes as any)?.users || []).filter(
+    (u: any) => u.role === "software_executive" || u.roleId === "software_executive",
+  );
+
+  // Real overtime + leave data (already the two working endpoints in this dashboard) — moved up
+  // here so the summary/leave widgets further down can all read from the same single fetch.
+  const { data: rawOvertimeData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/overtime"] });
+  const { data: rawLeaveData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/leaves"] });
+
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignTarget, setAssignTarget] = useState<any>(null);
+  const [assignForm, setAssignForm] = useState({ assigneeId: "", title: "", hours: "0", minutes: "0", links: "" });
+  const [workflowActionError, setWorkflowActionError] = useState<string | null>(null);
+
+  const openAssignModal = (row: any) => {
+    setAssignTarget(row);
+    setAssignForm({ assigneeId: "", title: row.project?.name || "", hours: "0", minutes: "0", links: "" });
+    setWorkflowActionError(null);
+    setAssignModalOpen(true);
+  };
+
+  const verifyProjectMutation = useMutation({
+    mutationFn: async (projectId: string) => {
+      const res = await apiRequest("POST", `/api/software/workflows/${projectId}/transition`, {
+        status: "APPROVED",
+        notes: "Verified by Software Manager",
+      });
+      await throwIfResNotOk(res);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/software/manager/queue"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/software/manager/execution-rows"] });
+    },
+    onError: (error: Error) => setWorkflowActionError(error.message),
+  });
+
+  const assignTaskMutation = useMutation({
+    mutationFn: async () => {
+      if (!assignTarget?.project?.id) throw new Error("No project selected");
+      const durationMinutes = (Number(assignForm.hours) || 0) * 60 + (Number(assignForm.minutes) || 0);
+      const res = await apiRequest("POST", `/api/software/projects/${assignTarget.project.id}/assign-task`, {
+        assigneeId: assignForm.assigneeId,
+        title: assignForm.title || assignTarget.project?.name,
+        description: assignTarget.project?.description || "",
+        assignedDurationMinutes: durationMinutes,
+        links: assignForm.links,
+      });
+      await throwIfResNotOk(res);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/software/manager/queue"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/software/manager/execution-rows"] });
+      setAssignModalOpen(false);
+    },
+    onError: (error: Error) => setWorkflowActionError(error.message),
+  });
+
+  const [leaveReportUser, setLeaveReportUser] = useState("");
+  const [leaveReportStart, setLeaveReportStart] = useState("");
+  const [leaveReportEnd, setLeaveReportEnd] = useState("");
+  const [overtimeReportUser, setOvertimeReportUser] = useState("");
+  const [overtimeReportStart, setOvertimeReportStart] = useState("");
+  const [overtimeReportEnd, setOvertimeReportEnd] = useState("");
+  const [overtimeReportPage, setOvertimeReportPage] = useState(1);
+  const OVERTIME_REPORT_PAGE_SIZE = 10;
+  const [monthlyProjectPeriod, setMonthlyProjectPeriod] = useState<"WK" | "MON">("MON");
+
   const projectOverviewButtons: string[] = [
     "Pms Setting", "Task Create",
     "Running Project", "Pending Project",
@@ -122,49 +215,97 @@ export default function SoftwareManagerDashboard() {
     "Project List", "Commission Verification",
   ];
 
+  // Real phase counts from the live software-workflow queue (`/api/software/manager/queue`).
+  const upcomingCount = managerQueueRows.filter((row) => row.currentPhase === "PENDING_PROJECT").length;
+  const inProgressCount = managerQueueRows.filter((row) => row.currentPhase === "RUNNING_PROJECT").length;
+  const completedCount = managerQueueRows.filter((row) => row.currentPhase === "VERIFICATION_COMPLETE").length;
+  const qcVerificationCount = managerQueueRows.filter((row) => row.currentPhase === "QA_REVIEW").length;
+  const depVerificationCount = managerQueueRows.filter((row) => row.currentPhase === "VERIFICATION_PENDING").length;
+  const pendingLeaveCount = (rawLeaveData as any[]).filter((item) => (item.status || "Pending") === "Pending").length;
+
   const importantItems: [string, string, string?][] = [
-    ["Upcoming", "0"], ["In Progress", "0"],
-    ["Completed", "0"], ["Qc Verification", "0"],
-    ["Dep Verification", "24(4600)", "text-red-500"], ["Leave Application", "13"],
+    ["Upcoming", String(upcomingCount)], ["In Progress", String(inProgressCount)],
+    ["Completed", String(completedCount)], ["Qc Verification", String(qcVerificationCount)],
+    ["Dep Verification", String(depVerificationCount), depVerificationCount > 0 ? "text-red-500" : undefined],
+    ["Leave Application", String(pendingLeaveCount)],
   ];
 
+  // NOTE (left mocked intentionally): "Team Work Performance" below uses CRM/sales columns
+  // (Leads, Follow, A-/B+/B/B- Customer grade, Call Connected, Appointment, Meeting) that have no
+  // equivalent in the software-workflow schema (software_workflows / tasks / task_time_logs only
+  // track phase, assigned/spent minutes and evidence links — there is no lead/appointment/customer
+  // grading concept for a software executive). There is no evidenced business rule for what these
+  // columns should mean for this role, so the original single demo row is left as-is rather than
+  // guessing a mapping. Flagged in the task report.
   const teamRows = [
     { name: "Test", leads: 10, follow: 5, notFollow: 5, aCust: 2, bPlus: 1, bCust: 1, bMinus: 1, callConn: 5, notResp: 2, appoint: 5, meeting: 2 },
   ];
 
+  const getStatRangeStart = (filter: string) => {
+    const now = new Date();
+    if (filter === "daily") {
+      const d = new Date(now);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    if (filter === "weekly") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      return d;
+    }
+    const d = new Date(now);
+    d.setDate(d.getDate() - 30);
+    return d;
+  };
+
   const getStatCards = () => {
-    if (topSellingFilter === "daily") {
-      return [
-        { label: "Total Project", value: "5(2)", icon: Users, gradient: "from-emerald-500 to-teal-600", lightBg: "bg-emerald-50", textColor: "text-emerald-600" },
-        { label: "Verification", value: "1", icon: ArrowRightLeft, gradient: "from-blue-500 to-indigo-600", lightBg: "bg-blue-50", textColor: "text-blue-600" },
-        { label: "Task", value: "8", icon: Tag, gradient: "from-violet-500 to-purple-600", lightBg: "bg-violet-50", textColor: "text-violet-600" },
-        { label: "Free", value: "2", icon: Compass, gradient: "from-amber-500 to-orange-500", lightBg: "bg-amber-50", textColor: "text-amber-600" },
-      ];
-    }
-    if (topSellingFilter === "weekly") {
-      return [
-        { label: "Total Project", value: "18(5)", icon: Users, gradient: "from-emerald-500 to-teal-600", lightBg: "bg-emerald-50", textColor: "text-emerald-600" },
-        { label: "Verification", value: "4", icon: ArrowRightLeft, gradient: "from-blue-500 to-indigo-600", lightBg: "bg-blue-50", textColor: "text-blue-600" },
-        { label: "Task", value: "35", icon: Tag, gradient: "from-violet-500 to-purple-600", lightBg: "bg-violet-50", textColor: "text-violet-600" },
-        { label: "Free", value: "12", icon: Compass, gradient: "from-amber-500 to-orange-500", lightBg: "bg-amber-50", textColor: "text-amber-600" },
-      ];
-    }
-    // monthly
+    const rangeStart = getStatRangeStart(topSellingFilter);
+    const rowsInRange = managerQueueRows.filter((row) => row.createdAt && new Date(row.createdAt) >= rangeStart);
+    const totalProjectsCount = rowsInRange.length;
+    const totalProjectsCompletedCount = rowsInRange.filter((row) => row.currentPhase === "VERIFICATION_COMPLETE").length;
+    const verificationCount = managerQueueRows.filter(
+      (row) => row.currentPhase === "DATA_VERIFY" && row.updatedAt && new Date(row.updatedAt) >= rangeStart,
+    ).length;
+    const taskCount = managerQueueRows.filter(
+      (row) => ["TASK_ASSIGNMENT", "RUNNING_PROJECT"].includes(row.currentPhase) && row.updatedAt && new Date(row.updatedAt) >= rangeStart,
+    ).length;
+    const busyExecutiveIds = new Set(
+      managerQueueRows.filter((row) => row.currentPhase === "RUNNING_PROJECT" && row.executiveUserId).map((row) => row.executiveUserId),
+    );
+    const freeExecutivesCount = Math.max(softwareExecutives.length - busyExecutiveIds.size, 0);
+
     return [
-      { label: "Total Project", value: "0(0)", icon: Users, gradient: "from-emerald-500 to-teal-600", lightBg: "bg-emerald-50", textColor: "text-emerald-600" },
-      { label: "Verification", value: "0", icon: ArrowRightLeft, gradient: "from-blue-500 to-indigo-600", lightBg: "bg-blue-50", textColor: "text-blue-600" },
-      { label: "Task", value: "0", icon: Tag, gradient: "from-violet-500 to-purple-600", lightBg: "bg-violet-50", textColor: "text-violet-600" },
-      { label: "Free", value: "0", icon: Compass, gradient: "from-amber-500 to-orange-500", lightBg: "bg-amber-50", textColor: "text-amber-600" },
+      { label: "Total Project", value: `${totalProjectsCount}(${totalProjectsCompletedCount})`, icon: Users, gradient: "from-emerald-500 to-teal-600", lightBg: "bg-emerald-50", textColor: "text-emerald-600" },
+      { label: "Verification", value: String(verificationCount), icon: ArrowRightLeft, gradient: "from-blue-500 to-indigo-600", lightBg: "bg-blue-50", textColor: "text-blue-600" },
+      { label: "Task", value: String(taskCount), icon: Tag, gradient: "from-violet-500 to-purple-600", lightBg: "bg-violet-50", textColor: "text-violet-600" },
+      { label: "Free", value: String(freeExecutivesCount), icon: Compass, gradient: "from-amber-500 to-orange-500", lightBg: "bg-amber-50", textColor: "text-amber-600" },
     ];
   };
 
   const statCards = getStatCards();
 
+  // Verification & Assign Project queue — real rows bucketed by software_workflows.currentPhase,
+  // sourced from the same /api/software/manager/queue used for the summary cards above.
+  const waitingQueueRows = managerQueueRows.filter((row) => row.currentPhase === "DATA_VERIFY");
+  const delayQueueRows = managerQueueRows.filter((row) => row.currentPhase === "RETURNED_FOR_CHANGE");
+  const approvedQueueRows = managerQueueRows.filter((row) => ["PROJECT_OVERVIEW", "TASK_ASSIGNMENT"].includes(row.currentPhase));
+
+  const todayLeaveQueueRows = (rawLeaveData as any[]).filter((item) => {
+    if (!item.fromDate || !item.toDate) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const from = new Date(item.fromDate);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(item.toDate);
+    to.setHours(0, 0, 0, 0);
+    return today >= from && today <= to;
+  });
+
   const tabs: { key: TabType; label: string; badge?: number }[] = [
-    { key: "waiting", label: "Waiting" },
-    { key: "delay", label: "Delay" },
-    { key: "approved", label: "Approved" },
-    { key: "today-leave", label: "Today Leave", badge: 0 },
+    { key: "waiting", label: "Waiting", badge: waitingQueueRows.length },
+    { key: "delay", label: "Delay", badge: delayQueueRows.length },
+    { key: "approved", label: "Approved", badge: approvedQueueRows.length },
+    { key: "today-leave", label: "Today Leave", badge: todayLeaveQueueRows.length },
     { key: "team-yearly", label: "Team Yearly Leave" },
     { key: "team-balance", label: "Team Balance Leave" },
   ];
@@ -322,7 +463,6 @@ export default function SoftwareManagerDashboard() {
     return matchesDepartment && matchesCity && matchesStatus && matchesStart && matchesEnd;
   });
 
-  const { data: rawOvertimeData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/overtime"] });
   const overtimeRows = rawOvertimeData.map((item: any, idx: number) => ({
     id: item.id,
     no: (idx + 1).toString(),
@@ -332,6 +472,12 @@ export default function SoftwareManagerDashboard() {
     detail: item.taskDetails || "",
     manager: item.status,
     create: new Date(item.createdAt).toLocaleString(),
+    // Raw ISO value for date-range filtering below — `create` above is
+    // already locale-formatted for display (e.g. "29/5/2026, 21:41"),
+    // and re-parsing a locale string with `new Date()` isn't reliably
+    // supported outside en-US, causing `RangeError: Invalid time value`
+    // once `.toISOString()` ran on the resulting Invalid Date.
+    createdAtRaw: item.createdAt,
   }));
 
   const filteredOvertimeRows = overtimeRows.filter((row: any) =>
@@ -770,8 +916,6 @@ export default function SoftwareManagerDashboard() {
     "Create",
     "Action",
   ];
-
-  const { data: rawLeaveData = [] } = useQuery<any[]>({ queryKey: ["/api/admin/leaves"] });
 
   const { mutate: submitLeaveMutation } = useMutation({
     mutationFn: async (data: any) => {
@@ -3422,6 +3566,9 @@ export default function SoftwareManagerDashboard() {
             <div className="p-5 text-[12px]">
               {activeTab === "waiting" && (
                 <>
+                  {workflowActionError && (
+                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">{workflowActionError}</div>
+                  )}
                   <div className="flex justify-between items-center mb-4">
                     <div className="flex items-center gap-2 text-slate-600 text-xs dark:text-zinc-300">
                       Show
@@ -3440,11 +3587,38 @@ export default function SoftwareManagerDashboard() {
                       <TableHeader><TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
                         {["No#","Company","Project","Status","Time","Action"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                       </TableRow></TableHeader>
-                      <TableBody><EmptyRow cols={6} /></TableBody>
+                      <TableBody>
+                        {(() => {
+                          const rows = waitingQueueRows.filter((row) =>
+                            [row.project?.name, row.project?.companyName].join(" ").toLowerCase().includes(attendanceSearch.toLowerCase()),
+                          );
+                          if (isManagerQueueLoading) return <EmptyRow cols={6} />;
+                          if (!rows.length) return <EmptyRow cols={6} />;
+                          return rows.map((row, i) => (
+                            <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                              <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{i + 1}</TableCell>
+                              <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.project?.companyName || "-"}</TableCell>
+                              <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.project?.name || "-"}</TableCell>
+                              <TableCell className="px-4 py-3"><Badge className="bg-amber-50 text-amber-700 border border-amber-200 font-semibold">{row.phaseLabel}</Badge></TableCell>
+                              <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString() : "-"}</TableCell>
+                              <TableCell className="px-4 py-3">
+                                <Button
+                                  size="sm"
+                                  className="h-7 px-3 text-[11px] bg-emerald-600 hover:bg-emerald-700 text-white"
+                                  disabled={verifyProjectMutation.isPending}
+                                  onClick={() => verifyProjectMutation.mutate(row.project.id)}
+                                >
+                                  {verifyProjectMutation.isPending ? "Verifying..." : "Verify"}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ));
+                        })()}
+                      </TableBody>
                     </Table>
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-zinc-800">
-                    <p className="text-slate-400 text-xs">Showing 0 to 0 of 0 entries</p>
+                    <p className="text-slate-400 text-xs">Showing {waitingQueueRows.length > 0 ? 1 : 0} to {waitingQueueRows.length} of {waitingQueueRows.length} entries</p>
                     <div className="flex gap-1">
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Previous</Button>
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Next</Button>
@@ -3473,11 +3647,27 @@ export default function SoftwareManagerDashboard() {
                       <TableHeader><TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
                         {["Name","Company","Project","Dep","Deadlines"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                       </TableRow></TableHeader>
-                      <TableBody><EmptyRow cols={5} /></TableBody>
+                      <TableBody>
+                        {(() => {
+                          const rows = delayQueueRows.filter((row) =>
+                            [row.project?.name, row.project?.companyName].join(" ").toLowerCase().includes(attendanceSearch.toLowerCase()),
+                          );
+                          if (isManagerQueueLoading || !rows.length) return <EmptyRow cols={5} />;
+                          return rows.map((row) => (
+                            <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                              <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.project?.name || "-"}</TableCell>
+                              <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.project?.companyName || "-"}</TableCell>
+                              <TableCell className="px-4 py-3"><Badge className="bg-rose-50 text-rose-700 border border-rose-200 font-semibold">{row.phaseLabel}</Badge></TableCell>
+                              <TableCell className="px-4 py-3 text-slate-500 max-w-[220px] truncate dark:text-zinc-400">{row.lastReturnReason || "-"}</TableCell>
+                              <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString() : "-"}</TableCell>
+                            </TableRow>
+                          ));
+                        })()}
+                      </TableBody>
                     </Table>
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-zinc-800">
-                    <p className="text-slate-400 text-xs">Showing 0 to 0 of 0 entries</p>
+                    <p className="text-slate-400 text-xs">Showing {delayQueueRows.length > 0 ? 1 : 0} to {delayQueueRows.length} of {delayQueueRows.length} entries</p>
                     <div className="flex gap-1">
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Previous</Button>
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Next</Button>
@@ -3488,6 +3678,9 @@ export default function SoftwareManagerDashboard() {
 
               {activeTab === "approved" && (
                 <>
+                  {workflowActionError && (
+                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">{workflowActionError}</div>
+                  )}
                   <div className="flex justify-between items-center mb-4">
                     <div className="flex items-center gap-2 text-slate-600 text-xs dark:text-zinc-300">
                       Show
@@ -3506,11 +3699,36 @@ export default function SoftwareManagerDashboard() {
                       <TableHeader><TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
                         {["No#","Company","Project","Status","Time","Action"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                       </TableRow></TableHeader>
-                      <TableBody><EmptyRow cols={6} /></TableBody>
+                      <TableBody>
+                        {(() => {
+                          const rows = approvedQueueRows.filter((row) =>
+                            [row.project?.name, row.project?.companyName].join(" ").toLowerCase().includes(attendanceSearch.toLowerCase()),
+                          );
+                          if (isManagerQueueLoading || !rows.length) return <EmptyRow cols={6} />;
+                          return rows.map((row, i) => (
+                            <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                              <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{i + 1}</TableCell>
+                              <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.project?.companyName || "-"}</TableCell>
+                              <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.project?.name || "-"}</TableCell>
+                              <TableCell className="px-4 py-3"><Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">{row.phaseLabel}</Badge></TableCell>
+                              <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.updatedAt ? new Date(row.updatedAt).toLocaleDateString() : "-"}</TableCell>
+                              <TableCell className="px-4 py-3">
+                                <Button
+                                  size="sm"
+                                  className="h-7 px-3 text-[11px] bg-blue-600 hover:bg-blue-700 text-white"
+                                  onClick={() => openAssignModal(row)}
+                                >
+                                  Assign
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ));
+                        })()}
+                      </TableBody>
                     </Table>
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-zinc-800">
-                    <p className="text-slate-400 text-xs">Showing 0 to 0 of 0 entries</p>
+                    <p className="text-slate-400 text-xs">Showing {approvedQueueRows.length > 0 ? 1 : 0} to {approvedQueueRows.length} of {approvedQueueRows.length} entries</p>
                     <div className="flex gap-1">
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Previous</Button>
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Next</Button>
@@ -3542,14 +3760,51 @@ export default function SoftwareManagerDashboard() {
                         ))}
                       </TableRow></TableHeader>
                       <TableBody>
-                        <TableRow>
-                          <TableCell colSpan={15} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No data available in table</span></div></TableCell>
-                        </TableRow>
+                        {(() => {
+                          const rows = todayLeaveQueueRows.filter((row: any) =>
+                            [row.userName, row.userId, row.reason].join(" ").toLowerCase().includes(attendanceSearch.toLowerCase()),
+                          );
+                          if (!rows.length) {
+                            return (
+                              <TableRow>
+                                <TableCell colSpan={15} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No leaves for today</span></div></TableCell>
+                              </TableRow>
+                            );
+                          }
+                          return rows.map((row: any, i: number) => (
+                            <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                              <TableCell className="px-3 py-3 text-slate-500 dark:text-zinc-400">{i + 1}</TableCell>
+                              <TableCell className="px-3 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.userName || row.userId || "Unknown"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-600 dark:text-zinc-300">{row.purpose || row.reason || "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-600 dark:text-zinc-300">{row.type || row.leaveType || "Full"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 dark:text-zinc-400">{row.alternative || "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 max-w-[220px] truncate dark:text-zinc-400">{row.reason || row.description || "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-400">-</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-400">-</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-400">-</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 dark:text-zinc-400">{row.day || "1"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 dark:text-zinc-400">{row.time || "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 whitespace-nowrap dark:text-zinc-400">{row.fromDate ? new Date(row.fromDate).toLocaleDateString() : "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 whitespace-nowrap dark:text-zinc-400">{row.toDate ? new Date(row.toDate).toLocaleDateString() : "-"}</TableCell>
+                              <TableCell className="px-3 py-3 text-slate-500 whitespace-nowrap dark:text-zinc-400">{row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}</TableCell>
+                              <TableCell className="px-3 py-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentView("leave-application")}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-emerald-600 text-emerald-600 text-[16px] font-bold hover:bg-emerald-50 transition-colors"
+                                  aria-label={`Open leave application for ${row.userName || row.userId}`}
+                                >
+                                  +
+                                </button>
+                              </TableCell>
+                            </TableRow>
+                          ));
+                        })()}
                       </TableBody>
                     </Table>
                   </div>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 dark:border-zinc-800">
-                    <p className="text-slate-400 text-xs">Showing 0 to 0 of 0 entries</p>
+                    <p className="text-slate-400 text-xs">Showing {todayLeaveQueueRows.length > 0 ? 1 : 0} to {todayLeaveQueueRows.length} of {todayLeaveQueueRows.length} entries</p>
                     <div className="flex gap-1">
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Previous</Button>
                       <Button variant="outline" className="h-8 px-4 text-xs font-bold text-slate-500 rounded-lg border-slate-200 dark:text-zinc-400 dark:border-zinc-800">Next</Button>
@@ -3558,6 +3813,18 @@ export default function SoftwareManagerDashboard() {
                 </>
               )}
 
+              {/*
+                NOTE (left mocked intentionally): "Team Yearly Leave" (Total/Unpaid/CM Leaves,
+                L-Approval, Last Increment, Expire) and "Team Balance Leave" (Available Leaves +
+                MA/HODA/AP multi-stage approval) below have no backing schema. `leave_requests`
+                only tracks a single fromDate/toDate/status/approvedByUserId per request — there is
+                no yearly leave quota, no half-leave/CM-leave bookkeeping, no multi-stage
+                Manager/HOD/Admin approval chain, and no salary-increment tracking anywhere in
+                shared/schema.ts. Wiring these would require inventing a business rule (what the
+                yearly quota is, how it decrements, what "Last Increment" means) that isn't
+                evidenced anywhere in the codebase, so both tabs are left as static mock per the
+                task instructions and flagged in the report.
+              */}
               {activeTab === "team-yearly" && (
                 <>
                   <div className="flex items-center gap-2 mb-4 text-[11px] text-slate-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 dark:text-zinc-400">
@@ -3761,7 +4028,28 @@ export default function SoftwareManagerDashboard() {
                   <TableHeader><TableRow className="hover:bg-transparent border-b border-slate-100 dark:border-zinc-800">
                     {["Name","Company","Project","Free","Task","Status","Run","Spent","Action"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                   </TableRow></TableHeader>
-                  <TableBody><EmptyRow cols={9} /></TableBody>
+                  <TableBody>
+                    {isExecutionRowsLoading || !executionRows.length ? (
+                      <EmptyRow cols={9} />
+                    ) : (
+                      executionRows.map((row: any) => {
+                        const freeMinutes = Math.max((row.assignedDurationMinutes || 0) - (row.spentMinutes || 0), 0);
+                        return (
+                          <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                            <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.assignee?.name || "Unassigned"}</TableCell>
+                            <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.companyName || "-"}</TableCell>
+                            <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.name || row.title || "-"}</TableCell>
+                            <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{freeMinutes} min</TableCell>
+                            <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.title || "-"}</TableCell>
+                            <TableCell className="px-4 py-3"><Badge className="bg-slate-100 text-slate-700 border border-slate-200 font-semibold">{row.phaseLabel}</Badge></TableCell>
+                            <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{(row.spentMinutes || 0) > 0 ? "Running" : "Idle"}</TableCell>
+                            <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.totalDurationMinutes || 0} min</TableCell>
+                            <TableCell className="px-4 py-3"><ArrowRight className="w-3.5 h-3.5 text-emerald-500" /></TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
                 </Table>
               </div>
             </div>
@@ -3772,17 +4060,28 @@ export default function SoftwareManagerDashboard() {
             <SectionHeader title="Leave Report">
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <select className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] appearance-none outline-none bg-white w-32 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                    <option>All Users</option>
+                  <select
+                    value={leaveReportUser}
+                    onChange={(e) => setLeaveReportUser(e.target.value)}
+                    className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] appearance-none outline-none bg-white w-32 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"
+                  >
+                    <option value="">All Users</option>
+                    {Array.from(new Set((rawLeaveData as any[]).map((item) => item.userName || item.userId).filter(Boolean))).map((name) => (
+                      <option key={String(name)} value={String(name)}>{String(name)}</option>
+                    ))}
                   </select>
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                 </div>
-                <Input type="date" className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
-                <Input type="date" className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
+                <Input type="date" value={leaveReportStart} onChange={(e) => setLeaveReportStart(e.target.value)} className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
+                <Input type="date" value={leaveReportEnd} onChange={(e) => setLeaveReportEnd(e.target.value)} className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
                 <Button className="h-8 px-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-[11px] border-none gap-1 rounded-lg shadow-sm">
                   <Filter className="w-3 h-3" /> Filter
                 </Button>
-                <button type="button" className="h-8 w-8 border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:border-emerald-300 bg-white transition-colors dark:bg-zinc-900 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => { setLeaveReportUser(""); setLeaveReportStart(""); setLeaveReportEnd(""); }}
+                  className="h-8 w-8 border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:border-emerald-300 bg-white transition-colors dark:bg-zinc-900 dark:border-zinc-800"
+                >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -3794,7 +4093,37 @@ export default function SoftwareManagerDashboard() {
                     {["Create Date","Name","Purpose","Type","Leave Date","PM-Comments","Status"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                   </TableRow></TableHeader>
                   <TableBody>
-                    <TableRow><TableCell colSpan={7} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No records found</span></div></TableCell></TableRow>
+                    {(() => {
+                      const rows = (rawLeaveData as any[]).filter((item) => {
+                        const matchesUser = !leaveReportUser || (item.userName || item.userId) === leaveReportUser;
+                        const from = item.fromDate ? new Date(item.fromDate).toISOString().slice(0, 10) : "";
+                        const matchesStart = !leaveReportStart || from >= leaveReportStart;
+                        const matchesEnd = !leaveReportEnd || from <= leaveReportEnd;
+                        return matchesUser && matchesStart && matchesEnd;
+                      });
+                      if (!rows.length) {
+                        return <TableRow><TableCell colSpan={7} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No records found</span></div></TableCell></TableRow>;
+                      }
+                      return rows.map((item) => (
+                        <TableRow key={item.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                          <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{item.userName || item.userId || "Unknown"}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.purpose || item.reason || "-"}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.type || item.leaveType || "Full"}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-500 whitespace-nowrap dark:text-zinc-400">
+                            {item.fromDate ? new Date(item.fromDate).toLocaleDateString() : "-"} - {item.toDate ? new Date(item.toDate).toLocaleDateString() : "-"}
+                          </TableCell>
+                          <TableCell className="px-4 py-3 text-slate-500 max-w-[200px] truncate dark:text-zinc-400">{item.rejectionReason || "-"}</TableCell>
+                          <TableCell className="px-4 py-3">
+                            <Badge className={
+                              item.status === "Approved" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                              item.status === "Rejected" ? "bg-rose-50 text-rose-700 border border-rose-200" :
+                              "bg-amber-50 text-amber-700 border border-amber-200"
+                            }>{item.status || "Pending"}</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ));
+                    })()}
                   </TableBody>
                 </Table>
               </div>
@@ -3806,17 +4135,28 @@ export default function SoftwareManagerDashboard() {
             <SectionHeader title="Overtime Report">
               <div className="flex items-center gap-2">
                 <div className="relative">
-                  <select className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] appearance-none outline-none bg-white w-32 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                    <option>All Users</option>
+                  <select
+                    value={overtimeReportUser}
+                    onChange={(e) => { setOvertimeReportUser(e.target.value); setOvertimeReportPage(1); }}
+                    className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] appearance-none outline-none bg-white w-32 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"
+                  >
+                    <option value="">All Users</option>
+                    {Array.from(new Set(overtimeRows.map((row: any) => row.name).filter(Boolean))).map((name) => (
+                      <option key={String(name)} value={String(name)}>{String(name)}</option>
+                    ))}
                   </select>
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
                 </div>
-                <Input type="date" className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
-                <Input type="date" className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
+                <Input type="date" value={overtimeReportStart} onChange={(e) => { setOvertimeReportStart(e.target.value); setOvertimeReportPage(1); }} className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
+                <Input type="date" value={overtimeReportEnd} onChange={(e) => { setOvertimeReportEnd(e.target.value); setOvertimeReportPage(1); }} className="h-8 border-slate-200 rounded-lg text-[11px] w-36 dark:border-zinc-800" />
                 <Button className="h-8 px-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-[11px] border-none gap-1 rounded-lg shadow-sm">
                   <Filter className="w-3 h-3" /> Filter
                 </Button>
-                <button type="button" className="h-8 w-8 border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:border-emerald-300 bg-white transition-colors dark:bg-zinc-900 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => { setOvertimeReportUser(""); setOvertimeReportStart(""); setOvertimeReportEnd(""); setOvertimeReportPage(1); }}
+                  className="h-8 w-8 border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:border-emerald-300 bg-white transition-colors dark:bg-zinc-900 dark:border-zinc-800"
+                >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -3828,10 +4168,74 @@ export default function SoftwareManagerDashboard() {
                     {["Create Date","Name","Purpose","Time (Mins)","Department","Detail"].map(h => <TableHead key={h} className={TheadStyle}>{h}</TableHead>)}
                   </TableRow></TableHeader>
                   <TableBody>
-                    <TableRow><TableCell colSpan={6} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No overtime records found for the selected filters</span></div></TableCell></TableRow>
+                    {(() => {
+                      const rows = overtimeRows.filter((row: any) => {
+                        const matchesUser = !overtimeReportUser || row.name === overtimeReportUser;
+                        const created = row.createdAtRaw ? new Date(row.createdAtRaw).toISOString().slice(0, 10) : "";
+                        const matchesStart = !overtimeReportStart || created >= overtimeReportStart;
+                        const matchesEnd = !overtimeReportEnd || created <= overtimeReportEnd;
+                        return matchesUser && matchesStart && matchesEnd;
+                      });
+                      if (!rows.length) {
+                        return <TableRow><TableCell colSpan={6} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><Activity className="w-5 h-5 opacity-40" /><span className="text-[11px] italic">No overtime records found for the selected filters</span></div></TableCell></TableRow>;
+                      }
+                      const totalPages = Math.max(1, Math.ceil(rows.length / OVERTIME_REPORT_PAGE_SIZE));
+                      const page = Math.min(overtimeReportPage, totalPages);
+                      const pagedRows = rows.slice((page - 1) * OVERTIME_REPORT_PAGE_SIZE, page * OVERTIME_REPORT_PAGE_SIZE);
+                      return pagedRows.map((row: any) => (
+                        <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                          <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.create}</TableCell>
+                          <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.name}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.task || "-"}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.time}</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-400">-</TableCell>
+                          <TableCell className="px-4 py-3 text-slate-500 max-w-[240px] truncate dark:text-zinc-400">{row.detail || "-"}</TableCell>
+                        </TableRow>
+                      ));
+                    })()}
                   </TableBody>
                 </Table>
               </div>
+              {(() => {
+                const rows = overtimeRows.filter((row: any) => {
+                  const matchesUser = !overtimeReportUser || row.name === overtimeReportUser;
+                  const created = row.createdAtRaw ? new Date(row.createdAtRaw).toISOString().slice(0, 10) : "";
+                  const matchesStart = !overtimeReportStart || created >= overtimeReportStart;
+                  const matchesEnd = !overtimeReportEnd || created <= overtimeReportEnd;
+                  return matchesUser && matchesStart && matchesEnd;
+                });
+                const totalPages = Math.max(1, Math.ceil(rows.length / OVERTIME_REPORT_PAGE_SIZE));
+                const page = Math.min(overtimeReportPage, totalPages);
+                return (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4">
+                    <span className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400">
+                      {rows.length === 0
+                        ? "Showing 0 entries"
+                        : `Showing ${(page - 1) * OVERTIME_REPORT_PAGE_SIZE + 1} to ${Math.min(page * OVERTIME_REPORT_PAGE_SIZE, rows.length)} of ${rows.length} entries`}
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[11px] px-3"
+                        disabled={page <= 1}
+                        onClick={() => setOvertimeReportPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[11px] px-3"
+                        disabled={page >= totalPages}
+                        onClick={() => setOvertimeReportPage((p) => Math.min(totalPages, p + 1))}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -4020,8 +4424,12 @@ export default function SoftwareManagerDashboard() {
               <PlusCircle className="w-4 h-4 text-emerald-600" />
             </button>
             <div className="relative">
-              <select className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] font-bold appearance-none outline-none bg-white text-slate-600 w-20 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                <option>WK</option><option>MON</option>
+              <select
+                value={monthlyProjectPeriod}
+                onChange={(e) => setMonthlyProjectPeriod(e.target.value as "WK" | "MON")}
+                className="h-8 border border-slate-200 rounded-lg px-3 pr-8 text-[11px] font-bold appearance-none outline-none bg-white text-slate-600 w-20 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"
+              >
+                <option value="WK">WK</option><option value="MON">MON</option>
               </select>
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
             </div>
@@ -4041,12 +4449,160 @@ export default function SoftwareManagerDashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow><TableCell colSpan={12} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><CheckCircle2 className="w-5 h-5 opacity-30" /><span className="text-[11px] italic">No data available</span></div></TableCell></TableRow>
+                {(() => {
+                  const now = new Date();
+                  const periodStart = new Date(now);
+                  if (monthlyProjectPeriod === "WK") {
+                    periodStart.setDate(periodStart.getDate() - 7);
+                  } else {
+                    periodStart.setDate(1);
+                    periodStart.setHours(0, 0, 0, 0);
+                  }
+                  const rows = executionRows.filter((row: any) => {
+                    if (row.status !== "VERIFICATION_COMPLETE") return false;
+                    const completedAt = row.verificationReviewedAt || row.managerCompletedAt || row.createdAt;
+                    return completedAt && new Date(completedAt) >= periodStart;
+                  });
+                  if (!rows.length) {
+                    return <TableRow><TableCell colSpan={12} className="h-16 text-center"><div className="flex flex-col items-center gap-1 text-slate-400"><CheckCircle2 className="w-5 h-5 opacity-30" /><span className="text-[11px] italic">No data available</span></div></TableCell></TableRow>;
+                  }
+                  return rows.map((row: any, i: number) => {
+                    const link = row.evidenceLinks?.[0]?.url;
+                    return (
+                      <TableRow key={row.id} className="hover:bg-slate-50/80 transition-colors border-b border-slate-50 dark:border-zinc-800">
+                        <TableCell className="px-4 py-3">
+                          <input type="checkbox" className="rounded border-slate-300 accent-emerald-500 dark:border-zinc-800" />
+                        </TableCell>
+                        <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{i + 1}</TableCell>
+                        <TableCell className="px-4 py-3 font-semibold text-slate-800 dark:text-zinc-100">{row.assignee?.name || "Unassigned"}</TableCell>
+                        <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.companyName || "-"}</TableCell>
+                        <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.name || row.title || "-"}</TableCell>
+                        <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">0 min</TableCell>
+                        <TableCell className="px-4 py-3 text-slate-600 dark:text-zinc-300">{row.title || "-"}</TableCell>
+                        <TableCell className="px-4 py-3"><Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">{row.phaseLabel}</Badge></TableCell>
+                        <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">Done</TableCell>
+                        <TableCell className="px-4 py-3 text-slate-500 dark:text-zinc-400">{row.totalDurationMinutes || 0} min</TableCell>
+                        <TableCell className="px-4 py-3">
+                          {link ? (
+                            <a href={link} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline text-[11px] font-semibold">Open</a>
+                          ) : (
+                            <span className="text-slate-300 text-[11px]">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-4 py-3"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></TableCell>
+                      </TableRow>
+                    );
+                  });
+                })()}
               </TableBody>
             </Table>
           </div>
         </div>
       </div>
+
+      {/* ASSIGN TASK MODAL */}
+      {assignModalOpen && assignTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/25 px-4">
+          <div className="w-full max-w-[560px] rounded-[10px] bg-white shadow-2xl dark:bg-zinc-900">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-5 dark:border-zinc-800">
+              <h2 className="text-[18px] font-semibold text-slate-700 dark:text-zinc-300">Assign Project — {assignTarget.project?.name}</h2>
+              <button
+                type="button"
+                onClick={() => setAssignModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 transition-colors"
+                aria-label="Close assign project modal"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-5">
+              {workflowActionError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">{workflowActionError}</div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Assign To Executive <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <select
+                    value={assignForm.assigneeId}
+                    onChange={(e) => setAssignForm((prev) => ({ ...prev, assigneeId: e.target.value }))}
+                    className="h-11 w-full rounded-md border border-slate-300 bg-white px-4 pr-10 text-[13px] text-slate-700 outline-none appearance-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
+                  >
+                    <option value="">Select executive...</option>
+                    {softwareExecutives.map((exec: any) => (
+                      <option key={exec.id} value={exec.id}>{exec.name || exec.fullName || exec.email}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Task Title</label>
+                <Input
+                  value={assignForm.title}
+                  onChange={(e) => setAssignForm((prev) => ({ ...prev, title: e.target.value }))}
+                  className="h-11 border-slate-200 text-[13px] dark:border-zinc-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Duration (Hours)</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={assignForm.hours}
+                    onChange={(e) => setAssignForm((prev) => ({ ...prev, hours: e.target.value }))}
+                    className="h-11 border-slate-200 text-[13px] dark:border-zinc-800"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Duration (Minutes)</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={assignForm.minutes}
+                    onChange={(e) => setAssignForm((prev) => ({ ...prev, minutes: e.target.value }))}
+                    className="h-11 border-slate-200 text-[13px] dark:border-zinc-800"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[13px] font-semibold text-slate-700 dark:text-zinc-400">Reference Links</label>
+                <Input
+                  value={assignForm.links}
+                  onChange={(e) => setAssignForm((prev) => ({ ...prev, links: e.target.value }))}
+                  placeholder="https://..."
+                  className="h-11 border-slate-200 text-[13px] dark:border-zinc-800"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-5 dark:border-zinc-800">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAssignModalOpen(false)}
+                className="h-11 px-6 border-slate-200 bg-[#777e95] text-white hover:bg-[#656c82] hover:text-white dark:border-zinc-800"
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                disabled={!assignForm.assigneeId || assignTaskMutation.isPending}
+                onClick={() => assignTaskMutation.mutate()}
+                className="h-11 px-6 bg-[#0c9b57] hover:bg-[#09884c] text-white font-semibold disabled:opacity-50"
+              >
+                {assignTaskMutation.isPending ? "Assigning..." : "Assign"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
     </div>
   );

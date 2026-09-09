@@ -1,4 +1,28 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Phase 2 (section C): mock the database module before importing anything
+// that transitively loads it. workflow-transition.service.ts -> AuditLogService
+// -> activity-service.ts -> server/db.ts, whose module body constructs a real
+// pg.Pool and logs the configured (shared Supabase) host/port. Every audit
+// call this test's code path can reach is already best-effort and wrapped in
+// try/catch by the real implementation, so a minimal stub is sufficient — no
+// real Pool is ever constructed and no hostname is ever logged.
+vi.mock("./db", () => ({
+  pool: {
+    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    connect: vi.fn(async () => ({ query: vi.fn(async () => ({ rows: [] })), release: vi.fn() })),
+    on: vi.fn(),
+    end: vi.fn(async () => {}),
+  },
+  db: {},
+  isDbAvailable: () => true,
+  isNetworkOrDnsError: () => false,
+  markDbUnavailable: () => {},
+  getDbUnavailableReason: () => null,
+  ensureDbAvailable: async () => true,
+  checkDbHealth: async () => ({ ok: true }),
+}));
+
 import {
   validateTransition,
   validateExtensionRequestInput,

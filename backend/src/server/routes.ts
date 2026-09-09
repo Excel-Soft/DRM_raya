@@ -1,89 +1,92 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { pool, checkDbHealth, getDbUnavailableReason, isNetworkOrDnsError, markDbUnavailable } from "./db";
-import { storage } from "./utils/storage";
-import aiRoutes from "./routes/ai-routes";
-import authRoutes from "./routes/auth.routes";
-import { registerSalesRoutes } from "./routes/sales-routes";
-import { registerPmsRoutes } from "./routes/pms-routes";
-import { registerSupportRoutes } from "./routes/support-routes";
-import { isSupportModuleEnabled } from "./utils/feature-flags";
-import { registerSettingsRoutes } from "./routes/settings-routes";
-import { registerAttendanceRoutes } from "./routes/attendance-routes";
-import { registerAttendanceEditRoutes } from "./routes/attendance-edit-routes";
-import { registerSalaryRoutes } from "./routes/salary-routes";
-import { registerStage3ReportsRoutes } from "./routes/stage3-reports-routes";
-import { registerLeaveRoutes } from "./routes/leave-routes";
-import { registerOvertimeRoutes } from "./routes/overtime-routes";
-import { registerLoanRoutes } from "./routes/loan-routes";
-import { registerReportsRoutes } from "./routes/reports-routes";
-import { registerDiagnosisReportRoutes } from "./routes/diagnosis-report-routes";
-import { registerTodoRoutes } from "./routes/todo-routes";
+import { storage } from "./storage";
+import aiRoutes from "./ai-routes";
+import authRoutes from "./auth.routes";
+import { registerSalesRoutes } from "./sales-routes";
+import { registerPmsRoutes } from "./pms-routes";
+import { assignmentOverrideRouter } from "./routes/assignment-override-routes";
+import { gmCommissionRouter } from "./routes/gm-commission-routes";
+import { registerSupportRoutes } from "./support-routes";
+import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "./feature-flags";
+import { registerSettingsRoutes } from "./settings-routes";
+import { registerAttendanceRoutes } from "./attendance-routes";
+import { registerAttendanceEditRoutes } from "./attendance-edit-routes";
+import { registerSalaryRoutes } from "./salary-routes";
+import { registerStage3ReportsRoutes } from "./stage3-reports-routes";
+import { registerLeaveRoutes } from "./leave-routes";
+import { registerOvertimeRoutes } from "./overtime-routes";
+import { registerLoanRoutes } from "./loan-routes";
+import { registerReportsRoutes } from "./reports-routes";
+import { registerDiagnosisReportRoutes } from "./diagnosis-report-routes";
+import { registerTodoRoutes } from "./todo-routes";
 // Manager routes removed
-import { registerAccountRoutes } from "./routes/account-routes";
-import { registerGmBvPoolRoutes } from "./routes/gm-bv-pool-routes";
-import tempContactsRoutes from "./routes/temp-contacts-routes";
-import poolsRoutes from "./routes/pools-routes";
-import trainingRoutes from "./routes/training-routes";
-import crmRoutes from "./routes/crm-routes";
-import officeAccountRoutes from "./routes/office-account-routes";
-import { checkUrlPermission, checkAllowedIp } from "./middleware/settings.middleware";
+import { registerAccountRoutes } from "./account-routes";
+import { registerGmBvPoolRoutes } from "./gm-bv-pool-routes";
+import tempContactsRoutes from "./temp-contacts-routes";
+import poolsRoutes from "./pools-routes";
+import trainingRoutes from "./training-routes";
+import crmRoutes from "./crm-routes";
+import officeAccountRoutes from "./office-account-routes";
+import { checkUrlPermission, checkAllowedIp } from "./settings.middleware";
 import { usersRepository } from "./repositories/users.repository";
-import { registerHodRoutes } from "./routes/hod-routes";
-import { registerQuickEntriesRoutes } from "./routes/quick-entries-routes";
-import { registerDashboardRoutes } from "./routes/dashboard-routes";
-import { registerGmPoolRoutes } from "./routes/gm-pool-routes";
-import { registerProjectActivityRoutes } from "./routes/project-activity-routes";
-import { registerQuotationRoutes } from "./routes/quotation-routes";
-import { registerServicePoolRoutes } from "./routes/service-pool-routes";
-import { authMiddleware, getAuthToken } from "./middleware/auth.middleware";
+import { registerHodRoutes } from "./hod-routes";
+import { registerQuickEntriesRoutes } from "./quick-entries-routes";
+import { registerDashboardRoutes } from "./dashboard-routes";
+import { registerGmPoolRoutes } from "./gm-pool-routes";
+import { registerProjectActivityRoutes } from "./project-activity-routes";
+import { registerQuotationRoutes } from "./quotation-routes";
+import { registerServicePoolRoutes } from "./service-pool-routes";
+import { authMiddleware, getAuthToken } from "./auth.middleware";
 import { authService } from "./auth.service";
 import { normalizeRole } from "./utils/role-utils";
-import usersRoutes from "./routes/users-routes";
-import adminActivityRoutes from "./routes/admin-activity-routes";
-import auditLogRoutes from "./routes/audit-log-routes";
-import rbacRoutes from "./routes/rbac-routes";
-import attributesRoutes from "./routes/attributes-routes";
-import drmRoutes from "./routes/drm-routes";
-import { registerBotRoutes } from "./routes/bot-routes";
-import { registerFormRoutes } from "./routes/form-routes";
-import { registerFbRoutes } from "./routes/fb-routes";
-import { registerDdManagerRoutes } from "./routes/dd-manager-routes";
-import { registerDdExecutiveRoutes } from "./routes/dd-executive-routes";
-import noticeRoutes from "./routes/notice-routes";
-import policyRoutes from "./routes/policy-routes";
-import portfolioRoutes from "./routes/portfolio-routes";
-import itAssetsRoutes from "./routes/it-assets-routes";
-import receptionRoutes from "./routes/reception-routes";
+import usersRoutes from "./users-routes";
+import adminActivityRoutes from "./admin-activity-routes";
+import auditLogRoutes from "./audit-log-routes";
+import rbacRoutes from "./rbac-routes";
+import attributesRoutes from "./attributes-routes";
+import drmRoutes from "./drm-routes";
+import { registerBotRoutes } from "./bot-routes";
+import { registerFormRoutes } from "./form-routes";
+import { registerFbRoutes } from "./fb-routes";
+import { registerDdManagerRoutes } from "./dd-manager-routes";
+import { registerDdExecutiveRoutes } from "./dd-executive-routes";
+import noticeRoutes from "./notice-routes";
+import policyRoutes from "./policy-routes";
+import portfolioRoutes from "./portfolio-routes";
+import itAssetsRoutes from "./it-assets-routes";
+import receptionRoutes from "./reception-routes";
 
-import { registerServiceExecutiveRoutes } from "./routes/service-executive-routes";
-import { registerServiceManagerRoutes } from "./routes/service-manager-routes";
-import { registerServiceCoreRoutes } from "./routes/service-core-routes";
-import { registerServiceReportsRoutes } from "./routes/service-reports-routes";
+import { registerServiceExecutiveRoutes } from "./service-executive-routes";
+import { registerServiceManagerRoutes } from "./service-manager-routes";
+import { registerServiceCoreRoutes } from "./service-core-routes";
+import { registerServiceReportsRoutes } from "./service-reports-routes";
 // Product Posting Workflow Routes
 import { invoiceRouter } from "./routes/invoice-routes";
 import { projectDocRouter } from "./routes/project-doc-routes";
 import { taskExecutionRouter } from "./routes/task-execution-routes";
 import { notificationRouter } from "./routes/notification-routes";
 import { productPostingWorkflowRouter } from "./routes/product-posting-workflow-routes";
+import { teamCommissionRouter } from "./routes/team-commission-routes";
 import { softwareWorkflowRouter } from "./routes/software-workflow-routes";
-import { registerPostingDataRoutes } from "./routes/posting-data-routes";
-import { registerLeadsImportRoutes } from "./routes/leads-import-routes";
-import { registerCrmDuplicatesRoutes } from "./routes/crm-duplicates-routes";
-import { registerLeadBulkRoutes } from "./routes/lead-bulk-routes";
-import targetSystemRoutes from "./routes/target-system-routes";
-import { registerPerformanceRoutes } from "./routes/performance-routes";
-import { registerIncrementRoutes } from "./routes/increment-routes";
-import { registerPenaltyRoutes } from "./routes/penalty-routes";
-import { registerPromotionRoutes } from "./routes/promotion-routes";
-import { registerTodayPostRoutes } from "./routes/today-post-routes";
-import { registerCommissionVerificationRoutes } from "./routes/commission-verification-routes";
-import { registerSocialAccountsRoutes } from "./routes/social-accounts-routes";
-import { registerSocialMediaRoutes } from "./routes/social-media-routes";
-import { registerLateComingRoutes } from "./routes/late-coming-routes";
-import { registerEventsRoutes } from "./routes/events-routes";
-import { registerTeamReportLinkReportRoutes } from "./routes/team-report-link-report-routes";
-import { registerProjectReportRoutes } from "./routes/project-report-routes";
+import { registerPostingDataRoutes } from "./posting-data-routes";
+import { registerLeadsImportRoutes } from "./leads-import-routes";
+import { registerCrmDuplicatesRoutes } from "./crm-duplicates-routes";
+import { registerLeadBulkRoutes } from "./lead-bulk-routes";
+import targetSystemRoutes from "./target-system-routes";
+import { registerPerformanceRoutes } from "./performance-routes";
+import { registerIncrementRoutes } from "./increment-routes";
+import { registerPenaltyRoutes } from "./penalty-routes";
+import { registerPromotionRoutes } from "./promotion-routes";
+import { registerTodayPostRoutes } from "./today-post-routes";
+import { registerCommissionVerificationRoutes } from "./commission-verification-routes";
+import { registerSocialAccountsRoutes } from "./social-accounts-routes";
+import { registerSocialMediaRoutes } from "./social-media-routes";
+import { registerLateComingRoutes } from "./late-coming-routes";
+import { registerEventsRoutes } from "./events-routes";
+import { registerTeamReportLinkReportRoutes } from "./team-report-link-report-routes";
+import { registerProjectReportRoutes } from "./project-report-routes";
 import { communicationRouter } from "./routes/communication-routes";
 import { CommunicationService } from "./services/communication.service";
 import { approvalRouter } from "./routes/approval-routes";
@@ -99,6 +102,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // disabled. Fully reversible via the `SUPPORT_MODULE_ENABLED` env flag.
   app.use("/api/support", (_req, res, next) => {
     if (!isSupportModuleEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    next();
+  });
+
+  // MD-22 (Project Owner, 2026-07-27): Bot System / Online Form / FB Post are
+  // mock chat-widget stubs with no real provider behind them — do not build
+  // fake bot/form-processing/Facebook-posting logic. Deactivated by default,
+  // same pattern and same ordering rule as the Support gate above (mounted
+  // before global auth so a disabled module 404s instead of leaking via 401).
+  // Each has its own flag since each is a separate future integration.
+  app.use("/api/bot", (_req, res, next) => {
+    if (!isBotSystemEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    next();
+  });
+  app.use("/api/forms", (_req, res, next) => {
+    if (!isOnlineFormEnabled()) {
+      return res.status(404).json({ error: "Not Found" });
+    }
+    next();
+  });
+  app.use("/api/fb", (_req, res, next) => {
+    if (!isFbPostEnabled()) {
       return res.status(404).json({ error: "Not Found" });
     }
     next();
@@ -279,6 +307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // PMS routes (protected)
   registerPmsRoutes(app);
+  app.use("/api/pms/assignment-override", assignmentOverrideRouter);
 
   // Support routes (protected)
   registerSupportRoutes(app);
@@ -377,6 +406,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/tasks", taskExecutionRouter);
   app.use("/api/notifications", notificationRouter);
   app.use("/api/product-posting", productPostingWorkflowRouter);
+  app.use("/api/commission", teamCommissionRouter);
   app.use("/api/software", softwareWorkflowRouter);
 
   // Stage 7 — unified communication / follow-up timeline (protected). Ensure the
@@ -404,6 +434,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerCrmDuplicatesRoutes(app);
   registerLeadBulkRoutes(app);
   app.use("/api/target-system", targetSystemRoutes);
+  app.use("/api/target-system/gm-commission", gmCommissionRouter);
 
   // Performance System routes (protected, read-only) — mounted after auth middleware
   registerPerformanceRoutes(app);

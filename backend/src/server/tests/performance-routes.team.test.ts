@@ -15,7 +15,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../db";
+import { pool } from "./db";
 import { registerPerformanceRoutes } from "./performance-routes";
 
 // req.user is normally populated by auth middleware; the tests swap this in.
@@ -54,7 +54,7 @@ async function seedTeam(dept: string, count: number): Promise<string[]> {
   for (let i = 0; i < count; i++) {
     const tag = `${dept}_${i}`;
     const { rows } = await pool.query(
-      `insert into drm.users (name, full_name, username, email, password, role, role_id, department, is_active)
+      `insert into drm.users (name, full_name, username, email, password_hash, role, role_id, department, is_active)
          values ($1, $1, $2, $3, $4, $5, $5, $6, true)
          returning id`,
       [`Perf Test ${tag}`, `user_${tag}`, `${tag}@example.test`, "x", "hod", dept],

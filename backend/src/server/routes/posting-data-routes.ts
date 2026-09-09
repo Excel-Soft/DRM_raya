@@ -1,9 +1,15 @@
 import { Express, Request, Response } from "express";
-import { db } from "../db";
+import { db } from "./db";
 import { productPostingData, insertProductPostingDataSchema, restrictedKeywords, insertRestrictedKeywordSchema } from "@shared/schema";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { normalizeRole } from "../utils/role-utils";
+import { authMiddleware } from "./auth.middleware";
+import { normalizeRole } from "./utils/role-utils";
+import { z } from "zod";
+import { ActivityLogService } from "./services/activity-service";
+
+const postingStatusUpdateSchema = z.object({
+  status: z.string().trim().min(1, "status is required")
+}).strict();
 
 export function registerPostingDataRoutes(app: Express) {
   const ensurePostingRole = (req: Request, res: Response, allowed: string[]) => {
@@ -77,12 +83,20 @@ export function registerPostingDataRoutes(app: Express) {
     try {
       if (!ensurePostingRole(req, res, ["admin", "product_posting_manager", "product_posting_executive", "posting_executive"])) return;
       const userId = (req.user as any)?.userId;
+      const { category, productLink, productTitle, companyName, quantity, price, status, notes } = req.body ?? {};
       const validatedData = insertProductPostingDataSchema.parse({
-        ...req.body,
+        category, productLink, productTitle, companyName, quantity, price, status, notes,
         userId
       });
 
       const [newItem] = await db.insert(productPostingData).values(validatedData).returning();
+      await ActivityLogService.log({
+        userId,
+        action: "POSTING_DATA_CREATED",
+        resourceType: "product_posting_data",
+        resourceId: newItem.id,
+        details: `Product: ${newItem.title}, Category: ${newItem.category}`,
+      });
       res.status(201).json(newItem);
     } catch (error: any) {
       console.error("Error creating posting data:", error);
@@ -97,13 +111,25 @@ export function registerPostingDataRoutes(app: Express) {
       const userId = (req.user as any)?.userId;
       const items = Array.isArray(req.body) ? req.body : [req.body];
       
-      const validatedItems = items.map(item => insertProductPostingDataSchema.parse({
-        ...item,
-        userId,
-        status: "Pending"
-      }));
+      const validatedItems = items.map((item: any) => {
+        const { category, productLink, productTitle, companyName, quantity, price, notes } = item ?? {};
+        return insertProductPostingDataSchema.parse({
+          category, productLink, productTitle, companyName, quantity, price, notes,
+          userId,
+          status: "Pending"
+        });
+      });
 
       const newItems = await db.insert(productPostingData).values(validatedItems).returning();
+      for (const item of newItems) {
+        await ActivityLogService.log({
+          userId,
+          action: "POSTING_DATA_IMPORTED",
+          resourceType: "product_posting_data",
+          resourceId: item.id,
+          details: `Imported product: ${item.title}`,
+        });
+      }
       res.status(201).json(newItems);
     } catch (error: any) {
       console.error("Error importing posting data:", error);
@@ -116,7 +142,9 @@ export function registerPostingDataRoutes(app: Express) {
     try {
       if (!ensurePostingRole(req, res, ["admin", "product_posting_manager"])) return;
       const { id } = req.params;
-      const { status } = req.body;
+      const _statusParsed = postingStatusUpdateSchema.safeParse(req.body);
+      if (!_statusParsed.success) return res.status(400).json({ error: "Invalid status payload", issues: _statusParsed.error.issues });
+      const { status } = _statusParsed.data;
       
       const [updatedItem] = await db.update(productPostingData)
         .set({ status, updatedAt: new Date() })
@@ -124,6 +152,15 @@ export function registerPostingDataRoutes(app: Express) {
         .returning();
         
       if (!updatedItem) return res.status(404).json({ error: "Item not found" });
+
+      await ActivityLogService.log({
+        userId: (req.user as any)?.userId,
+        action: "POSTING_DATA_STATUS_UPDATED",
+        resourceType: "product_posting_data",
+        resourceId: id,
+        details: `Status set to: ${status}`,
+      });
+
       res.json(updatedItem);
     } catch (error: any) {
       console.error("Error updating posting data status:", error);
@@ -149,6 +186,13 @@ export function registerPostingDataRoutes(app: Express) {
       if (!ensurePostingRole(req, res, ["admin", "product_posting_manager"])) return;
       const validated = insertRestrictedKeywordSchema.parse(req.body);
       const [newItem] = await db.insert(restrictedKeywords).values(validated).returning();
+      await ActivityLogService.log({
+        userId: (req.user as any)?.userId,
+        action: "RESTRICTED_KEYWORD_ADDED",
+        resourceType: "restricted_keyword",
+        resourceId: newItem.id,
+        details: `Keyword: ${newItem.keyword}`,
+      });
       res.status(201).json(newItem);
     } catch (error: any) {
       console.error("Error adding restricted keyword:", error);
@@ -161,6 +205,12 @@ export function registerPostingDataRoutes(app: Express) {
       if (!ensurePostingRole(req, res, ["admin", "product_posting_manager"])) return;
       const { id } = req.params;
       await db.delete(restrictedKeywords).where(eq(restrictedKeywords.id, id));
+      await ActivityLogService.log({
+        userId: (req.user as any)?.userId,
+        action: "RESTRICTED_KEYWORD_DELETED",
+        resourceType: "restricted_keyword",
+        resourceId: id,
+      });
       res.status(204).end();
     } catch (error: any) {
       console.error("Error deleting restricted keyword:", error);

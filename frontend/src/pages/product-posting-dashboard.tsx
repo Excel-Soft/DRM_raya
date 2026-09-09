@@ -1,15 +1,13 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
-import { useMutation } from "@tanstack/react-query";
+import { apiRequest, apiRequestJson, queryClient, throwIfResNotOk } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 
 import { Breadcrumb } from "@/components/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Download, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
     Select,
@@ -46,6 +44,8 @@ import {
     Target,
     Building2,
     Package,
+    Download,
+    X,
 } from "lucide-react";
 import { ProductPostingExecutiveWidget } from "@/components/product-posting-executive-widget";
 import { ProductPostingManagerWidget } from "@/components/product-posting-manager-widget";
@@ -119,7 +119,7 @@ const projectOverviewLinks: Record<string, Array<{ label: string; icon: any; hre
         { label: "Add Penalty", icon: AlertCircle, href: "/hr/attendance" },
         { label: "Commission Verification", icon: DollarSign, href: "/account/gm-entries" },
         { label: "Overall Report", icon: FileText, href: "/reports" },
-        { label: "Complete Project D&D P&P", icon: Briefcase, href: "/pms/task-history" },
+        { label: "Complete Project D&D P&P", icon: Briefcase, href: "/pms/task-history", highlight: true },
     ],
     "General Services": [
         { label: "Customer", icon: Users, href: "/sales/customers" },
@@ -298,6 +298,9 @@ export default function ProductPostingDashboard() {
     const [confirmSaveModalOpen, setConfirmSaveModalOpen] = useState(false);
     const [confirmAction, setConfirmAction] = useState<"approve" | "reject" | "task" | null>(null);
     const [verificationDetails, setVerificationDetails] = useState({ image: "", detail: "" });
+    const [overtimeApprovalModalOpen, setOvertimeApprovalModalOpen] = useState(false);
+    const [selectedOvertimeRow, setSelectedOvertimeRow] = useState<any>(null);
+    const [approvedMinutesInput, setApprovedMinutesInput] = useState("0");
 
     // ── Queries ──
 
@@ -309,6 +312,17 @@ export default function ProductPostingDashboard() {
             return res.json();
         }
     });
+
+    // MD-20: this manager's own team/management commission share (this role
+    // gets the MD-20 share instead of a duplicate per-post slab, per MD-16(a)).
+    const { data: teamShareRes } = useQuery({
+        queryKey: ["/api/commission/team-share/me"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/commission/team-share/me");
+            return res.json();
+        }
+    });
+    const teamShare = teamShareRes?.data;
 
     // 2. Projects for the status table
     const { data: projects = [] } = useQuery<Project[]>({
@@ -324,6 +338,30 @@ export default function ProductPostingDashboard() {
         queryKey: ["/api/dashboard/activities", activityPeriod],
         queryFn: async () => {
             const res = await apiRequest("GET", `/api/dashboard/activities?period=${activityPeriod}`);
+            return res.json();
+        }
+    });
+
+    // 3b. Product Posting's own project-status counts (Total/Complete/Pending/Free) —
+    // /api/pms/projects scopes "my projects" by owner_user_id/under_works, which
+    // never matches for this role (Product Posting projects are owned by the
+    // originating Sales Executive), so it always came back empty here.
+    const { data: ppProjectStats } = useQuery({
+        queryKey: ["/api/product-posting/manager/project-stats"],
+        enabled: !isExecutiveView,
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/product-posting/manager/project-stats");
+            return res.json();
+        }
+    });
+
+    // 3c. Per-executive task submissions today — replaces the Sales-call
+    // "Daily Activities" widget, which Product Posting executives never populate.
+    const { data: ppDailySubmissions } = useQuery({
+        queryKey: ["/api/product-posting/manager/daily-submissions"],
+        enabled: !isExecutiveView,
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/product-posting/manager/daily-submissions");
             return res.json();
         }
     });
@@ -362,9 +400,10 @@ export default function ProductPostingDashboard() {
                             href={link.href}
                             className={cn(
                                 "flex items-center justify-between py-1.5 px-2 rounded transition-all duration-200 group",
-                                isActive 
-                                    ? "bg-emerald-50 border border-emerald-100 shadow-sm" 
-                                    : "hover:bg-slate-50 dark:bg-zinc-900 border border-transparent"
+                                isActive
+                                    ? "bg-emerald-50 border border-emerald-100 shadow-sm"
+                                    : "hover:bg-slate-50 dark:bg-zinc-900 border border-transparent",
+                                link.highlight && "animate-pulse ring-2 ring-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
                             )}
                         >
                             <div className="flex items-center gap-2">
@@ -522,6 +561,30 @@ export default function ProductPostingDashboard() {
         }
     });
 
+    const approveOvertimeMutation = useMutation({
+        mutationFn: async ({ taskId, approvedMinutes }: { taskId: string, approvedMinutes: number }) => {
+            const res = await apiRequest("POST", `/api/product-posting/tasks/${taskId}/approve-overtime`, { approvedMinutes });
+            await throwIfResNotOk(res);
+        },
+        onSuccess: () => {
+            refetchManagerQueue();
+            setOvertimeApprovalModalOpen(false);
+            setSelectedOvertimeRow(null);
+            toast({
+                title: "Overtime Approved",
+                description: "The approved minutes have been saved for this task.",
+                className: "bg-emerald-50 border-emerald-200 text-emerald-800"
+            });
+        },
+        onError: (error: any) => {
+            toast({
+                title: "Approval Failed",
+                description: error.message || "Could not approve overtime. Please try again.",
+                variant: "destructive"
+            });
+        }
+    });
+
     // ── Mappings ──
 
     const dynamicStatCards = useMemo(() => {
@@ -606,7 +669,7 @@ export default function ProductPostingDashboard() {
         let waiting = queueItems
             .filter((item: any) => !["RETURNED_FOR_CHANGE", "VERIFICATION_COMPLETE", "PROJECT_OVERVIEW", "QA_REVIEW"].includes(item.currentPhase))
             .map((item: any, i: number) => ({
-                no: `${i + 1}/${item.project.id.slice(0, 4)}`,
+                no: item.project.projectNumber ? `#${item.project.projectNumber}` : `${i + 1}/${item.project.id.slice(0, 4)}`,
                 company: item.project.companyName || "N/A",
                 project: item.project.name,
                 status: (!item.documents || item.documents.length === 0 || !item.documents.some((d: any) => d.documentUrl)) ? "Documents Pending" : item.phaseLabel,
@@ -621,7 +684,7 @@ export default function ProductPostingDashboard() {
         let delay = queueItems
             .filter((item: any) => item.currentPhase === "RETURNED_FOR_CHANGE" || item.overtimeExceededBy > 0)
             .map((item: any, i: number) => ({
-                no: `${i + 1}/${item.project.id.slice(0, 4)}`,
+                no: item.project.projectNumber ? `#${item.project.projectNumber}` : `${i + 1}/${item.project.id.slice(0, 4)}`,
                 company: item.project.companyName || "N/A",
                 project: item.project.name,
                 status: item.overtimeExceededBy > 0 ? `Overtime +${item.overtimeExceededBy}m` : ((!item.documents || item.documents.length === 0 || !item.documents.some((d: any) => d.documentUrl)) ? "Documents Pending" : item.phaseLabel),
@@ -630,12 +693,15 @@ export default function ProductPostingDashboard() {
                 canAssign: item.currentPhase === "RETURNED_FOR_CHANGE",
                 canComplete: false,
                 time: item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "N/A",
+                overtimeRequestedMinutes: item.overtimeRequestedMinutes || 0,
+                overtimeApprovedMinutes: item.overtimeApprovedMinutes || 0,
+                overtimeReason: item.overtimeReason || "",
             }));
 
         let approved = queueItems
             .filter((item: any) => ["VERIFICATION_COMPLETE", "PROJECT_OVERVIEW", "QA_REVIEW"].includes(item.currentPhase))
             .map((item: any, i: number) => ({
-                no: `${i + 1}/${item.project.id.slice(0, 4)}`,
+                no: item.project.projectNumber ? `#${item.project.projectNumber}` : `${i + 1}/${item.project.id.slice(0, 4)}`,
                 company: item.project.companyName || "N/A",
                 project: item.project.name,
                 status: (!item.documents || item.documents.length === 0 || !item.documents.some((d: any) => d.documentUrl)) ? "Documents Pending" : item.phaseLabel,
@@ -659,57 +725,26 @@ export default function ProductPostingDashboard() {
     }, [managerQueueData, storageSync]);
 
     const dynamicDailyActivities = useMemo(() => {
-        if (!activitiesData?.success || !activitiesData.data?.rows) return [];
+        if (!ppDailySubmissions?.success || !ppDailySubmissions.data) return [];
 
-        return activitiesData.data.rows.flatMap((user: ActivityRow) => {
-            return Object.entries(user.methods).filter(([_, val]) => val.done > 0).map(([method, val]) => {
-                const percent = val.target > 0 ? Math.round((val.done / val.target) * 100) : 0;
-                return {
-                    name: user.name,
-                    method: method.charAt(0).toUpperCase() + method.slice(1),
-                    methodColor: method === "mobile" ? "copy" : "new", // Simplified color mapping
-                    target: `${val.target} (${val.done}) ${percent}%`,
-                    timeVal: user.totals.timeMinutes,
-                    time: user.totals.timeMinutes.toLocaleString(),
-                };
-            });
-        });
-    }, [activitiesData]);
+        return ppDailySubmissions.data.map((row: any) => ({
+            name: row.name || "Unknown",
+            submittedCount: row.submitted_count || 0,
+            lastTask: row.last_task_title || "—",
+            time: row.last_submitted_at
+                ? new Date(row.last_submitted_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                : "—",
+        }));
+    }, [ppDailySubmissions]);
 
     const donutChartStats = useMemo(() => {
-        const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        let startPeriod: Date;
-        if (activityPeriod === "TD") {
-            startPeriod = startOfDay;
-        } else if (activityPeriod === "WC") {
-            const day = startOfDay.getDay();
-            const diff = (day === 0 ? -6 : 1) - day;
-            const monday = new Date(startOfDay);
-            monday.setDate(startOfDay.getDate() + diff);
-            startPeriod = monday;
-        } else { // MONTH
-            startPeriod = new Date(now.getFullYear(), now.getMonth(), 1);
-        }
-
-        const filteredProjects = projects.filter((p: any) => {
-            const dateToCheck = p.updatedAt ? new Date(p.updatedAt) : (p.createdAt ? new Date(p.createdAt) : null);
-            return dateToCheck ? dateToCheck >= startPeriod : true;
-        });
-
-        const total = filteredProjects.length;
-        const complete = filteredProjects.filter((p: any) => p.status === "Completed").length;
-        const pending = filteredProjects.filter((p: any) => p.status === "Active").length;
-        const free = filteredProjects.filter((p: any) => p.status === "OnHold").length;
-
         return {
-            totalProjects: total,
-            completedProjects: complete,
-            activeProjects: pending,
-            onHoldProjects: free
+            totalProjects: ppProjectStats?.total ?? 0,
+            completedProjects: ppProjectStats?.complete ?? 0,
+            activeProjects: ppProjectStats?.pending ?? 0,
+            onHoldProjects: ppProjectStats?.free ?? 0,
         };
-    }, [projects, activityPeriod]);
+    }, [ppProjectStats]);
 
     const dynamicImportantStats = useMemo(() => {
         const h = hodImportantStats?.data || {};
@@ -953,16 +988,16 @@ export default function ProductPostingDashboard() {
 
             {/* Unified Comprehensive Verification Modal */}
             <Dialog open={verifyDocModalOpen} onOpenChange={setVerifyDocModalOpen}>
-                <DialogContent className="max-w-[1100px] p-0 overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
-                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30">
+                <DialogContent className="max-w-[1100px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30 flex-shrink-0">
                         <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">PROJECTS OVERVIEW & VERIFICATION</DialogTitle>
                     </div>
-                    
-                    <div className="p-8 pb-10">
+
+                    <div className="p-8 pb-10 overflow-y-auto">
                         {selectedDoc && (() => {
                             const displayTime = (() => {
                                 const rawTime = selectedDoc?.rawRow?.time || selectedDoc?.time || projectDetails?.createdAt || projectDetails?.project?.createdAt;
-                                if (!rawTime || rawTime === "N/A") return "22 May 2026 05:12 PM";
+                                if (!rawTime || rawTime === "N/A") return "N/A";
                                 try {
                                     const d = new Date(rawTime);
                                     if (isNaN(d.getTime())) return rawTime;
@@ -975,7 +1010,7 @@ export default function ProductPostingDashboard() {
                                         hour12: true,
                                     }).replace(",", "");
                                 } catch (e) {
-                                    return "22 May 2026 05:12 PM";
+                                    return "N/A";
                                 }
                             })();
 
@@ -993,10 +1028,10 @@ export default function ProductPostingDashboard() {
                                                 </div>
                                                 <div>
                                                     <h3 className="text-[22px] font-bold text-gray-900 leading-tight tracking-tight dark:text-zinc-100">
-                                                        {projectDetails?.project?.companyName || selectedDoc?.rawRow?.company || "QUBA FASHION"}
+                                                        {projectDetails?.project?.companyName || selectedDoc?.rawRow?.company || "N/A"}
                                                     </h3>
                                                     <p className="text-[15px] text-gray-500 font-medium dark:text-zinc-400">
-                                                        {selectedDoc?.rawRow?.executiveName || "Ramish Khurram"}
+                                                        {selectedDoc?.rawRow?.executiveName || "N/A"}
                                                     </p>
                                                 </div>
                                             </div>
@@ -1014,9 +1049,9 @@ export default function ProductPostingDashboard() {
                                         <div className="space-y-3 pt-2">
                                             <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Project Details :</h4>
                                             <div className="grid gap-2 pl-1">
-                                                <DetailRow label="Product_detail_add" value={projectDetails?.id ? String(parseInt(projectDetails.id.split("-")[0], 16) % 100000) : "10867"} />
-                                                <DetailRow label="Company" value={projectDetails?.project?.companyName || selectedDoc?.rawRow?.company || "QUBA FASHION"} />
-                                                <DetailRow label="Package" value={projectDetails?.packageName || "Basic Plus"} />
+                                                <DetailRow label="Product_detail_add" value={projectDetails?.id ? String(parseInt(projectDetails.id.split("-")[0], 16) % 100000) : "N/A"} />
+                                                <DetailRow label="Company" value={projectDetails?.project?.companyName || selectedDoc?.rawRow?.company || "N/A"} />
+                                                <DetailRow label="Package" value={projectDetails?.packageName || "N/A"} />
                                                 <DetailRow label="Web_url" value={projectDetails?.minisiteUrl} />
                                                 <DetailRow label="Phone" value={projectDetails?.phone} />
                                                 <DetailRow label="Mobile" value={projectDetails?.mobile} />
@@ -1060,27 +1095,41 @@ export default function ProductPostingDashboard() {
                                     </div>
 
                                     {/* Right Side: Attached Files */}
-                                    <div className="space-y-6 bg-gray-50/50 p-6 rounded-xl border border-gray-100 h-fit dark:border-zinc-800">
+                                    <div className="space-y-6 bg-gray-50/50 dark:bg-zinc-900 p-6 rounded-xl border border-gray-100 h-fit dark:border-zinc-800">
                                         <div className="flex items-center justify-between border-b pb-3">
                                             <h4 className="text-[14px] font-bold text-gray-700 uppercase tracking-wide dark:text-zinc-400">Attached Files</h4>
                                         </div>
                                         <div className="space-y-3">
-                                            <a 
-                                                href={selectedDoc.documentUrl || projectDetails?.evidenceUrl || "#"} 
-                                                download="Data.xlsx"
-                                                className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100 shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900 dark:border-zinc-800"
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 bg-emerald-50 text-[#00a65a] rounded-lg flex items-center justify-center ring-4 ring-emerald-50/50 dark:bg-zinc-800 dark:text-emerald-400">
-                                                        <FileText className="h-5 w-5" />
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-[13px] font-bold text-gray-800 mb-0 dark:text-zinc-100">Data.xlsx</p>
-                                                        <p className="text-[11px] text-gray-400 font-medium">Size : 33 KB</p>
-                                                    </div>
-                                                </div>
-                                                <Download className="h-4 w-4 text-gray-400 group-hover:text-[#00a65a] transition-colors" />
-                                            </a>
+                                            {(() => {
+                                                const fileUrl = selectedDoc.documentUrl || projectDetails?.evidenceUrl || "";
+                                                const hasFile = !!fileUrl && fileUrl !== "none" && fileUrl !== "#";
+                                                if (!hasFile) {
+                                                    return (
+                                                        <div className="flex items-center justify-center p-6 text-[12px] text-gray-400 font-medium border border-dashed border-gray-200 rounded-xl dark:border-zinc-800">
+                                                            No file attached
+                                                        </div>
+                                                    );
+                                                }
+                                                const fileName = fileUrl.split("/").pop()?.split("?")[0] || "Attached Document";
+                                                return (
+                                                    <a
+                                                        href={fileUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100 shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900 dark:border-zinc-800"
+                                                    >
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-10 h-10 bg-emerald-50 text-[#00a65a] rounded-lg flex items-center justify-center ring-4 ring-emerald-50/50 dark:bg-zinc-800 dark:text-emerald-400">
+                                                                <FileText className="h-5 w-5" />
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-[13px] font-bold text-gray-800 mb-0 dark:text-zinc-100 truncate max-w-[220px]">{fileName}</p>
+                                                            </div>
+                                                        </div>
+                                                        <Download className="h-4 w-4 text-gray-400 group-hover:text-[#00a65a] transition-colors" />
+                                                    </a>
+                                                );
+                                            })()}
                                         </div>
                                         <div className="pt-2 border-t mt-4">
                                             <p className="text-[11px] text-gray-500 font-medium leading-relaxed dark:text-zinc-400">
@@ -1191,6 +1240,60 @@ export default function ProductPostingDashboard() {
                                 disabled={verifyDocMutation.isPending || createTaskMutation.isPending}
                             >
                                 {verifyDocMutation.isPending || createTaskMutation.isPending ? "Processing..." : "Yes"}
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Overtime Approval Modal */}
+            <Dialog open={overtimeApprovalModalOpen} onOpenChange={setOvertimeApprovalModalOpen}>
+                <DialogContent className="max-w-[420px] p-0 overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30">
+                        <DialogTitle className="text-[16px] font-bold text-gray-700 flex items-center gap-2 dark:text-zinc-400">
+                            <Clock className="w-4 h-4 text-amber-500" /> Approve Overtime
+                        </DialogTitle>
+                    </div>
+                    <div className="p-6 space-y-4">
+                        <div className="text-[13px] text-gray-600 dark:text-zinc-300 space-y-1">
+                            <p><span className="font-semibold">Project:</span> {selectedOvertimeRow?.project || "N/A"}</p>
+                            <p><span className="font-semibold">Company:</span> {selectedOvertimeRow?.company || "N/A"}</p>
+                            <p><span className="font-semibold">Requested:</span> {selectedOvertimeRow?.overtimeRequestedMinutes || 0} minutes</p>
+                            {selectedOvertimeRow?.overtimeReason && (
+                                <p><span className="font-semibold">Reason:</span> {selectedOvertimeRow.overtimeReason}</p>
+                            )}
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Approved Minutes</label>
+                            <Input
+                                type="number"
+                                min="0"
+                                value={approvedMinutesInput}
+                                onChange={(e) => setApprovedMinutesInput(e.target.value)}
+                                className="h-10 text-[13px]"
+                            />
+                        </div>
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                            <Button
+                                variant="ghost"
+                                className="bg-[#f0f2f5] hover:bg-gray-200 text-gray-900 font-bold h-10 px-6 rounded-lg text-[13px] dark:bg-zinc-900 dark:text-zinc-100"
+                                onClick={() => setOvertimeApprovalModalOpen(false)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                className="bg-amber-500 hover:bg-amber-600 text-white font-bold h-10 px-6 rounded-lg shadow-md active:scale-95 text-[13px]"
+                                disabled={approveOvertimeMutation.isPending || !selectedOvertimeRow?.taskId}
+                                onClick={() => {
+                                    const minutes = Number(approvedMinutesInput);
+                                    if (Number.isNaN(minutes) || minutes < 0) {
+                                        alert("Please enter a valid number of minutes.");
+                                        return;
+                                    }
+                                    approveOvertimeMutation.mutate({ taskId: selectedOvertimeRow.taskId, approvedMinutes: minutes });
+                                }}
+                            >
+                                {approveOvertimeMutation.isPending ? "Saving..." : "Approve"}
                             </Button>
                         </div>
                     </div>
@@ -1365,12 +1468,28 @@ export default function ProductPostingDashboard() {
                                                                         setVerifyDocModalOpen(true);
                                                                     }
                                                                 }}
-                                                            >
+                                            >
                                                                 <CheckCircle2 className={cn(
                                                                     "w-5 h-5 transition-colors",
                                                                     (activeTab === "approved" || row.doc) ? "text-[#00a65a]" : "text-gray-500 dark:text-slate-400"
                                                                 )} />
                                                             </Button>
+                                                            {activeTab === "delay" && row.overtimeRequestedMinutes > (row.overtimeApprovedMinutes || 0) && (
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-8 w-8 rounded-full hover:bg-amber-50 p-0"
+                                                                    title={`Approve overtime (requested ${row.overtimeRequestedMinutes}m)`}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setSelectedOvertimeRow(row);
+                                                                        setApprovedMinutesInput(String(row.overtimeRequestedMinutes));
+                                                                        setOvertimeApprovalModalOpen(true);
+                                                                    }}
+                                                                >
+                                                                    <Clock className="w-5 h-5 text-amber-500" />
+                                                                </Button>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 ))
@@ -1400,7 +1519,7 @@ export default function ProductPostingDashboard() {
                                 </CardHeader>
                                 <CardContent className="px-4 pb-4 pt-0 space-y-3">
                                     {/* User profile + stat cards row */}
-                                    <div className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-white to-gray-50 p-3">
+                                    <div className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-white to-gray-50 dark:from-zinc-900 dark:to-zinc-900 p-3">
                                         {/* User avatar and info */}
                                         <div className="flex items-center gap-3 min-w-[200px]">
                                             <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-200 to-amber-400 flex items-center justify-center text-white font-bold shrink-0 ring-2 ring-white shadow" style={{ fontSize: "14px" }}>
@@ -1631,6 +1750,26 @@ export default function ProductPostingDashboard() {
                             </Card>
 
 
+                            {/* Team / Management Commission Share (MD-20) */}
+                            <Card>
+                                <CardHeader className="p-3 pb-2">
+                                    <CardTitle style={{ fontSize: "14px", fontWeight: 600 }}>My Team Commission Share (This Month)</CardTitle>
+                                </CardHeader>
+                                <CardContent className="px-3 pb-3 pt-0 space-y-1.5" style={{ fontSize: "12px" }}>
+                                    {teamShare?.eligible === false ? (
+                                        <p className="text-muted-foreground">Not eligible for a team share.</p>
+                                    ) : (
+                                        <>
+                                            <div className="flex justify-between"><span className="text-muted-foreground">Tier</span><span className="font-semibold">{teamShare?.tierLabel ?? "—"} ({teamShare?.percent ?? 0}%)</span></div>
+                                            <div className="flex justify-between"><span className="text-muted-foreground">Direct Team Size</span><span className="font-semibold">{teamShare?.teamSize ?? 0}</span></div>
+                                            <div className="flex justify-between"><span className="text-muted-foreground">Team Paid Commission</span><span className="font-semibold">${(teamShare?.teamBaseAmount ?? 0).toLocaleString()}</span></div>
+                                            <div className="flex justify-between"><span className="text-muted-foreground">My Share</span><span className="font-bold text-[#1a7a4a]">${(teamShare?.shareAmount ?? 0).toLocaleString()}</span></div>
+                                            {teamShare?.note && <p className="text-[11px] text-muted-foreground pt-1 border-t">{teamShare.note}</p>}
+                                        </>
+                                    )}
+                                </CardContent>
+                            </Card>
+
                             {/* Projects Overview */}
                             <Card>
                                 <CardHeader className="p-3 pb-2">
@@ -1696,15 +1835,21 @@ export default function ProductPostingDashboard() {
                                     <table className="w-full border-collapse" style={{ fontSize: "12px" }}>
                                         <thead>
                                             <tr className="">
-                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "50%" }}>Name</th>
-                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "20%" }}>Method</th>
-                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "20%" }}>Target</th>
+                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "40%" }}>Name</th>
+                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "15%" }}>Submitted</th>
+                                                <th className="pb-3 text-left font-medium text-gray-400 whitespace-nowrap" style={{ width: "35%" }}>Last Task</th>
                                                 <th className="pb-3 text-left font-medium text-gray-400 text-right whitespace-nowrap" style={{ width: "10%" }}>Time</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
-                                            {dynamicDailyActivities.map((row: any, idx: number) => (
-                                                <tr key={idx} className="group hover:bg-gray-50/50 transition-colors">
+                                            {dynamicDailyActivities.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={4} className="py-8 text-center text-gray-400" style={{ fontSize: "12px" }}>
+                                                        No tasks submitted today yet.
+                                                    </td>
+                                                </tr>
+                                            ) : dynamicDailyActivities.map((row: any, idx: number) => (
+                                                <tr key={idx} className="group hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                                                     <td className="py-2.5">
                                                         <div className="flex items-center gap-2 pr-1">
                                                             <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-gray-100 bg-[#f0f2f5] flex items-center justify-center text-gray-400 font-semibold text-[10px] dark:border-zinc-800 dark:bg-zinc-900">
@@ -1717,19 +1862,15 @@ export default function ProductPostingDashboard() {
                                                         <div
                                                             className={cn(
                                                                 "inline-flex items-center justify-center px-3 py-1 rounded-full text-[10px] font-semibold text-white shadow-sm whitespace-nowrap",
-                                                                row.methodColor === "copy" ? "bg-[#369b74]" : "bg-[#e8ba6c]"
+                                                                row.submittedCount > 0 ? "bg-[#369b74]" : "bg-gray-300"
                                                             )}
-                                                            style={{ width: "100%" }}
                                                         >
-                                                            {row.method}
+                                                            {row.submittedCount}
                                                         </div>
                                                     </td>
                                                     <td className="py-2.5">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <div className="bg-[#f0f2f5] px-2 py-0.5 rounded-md font-medium text-gray-600 whitespace-nowrap dark:text-zinc-300 dark:bg-zinc-900" style={{ fontSize: "10px" }}>
-                                                                {row.target.split(" ").slice(0, 2).join(" ")} <span className="text-gray-400 font-normal ml-0.5">{row.target.split(" ")[2]}</span>
-                                                            </div>
-                                                            <span className="font-bold text-gray-500 text-[10px] dark:text-zinc-400">{row.timeVal}</span>
+                                                        <div className="bg-[#f0f2f5] px-2 py-0.5 rounded-md font-medium text-gray-600 truncate dark:text-zinc-300 dark:bg-zinc-900" style={{ fontSize: "10px", maxWidth: "180px" }} title={row.lastTask}>
+                                                            {row.lastTask}
                                                         </div>
                                                     </td>
                                                     <td className="py-2.5 text-right">

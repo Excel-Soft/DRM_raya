@@ -26,9 +26,11 @@ export const poolsRepository = {
     let i = 1;
 
     if (poolType === "Private") {
-      // Include both Private and GMBV customers owned or created by the user
+      // Show customers in Private pool for this user:
+      // - If owner_user_id is set → show only to that owner
+      // - If owner_user_id is null → fall back to created_by (un-claimed entries)
       if (filters.userId) {
-        clauses.push(`(pool_type = 'Private' OR pool_type = 'GMBV') AND (owner_user_id = $${i} OR created_by = $${i})`);
+        clauses.push(`(pool_type = 'Private' OR pool_type = 'GMBV') AND (owner_user_id = $${i} OR (owner_user_id IS NULL AND created_by = $${i}))`);
         params.push(filters.userId);
         i++;
       } else {
@@ -75,7 +77,7 @@ export const poolsRepository = {
     `;
 
     const res = await pool.query(sqlText, params);
-    return res.rows.map((row: any) => ({
+    const customerRows = res.rows.map((row: any) => ({
       id: row.id,
       companyName: row.company_name,
       region: row.region,
@@ -86,7 +88,61 @@ export const poolsRepository = {
       ownerUserId: row.owner_user_id,
       expiresAt: row.expires_at,
       createdAt: row.created_at,
-    })) as any;
+    }));
+
+    if (poolType === "Private") {
+      try {
+        const tempClauses: string[] = [];
+        const tempParams: any[] = [];
+        let tp = 1;
+        if (filters.userId) {
+          tempClauses.push(`user_id = $${tp++}`);
+          tempParams.push(filters.userId);
+        }
+        if (filters.grade) {
+          tempClauses.push(`grade = $${tp++}`);
+          tempParams.push(filters.grade);
+        }
+        if (filters.search) {
+          tempClauses.push(`(person_name ILIKE $${tp} OR email ILIKE $${tp} OR mobile ILIKE $${tp})`);
+          tempParams.push(`%${filters.search}%`);
+          tp++;
+        }
+        const tempWhere = tempClauses.length ? `WHERE ${tempClauses.join(" AND ")}` : "";
+        const tempQuery = `
+          SELECT id, title, person_name, raw_name, email, country, grade, status, source, user_id, created_at
+          FROM temp_contacts
+          ${tempWhere}
+          ORDER BY created_at DESC
+          LIMIT ${limit}
+        `;
+        const tempRes = await pool.query(tempQuery, tempParams);
+        const tempMapped = tempRes.rows.map((r: any) => {
+          const name = `${r.title ? r.title + '. ' : ''}${r.person_name || r.raw_name || r.email || 'Temp Contact'}`;
+          return {
+            id: r.id,
+            companyName: `${name} (Temp)`,
+            region: r.country || "Other",
+            grade: r.grade || "A",
+            status: r.status || "Pending",
+            source: r.source || "Temporary",
+            poolType: "Private",
+            ownerUserId: r.user_id,
+            createdAt: r.created_at,
+            isTempContact: true,
+          };
+        });
+
+        const combined = [...tempMapped, ...customerRows].sort((a: any, b: any) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        return combined.slice(offset, offset + limit) as any;
+      } catch (err) {
+        console.error("Error fetching temp_contacts for Private Pool:", err);
+      }
+    }
+
+    return customerRows as any;
   },
 
   async getPoolStats(userId: string): Promise<{
@@ -99,17 +155,29 @@ export const poolsRepository = {
     try {
       const { rows } = await pool.query(
         `select
-           count(*) filter (where (pool_type = 'Private' OR pool_type = 'GMBV') and (owner_user_id = $1 OR created_by = $1))::int as private,
+           count(*) filter (where (pool_type = 'Private' OR pool_type = 'GMBV') and (owner_user_id = $1 OR (owner_user_id IS NULL AND created_by = $1)))::int as private,
            count(*) filter (where pool_type = 'Service')::int as service,
            count(*) filter (where pool_type = 'GMBV')::int as gmbv,
            count(*) filter (where pool_type = 'Public')::int as public,
-           count(*) filter (where (owner_user_id = $1 OR created_by = $1) and expires_at between now() and now() + interval '7 day')::int as expiring_soon
+           count(*) filter (where (owner_user_id = $1 OR (owner_user_id IS NULL AND created_by = $1)) and expires_at between now() and now() + interval '7 day')::int as expiring_soon
          from drm.customers
          where coalesce(is_deleted,false)=false`,
         [userId],
       );
+
+      let tempCount = 0;
+      try {
+        const tempRes = await pool.query(
+          `SELECT count(*)::int as count FROM temp_contacts WHERE ($1::text IS NULL OR user_id = $1)`,
+          [userId || null]
+        );
+        tempCount = Number(tempRes.rows[0]?.count ?? 0);
+      } catch (err) {
+        console.error("Error counting temp_contacts in getPoolStats:", err);
+      }
+
       return {
-        private: rows[0]?.private ?? 0,
+        private: (rows[0]?.private ?? 0) + tempCount,
         service: rows[0]?.service ?? 0,
         gmbv: rows[0]?.gmbv ?? 0,
         public: rows[0]?.public ?? 0,

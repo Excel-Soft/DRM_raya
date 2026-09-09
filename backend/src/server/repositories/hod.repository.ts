@@ -1,5 +1,7 @@
 import { pool } from "../db";
 import { NotificationService } from "../services/notification-service";
+import { WORKFLOW_ENTITY_TYPES } from "../../shared/gm-sales-constants";
+import { generateInvoicesAfterFinalGmApproval } from "../services/gm-invoice-generation.service";
 
 
 export type HodSummary = {
@@ -155,24 +157,73 @@ const pendingApprovalsUnion = `
   left join drm.users u on u.id::text = p."submittedById"
 `;
 
+// Matches the TD/WC/MC/QC/YC (Today/Week/Month/Quarter/Year Cumulative) convention
+// used elsewhere in the app (see sales-routes.ts getDateRangeForPeriod). The HOD
+// dashboard's "Top Selling" dropdown labels its today option "LD" instead of "TD".
+const getDateFromForPeriod = (period?: string): Date | null => {
+  const now = new Date();
+  switch ((period ?? "").toUpperCase()) {
+    case "LD":
+    case "TD": {
+      const d = new Date(now);
+      d.setHours(0, 0, 0, 0);
+      return d;
+    }
+    case "WC":
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    case "MC":
+      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    case "QC":
+      return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    case "YC":
+      return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+    default:
+      return null;
+  }
+};
+
 export class HodRepository {
-  async getSummary(): Promise<HodSummary> {
+  async getSummary(period?: string): Promise<HodSummary> {
     try {
+      const dateFrom = getDateFromForPeriod(period);
+
       const [totalProjectsRes, pendingApprovalsRes, teamMembersRes, revenueRes] = await Promise.all([
-        pool.query(
-          `select count(*)::int as count
-           from drm.gm_entries`,
-        ),
-        pool.query(
-          `select count(*)::int as count from (
-             ${pendingApprovalsUnion}
-           ) as p`,
-        ),
+        dateFrom
+          ? pool.query(
+              `select count(*)::int as count
+               from drm.gm_entries
+               where created_at >= $1`,
+              [dateFrom],
+            )
+          : pool.query(
+              `select count(*)::int as count
+               from drm.gm_entries`,
+            ),
+        dateFrom
+          ? pool.query(
+              `select count(*)::int as count from (
+                 ${pendingApprovalsUnion}
+               ) as p
+               where p."createdAt" >= $1`,
+              [dateFrom],
+            )
+          : pool.query(
+              `select count(*)::int as count from (
+                 ${pendingApprovalsUnion}
+               ) as p`,
+            ),
         pool.query(`select count(*)::int as count from drm.users`),
-        pool.query(
-          `select coalesce(sum(CAST(amount_pkr as numeric)), 0)::float as amount
-           from drm.gm_entries`,
-        ),
+        dateFrom
+          ? pool.query(
+              `select coalesce(sum(CAST(amount_pkr as numeric)), 0)::float as amount
+               from drm.gm_entries
+               where created_at >= $1`,
+              [dateFrom],
+            )
+          : pool.query(
+              `select coalesce(sum(CAST(amount_pkr as numeric)), 0)::float as amount
+               from drm.gm_entries`,
+            ),
       ]);
 
       const result = {
@@ -181,10 +232,10 @@ export class HodRepository {
         teamMembers: teamMembersRes.rows[0]?.count ?? 0,
         totalRevenue: revenueRes.rows[0]?.amount ?? 0,
       };
-      console.log("[HOD REPOSITORY] getSummary result:", result);
+      console.log("[HOD REPOSITORY] getSummary result:", { period, ...result });
       return result;
     } catch (error) {
-      console.error("[HOD] getSummary failed", { error });
+      console.error("[HOD] getSummary failed", { error, period });
       throw error;
     }
   }
@@ -263,11 +314,18 @@ export class HodRepository {
       case "gm_entries":
         await pool.query(
           `update drm.gm_entries
-           set approval_status = 'pending_managers', hod_approved_by = $2, hod_approved_at = now(), updated_at = now()
+           set approval_status = 'pending_managers', hod_status = 'Approved', hod_approved_by = $2, hod_approved_at = now(), account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = now()
            where id = $1 and (approval_status IS NULL OR approval_status = 'Pending' OR approval_status = 'pending_hod')`,
           [id, approverId],
         );
         finalStatus = "pending_managers";
+        // Always generate 3 invoices on HOD approval of a GM entry (best-effort)
+        try {
+          const invResult = await generateInvoicesAfterFinalGmApproval(id, approverId);
+          console.log(`[HOD REPOSITORY] Invoice generation for GM ${id}:`, invResult);
+        } catch (invErr) {
+          console.error(`[HOD REPOSITORY] Invoice generation failed for GM ${id} (non-fatal):`, invErr);
+        }
         break;
       case "invoices":
         await pool.query(
@@ -288,15 +346,22 @@ export class HodRepository {
         );
         finalStatus = "PENDING_ACCOUNT";
 
-        // Notify Sales Executive that HOD has approved their invoice
+        // Notify Sales Executive that HOD has approved their invoice.
+        // Fixed 2026-07-22 (D-018): tagged with entityType/entityId so the
+        // Account-Manager approval stage can find and supersede this exact
+        // notification instead of leaving it to sit stale once the invoice
+        // moves past this stage -- see docs/completion/DECISION_LOG.md D-018.
         const inv = invRes.rows[0];
         if (inv?.sales_exec_id) {
           try {
-            await NotificationService.notify({
+            await NotificationService.createNotification({
               userId: String(inv.sales_exec_id),
               message: `Your '${inv.project_name || 'Product Posting Invoice'}' for '${inv.company_name || 'your company'}' has been approved by the HOD and is now pending Account Manager review.`,
               type: "SUCCESS",
-              targetUrl: "/pms/approvals"
+              targetUrl: "/pms/approvals",
+              module: "invoice-workflow",
+              entityType: WORKFLOW_ENTITY_TYPES.INVOICE,
+              entityId: String(id),
             });
             console.log(`[HOD] Notified sales exec ${inv.sales_exec_id} - product posting invoice approved`);
           } catch (notifErr) {
@@ -407,16 +472,20 @@ export class HodRepository {
 
   async getProjectDeadlines(filter: string = 'WK', userId?: string) {
     try {
-      const interval = filter === 'LD' ? "30 days" : "7 days";
+      // WK = next 7 days, MN/MO/LD = next 30 days, All = no upper bound.
+      // ("LD" kept as a legacy alias for 30 days for existing callers.)
+      const isMonth = filter === 'MN' || filter === 'MO' || filter === 'LD';
+      const isAll = filter === 'All' || filter === 'ALL';
+      const upperBoundSql = isAll ? "" : `AND end_date <= NOW() + INTERVAL '${isMonth ? "30 days" : "7 days"}'`;
       const query = `
-        SELECT 
+        SELECT
           id,
           name as "companyName",
           description as project,
           workspace as dep,
           end_date as deadlines
         FROM drm.projects
-        WHERE end_date >= NOW() AND end_date <= NOW() + INTERVAL '${interval}'
+        WHERE end_date >= NOW() ${upperBoundSql}
         ${userId ? `AND owner_user_id = $1` : ""}
         ORDER BY end_date ASC
         LIMIT 20

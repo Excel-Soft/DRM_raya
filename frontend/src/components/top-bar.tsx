@@ -33,6 +33,11 @@ interface TopBarProps {
   onLogout?: () => void;
   onNavigate?: (path: string) => void;
   userRoles?: string[];
+  // Only Product Posting Dashboard actually reads this (sessionStorage
+  // "globalPeriod" -> /api/pms/stats?period=...). Every other dashboard
+  // ignored it entirely, so it's hidden by default rather than shown as a
+  // working control everywhere.
+  showPeriodFilter?: boolean;
 }
 
 export function TopBar({
@@ -44,6 +49,7 @@ export function TopBar({
   onLogout,
   onNavigate,
   userRoles = [],
+  showPeriodFilter = false,
 }: TopBarProps) {
   const { toast } = useToast();
   const [period, setPeriod] = useState(() => sessionStorage.getItem("globalPeriod") || "TD");
@@ -111,7 +117,7 @@ export function TopBar({
           product_posting_manager: "/product-posting/manager",
           product_posting_executive: "/product-posting/executive",
           posting_executive: "/product-posting/executive",
-          developer: "/dashboard/software-executive",
+          developer: "/dashboard/developer",
           software_manager: "/dashboard/software-manager",
           software_executive: "/dashboard/software-executive",
           lead_manager: "/dashboard/lead-manager",
@@ -336,18 +342,20 @@ export function TopBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Select value={period} onValueChange={handlePeriodChange}>
-          <SelectTrigger className="w-32 text-sm h-9" data-testid="select-time-period">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="TD">Today</SelectItem>
-            <SelectItem value="WC">Weekly</SelectItem>
-            <SelectItem value="MN">Monthly</SelectItem>
-            <SelectItem value="QT">Quarterly</SelectItem>
-            <SelectItem value="YR">Yearly</SelectItem>
-          </SelectContent>
-        </Select>
+        {showPeriodFilter && (
+          <Select value={period} onValueChange={handlePeriodChange}>
+            <SelectTrigger className="w-32 text-sm h-9" data-testid="select-time-period">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="TD">Today</SelectItem>
+              <SelectItem value="WC">Weekly</SelectItem>
+              <SelectItem value="MN">Monthly</SelectItem>
+              <SelectItem value="QT">Quarterly</SelectItem>
+              <SelectItem value="YR">Yearly</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
 
         <NotificationDropdown />
 

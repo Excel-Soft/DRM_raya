@@ -301,7 +301,7 @@ export default function EventsMenu() {
                 ) : (
                   menuItems.map((m, idx) => (
                     <tr key={m.id} className="border-b last:border-b-0 transition-colors">
-                      <td className="px-4 py-4 text-[#d35400] font-medium">{idx + 1}</td>
+                      <td className="px-4 py-4 text-[#d35400] dark:text-orange-400 font-medium">{idx + 1}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.itemName}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.assignedUserName || "-"}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.assignedRole || "-"}</td>

@@ -162,11 +162,14 @@ export default function AccountInvoices() {
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="none">Search Company Through Id/Name</SelectItem>
-                        {gmEntries?.map((gm: any) => (
-                            <SelectItem key={gm.id} value={gm.companyName.toLowerCase()}>
-                                {gm.companyName || gm.drmId || gm.orderId}
-                            </SelectItem>
-                        ))}
+                        {gmEntries?.map((gm: any) => {
+                            const val = (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim();
+                            return (
+                                <SelectItem key={gm.id} value={val || "unknown"}>
+                                    {gm.companyName || gm.drmId || gm.orderId || "Unnamed Company"}
+                                </SelectItem>
+                            );
+                        })}
                     </SelectContent>
                 </Select>
               </div>
@@ -381,7 +384,6 @@ export default function AccountInvoices() {
                     <img src="/logo.png" alt="Web Excels" className="h-16" onError={(e) => (e.currentTarget.style.display = 'none')} />
                     <div className="flex flex-col">
                       <span className="text-3xl font-bold tracking-tight text-[#10b981] dark:text-zinc-100">WEB EXCELS</span>
-                      <span className="text-sm italic font-medium">Design, Development & Marketing</span>
                     </div>
                   </div>
                 </div>

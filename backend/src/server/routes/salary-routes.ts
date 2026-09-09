@@ -1,8 +1,8 @@
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { recordAuditLog } from "../services/activity-service";
-import { buildExportFilename } from "../utils/export-filename";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { recordAuditLog } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
 
 // ---------------------------------------------------------------------------
 // Permissions (Patch 2 Stage 4) — action-aware, role-based.
@@ -357,7 +357,7 @@ async function computePreview(
 
   // Approved leave overlapping the period (Unpaid -> deduction, others informational).
   const leaveRes = await pool.query(
-    `SELECT user_id, leave_type, from_date, to_date
+    `SELECT user_id, type as leave_type, from_date, to_date
        FROM drm.leave_requests
       WHERE status = 'Approved' AND from_date <= $2 AND to_date >= $1`,
     [start, end],
@@ -374,13 +374,18 @@ async function computePreview(
   }
 
   // Approved overtime minutes (informational; no rate -> overtimeAmount 0).
-  const otRes = await pool.query(
-    `SELECT user_id, COALESCE(SUM(time_spent),0) AS minutes
-       FROM drm.overtime_records
-      WHERE status = 'Approved' AND date >= $1 AND date <= $2
-      GROUP BY user_id`,
-    [start, end],
-  );
+  let otRes = { rows: [] as any[] };
+  try {
+    otRes = await pool.query(
+      `SELECT user_id, COALESCE(SUM(time_spent),0) AS minutes
+         FROM drm.overtime_records
+        WHERE status = 'Approved' AND date >= $1 AND date <= $2
+        GROUP BY user_id`,
+      [start, end],
+    );
+  } catch (err) {
+    console.warn("[salary] overtime query skipped due to schema drift:", (err as Error).message);
+  }
   const otMap = new Map<string, number>();
   for (const r of otRes.rows) otMap.set(String(r.user_id), Number(r.minutes || 0));
 
@@ -558,6 +563,34 @@ async function finalizedConflicts(
   return r.rows.map((x: any) => x.employee_name).filter(Boolean);
 }
 
+// Phase 13 — blocks creating a new run for an employee+period that already
+// has ANY non-cancelled run in progress (DRAFT/GENERATED/APPROVED).
+// Complements finalizedConflicts() above, which only catches the
+// FINALIZED/LOCKED case — two DRAFT/GENERATED runs for the same
+// employee+period could otherwise coexist indefinitely.
+async function activeRunConflicts(
+  month: number,
+  year: number,
+  userIds: string[],
+  excludeRunId?: string,
+): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const params: any[] = [month, year, userIds];
+  let exclude = "";
+  if (excludeRunId) { params.push(excludeRunId); exclude = `AND sr.id <> $${params.length}`; }
+  const r = await pool.query(
+    `SELECT DISTINCT sri.employee_name
+       FROM drm.salary_run_items sri
+       JOIN drm.salary_runs sr ON sr.id = sri.run_id
+      WHERE sr.status IN ('DRAFT','GENERATED','APPROVED')
+        AND sr.deleted_at IS NULL
+        AND sr.period_month = $1 AND sr.period_year = $2
+        AND sri.user_id = ANY($3) ${exclude}`,
+    params,
+  );
+  return r.rows.map((x: any) => x.employee_name).filter(Boolean);
+}
+
 export const LOCKED_STATUSES = new Set(["FINALIZED", "LOCKED"]);
 export const ALLOWED_NEXT: Record<string, string[]> = {
   DRAFT: ["GENERATED", "CANCELLED"],
@@ -659,6 +692,16 @@ export function registerSalaryRoutes(app: Express) {
         return res.status(409).json({
           error: "A finalized salary already exists for some employees in this period",
           employees: conflicts,
+        });
+      }
+
+      // Phase 13 — duplicate-in-progress guard (cannot create a second
+      // DRAFT/GENERATED/APPROVED run for an employee already covered by one).
+      const activeConflicts = await activeRunConflicts(period.month, period.year, items.map((i) => i.userId));
+      if (activeConflicts.length > 0) {
+        return res.status(409).json({
+          error: "A salary run already exists (in progress) for some employees in this period",
+          employees: activeConflicts,
         });
       }
 

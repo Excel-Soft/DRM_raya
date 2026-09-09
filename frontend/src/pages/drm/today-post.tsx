@@ -43,11 +43,11 @@ type SocialStats = {
 };
 
 const SOCIAL_PLATFORMS: SocialStats[] = [
-    { platform: "Facebook", bgColor: "bg-[#e5ecf6]" },
-    { platform: "Instagram", bgColor: "bg-[#fdf0d5]" },
-    { platform: "Linkedin", bgColor: "bg-[#e2f3ec]" },
-    { platform: "Youtube", bgColor: "bg-[#feeceb]" },
-    { platform: "Tiktok", bgColor: "bg-[#e1f7ec]" },
+    { platform: "Facebook", bgColor: "bg-[#e5ecf6] dark:bg-zinc-900" },
+    { platform: "Instagram", bgColor: "bg-[#fdf0d5] dark:bg-zinc-900" },
+    { platform: "Linkedin", bgColor: "bg-[#e2f3ec] dark:bg-zinc-900" },
+    { platform: "Youtube", bgColor: "bg-[#feeceb] dark:bg-zinc-900" },
+    { platform: "Tiktok", bgColor: "bg-[#e1f7ec] dark:bg-zinc-900" },
 ];
 
 // Fixed business entities used for grouping + the add-post account selector.

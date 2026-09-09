@@ -224,26 +224,26 @@ export default function EditAtt() {
   function statusBadge(status: string) {
     const s = status.toLowerCase();
     const cls =
-      s === "approved" ? "bg-[#e8f5e9] text-[#00a65a]" :
-      s === "rejected" ? "bg-[#fdecea] text-[#d9534f]" :
-      "bg-[#fff8e1] text-[#b8860b]";
+      s === "approved" ? "bg-[#e8f5e9] text-[#00a65a] dark:bg-green-950 dark:text-green-400" :
+      s === "rejected" ? "bg-[#fdecea] text-[#d9534f] dark:bg-red-950 dark:text-red-400" :
+      "bg-[#fff8e1] text-[#b8860b] dark:bg-amber-950 dark:text-amber-400";
     return <span className={`px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>{status}</span>;
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-6">
         <div className="flex items-center justify-between gap-2 mb-4">
-          <h1 className="text-[17px] font-bold text-[#555] uppercase">Edit Attendance</h1>
+          <h1 className="text-[17px] font-bold text-[#555] dark:text-zinc-300 uppercase">Edit Attendance</h1>
           <Button
             onClick={() => { setForm({ ...emptyForm }); setModalOpen(true); }}
-            className="h-8 px-4 bg-[#5c7cfa] hover:bg-[#4c6ef5] text-white text-xs rounded-sm"
+            className="h-8 px-4 bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-bold rounded-sm shadow-sm"
           >
             New Request
           </Button>
         </div>
 
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
 
             <div className="flex items-center justify-between">
@@ -257,29 +257,29 @@ export default function EditAtt() {
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-[200px] h-8 bg-white border-slate-300 rounded-sm text-xs focus-visible:ring-0 focus-visible:border-slate-400"
+                  className="w-[200px] h-8 bg-white dark:bg-zinc-900 border-slate-300 rounded-sm text-xs focus-visible:ring-0 focus-visible:border-slate-400"
                 />
               </div>
             </div>
 
-            <div className="overflow-x-auto border border-slate-100 mt-4">
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 mt-4">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#fdf3db]">
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Employee</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Date</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Field</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Before</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">After</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Reason</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Requested By</TableHead>
-                    <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left text-xs">Status</TableHead>
+                  <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#fdf3db] dark:bg-zinc-900">
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Employee</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Date</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Field</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Before</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">After</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Reason</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Requested By</TableHead>
+                    <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-left text-xs">Status</TableHead>
                     {isManager && (
-                      <TableHead className="py-2.5 px-3 font-bold text-[#555] text-center text-xs">Actions</TableHead>
+                      <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-300 text-center text-xs">Actions</TableHead>
                     )}
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {editsQuery.isLoading ? (
                     <TableRow>
                       <TableCell colSpan={isManager ? 9 : 8} className="text-center text-muted-foreground py-8">Loading...</TableCell>
@@ -299,14 +299,14 @@ export default function EditAtt() {
                     </TableRow>
                   ) : (
                     filtered.map((e) => (
-                      <TableRow key={e.id} className="border-b border-slate-100 hover:bg-[#f1f3f5] transition-colors">
-                        <TableCell className="py-3 px-3 text-[#555] font-semibold">{e.employee_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{formatDate(e.attendance_date)}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{e.field}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{e.before_value ?? "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{e.after_value ?? "-"}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555] max-w-[240px] truncate" title={e.reason}>{e.reason}</TableCell>
-                        <TableCell className="py-3 px-3 text-[#555]">{e.requested_by_name || "-"}</TableCell>
+                      <TableRow key={e.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{e.employee_name || "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{formatDate(e.attendance_date)}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{e.field}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{e.before_value ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{e.after_value ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 max-w-[240px] truncate" title={e.reason}>{e.reason}</TableCell>
+                        <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{e.requested_by_name || "-"}</TableCell>
                         <TableCell className="py-3 px-3">{statusBadge(e.status)}</TableCell>
                         {isManager && (
                           <TableCell className="py-3 px-3 text-center">
@@ -325,7 +325,7 @@ export default function EditAtt() {
                                   variant="outline"
                                   onClick={() => reject.mutate(e.id)}
                                   disabled={reject.isPending}
-                                  className="h-7 px-3 border-[#d9534f] text-[#d9534f] hover:bg-[#fdecea] text-xs rounded-sm"
+                                  className="h-7 px-3 border-[#d9534f] text-[#d9534f] dark:text-red-400 hover:bg-[#fdecea] dark:hover:bg-red-950 text-xs rounded-sm"
                                 >
                                   Reject
                                 </Button>
@@ -408,7 +408,7 @@ export default function EditAtt() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-semibold text-slate-500">Reason <span className="text-[#d9534f]">*</span></Label>
+              <Label className="text-xs font-semibold text-slate-500">Reason <span className="text-[#d9534f] dark:text-red-400">*</span></Label>
               <Textarea
                 value={form.reason}
                 onChange={(e) => setField("reason", e.target.value)}
@@ -422,7 +422,7 @@ export default function EditAtt() {
             <Button
               onClick={() => createReq.mutate()}
               disabled={createReq.isPending}
-              className="h-8 px-4 bg-[#5c7cfa] hover:bg-[#4c6ef5] text-white text-xs"
+              className="h-8 px-4 bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-bold shadow-sm"
             >
               {createReq.isPending ? "Submitting…" : "Submit request"}
             </Button>

@@ -1,10 +1,23 @@
 import React, { useState, useMemo } from 'react';
 import { Input } from "@/components/ui/input";
-import { LayoutGrid, ArrowLeft } from "lucide-react";
-import { useQuery } from '@tanstack/react-query';
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogFooter,
+    DialogDescription,
+} from "@/components/ui/dialog";
+import { LayoutGrid, ArrowLeft, Pencil } from "lucide-react";
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 export default function DelayProjectPage() {
     const [searchQuery, setSearchQuery] = useState("");
+    const { toast } = useToast();
 
     const handleBack = () => {
         window.history.back();
@@ -15,6 +28,50 @@ export default function DelayProjectPage() {
     });
 
     const delayedProjects = response?.data || [];
+
+    // Edit dialog state — reschedules the deadline (and/or leaves a note) on the
+    // real project row via the existing, authorized PUT /api/pms/projects/:id
+    // metadata-edit endpoint. Pushing the deadline forward is also what makes a
+    // project naturally drop off this list, since the backing query filters on
+    // `end_date < NOW()`.
+    const [editingRow, setEditingRow] = useState<any>(null);
+    const [editDeadline, setEditDeadline] = useState("");
+    const [editNotes, setEditNotes] = useState("");
+    const [isEditOpen, setIsEditOpen] = useState(false);
+
+    const openEdit = (row: any) => {
+        setEditingRow(row);
+        setEditDeadline(row.deadline ? new Date(row.deadline).toISOString().slice(0, 10) : "");
+        setEditNotes("");
+        setIsEditOpen(true);
+    };
+
+    const updateProjectMutation = useMutation({
+        mutationFn: async (payload: { endDate?: string; notes?: string }) => {
+            const res = await apiRequest("PUT", `/api/pms/projects/${editingRow.id}`, payload);
+            return res.json();
+        },
+        onSuccess: () => {
+            toast({ title: "Project updated", description: "Delayed project has been updated." });
+            queryClient.invalidateQueries({ queryKey: ['/api/hod/projects/delayed'] });
+            setIsEditOpen(false);
+        },
+        onError: (err: any) => {
+            toast({ title: "Update failed", description: err?.message ?? "Error", variant: "destructive" });
+        },
+    });
+
+    const handleSaveEdit = () => {
+        if (!editingRow) return;
+        const payload: { endDate?: string; notes?: string } = {};
+        if (editDeadline) payload.endDate = editDeadline;
+        if (editNotes.trim()) payload.notes = editNotes.trim();
+        if (Object.keys(payload).length === 0) {
+            toast({ title: "Nothing to save", description: "Change the deadline or add a note first.", variant: "destructive" });
+            return;
+        }
+        updateProjectMutation.mutate(payload);
+    };
 
     const filteredData = useMemo(() => {
         if (!searchQuery.trim()) return delayedProjects;
@@ -47,11 +104,11 @@ export default function DelayProjectPage() {
     const renderBadge = (row: any, colKey: string, label: string) => {
         const value = row[colKey] || "N/A";
         let colors = {
-            bg: "bg-[#f4f6f8]",
-            text: "text-[#9ba3af]",
-            border: "border border-[#eaedf1]",
+            bg: "bg-[#f4f6f8] dark:bg-zinc-800",
+            text: "text-[#9ba3af] dark:text-zinc-400",
+            border: "border border-[#eaedf1] dark:border-zinc-700",
             tooltipBg: "bg-white dark:bg-zinc-900",
-            tooltipText: "text-[#333] shadow-lg",
+            tooltipText: "text-[#333] dark:text-zinc-300 shadow-lg",
             tooltipBorder: "border border-gray-200 dark:border-slate-700"
         };
         
@@ -147,24 +204,25 @@ export default function DelayProjectPage() {
                                 <th className="px-2 py-4 text-[13px] font-bold text-[#495057] text-center dark:text-zinc-400">Vfy Dep Pending</th>
                                 <th className="px-2 py-4 text-[13px] font-bold text-[#495057] text-center dark:text-zinc-400">Project Dead Line</th>
                                 <th className="px-4 py-4 text-[13px] font-bold text-[#495057] text-center dark:text-zinc-400">Days</th>
+                                <th className="px-4 py-4 text-[13px] font-bold text-[#495057] text-center dark:text-zinc-400">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100/60">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={17} className="px-4 py-8 text-center text-[13px] text-gray-500 dark:text-zinc-400">
+                                    <td colSpan={18} className="px-4 py-8 text-center text-[13px] text-gray-500 dark:text-zinc-400">
                                         Loading delayed projects...
                                     </td>
                                 </tr>
                             ) : filteredData.length === 0 ? (
                                 <tr>
-                                    <td colSpan={17} className="px-4 py-8 text-center text-[13px] text-gray-500 dark:text-zinc-400">
+                                    <td colSpan={18} className="px-4 py-8 text-center text-[13px] text-gray-500 dark:text-zinc-400">
                                         No matching records found.
                                     </td>
                                 </tr>
                             ) : (
                                 filteredData.map((row: any, idx: number) => (
-                                    <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                                    <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                                         <td className="px-3 py-4">
                                             <div className="flex items-center gap-2">
                                                 <input type="checkbox" className="rounded border-gray-300 text-[#41a877] focus:ring-[#41a877] dark:border-zinc-800 dark:text-zinc-400" />
@@ -187,6 +245,15 @@ export default function DelayProjectPage() {
                                         <td className="px-2 py-4 text-center">{renderBadge(row, 'vfyDepP', 'Vfy Dep Pending')}</td>
                                         <td className="px-2 py-4 text-center">{renderBadge(row, 'projectDeadLine', 'Project Dead Line')}</td>
                                         <td className="px-3 py-4 text-[13px] text-gray-600 text-center font-bold text-[#dd3b4a] dark:text-zinc-300">{row.days || 0}</td>
+                                        <td className="px-3 py-4 text-center">
+                                            <button
+                                                onClick={() => openEdit(row)}
+                                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-[#0f8c5b] transition-colors dark:hover:bg-zinc-800"
+                                                title="Reschedule deadline / add note"
+                                            >
+                                                <Pencil size={15} />
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))
                             )}
@@ -212,6 +279,47 @@ export default function DelayProjectPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Edit dialog — real, persisting action against the existing
+                PUT /api/pms/projects/:id endpoint (server/pms-routes.ts). Only
+                deadline and notes are editable here: that endpoint deliberately
+                fails closed on workflow-sensitive fields like status/isDeleted,
+                which are owned by WorkflowTransitionService, not a generic edit. */}
+            <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+                <DialogContent className="sm:max-w-[480px]">
+                    <DialogHeader>
+                        <DialogTitle>Reschedule Delayed Project</DialogTitle>
+                        <DialogDescription>
+                            {editingRow?.project || "Project"} — {editingRow?.company || "N/A"}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">New Deadline</label>
+                            <Input
+                                type="date"
+                                value={editDeadline}
+                                onChange={(e) => setEditDeadline(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Note</label>
+                            <Textarea
+                                value={editNotes}
+                                onChange={(e) => setEditNotes(e.target.value)}
+                                placeholder="Reason for delay / remediation plan..."
+                                rows={4}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+                        <Button onClick={handleSaveEdit} disabled={updateProjectMutation.isPending}>
+                            {updateProjectMutation.isPending ? "Saving..." : "Save"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

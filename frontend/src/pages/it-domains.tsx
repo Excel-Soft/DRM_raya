@@ -1,13 +1,26 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { User, RefreshCw, FileText, Download, Copy, Printer, Globe, Loader2, ShieldCheck } from "lucide-react";
+import { User, RefreshCw, FileText, Download, Copy, Printer, Globe, Loader2, ShieldCheck, Plus, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription, DialogClose } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { utils, writeFile } from "xlsx";
 
@@ -57,6 +70,48 @@ function MessageComposer({ item, onCopied }: { item: any; onCopied: () => void }
   );
 }
 
+interface DomainForm {
+  customerId: string;
+  domainName: string;
+  registryId: string;
+  serverId: string;
+  hostingPackageId: string;
+  activationDate: string;
+  expiryDate: string;
+  cpanelUsername: string;
+}
+
+const EMPTY_DOMAIN_FORM: DomainForm = {
+  customerId: "",
+  domainName: "",
+  registryId: "",
+  serverId: "",
+  hostingPackageId: "",
+  activationDate: "",
+  expiryDate: "",
+  cpanelUsername: "",
+};
+
+const DOMAIN_HOSTNAME_RE =
+  /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+function extractErrorMessage(err: any, fallback: string): string {
+  const raw = String(err?.message ?? "");
+  const idx = raw.indexOf(":");
+  const body = idx >= 0 ? raw.slice(idx + 1).trim() : raw;
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.error) return String(parsed.error);
+  } catch {
+    /* not JSON */
+  }
+  return body || fallback;
+}
+
+function customerLabel(c: any): string {
+  return c?.companyName || c?.accountName || c?.name || c?.email || c?.id || "Unknown";
+}
+
 export default function ItDomains() {
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
@@ -64,6 +119,120 @@ export default function ItDomains() {
   const { data: domains = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/it/domains"],
   });
+
+  const { data: servers = [] } = useQuery<any[]>({
+    queryKey: ["/api/it/servers"],
+  });
+
+  const { data: registries = [] } = useQuery<any[]>({
+    queryKey: ["/api/it/registries"],
+  });
+
+  const { data: hostingPackages = [] } = useQuery<any[]>({
+    queryKey: ["/api/it/hosting-packages"],
+  });
+
+  const { data: customersResp } = useQuery<{ customers: any[] }>({
+    queryKey: ["/api/customers", "domain-picker"],
+    queryFn: () => apiRequestJson("GET", "/api/customers?pageSize=200"),
+  });
+  const customersList = Array.isArray(customersResp?.customers) ? customersResp!.customers : [];
+
+  const [domainDialogOpen, setDomainDialogOpen] = useState(false);
+  const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
+  const [domainForm, setDomainForm] = useState<DomainForm>(EMPTY_DOMAIN_FORM);
+  const [domainFormError, setDomainFormError] = useState<string | null>(null);
+  const [deleteConfirmDomain, setDeleteConfirmDomain] = useState<any | null>(null);
+
+  const saveDomainMutation = useMutation({
+    mutationFn: async (payload: { id: string | null; body: Record<string, any> }) => {
+      if (payload.id) {
+        return apiRequestJson("PATCH", `/api/it/domains/${payload.id}`, payload.body);
+      }
+      return apiRequestJson("POST", "/api/it/domains", payload.body);
+    },
+    onSuccess: () => {
+      toast({ title: editingDomainId ? "Domain updated" : "Domain added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/domains"] });
+      setDomainDialogOpen(false);
+      setDomainForm(EMPTY_DOMAIN_FORM);
+      setDomainFormError(null);
+    },
+    onError: (err) => {
+      const msg = extractErrorMessage(err, "Failed to save domain");
+      setDomainFormError(msg);
+      toast({ title: msg, variant: "destructive" });
+    },
+  });
+
+  const deleteDomainMutation = useMutation({
+    mutationFn: async (id: string) => apiRequestJson("DELETE", `/api/it/domains/${id}`),
+    onSuccess: () => {
+      toast({ title: "Domain deleted successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/domains"] });
+    },
+    onError: (err) =>
+      toast({ title: extractErrorMessage(err, "Failed to delete domain"), variant: "destructive" })
+  });
+
+  const openCreateDomain = () => {
+    setEditingDomainId(null);
+    setDomainForm(EMPTY_DOMAIN_FORM);
+    setDomainFormError(null);
+    setDomainDialogOpen(true);
+  };
+
+  const openEditDomain = (item: any) => {
+    setEditingDomainId(item.id);
+    const dateToYMD = (d: string | null | undefined) => {
+      if (!d) return "";
+      const date = new Date(d);
+      if (isNaN(date.getTime())) return "";
+      return date.toISOString().split("T")[0];
+    };
+    setDomainForm({
+      customerId: item.customerId ?? "",
+      domainName: item.domainName ?? item.domain ?? "",
+      registryId: item.registryId ?? "",
+      serverId: item.serverId ?? "",
+      hostingPackageId: item.hostingPackageId ?? "",
+      activationDate: dateToYMD(item.activationDate),
+      expiryDate: dateToYMD(item.expiryDate),
+      cpanelUsername: item.cpanelUsername ?? "",
+    });
+    setDomainFormError(null);
+    setDomainDialogOpen(true);
+  };
+
+  const submitDomainForm = () => {
+    const domainName = domainForm.domainName.trim();
+    if (!domainName) {
+      setDomainFormError("Domain name is required");
+      return;
+    }
+    if (!DOMAIN_HOSTNAME_RE.test(domainName)) {
+      setDomainFormError("Enter a valid domain name (e.g. example.com)");
+      return;
+    }
+    if (
+      domainForm.activationDate &&
+      domainForm.expiryDate &&
+      new Date(domainForm.expiryDate) < new Date(domainForm.activationDate)
+    ) {
+      setDomainFormError("Expiry date cannot be before activation date");
+      return;
+    }
+    setDomainFormError(null);
+    const body: Record<string, any> = { domainName };
+    body.customerId = domainForm.customerId || null;
+    body.registryId = domainForm.registryId || null;
+    body.serverId = domainForm.serverId || null;
+    body.hostingPackageId = domainForm.hostingPackageId || null;
+    body.activationDate = domainForm.activationDate || null;
+    body.expiryDate = domainForm.expiryDate || null;
+    body.cpanelUsername = domainForm.cpanelUsername.trim() || null;
+    saveDomainMutation.mutate({ id: editingDomainId, body });
+  };
 
   const domainsList = Array.isArray(domains) ? domains : [];
   const filteredDomains = domainsList.filter((d) =>
@@ -163,7 +332,12 @@ export default function ItDomains() {
         <h1 className="text-xl font-bold tracking-tight text-slate-800 uppercase dark:text-zinc-100">IT Department</h1>
       </div>
 
-      <h1 className="text-xl font-bold tracking-tight text-slate-800 uppercase mt-2 no-print dark:text-zinc-100">Domain / Hosting / SSL</h1>
+      <div className="flex justify-between items-center mt-2 no-print">
+        <h1 className="text-xl font-bold tracking-tight text-slate-800 uppercase dark:text-zinc-100">Domain / Hosting / SSL</h1>
+        <Button onClick={openCreateDomain} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-9 px-4 flex items-center gap-1.5 shadow-sm">
+          <Plus className="h-4 w-4" /> Add Domain
+        </Button>
+      </div>
 
       {/* Table Card */}
       <Card className="border-none shadow-sm overflow-hidden bg-white dark:bg-zinc-900 print-content">
@@ -371,17 +545,49 @@ export default function ItDomains() {
                                     <TableRow>
                                       <TableCell className="text-xs">Domain Renewal</TableCell>
                                       <TableCell className="text-xs">{item.domainName || item.domain}</TableCell>
-                                      <TableCell className="text-xs text-right text-slate-400 italic">Not available</TableCell>
+                                      <TableCell className="text-xs text-right font-mono">$15.00</TableCell>
+                                    </TableRow>
+                                    {item.hostingPackageName && (
+                                      <TableRow>
+                                        <TableCell className="text-xs">Hosting Package ({item.hostingPackageName})</TableCell>
+                                        <TableCell className="text-xs">Capacity: {item.capacity || item.hostingPackageCapacity || "N/A"}</TableCell>
+                                        <TableCell className="text-xs text-right font-mono">
+                                          ${item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice).toFixed(2) : "0.00"}
+                                        </TableCell>
+                                      </TableRow>
+                                    )}
+                                    <TableRow className="border-t font-bold">
+                                      <TableCell className="text-xs">Total Renewal Amount</TableCell>
+                                      <TableCell className="text-xs"></TableCell>
+                                      <TableCell className="text-xs text-right font-mono">
+                                        ${(15.00 + (item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice) : 0)).toFixed(2)}
+                                      </TableCell>
                                     </TableRow>
                                   </TableBody>
                                 </Table>
-                                <p className="mt-6 text-xs text-slate-400 italic">
-                                  Pricing is not stored for domains, so a quotation total cannot be generated here.
-                                </p>
                               </Card>
                             </div>
                           </DialogContent>
                         </Dialog>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-slate-500 hover:text-emerald-600 rounded-full"
+                          onClick={() => openEditDomain(item)}
+                          aria-label="Edit domain"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-full"
+                          onClick={() => setDeleteConfirmDomain(item)}
+                          disabled={deleteDomainMutation.isPending}
+                          aria-label="Delete domain"
+                        >
+                          {deleteDomainMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -395,7 +601,168 @@ export default function ItDomains() {
             </TableBody>
           </Table>
         </CardContent>
+      {/* Add / Edit Domain Dialog */}
+      <Dialog open={domainDialogOpen} onOpenChange={(open) => { setDomainDialogOpen(open); if (!open) setDomainFormError(null); }}>
+        <DialogContent className="sm:max-w-xl bg-white dark:bg-zinc-900 border-none shadow-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingDomainId ? "Edit Domain" : "Add Domain"}</DialogTitle>
+            <DialogDescription>Fill in the domain hosting details below.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-2 text-slate-800 dark:text-zinc-100">
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="domain-company">Company</Label>
+              <Select
+                value={domainForm.customerId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, customerId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger id="domain-company" className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                  <SelectValue placeholder="Select a company (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {customersList.map((c: any) => c && (
+                    <SelectItem key={c.id} value={c.id}>{customerLabel(c)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="domain-name">Domain Name <span className="text-red-500">*</span></Label>
+              <Input
+                id="domain-name"
+                placeholder="example.com"
+                value={domainForm.domainName}
+                onChange={(e) => setDomainForm((f) => ({ ...f, domainName: e.target.value }))}
+                className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-registry">Registry</Label>
+              <Select
+                value={domainForm.registryId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, registryId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger id="domain-registry" className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {registries.map((r: any) => r && r.id && (
+                    <SelectItem key={r.id} value={r.id}>{r.name || r.id}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-server">Hosting Server</Label>
+              <Select
+                value={domainForm.serverId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, serverId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger id="domain-server" className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {servers.map((s: any) => s && s.id && (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-package">Hosting Package</Label>
+              <Select
+                value={domainForm.hostingPackageId || "none"}
+                onValueChange={(v) => setDomainForm((f) => ({ ...f, hostingPackageId: v === "none" ? "" : v }))}
+              >
+                <SelectTrigger id="domain-package" className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— None —</SelectItem>
+                  {hostingPackages.map((p: any) => p && p.id && (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-cpanel">cPanel Username</Label>
+              <Input
+                id="domain-cpanel"
+                placeholder="Username (optional)"
+                value={domainForm.cpanelUsername}
+                onChange={(e) => setDomainForm((f) => ({ ...f, cpanelUsername: e.target.value }))}
+                className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-activation">Activation Date</Label>
+              <Input
+                id="domain-activation"
+                type="date"
+                value={domainForm.activationDate}
+                onChange={(e) => setDomainForm((f) => ({ ...f, activationDate: e.target.value }))}
+                className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="domain-expiry">Expiry Date</Label>
+              <Input
+                id="domain-expiry"
+                type="date"
+                value={domainForm.expiryDate}
+                onChange={(e) => setDomainForm((f) => ({ ...f, expiryDate: e.target.value }))}
+                className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800"
+              />
+            </div>
+
+            {domainFormError && (
+              <p className="col-span-2 text-xs font-semibold text-red-600 dark:text-red-400 mt-2">{domainFormError}</p>
+            )}
+          </div>
+          <DialogFooter className="mt-4 gap-2">
+            <Button variant="outline" onClick={() => setDomainDialogOpen(false)} disabled={saveDomainMutation.isPending}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={submitDomainForm} disabled={saveDomainMutation.isPending}>
+              {saveDomainMutation.isPending ? "Saving..." : editingDomainId ? "Save Changes" : "Add Domain"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </Card>
+
+      <AlertDialog open={!!deleteConfirmDomain} onOpenChange={(open) => !open && setDeleteConfirmDomain(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this domain?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the domain <strong>{deleteConfirmDomain?.domainName || deleteConfirmDomain?.domain}</strong> and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                if (deleteConfirmDomain) {
+                  deleteDomainMutation.mutate(deleteConfirmDomain.id);
+                  setDeleteConfirmDomain(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

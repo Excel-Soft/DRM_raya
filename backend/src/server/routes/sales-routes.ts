@@ -1,29 +1,29 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { opportunitiesRepository } from "../repositories/opportunities.repository";
-import { activitiesRepository } from "../repositories/activities.repository";
-import { appointmentsRepository } from "../repositories/appointments.repository";
-import { targetsRepository } from "../repositories/targets.repository";
-import { vasProgressRepository } from "../repositories/vas-progress.repository";
-import { followUpsRepository } from "../repositories/followups.repository";
-import { CommunicationService } from "../services/communication.service";
-import { customersRepository } from "../repositories/customers.repository";
-import { leadActivitiesRepository } from "../repositories/lead-activities.repository";
-import { leadServicesRepository } from "../repositories/lead-services.repository";
-import { servicesRepository } from "../repositories/services.repository";
-import { callSessionsRepository } from "../repositories/call-sessions.repository";
-import { servicePoolRepository } from "../repositories/service-pool.repository";
-import { pool, db } from "../db";
+import { authMiddleware } from "./auth.middleware";
+import { opportunitiesRepository } from "./repositories/opportunities.repository";
+import { activitiesRepository } from "./repositories/activities.repository";
+import { appointmentsRepository } from "./repositories/appointments.repository";
+import { targetsRepository } from "./repositories/targets.repository";
+import { vasProgressRepository } from "./repositories/vas-progress.repository";
+import { followUpsRepository } from "./repositories/followups.repository";
+import { CommunicationService } from "./services/communication.service";
+import { customersRepository } from "./repositories/customers.repository";
+import { leadActivitiesRepository } from "./repositories/lead-activities.repository";
+import { leadServicesRepository } from "./repositories/lead-services.repository";
+import { servicesRepository } from "./repositories/services.repository";
+import { callSessionsRepository } from "./repositories/call-sessions.repository";
+import { servicePoolRepository } from "./repositories/service-pool.repository";
+import { pool, db } from "./db";
 import { sql, eq } from "drizzle-orm";
-import { customers, targetSystemDailyTargets, targetSystemUserTargets, users } from "@shared/schema";
+import { customers, targetSystemDailyTargets, targetSystemUserTargets, users, serviceCustomers } from "@shared/schema";
 import crypto from "crypto";
-import { ensureBvReportsSchema } from "../repositories/bv-reports.repository";
-import { generateDrmId } from "../utils/drm-id-utils";
-import { isManagerialRole, normalizeRole } from "../utils/role-utils";
-import { assertCanEditCustomer } from "../utils/ownership";
-import { sendError, ApiError } from "../utils/api-error";
-import { recordAssignment, getAssignmentHistory } from "../utils/assignment-history";
+import { ensureBvReportsSchema } from "./repositories/bv-reports.repository";
+import { generateDrmId, resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { isManagerialRole, normalizeRole } from "./utils/role-utils";
+import { assertCanEditCustomer } from "./utils/ownership";
+import { sendError, ApiError } from "./utils/api-error";
+import { recordAssignment, getAssignmentHistory } from "./utils/assignment-history";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 
 let customersSchemaEnsured = false;
@@ -67,8 +67,11 @@ async function ensureCustomersSchema() {
       add column if not exists expires_at timestamptz,
       add column if not exists is_gold_member integer default 0,
       add column if not exists is_business_verified integer default 0,
+      add column if not exists is_focus boolean default false,
       add column if not exists ab_type text,
       add column if not exists drm_id text,
+      add column if not exists emails text[] default '{}'::text[],
+      add column if not exists mobiles text[] default '{}'::text[],
       add column if not exists created_at timestamptz default now(),
       add column if not exists updated_at timestamptz default now();
 
@@ -135,7 +138,8 @@ async function ensureCustomersSchema() {
     await pool.query(alterSql);
     customersSchemaEnsured = true;
   } catch (err) {
-    console.error("Failed to ensure customers schema (continuing):", err);
+    console.error("Failed to ensure customers schema (will retry on next call):", err);
+    customersSchemaPromise = null;
   }
   })();
   await customersSchemaPromise;
@@ -268,7 +272,7 @@ let ensuredFollowupDetails = false;
 async function ensureFollowupDetailsTables() {
   if (ensuredFollowupDetails) return;
   const ddl = `
-    create table if not exists drm.followup_subservice_details (
+    create table if not exists followup_subservice_details (
       id uuid primary key default gen_random_uuid(),
       followup_id uuid not null references follow_ups(id) on delete cascade,
       service_id uuid not null references services(id) on delete cascade,
@@ -285,12 +289,12 @@ async function ensureFollowupDetailsTables() {
       created_at timestamptz not null default now()
     );
 
-    alter table drm.followup_subservice_details
+    alter table followup_subservice_details
       add column if not exists talk_time_minutes int null,
       add column if not exists activity_at timestamptz null;
 
-    create index if not exists idx_followup_detail_followup on drm.followup_subservice_details(followup_id);
-    create index if not exists idx_followup_detail_subservice on drm.followup_subservice_details(subservice_id);
+    create index if not exists idx_followup_detail_followup on followup_subservice_details(followup_id);
+    create index if not exists idx_followup_detail_subservice on followup_subservice_details(subservice_id);
 
     create table if not exists followup_subservice_attachments (
       id uuid primary key default gen_random_uuid(),
@@ -315,11 +319,13 @@ async function ensureFollowupDetailsTables() {
 function isLeadPoolManager(roleId?: string): boolean {
   if (!roleId) return false;
   const n = normalizeRole(roleId);
+  // service_executive was previously included here, meaning their own
+  // "Private Pool" page skipped the owner_user_id scope entirely and showed
+  // every private/GMBV customer in the system instead of just their own.
   const allowedExecutives = [
     "posting_executive",
     "product_posting_executive",
     "lead_executive",
-    "service_executive",
     "software_executive",
     "dd_executive"
   ];
@@ -330,6 +336,9 @@ async function countGmBvEntries(userId: string, roleId?: string): Promise<number
   try {
     await ensureBvReportsSchema();
     const manager = isLeadPoolManager(roleId);
+    const allowedUserIds = manager
+      ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+      : null;
     const params: any[] = [];
     let bvClause = "1=1";
     let gmClause = "coalesce(g.is_deleted,false)=false";
@@ -340,6 +349,14 @@ async function countGmBvEntries(userId: string, roleId?: string): Promise<number
       ))`;
       gmClause = `coalesce(g.is_deleted,false)=false and (g.created_by = $1 or exists (
         select 1 from drm.customers cg where cg.id = g.customer_id and cg.owner_user_id = $1
+      ))`;
+    } else if (allowedUserIds) {
+      params.push(allowedUserIds);
+      bvClause = `(br.assigned_to = ANY($1::uuid[]) or br.user_id = ANY($1::uuid[]) or exists (
+        select 1 from drm.customers c where c.id = br.customer_id and (c.owner_user_id = ANY($1::uuid[]) or c.pool_type = 'Public')
+      ))`;
+      gmClause = `coalesce(g.is_deleted,false)=false and (g.created_by = ANY($1::uuid[]) or exists (
+        select 1 from drm.customers cg where cg.id = g.customer_id and cg.owner_user_id = ANY($1::uuid[])
       ))`;
     }
     const sql = `
@@ -385,7 +402,7 @@ async function fetchFollowupWithDetails(followupId: string, customerId?: string)
 
   const subServicesRes = await pool.query(
     `select ss.id, ss.code, ss.name, ss.service_id, svc.code as service_code
-         from drm.followup_subservices fss
+         from followup_subservices fss
          left join service_subservices ss on ss.id = fss.subservice_id
          left join services svc on svc.id = ss.service_id
         where fss.followup_id = $1`,
@@ -421,7 +438,7 @@ async function fetchFollowupWithDetails(followupId: string, customerId?: string)
            ) filter (where a.id is not null),
            '[]'
          ) as attachments
-       from drm.followup_subservice_details d
+       from followup_subservice_details d
        left join followup_subservice_attachments a on a.detail_id = d.id
        where d.followup_id = $1
        group by d.id`,
@@ -440,14 +457,24 @@ async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<Le
   await syncGmBvPool();
   const gmBvCount = await countGmBvEntries(userId, roleId);
   const manager = isLeadPoolManager(roleId);
+  const allowedUserIds = manager
+    ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+    : null;
   const params: any[] = [];
   let scopeClause = "coalesce(c.is_deleted, false) = false";
   if (!manager) {
     params.push(userId);
-    // Include: customers owned by this user (owner_user_id OR created_by), plus Public pool
+    // Include: customers owned by this user, OR (not owned by anyone AND created by this user), plus Public pool
     scopeClause += ` and (
       c.owner_user_id = $${params.length}
-      or c.created_by = $${params.length}
+      or (c.owner_user_id IS NULL AND c.created_by = $${params.length})
+      or c.pool_type = 'Public'
+    )`;
+  } else if (allowedUserIds) {
+    params.push(allowedUserIds);
+    scopeClause += ` and (
+      c.owner_user_id = ANY($${params.length}::uuid[])
+      or (c.owner_user_id IS NULL AND c.created_by = ANY($${params.length}::uuid[]))
       or c.pool_type = 'Public'
     )`;
   }
@@ -524,6 +551,13 @@ async function buildLeadPoolList(
   const sourceFilter = query.sourceFilter;
 
   const manager = isLeadPoolManager(roleId);
+  // Same gap as /api/sales/tracing/summary: a department manager (service_manager,
+  // sales_manager, ...) got zero scoping here, seeing every department's pool —
+  // not just their own team's. getDepartmentFilterUserIds only returns null for
+  // true global roles; a department manager gets their own team's user ids back.
+  const allowedUserIds = manager
+    ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+    : null;
   const conditions: string[] = ["coalesce(c.is_deleted, false) = false"];
   const params: any[] = [];
   const addParam = (value: any) => {
@@ -534,14 +568,20 @@ async function buildLeadPoolList(
   switch (poolParam) {
     case "all":
       if (!manager) {
-        conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(userId)} OR c.created_by = ${addParam(userId)})`);
+        conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
+      } else if (allowedUserIds) {
+        const p = addParam(allowedUserIds);
+        conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
       }
       break;
     case "private":
       conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
       if (!manager) {
-        // Show customers owned by this user OR created by this user
-        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR c.created_by = ${addParam(userId)})`);
+        // Show customers owned by this user OR (no owner set AND created by this user)
+        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
+      } else if (allowedUserIds) {
+        const p = addParam(allowedUserIds);
+        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
       }
       break;
     case "service":
@@ -551,17 +591,31 @@ async function buildLeadPoolList(
     case "gmbv":
       conditions.push("c.pool_type = 'GMBV'");
       break;
-    case "public":
+    case "public": {
       conditions.push("c.pool_type = 'Public'");
-      conditions.push("c.owner_user_id IS NULL");
-      conditions.push("NOT EXISTS (SELECT 1 FROM drm.follow_ups f WHERE f.customer_id = c.id AND coalesce(f.is_deleted, false) = false)");
-      conditions.push("NOT EXISTS (SELECT 1 FROM drm.appointments a WHERE a.customer_id = c.id AND coalesce(a.is_deleted, false) = false)");
-      conditions.push("NOT EXISTS (SELECT 1 FROM drm.service_pool_entries spe WHERE spe.customer_id = c.id AND spe.status = 'active')");
+      // Public Pool is a department-wide shared pool (e.g. any Sales Executive
+      // can pick up a lead another Sales Executive dropped here), but it must
+      // not leak across departments — a Service viewer should never see a
+      // Sales-originated public lead and vice versa. There's no explicit
+      // department column on customers, so department is inferred from the
+      // creator's role, same ad hoc "role contains service" convention used
+      // in App.tsx's DynamicPublicPool. True global roles see everything.
+      const isGlobalRole = ["admin", "super_admin", "hod", "super_hod", "account_manager"].includes(normalizeRole(roleId || ""));
+      if (!isGlobalRole) {
+        const viewerIsService = normalizeRole(roleId || "").includes("service");
+        conditions.push(`not exists (
+          select 1 from drm.users cb where cb.id = c.created_by
+          and (cb.role_id ilike '%service%') <> ${addParam(viewerIsService)}::boolean
+        )`);
+      }
       break;
+    }
     case "expiring":
       conditions.push("c.expires_at between now() and now() + interval '7 day'");
       if (!manager) {
         conditions.push(`c.owner_user_id = ${addParam(userId)}`);
+      } else if (allowedUserIds) {
+        conditions.push(`c.owner_user_id = ANY(${addParam(allowedUserIds)}::uuid[])`);
       }
       break;
     default:
@@ -576,10 +630,14 @@ async function buildLeadPoolList(
     }
   }
 
-  if (serviceFilter && serviceFilter !== "all") {
+  const canonicalServiceCodes = ["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES", "DESIGN_DEVELOPMENT", "DOMAIN_HOSTING"];
+  if (serviceFilter && canonicalServiceCodes.includes(serviceFilter)) {
+    const codeParam = addParam(serviceFilter);
+    conditions.push(`exists (select 1 from drm.service_pool_entries spe where spe.customer_id = c.id and spe.service_code = ${codeParam} and spe.status not in ('dropout', 'refund'))`);
+  } else if (serviceFilter && serviceFilter !== "all") {
     // Map frontend values to more flexible database search patterns
     let searchPatterns: string[] = [];
-    
+
     if (serviceFilter === "Alibaba.com") {
       searchPatterns = ["%Alibaba.com%", "%Alibaba Membership%"];
     } else if (serviceFilter === "VAS (Value Added Services)") {
@@ -604,7 +662,7 @@ async function buildLeadPoolList(
   }
 
   if (statusFilter) {
-    conditions.push(`lower(c.status::text) = lower(${addParam(statusFilter)})`);
+    conditions.push(`lower(c.status) = lower(${addParam(statusFilter)})`);
   }
 
   if (sourceFilter) {
@@ -645,19 +703,11 @@ async function buildLeadPoolList(
       c.grade,
       c.owner_user_id,
       c.service_types,
+      coalesce(su.full_name, su.username) as sales_person_name,
       count(*) over() as total_count
     from drm.customers c
-    ${poolParam === "public" ? `
-      left join lateral (
-        select fu.id as followup_exists
-        from drm.follow_ups fu
-        where fu.customer_id = c.id
-          and coalesce(fu.is_deleted, false) = false
-        limit 1
-      ) latest_fu on true
-    ` : ""}
+    left join drm.users su on su.id = coalesce(c.owner_user_id, c.created_by)
     where ${conditions.join(" and ")}
-    ${poolParam === "public" ? "and latest_fu.followup_exists is null" : ""}
     order by c.created_at desc
     limit ${limitParam} offset ${offsetParam};
   `;
@@ -688,6 +738,7 @@ async function buildLeadPoolList(
     grade: row.grade,
     ownerUserId: row.owner_user_id,
     serviceTypes: row.service_types ?? [],
+    salesPersonName: row.sales_person_name ?? null,
   }));
 
   return { items, total, page, pageSize };
@@ -702,6 +753,7 @@ async function syncGmBvPool() {
       `update drm.customers c
           set pool_type = 'GMBV', updated_at = now()
         where pool_type <> 'GMBV'
+          and pool_type <> 'Public'
           and exists (select 1 from gm_entries g where coalesce(g.is_deleted,false)=false and g.customer_id = c.id)`,
     );
     try {
@@ -710,6 +762,7 @@ async function syncGmBvPool() {
         `update drm.customers c
             set pool_type = 'GMBV', updated_at = now()
           where pool_type <> 'GMBV'
+            and pool_type <> 'Public'
             and exists (select 1 from bv_reports br where br.customer_id = c.id)`,
       );
     } catch (err: any) {
@@ -757,6 +810,16 @@ const updateLeadSchema = z.object({
   city: z.string().optional(),
   country: z.string().optional(),
   ownerUserId: z.string().uuid().nullable().optional(),
+  // These have always been real columns on drm.customers, but were missing
+  // here — the Edit Company form sent them and got a misleading "updated
+  // successfully" toast while they were silently stripped before reaching
+  // the database.
+  mobile: z.string().optional(),
+  website: z.string().optional(),
+  address: z.string().optional(),
+  comment: z.string().optional(),
+  title: z.string().optional(),
+  companyType: z.string().optional(),
 });
 
 // Helper to get date range based on period
@@ -857,7 +920,7 @@ async function ensureTargetsTable() {
     const client = await pool.connect();
     try {
       await client.query(`
-        create table if not exists drm.targets (
+        create table if not exists targets (
           id uuid primary key default gen_random_uuid(),
           user_id uuid not null,
           month int not null,
@@ -868,7 +931,7 @@ async function ensureTargetsTable() {
           updated_at timestamptz not null default now(),
           unique(user_id, month, year)
         );
-        create index if not exists idx_targets_user_month_year on drm.targets(user_id, year, month);
+        create index if not exists idx_targets_user_month_year on targets(user_id, year, month);
       `);
     } finally {
       client.release();
@@ -898,19 +961,27 @@ export function registerSalesRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const userObj = req.user as any;
+      const r = (userObj.role || (Array.isArray(userObj.roles) ? userObj.roles.join(" ") : "")).toLowerCase();
+      const isManagerial = r.includes("admin") || r.includes("super_hod") || r.includes("hod") || r.includes("account");
+
+      const whereSql = isManagerial ? "" : "WHERE sales_exec_id = $1";
+      const params = isManagerial ? [] : [req.user.userId];
+
       const { rows } = await pool.query(`
-        SELECT 
-          id, 
-          company_name as "client", 
-          amount as "grandTotal", 
+        SELECT
+          id,
+          invoice_number as "invoiceNumber",
+          company_name as "client",
+          amount as "grandTotal",
           status as "finalStatus",
           CASE WHEN status IN ('PENDING_ACCOUNT', 'APPROVED') THEN 'Approved' ELSE (CASE WHEN status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "hodStatus",
           CASE WHEN status = 'APPROVED' THEN 'Approved' ELSE (CASE WHEN status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "accountStatus",
           created_at as "createdAt"
         FROM drm.product_posting_invoices 
-        WHERE sales_exec_id = $1
+        ${whereSql}
         ORDER BY created_at DESC
-      `, [req.user.userId]);
+      `, params);
 
       res.json(rows);
     } catch (error) {
@@ -927,14 +998,22 @@ export function registerSalesRoutes(app: Express) {
       }
 
       const { rows } = await pool.query(`
-        SELECT 
+        SELECT
           i.id,
+          i.invoice_number as "invoiceNumber",
           i.amount,
           i.project_name,
           i.company_name,
           i.status,
+          i.notes,
+          i.rejection_reason as "rejectionReason",
           i.created_at,
           i.updated_at,
+          i.invoice_type as "invoiceType",
+          i.service_type as "serviceType",
+          i.payment_method as "paymentMethod",
+          i.paid_amount as "paidAmount",
+          i.paid_date as "paidDate",
           c.account_name,
           c.email,
           c.phone,
@@ -966,13 +1045,16 @@ export function registerSalesRoutes(app: Express) {
       const period = periodSchema.parse(req.query.period || "TD");
       const { dateFrom, dateTo } = getDateRangeForPeriod(period);
 
-      // Get customer counts for the user within the period
+      // Get customer counts for the user within the period. Some customer-creation
+      // paths only set created_by (not owner_user_id) — fall back the same way
+      // crm-routes.ts's customer search already does, or leads created without an
+      // explicit owner silently never counted here.
       const { rows } = await pool.query(
-        `SELECT coalesce(status, 'New') as status, count(*) as count 
-         FROM drm.customers 
-         WHERE owner_user_id = $1 
-           AND created_at >= $2 
-           AND created_at <= $3 
+        `SELECT coalesce(status, 'New') as status, count(*) as count
+         FROM drm.customers
+         WHERE coalesce(owner_user_id, created_by) = $1
+           AND created_at >= $2
+           AND created_at <= $3
          GROUP BY coalesce(status, 'New')`,
         [req.user.userId, dateFrom, dateTo]
       );
@@ -1207,7 +1289,6 @@ export function registerSalesRoutes(app: Express) {
   // GET /api/sales/activity-plan - Get activity plan grid
   app.get("/api/sales/activity-plan", async (req, res) => {
     try {
-      await ensureFollowupDetailsTables();
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
@@ -1752,7 +1833,7 @@ export function registerSalesRoutes(app: Express) {
             left join drm.customers c on c.id = f.customer_id
             left join lateral (
               select d.purpose
-                from drm.followup_subservice_details d
+                from followup_subservice_details d
                where d.followup_id = f.id
                limit 1
             ) detail on true
@@ -1944,8 +2025,8 @@ export function registerSalesRoutes(app: Express) {
       // Dropout leads (using customers status if available)
       const dropoutRes = await pool.query(
         `select
-            count(*) filter (where coalesce(lower(c.status::text),'') = 'dropout')::int as dropout_all,
-            count(*) filter (where coalesce(lower(c.status::text),'') = 'dropout' and c.updated_at >= now() - interval '7 day')::int as dropout_7
+            count(*) filter (where coalesce(lower(c.status),'') = 'dropout')::int as dropout_all,
+            count(*) filter (where coalesce(lower(c.status),'') = 'dropout' and c.updated_at >= now() - interval '7 day')::int as dropout_7
          from drm.customers c
          ${whereCustomers}`,
         params,
@@ -1992,7 +2073,7 @@ export function registerSalesRoutes(app: Express) {
 
       // Todo list pending
       const todoRes = await pool.query(
-        `select count(*)::int as count from drm.todo_tasks
+        `select count(*)::int as count from todo_tasks
           where coalesce(status,'PENDING') not in ('FINISHED','DONE','COMPLETED')
             ${manager ? "" : "and created_by_user_id = $1"}`,
         manager ? [] : [userId],
@@ -2192,6 +2273,8 @@ export function registerSalesRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      await ensureCustomersSchema();
+
       const page = parseInt(req.query.page as string) || 1;
       const pageSize = parseInt(req.query.pageSize as string) || 10;
       const search = req.query.search as string;
@@ -2200,6 +2283,15 @@ export function registerSalesRoutes(app: Express) {
       const stage = req.query.stage as string;
       const sortBy = req.query.sortBy as string || "createdAt";
       const sortOrder = (req.query.sortOrder as "asc" | "desc") || "desc";
+      const poolType = req.query.poolType as string | undefined;
+      // Private-Pool-scoped requests (Customer Management) read the live
+      // drm.customers table directly rather than the per-executive shadow
+      // table ensureSalesTables() maintains — that shadow copy is kept in
+      // sync by a trigger that never removes a row when its owner_user_id is
+      // nulled or reassigned away, so it can retain customers that no longer
+      // belong to this user in the real table. Every other caller of this
+      // route keeps using the shadow table as before.
+      const salesTable = poolType === "Private" ? undefined : (req as any).salesTable;
 
       const result = await customersRepository.findByUserId(req.user.userId, {
         page,
@@ -2210,7 +2302,8 @@ export function registerSalesRoutes(app: Express) {
         stage,
         sortBy,
         sortOrder,
-      }, ((req.user as any).activeRoleId || req.user.roleId));
+        poolType,
+      }, ((req.user as any).activeRoleId || req.user.roleId), salesTable);
 
       const payload = {
         success: true,
@@ -2305,13 +2398,20 @@ export function registerSalesRoutes(app: Express) {
       let queryValue = value;
 
       if (field === 'email') {
-        query = `select id from drm.customers where lower(trim(email)) = lower(trim($1)) limit 1`;
+        query = `select id from drm.customers where lower(trim(email)) = lower(trim($1)) or lower(trim($1)) = any(select lower(trim(x)) from unnest(emails) x) limit 1`;
       } else if (field === 'mobile' || field === 'phone') {
         const normalized = value.replace(/\D/g, "");
-        query = field === 'mobile' 
-          ? `select id from drm.customers where regexp_replace(mobile, '\\D', '', 'g') = $1 limit 1`
-          : `select id from drm.customers where phone_normalized = $1 or regexp_replace(phone, '\\D', '', 'g') = $1 limit 1`;
-        queryValue = normalized;
+        if (field === 'mobile') {
+          query = `select id from drm.customers where (mobile is not null and regexp_replace(mobile, '\\D', '', 'g') = $1) or $2 = any(mobiles) limit 1`;
+          const result = await pool.query(query, [normalized, value]);
+          if ((result.rowCount ?? 0) > 0) {
+            return res.json({ available: false, existingCustomerId: result.rows[0].id });
+          }
+          return res.json({ available: true });
+        } else {
+          query = `select id from drm.customers where phone_normalized = $1 or regexp_replace(phone, '\\D', '', 'g') = $1 limit 1`;
+          queryValue = normalized;
+        }
       }
 
       const result = await pool.query(query, [queryValue]);
@@ -2371,11 +2471,25 @@ export function registerSalesRoutes(app: Express) {
         businessLine,
       } = req.body;
 
+      const emailsListRaw = Array.isArray(req.body.emails)
+        ? req.body.emails
+        : (req.body.email ? [req.body.email] : []);
+      const emailsList = Array.from(new Set(
+        emailsListRaw.map((e: any) => String(e).trim().toLowerCase()).filter(Boolean)
+      )).slice(0, 5);
+
+      const mobilesListRaw = Array.isArray(req.body.mobiles)
+        ? req.body.mobiles
+        : (req.body.mobile ? [req.body.mobile] : []);
+      const mobilesList = Array.from(new Set(
+        mobilesListRaw.map((m: any) => String(m).trim()).filter(Boolean)
+      )).slice(0, 5);
+
       const companyVal = (company || companyName)?.trim();
       const accountVal = (accountHolder || accountHolderName)?.trim();
-      const emailVal = email?.trim().toLowerCase();
+      const emailVal = emailsList[0] || email?.trim().toLowerCase();
       const phoneVal = phone?.toString().trim();
-      const mobileVal = mobile?.toString().trim();
+      const mobileVal = mobilesList[0] || mobile?.toString().trim();
       const countryVal = country?.trim();
 
       if (!companyVal || !accountVal || !phoneVal || !emailVal || !region) {
@@ -2403,7 +2517,9 @@ export function registerSalesRoutes(app: Express) {
         if (col === "company_name") {
           sql = `select 1 from drm.customers where regexp_replace(lower(coalesce(company_name, company, '')), '[^a-z0-9]', '', 'g') = regexp_replace(lower($1), '[^a-z0-9]', '', 'g') limit 1`;
         } else if (col === "email") {
-          sql = `select 1 from drm.customers where lower(trim(email)) = lower(trim($1)) limit 1`;
+          sql = `select 1 from drm.customers where lower(trim(email)) = lower(trim($1)) or lower(trim($1)) = any(select lower(trim(x)) from unnest(emails) x) limit 1`;
+        } else if (col === "mobile") {
+          sql = `select 1 from drm.customers where (mobile is not null and regexp_replace(mobile, '\\D', '', 'g') = regexp_replace($1, '\\D', '', 'g')) or $1 = any(mobiles) limit 1`;
         }
         const res = await pool.query(sql, [val]);
         if ((res.rowCount ?? 0) > 0) throw new Error(msg);
@@ -2421,7 +2537,12 @@ export function registerSalesRoutes(app: Express) {
       if (!existingCustomer) {
         try {
           await checkDup("company_name", companyVal, "Company name already exists");
-          await checkDup("email", emailVal, "Email already exists");
+          for (const em of emailsList) {
+            await checkDup("email", em, `Email ${em} already exists`);
+          }
+          for (const mob of mobilesList) {
+            await checkDup("mobile", mob, `Mobile ${mob} already exists`);
+          }
           await checkDup("phone_normalized", phoneNormalized, "Phone number already exists");
           if (cnic?.trim()) await checkDup("cnic", cnic.trim(), "CNIC already exists");
           if (ntn?.trim()) await checkDup("ntn", ntn.trim(), "NTN already exists");
@@ -2444,12 +2565,14 @@ export function registerSalesRoutes(app: Express) {
           grade: grade || "C",
           rcLink: req.body.rcLink || null,
           email: emailVal,
+          emails: emailsList,
           phone: phoneVal,
           phoneNormalized,
           accountName: accountVal,
           ntn: ntn?.trim() || null,
           cnic: cnic?.trim() || null,
           mobile: mobileVal || null,
+          mobiles: mobilesList,
           lastNote: lastNote || null,
           serviceTypes: serviceTypes ?? [],
           businessLine: businessLine || null,
@@ -2461,8 +2584,10 @@ export function registerSalesRoutes(app: Express) {
           crmDate: req.body.crmDate ? new Date(req.body.crmDate) : null,
         } as any);
       } else {
-        // Generate Custom DRM ID: [Country] [Initials] [UniquePart]
-        const drmId = generateDrmId(companyVal, countryVal || "Other", crypto.randomUUID());
+        const drmId = await resolveOrCreateCanonicalDrmId(pool, {
+          companyName: companyVal,
+          country: countryVal,
+        });
 
         customer = await customersRepository.create(
           {
@@ -2477,12 +2602,14 @@ export function registerSalesRoutes(app: Express) {
             grade: grade || "C",
             rcLink: req.body.rcLink || null,
             email: emailVal,
+            emails: emailsList,
             phone: phoneVal,
             phoneNormalized,
             accountName: accountVal,
             ntn: ntn?.trim() || null,
             cnic: cnic?.trim() || null,
             mobile: mobileVal || null,
+            mobiles: mobilesList,
             lastNote: lastNote || null,
             serviceTypes: serviceTypes ?? [],
             businessLine: businessLine || null,
@@ -2498,6 +2625,33 @@ export function registerSalesRoutes(app: Express) {
           } as any,
           req.user.userId,
         );
+
+        // A service_% role adding a customer here means it's THEIR customer —
+        // auto-onboard into the service module (drm.service_customers) so it
+        // immediately counts toward their own Top Selling / Total Contact
+        // stats, instead of requiring a separate manual "Onboard Now" step
+        // for the common case of a service rep directly registering someone.
+        const actorRoleId = (req.user as any).activeRoleId || req.user.roleId || "";
+        if (/^service_/i.test(actorRoleId) && customer?.id) {
+          try {
+            const serviceStartDate = new Date();
+            const expiryDate = new Date(serviceStartDate);
+            expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+            await db.insert(serviceCustomers).values({
+              customerId: customer.id,
+              userId: req.user.userId,
+              assignedTo: req.user.userId,
+              assignedBy: req.user.userId,
+              assignedAt: new Date(),
+              createdBy: req.user.userId,
+              status: "active",
+              serviceStartDate,
+              expiryDate,
+            });
+          } catch (scErr) {
+            console.error("Failed to auto-onboard new customer into service module:", scErr);
+          }
+        }
       }
 
       return res.status(201).json({
@@ -2509,6 +2663,21 @@ export function registerSalesRoutes(app: Express) {
       console.error("Error creating customer:", error);
       if (error?.message?.includes("Missing required")) {
         return res.status(400).json({ success: false, message: error.message });
+      }
+      // 23505 = Postgres unique_violation. The pre-checks above cover the common
+      // cases, but a raw DB-level constraint can still fire (e.g. a race, or a
+      // normalization mismatch) — translate it to the same friendly wording
+      // instead of leaking the raw constraint/index name to the user.
+      if (error?.code === "23505") {
+        const ref = `${error.constraint || ""} ${error.detail || ""} ${error.message || ""}`.toLowerCase();
+        let friendly = "This record conflicts with an existing customer (duplicate value).";
+        if (ref.includes("phone")) friendly = "Phone number already exists for another customer.";
+        else if (ref.includes("email")) friendly = "Email already exists for another customer.";
+        else if (ref.includes("company")) friendly = "Company name already exists.";
+        else if (ref.includes("cnic")) friendly = "CNIC already exists for another customer.";
+        else if (ref.includes("ntn")) friendly = "NTN already exists for another customer.";
+        else if (ref.includes("person_name") || ref.includes("personname")) friendly = "Person name already exists for another customer.";
+        return res.status(409).json({ success: false, error: "VALIDATION_ERROR", message: friendly });
       }
       res.status(500).json({ success: false, message: error.message || "Failed to create customer" });
     }
@@ -2524,7 +2693,14 @@ export function registerSalesRoutes(app: Express) {
       await ensureCustomersSchema();
 
       const roleIsManager = isManagerialRole(((req.user as any).activeRoleId || req.user.roleId));
-      
+      // A department-level manager (service_manager, sales_manager, etc.) previously
+      // got NO scoping at all here — "manager" just skipped the owner/created_by
+      // filter entirely, so e.g. a service_manager saw every department's Private
+      // Pool customers, including sales_manager's team. getDepartmentFilterUserIds
+      // returns null only for true global roles (admin/super_admin/hod/...); for a
+      // department manager it returns their own team's user ids.
+      const allowedUserIds = roleIsManager ? await getDepartmentFilterUserIds(req) : null;
+
       const poolParam = (req.query.pool as string || "private").toLowerCase();
       const statusFilter = req.query.statusFilter as string | undefined;
 
@@ -2538,13 +2714,19 @@ export function registerSalesRoutes(app: Express) {
       switch (poolParam) {
         case "all":
           if (!roleIsManager) {
-            conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(req.user.userId)} OR c.created_by = ${addParam(req.user.userId)})`);
+            conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(req.user.userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(req.user.userId)}))`);
+          } else if (allowedUserIds) {
+            const p = addParam(allowedUserIds);
+            conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
           }
           break;
         case "private":
           conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
           if (!roleIsManager) {
-            conditions.push(`(c.owner_user_id = ${addParam(req.user.userId)} OR c.created_by = ${addParam(req.user.userId)})`);
+            conditions.push(`(c.owner_user_id = ${addParam(req.user.userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(req.user.userId)}))`);
+          } else if (allowedUserIds) {
+            const p = addParam(allowedUserIds);
+            conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
           }
           break;
         case "service":
@@ -2554,23 +2736,35 @@ export function registerSalesRoutes(app: Express) {
         case "gmbv":
           conditions.push("c.pool_type = 'GMBV'");
           break;
-        case "public":
+        case "public": {
           conditions.push("c.pool_type = 'Public'");
-          conditions.push("c.owner_user_id IS NULL");
-          conditions.push("NOT EXISTS (SELECT 1 FROM drm.follow_ups f WHERE f.customer_id = c.id AND coalesce(f.is_deleted, false) = false)");
-          conditions.push("NOT EXISTS (SELECT 1 FROM drm.appointments a WHERE a.customer_id = c.id AND coalesce(a.is_deleted, false) = false)");
-          conditions.push("NOT EXISTS (SELECT 1 FROM drm.service_pool_entries spe WHERE spe.customer_id = c.id AND spe.status = 'active')");
+          // Same department-leak guard as buildLeadPoolList's "public" case —
+          // a Service viewer must not see Sales-originated public leads (and
+          // vice versa), inferred from the creator's role since there's no
+          // explicit department column on customers.
+          const viewerRoleForPublic = normalizeRole(((req.user as any).activeRoleId || req.user.roleId) || "");
+          const isGlobalRolePublic = ["admin", "super_admin", "hod", "super_hod", "account_manager"].includes(viewerRoleForPublic);
+          if (!isGlobalRolePublic) {
+            const viewerIsServicePublic = viewerRoleForPublic.includes("service");
+            conditions.push(`not exists (
+              select 1 from drm.users cb where cb.id = c.created_by
+              and (cb.role_id ilike '%service%') <> ${addParam(viewerIsServicePublic)}::boolean
+            )`);
+          }
           break;
+        }
         case "expiring":
           conditions.push("c.expires_at between now() and now() + interval '7 day'");
           if (!roleIsManager) {
             conditions.push(`c.owner_user_id = ${addParam(req.user.userId)}`);
+          } else if (allowedUserIds) {
+            conditions.push(`c.owner_user_id = ANY(${addParam(allowedUserIds)}::uuid[])`);
           }
           break;
       }
 
       if (statusFilter) {
-        conditions.push(`lower(c.status::text) = lower(${addParam(statusFilter)})`);
+        conditions.push(`lower(c.status) = lower(${addParam(statusFilter)})`);
       }
 
       const where = conditions.join(" AND ");
@@ -2580,15 +2774,17 @@ export function registerSalesRoutes(app: Express) {
         .join(", ");
 
       const services = [
-        { key: "Alibaba_Membership", patterns: ["%Alibaba.com%", "%Alibaba Membership%"] },
-        { key: "Alibaba_Services", patterns: ["%VAS%", "%Alibaba Services%"] },
-        { key: "Design_Development", patterns: ["%Website%", "%Design%", "%E-Commerce%"] },
-        { key: "Domain_Hosting", patterns: ["%Domain%", "%Hosting%"] },
+        { key: "Alibaba_Membership", code: "ALIBABA_MEMBERSHIP" },
+        { key: "Alibaba_Services", code: "ALIBABA_SERVICES" },
+        { key: "Design_Development", code: "DESIGN_DEVELOPMENT" },
+        { key: "Domain_Hosting", code: "DOMAIN_HOSTING" },
       ];
 
       const serviceSelects = services.map(s => {
-        const orConditions = s.patterns.map(p => `exists (select 1 from unnest(coalesce(c.service_types, '{}'::text[])) as sv where sv ilike '${p}') OR exists (select 1 from drm.lead_services ls where ls.lead_id = c.id and ls.service_type ilike '${p}')`).join(' OR ');
-        return `count(*) filter (where ${orConditions}) as "${s.key}"`;
+        return `count(*) filter (where exists (
+          select 1 from drm.service_pool_entries spe
+          where spe.customer_id = c.id and spe.service_code = '${s.code}' and spe.status not in ('dropout', 'refund')
+        )) as "${s.key}"`;
       }).join(", ");
 
       const query = `
@@ -2653,7 +2849,8 @@ export function registerSalesRoutes(app: Express) {
           coalesce(account_name, account_holder) as "accountHolder",
           email,
           phone as "contactNo",
-          coalesce(ntn, cnic) as "ntnCnic",
+          ntn,
+          cnic,
           grade,
           created_at as "createdAt"
         from drm.customers
@@ -2742,7 +2939,7 @@ export function registerSalesRoutes(app: Express) {
       }
       await ensureCustomersSchema();
 
-      const { companyName, accountHolder, email, contactNo, ntnCnic, grade } = req.body;
+      const { companyName, accountHolder, email, contactNo, ntn, cnic, grade } = req.body;
       const normalizedGrade = grade || "C";
 
       if (!companyName || !accountHolder || !contactNo || !email || !normalizedGrade) {
@@ -2761,7 +2958,11 @@ export function registerSalesRoutes(app: Express) {
         return res.status(409).json({ error: "Customer already exists (contact)" });
       }
 
-      const drmId = generateDrmId(companyName, "Other", crypto.randomUUID());
+      const drmId = await resolveOrCreateCanonicalDrmId(pool, {
+        companyName,
+        email,
+        phone: contactNo,
+      });
 
       const [inserted] = await db
         .insert(customers)
@@ -2771,8 +2972,8 @@ export function registerSalesRoutes(app: Express) {
           accountName: accountHolder,
           email,
           phone: contactNo,
-          ntn: ntnCnic ?? null,
-          cnic: ntnCnic ?? null,
+          ntn: ntn ?? null,
+          cnic: cnic ?? null,
           grade: normalizedGrade,
           status: "New",
           poolType: "Private",
@@ -2952,7 +3153,7 @@ export function registerSalesRoutes(app: Express) {
              ) filter (where a.id is not null),
              '[]'
            ) as attachments
-         from drm.followup_subservice_details d
+         from followup_subservice_details d
          left join followup_subservice_attachments a on a.detail_id = d.id
          where d.followup_id = $1
          group by d.id`,
@@ -3249,7 +3450,7 @@ export function registerSalesRoutes(app: Express) {
           );
         }
 
-        await client.query(`delete from drm.followup_subservices where followup_id = $1`, [followupId]);
+        await client.query(`delete from followup_subservices where followup_id = $1`, [followupId]);
         const subServiceIds = Array.from(
           new Set(
             pairsToValidate
@@ -3265,10 +3466,10 @@ export function registerSalesRoutes(app: Express) {
         }
 
         await client.query(
-          `delete from drm.followup_subservice_attachments where detail_id in (select id from drm.followup_subservice_details where followup_id = $1)`,
+          `delete from followup_subservice_attachments where detail_id in (select id from followup_subservice_details where followup_id = $1)`,
           [followupId],
         );
-        await client.query(`delete from drm.followup_subservice_details where followup_id = $1`, [followupId]);
+        await client.query(`delete from followup_subservice_details where followup_id = $1`, [followupId]);
 
         if (detailPayloads.length) {
           const codePairToMeta = new Map(
@@ -3707,6 +3908,31 @@ export function registerSalesRoutes(app: Express) {
     }
   });
 
+  // GET /api/sales/customers/:id/invoices - Get customer invoice history
+  app.get("/api/sales/customers/:id/invoices", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { rows } = await pool.query(`
+        SELECT 
+          id,
+          project_name as "projectName",
+          company_name as "companyName",
+          invoice_type as "invoiceType",
+          status,
+          amount,
+          created_at as "createdAt"
+        FROM drm.product_posting_invoices
+        WHERE customer_id = $1
+        ORDER BY created_at DESC
+      `, [id]);
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching customer invoices:", error);
+      res.status(500).json({ error: "Failed to fetch customer invoices" });
+    }
+  });
+
   // PATCH /api/sales/customers/:id/grade - Update customer grade
   app.patch("/api/sales/customers/:id/grade", async (req, res) => {
     try {
@@ -3730,6 +3956,33 @@ export function registerSalesRoutes(app: Express) {
       if (error instanceof ApiError) return sendError(res, error);
       console.error("Error updating grade:", error);
       res.status(500).json({ error: "Failed to update grade" });
+    }
+  });
+
+  // PATCH /api/sales/customers/mark-focus - Bulk flag/unflag customers as focus (important)
+  app.patch("/api/sales/customers/mark-focus", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      await ensureCustomersSchema();
+
+      const { customerIds, focus } = req.body as { customerIds?: unknown; focus?: unknown };
+      if (!Array.isArray(customerIds) || customerIds.length === 0 || !customerIds.every((id) => typeof id === "string")) {
+        return res.status(400).json({ error: "customerIds must be a non-empty array of strings" });
+      }
+
+      for (const id of customerIds) {
+        await assertCanEditCustomer(req, id, "customer");
+      }
+
+      const updated = await customersRepository.setFocus(customerIds, focus !== false);
+      res.json({ success: true, data: updated });
+    } catch (error) {
+      if (error instanceof ApiError) return sendError(res, error);
+      console.error("Error marking customers as focus:", error);
+      res.status(500).json({ error: "Failed to mark customers as focus" });
     }
   });
 
@@ -3786,6 +4039,32 @@ export function registerSalesRoutes(app: Express) {
     }
   });
 
+  // POST /api/sales/customers/:id/pick - Pick/move customer into Public Pool for all sales executives
+  app.post("/api/sales/customers/:id/pick", async (req, res) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+      const customerId = req.params.id;
+      await pool.query(
+        `UPDATE drm.customers 
+            SET pool_type = 'Public', owner_user_id = NULL, updated_at = NOW() 
+          WHERE id::text = $1::text OR drm_id = $1::text`,
+        [customerId]
+      );
+      await pool.query(
+        `UPDATE drm.temp_contacts
+            SET user_id = NULL, updated_at = NOW()
+          WHERE id::text = $1::text`,
+        [customerId]
+      );
+      res.json({ success: true, message: "Customer moved to Public Pool" });
+    } catch (error) {
+      console.error("Error picking customer to Public Pool:", error);
+      res.status(500).json({ error: "Failed to pick customer to Public Pool" });
+    }
+  });
+
   // ============================================
   // DUPLICATE CHECKER ENDPOINTS
   // ============================================
@@ -3810,7 +4089,10 @@ export function registerSalesRoutes(app: Express) {
       const isPrivileged = isManagerialRole(((req.user as any).activeRoleId || req.user.roleId));
       const ownerUserId = isPrivileged ? null : req.user.userId;
 
-      const normalizedCompany = typeof company === "string" ? company.trim() : "";
+      let rawCompany = typeof company === "string" ? company.trim() : "";
+      if (rawCompany.includes("•")) rawCompany = rawCompany.split("•")[0].trim();
+      if (rawCompany.includes("·")) rawCompany = rawCompany.split("·")[0].trim();
+      const normalizedCompany = rawCompany;
       const normalizedEmail = typeof email === "string" ? email.trim() : "";
       const normalizedPhone = typeof phone === "string" ? phone.trim() : "";
 
@@ -3837,7 +4119,7 @@ export function registerSalesRoutes(app: Express) {
           case
             when $2 <> '' and c.email ilike ('%' || $2 || '%') then 'email'
             when $3 <> '' and c.phone ilike ('%' || $3 || '%') then 'phone'
-            when $1 <> '' and c.company_name ilike ('%' || $1 || '%') then 'company'
+            when $1 <> '' and (c.company_name ilike ('%' || $1 || '%') or c.drm_id ilike ('%' || $1 || '%')) then 'company'
             else 'company'
           end as "matchType"
         from drm.customers c
@@ -3845,7 +4127,7 @@ export function registerSalesRoutes(app: Express) {
         left join last_follow lf on lf.customer_id = c.id
         where
           (
-            ($1 <> '' and c.company_name ilike ('%' || $1 || '%'))
+            ($1 <> '' and (c.company_name ilike ('%' || $1 || '%') or c.drm_id ilike ('%' || $1 || '%')))
             or ($2 <> '' and c.email ilike ('%' || $2 || '%'))
             or ($3 <> '' and c.phone ilike ('%' || $3 || '%'))
           )
@@ -3857,6 +4139,17 @@ export function registerSalesRoutes(app: Express) {
       );
 
       const duplicates = result.rows;
+      for (const d of duplicates) {
+        if (!d.drmId) {
+          d.drmId = await resolveOrCreateCanonicalDrmId(pool, {
+            customerId: d.id,
+            companyName: d.companyName,
+            email: d.email,
+            phone: d.phone,
+            country: d.country,
+          });
+        }
+      }
 
       res.json({
         duplicates,
@@ -3907,8 +4200,13 @@ export function registerSalesRoutes(app: Express) {
         });
       }
 
-      // Generate Custom DRM ID
-      const drmId = generateDrmId(companyName, req.body.country || "Other", crypto.randomUUID());
+      // Resolve or generate canonical DRM ID ONCE
+      const drmId = await resolveOrCreateCanonicalDrmId(pool, {
+        companyName,
+        email,
+        phone,
+        country: req.body.country,
+      });
 
       // Create the customer
       const customer = await customersRepository.create({
@@ -4173,6 +4471,12 @@ export function registerSalesRoutes(app: Express) {
       if (payload.source !== undefined) updates.source = payload.source;
       if (payload.city !== undefined) updates.city = payload.city;
       if (payload.country !== undefined) updates.country = payload.country;
+      if (payload.mobile !== undefined) updates.mobile = payload.mobile;
+      if (payload.website !== undefined) updates.website = payload.website;
+      if (payload.address !== undefined) updates.address = payload.address;
+      if (payload.comment !== undefined) updates.comment = payload.comment;
+      if (payload.title !== undefined) updates.title = payload.title;
+      if (payload.companyType !== undefined) updates.companyType = payload.companyType;
       if (payload.ownerUserId !== undefined) updates.ownerUserId = payload.ownerUserId;
       updates.updatedAt = new Date();
 
@@ -4197,11 +4501,14 @@ export function registerSalesRoutes(app: Express) {
         );
       }
 
+      const transferReason = String((req.body as any)?.reason ?? "").trim();
       await leadActivitiesRepository.log({
         customerId: req.params.id,
         action: "edit",
         performedBy: req.user.userId,
-        note: "Lead updated",
+        note: payload.ownerUserId !== undefined || payload.city !== undefined || payload.country !== undefined
+          ? (transferReason ? `Lead transferred: ${transferReason}` : "Lead transferred")
+          : "Lead updated",
         meta: payload as any,
       });
 
@@ -4294,7 +4601,10 @@ export function registerSalesRoutes(app: Express) {
         lead,
         services,
         lastContactAt: lastContact?.createdAt ?? null,
-        phones: [lead.phone, (lead as any).mobile].filter(Boolean),
+        phones: [
+          lead.phone ? { label: "Phone", value: lead.phone } : null,
+          (lead as any).mobile ? { label: "Mobile", value: (lead as any).mobile } : null,
+        ].filter(Boolean),
         assignmentHistory,
       });
     } catch (error) {
@@ -4433,9 +4743,14 @@ export function registerSalesRoutes(app: Express) {
     }
   });
 
-  // Debug schema (dev only)
-  app.get("/api/sales/targets/debug/schema", async (_req, res) => {
+  // Debug schema (dev only, admin only)
+  app.get("/api/sales/targets/debug/schema", async (req: any, res) => {
     if (process.env.NODE_ENV === "production") return res.status(404).end();
+    const user = req.user;
+    const activeRoleId = normalizeRole(user?.activeRoleId || user?.roleId || user?.role || "");
+    if (activeRoleId !== "admin") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
     const cols = await pool.query(
       "select table_name, array_agg(column_name order by ordinal_position) as cols from information_schema.columns where table_schema='public' and table_name in ('opportunities','targets') group by table_name",
     );

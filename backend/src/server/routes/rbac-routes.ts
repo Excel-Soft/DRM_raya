@@ -1,10 +1,10 @@
 import { Router, type Request, type Response } from "express";
-import { authMiddleware, requireRole } from "../middleware/auth.middleware";
-import { getNavigationForRole, ROLE_REGISTRY } from "../services/rbac.service";
-import { impersonationService } from "../services/impersonation.service";
-import { ROLES, normalizeRole } from "../utils/role-utils";
-import { authService } from "../auth.service";
-import { usersRepository } from "../repositories/users.repository";
+import { authMiddleware, requireRole } from "./auth.middleware";
+import { getNavigationForRole, ROLE_REGISTRY } from "./services/rbac.service";
+import { impersonationService } from "./services/impersonation.service";
+import { ROLES, normalizeRole } from "./utils/role-utils";
+import { authService } from "./auth.service";
+import { usersRepository } from "./repositories/users.repository";
 
 const router = Router();
 
@@ -31,7 +31,7 @@ router.get("/me/navigation", authMiddleware, async (req: Request, res: Response)
         if (!isAdmin && req.user.impersonatorId) {
             // User is impersonating — check if the real user is admin via DB
             try {
-                const { pool } = await import("../db");
+                const { pool } = await import("./db");
                 const result = await pool.query(
                     `SELECT role, role_id, roles FROM drm.users WHERE id = $1 LIMIT 1`,
                     [req.user.impersonatorId]
@@ -85,16 +85,10 @@ router.post("/admin/impersonate", authMiddleware, async (req: Request, res: Resp
         if (!user) return res.status(401).json({ error: "Not authenticated" });
 
         const realUserId = user.impersonatorId || user.userId || (user as any).id;
-        const userEmail = (user.email || "").toLowerCase();
-        
+
         let canImpersonate = false;
 
-        // SAFEST, MOST BULLETPROOF OVERRIDE (Instantly passes the user if their email or explicit token matches admin context)
-        if (userEmail.includes("admin") || userEmail.includes("talha") || userEmail.includes("bilal") || userEmail.includes("hamza") || userEmail.includes("shahzaib")) {
-            canImpersonate = true;
-        }
-
-        // Secondary Token Bypass
+        // Token-claimed role check
         const rolesArr = Array.isArray(user.roles) ? user.roles : [];
         if (rolesArr.some(r => typeof r === "string" && r.toLowerCase().includes("admin"))) {
             canImpersonate = true;
@@ -103,7 +97,7 @@ router.post("/admin/impersonate", authMiddleware, async (req: Request, res: Resp
         // Final Fallback DB Lookup if all above somehow missed it
         if (!canImpersonate && realUserId) {
             try {
-                const { pool } = await import("../db");
+                const { pool } = await import("./db");
                 const dbResult = await pool.query(
                     `SELECT role, role_id FROM drm.users WHERE id = $1`,
                     [realUserId]

@@ -67,7 +67,7 @@ export function NotificationDropdown() {
                 </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-[400px] p-0 shadow-2xl border-slate-200 dark:border-zinc-800">
-                <div className="p-4 border-b bg-slate-50/50 flex items-center justify-between">
+                <div className="p-4 border-b bg-slate-50/50 dark:bg-zinc-900 dark:border-zinc-800 flex items-center justify-between">
                     <DropdownMenuLabel className="p-0 text-base font-bold text-slate-900 dark:text-zinc-100">Notifications</DropdownMenuLabel>
                     {unreadCount > 0 && (
                         <Badge variant="outline" className="text-[10px] bg-white dark:bg-zinc-900">{unreadCount} New</Badge>

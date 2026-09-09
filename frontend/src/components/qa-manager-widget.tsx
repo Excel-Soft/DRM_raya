@@ -178,10 +178,15 @@ export function QAManagerWidget() {
     };
 
     // Queries (Reusing existing endpoints where possible for dynamic feel)
+    // pms-routes.ts's period convention spells "this week" as "WC", not the
+    // "WK" this widget's own dropdown uses — remap so the real endpoint gets
+    // a value it understands.
+    const statsPeriod = sellingPeriod === "WK" ? "WC" : sellingPeriod;
+
     const { data: pmsStats } = useQuery({
-        queryKey: ["/api/pms/stats"],
+        queryKey: ["/api/pms/stats", statsPeriod],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/pms/stats");
+            const res = await apiRequest("GET", `/api/pms/stats?period=${statsPeriod}`);
             return res.json();
         }
     });
@@ -194,6 +199,16 @@ export function QAManagerWidget() {
         }
     });
 
+    // Distinct projects that have ever reached QA — not /api/pms/stats' system-wide
+    // count, which includes every department regardless of QA involvement.
+    const { data: qaStatsData } = useQuery({
+        queryKey: ["/api/product-posting/qa/stats", statsPeriod],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/product-posting/qa/stats?period=${statsPeriod}`);
+            return res.json();
+        }
+    });
+
     const { data: projectsData } = useQuery({
         queryKey: ["/api/pms/projects", { withStats: "true" }],
         queryFn: async () => {
@@ -202,9 +217,56 @@ export function QAManagerWidget() {
         }
     });
 
+    // Real Project Details (packageName, phone, address, etc.) for the "Projects Overview" dialog
+    const detailProjectId = detailProject?.raw?.projectId;
+    const { data: detailsResponse } = useQuery({
+        queryKey: ["project-details", detailProjectId],
+        enabled: !!detailProjectId && isDetailDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/projects/${detailProjectId}/details`);
+            return res.json();
+        }
+    });
+    const projectDetails = detailsResponse?.data;
+
+    // Real attached documents for the same dialog (replaces the dummy blob download)
+    const { data: projectDocsResponse } = useQuery({
+        queryKey: ["project-docs", detailProjectId],
+        enabled: !!detailProjectId && isDetailDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/projects/${detailProjectId}/documents`);
+            return res.json();
+        }
+    });
+    const attachedDocuments = projectDocsResponse?.data || [];
+
+    // Real "Important" sidebar counts
+    const { data: hodImportantStats } = useQuery({
+        queryKey: ["/api/hod/dashboard/important-stats"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/hod/dashboard/important-stats");
+            return res.json();
+        }
+    });
+    const { data: noticesData } = useQuery({
+        queryKey: ["/api/notice-board"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/notice-board");
+            return res.json();
+        }
+    });
+    const { data: supportTicketsData } = useQuery({
+        queryKey: ["/api/support/tickets"],
+        enabled: isSupportModuleEnabled(),
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/support/tickets");
+            return res.json();
+        }
+    });
+
     const qaReviewMutation = useMutation({
-        mutationFn: async ({ taskId, action, remarks }: { taskId: string; action: "complete" | "return"; remarks?: string }) =>
-            apiRequest("POST", `/api/product-posting/tasks/${taskId}/qa-review`, { action, remarks }),
+        mutationFn: async ({ taskId, action, remarks, level }: { taskId: string; action: "complete" | "return"; remarks?: string; level?: string }) =>
+            apiRequest("POST", `/api/product-posting/tasks/${taskId}/qa-review`, { action, remarks, level }),
         onSuccess: (_data, variables) => {
             if (selectedProject) {
                 hideProject(selectedProject);
@@ -300,7 +362,7 @@ export function QAManagerWidget() {
                         </div>
                         <div className="flex gap-4 flex-wrap">
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("today")}>
-                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total ?? 0} />
+                                <StatCard label="Total Project" icon={Users} value={qaStatsData?.total ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("pending")}>
                                 <StatCard label="Pending Reviews" icon={RefreshCw} value={queueRows.length || "0"} />
@@ -349,7 +411,7 @@ export function QAManagerWidget() {
                                 <tbody className="bg-white dark:bg-zinc-900">
                                     {projectsToDisplay.length > 0 ? (
                                         projectsToDisplay.map((row: any) => (
-                                            <tr key={row.no} className="border-b hover:bg-gray-50/50 transition-colors group">
+                                            <tr key={row.no} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors group">
                                                 <td className="px-4 py-6 text-gray-500 align-middle dark:text-zinc-400">
                                                     <div className="flex items-center gap-3">
                                                         <Checkbox className="rounded shadow-none border-gray-300 data-[state=checked]:bg-[#00a65a] data-[state=checked]:border-[#00a65a] dark:border-zinc-800" />
@@ -440,18 +502,25 @@ export function QAManagerWidget() {
                         <div className="space-y-2">
                             <button onClick={() => setLocation("/drm/delay-project")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Delay Projects</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">416</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">{hodImportantStats?.data?.delayProjects ?? 0}</span>
                             </button>
                             <button onClick={() => setLocation("/drm/online-form")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Notice</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">0</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">
+                                    {Array.isArray(noticesData) ? noticesData.filter((n: any) => n.status === "Active").length : 0}
+                                </span>
                             </button>
                             {isSupportModuleEnabled() && (
                             <button onClick={() => setLocation("/support/complaints")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Complaints</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">51(10200)</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">
+                                    {Array.isArray(supportTicketsData) ? supportTicketsData.filter((t: any) => t.status === "Open" || t.status === "InProgress").length : 0}
+                                </span>
                             </button>
                             )}
+                            {/* NOTE: "Event" has no backing entity anywhere in the schema (no events table/endpoint exists in this codebase),
+                                unlike Delay Projects/Notice/Complaints above which now read real data. Left as the pre-existing
+                                placeholder pending a decision on what "Event" should actually count. */}
                             <button onClick={() => setLocation("/training")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Event</span>
                                 <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">99</span>
@@ -704,7 +773,7 @@ export function QAManagerWidget() {
                             <Button
                                 variant="secondary"
                                 onClick={() => setIsStatusDialogOpen(false)}
-                                className="bg-[#f0f2f5] hover:bg-gray-200 text-black px-6 font-medium shadow-none h-9 text-[14px] dark:bg-zinc-900"
+                                className="bg-[#f0f2f5] hover:bg-gray-200 text-black px-6 font-medium shadow-none h-9 text-[14px] dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
                             >
                                 Close
                             </Button>
@@ -720,6 +789,7 @@ export function QAManagerWidget() {
                                             taskId: selectedProject?.id,
                                             action: statusValue === "Changing" ? "return" : "complete",
                                             remarks: remarksValue,
+                                            level: levelValue,
                                         });
                                     } else {
                                         setIsStatusDialogOpen(false);
@@ -755,15 +825,22 @@ export function QAManagerWidget() {
                                               <img src="https://images.crunchbase.com/image/upload/c_pad,h_256,w_256,f_auto,q_auto:eco,dpr_1/b3c7bd127fc1800de1a4" alt="logo" className="w-full h-full object-contain" />
                                             </div>
                                             <div>
-                                                <h3 className="text-[17px] font-medium text-gray-800 uppercase tracking-wide dark:text-zinc-100">{detailProject?.company || "ATTRACTIVE FASHION"}</h3>
-                                                <p className="text-[13px] text-gray-400 mt-1">{detailProject?.tasker || "Zohaib Nisar Ahmad"}</p>
+                                                <h3 className="text-[17px] font-medium text-gray-800 uppercase tracking-wide dark:text-zinc-100">{projectDetails?.project?.companyName || detailProject?.company || "N/A"}</h3>
+                                                <p className="text-[13px] text-gray-400 mt-1">{detailProject?.tasker || "N/A"}</p>
                                             </div>
                                         </div>
                                         <div className="flex items-start gap-2 pt-1 border-l pl-4 border-gray-100 dark:border-zinc-800">
                                             <Calendar className="h-[18px] w-[18px] text-[#00a65a] mt-[1px] dark:text-zinc-400" />
                                             <div>
                                                 <p className="text-[14px] font-bold text-gray-600 dark:text-zinc-300">Upload Date</p>
-                                                <p className="text-[12px] text-gray-400 font-medium whitespace-nowrap mt-1">11 Feb 2026 11:37 AM</p>
+                                                <p className="text-[12px] text-gray-400 font-medium whitespace-nowrap mt-1">
+                                                    {(() => {
+                                                        const rawDate = projectDetails?.createdAt || projectDetails?.project?.createdAt || detailProject?.raw?.createdAt;
+                                                        if (!rawDate) return "N/A";
+                                                        const d = new Date(rawDate);
+                                                        return isNaN(d.getTime()) ? "N/A" : format(d, "dd MMM yyyy hh:mm a");
+                                                    })()}
+                                                </p>
                                             </div>
                                         </div>
                                     </div>
@@ -771,54 +848,75 @@ export function QAManagerWidget() {
                                     <div className="space-y-4 pt-10">
                                         <h4 className="text-[16px] font-bold text-gray-700 dark:text-zinc-400">Project Details :</h4>
                                         <div className="grid gap-3.5 pl-1">
-                                            <DetailRow label="Product_detail_add" value="9703" />
-                                            <DetailRow label="Company" value={detailProject?.company || "ATTRACTIVE FASHION"} />
-                                            <DetailRow label="Package" value="Verified Supplier" />
-                                            <DetailRow label="Web_url" value="" />
-                                            <DetailRow label="Phone" value="3400037616" />
-                                            <DetailRow label="Mobile" value="3400037616" />
-                                            <DetailRow label="Address" value="" />
-                                            <DetailRow label="Referance_web" value="" />
-                                            <DetailRow label="Categories" value="" />
-                                            <DetailRow label="Detail" value="" />
+                                            <DetailRow label="Product_detail_add" value={projectDetails?.project?.id ? projectDetails.project.id.slice(0, 8) : "N/A"} />
+                                            <DetailRow label="Company" value={projectDetails?.project?.companyName || detailProject?.company || "N/A"} />
+                                            <DetailRow label="Package" value={projectDetails?.packageName || "N/A"} />
+                                            <DetailRow label="Web_url" value={projectDetails?.minisiteUrl || "N/A"} />
+                                            <DetailRow label="Phone" value={projectDetails?.phone || "N/A"} />
+                                            <DetailRow label="Mobile" value={projectDetails?.mobile || "N/A"} />
+                                            <DetailRow label="Address" value={projectDetails?.address || "N/A"} />
+                                            <DetailRow label="Referance_web" value={projectDetails?.reference || "N/A"} />
+                                            <DetailRow label="Categories" value={projectDetails?.categories || "N/A"} />
+                                            <DetailRow label="Detail" value={projectDetails?.detailNotes || "N/A"} />
                                         </div>
                                     </div>
                                 </div>
 
                                 {/* Right Side: Attached Files */}
-                                <div className="bg-white rounded-md shadow-sm p-6 max-h-[200px] dark:bg-zinc-900">
+                                <div className="bg-white rounded-md shadow-sm p-6 max-h-[200px] overflow-y-auto dark:bg-zinc-900">
                                     <h4 className="text-[14px] font-bold text-gray-700 mb-6 dark:text-zinc-400">
                                         Attached Files
                                     </h4>
                                     <div className="space-y-4">
-                                        <div
-                                            onClick={() => {
-                                                const content = "Project Data for " + (detailProject?.company || "ATTRACTIVE FASHION");
-                                                const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-                                                const url = URL.createObjectURL(blob);
-                                                const link = document.createElement('a');
-                                                link.href = url;
-                                                link.setAttribute('download', 'Data.xlsx');
-                                                document.body.appendChild(link);
-                                                link.click();
-                                                document.body.removeChild(link);
-                                                URL.revokeObjectURL(url);
-                                            }}
-                                            className="flex items-center justify-between p-3.5 bg-white rounded-md border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer dark:bg-zinc-900"
-                                        >
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center">
-                                                    <FileText className="h-5 w-5" />
+                                        {attachedDocuments.length > 0 ? (
+                                            attachedDocuments.map((doc: any) => (
+                                                <a
+                                                    key={doc.id}
+                                                    href={doc.documentUrl || projectDetails?.evidenceUrl || "#"}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    download
+                                                    className="flex items-center justify-between p-3.5 bg-white rounded-md border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center">
+                                                            <FileText className="h-5 w-5" />
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-[13px] font-semibold text-gray-800 dark:text-zinc-100">
+                                                                {doc.documentUrl ? doc.documentUrl.split('/').pop() : "Document"}
+                                                            </p>
+                                                            <p className="text-[11px] text-gray-400 mt-0.5">Status: {doc.status || "N/A"}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-gray-400 group-hover:text-[#00a65a] transition-colors pr-2">
+                                                        <Download className="h-4 w-4" />
+                                                    </div>
+                                                </a>
+                                            ))
+                                        ) : projectDetails?.evidenceUrl ? (
+                                            <a
+                                                href={projectDetails.evidenceUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                download
+                                                className="flex items-center justify-between p-3.5 bg-white rounded-md border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900"
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center">
+                                                        <FileText className="h-5 w-5" />
+                                                    </div>
+                                                    <p className="text-[13px] font-semibold text-gray-800 dark:text-zinc-100">Evidence File</p>
                                                 </div>
-                                                <div>
-                                                    <p className="text-[13px] font-semibold text-gray-800 dark:text-zinc-100">Data.xlsx</p>
-                                                    <p className="text-[11px] text-gray-400 mt-0.5">Size : 133 KB</p>
+                                                <div className="text-gray-400 group-hover:text-[#00a65a] transition-colors pr-2">
+                                                    <Download className="h-4 w-4" />
                                                 </div>
+                                            </a>
+                                        ) : (
+                                            <div className="py-6 text-center text-gray-400 italic text-[13px]">
+                                                No attached files uploaded yet.
                                             </div>
-                                            <div className="text-gray-400 group-hover:text-[#00a65a] transition-colors pr-2">
-                                                <Download className="h-4 w-4" />
-                                            </div>
-                                        </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>

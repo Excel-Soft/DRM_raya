@@ -91,7 +91,12 @@ import {
 } from "lucide-react";
 import type { Customer } from "@shared/schema";
 import InvoiceCreateForm from "@/components/InvoiceCreateForm";
+import { exportToCSV, exportToPDF } from "@/lib/export-utils";
 
+
+const WHATSAPP_TEMPLATES = [
+  { id: "04", title: "Ramzan Offer", message: "Ramzan offer 50% off" },
+];
 
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
 const SERVICE_TYPES = [
@@ -233,6 +238,8 @@ export default function LeadPools() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [gradeFilter, setGradeFilter] = useState<string>("all");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
+  const [activeTracingDetail, setActiveTracingDetail] = useState<string | null>(null);
+  const [whatsappLead, setWhatsappLead] = useState<PoolCustomer | null>(null);
   const [claimDialogOpen, setClaimDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PoolCustomer | null>(null);
   const [historyLead, setHistoryLead] = useState<PoolCustomer | null>(null);
@@ -242,6 +249,8 @@ export default function LeadPools() {
   const [quotationLoading, setQuotationLoading] = useState(false);
   const [gmHistory, setGmHistory] = useState<Array<any>>([]);
   const [gmLoading, setGmLoading] = useState(false);
+  const [invoiceHistory, setInvoiceHistory] = useState<Array<any>>([]);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [viewLead, setViewLead] = useState<PoolCustomer | null>(null);
   const [followupLead, setFollowupLead] = useState<PoolCustomer | null>(null);
@@ -261,6 +270,14 @@ export default function LeadPools() {
     status: "",
     source: "",
     serviceTypes: [] as string[],
+    mobile: "",
+    website: "",
+    address: "",
+    comment: "",
+    title: "",
+    companyType: "",
+    country: "",
+    city: "",
   });
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
@@ -479,10 +496,10 @@ export default function LeadPools() {
     const path = window.location.pathname;
     let pool: PoolType | null = poolFromQuery;
     if (!pool) {
-      if (path.includes("/customers/private-pool")) pool = "Private";
-      else if (path.includes("/customers/service-pool")) pool = "Service";
-      else if (path.includes("/customers/gmbv-pool")) pool = "GMBV";
-      else if (path.includes("/customers/public-pool")) pool = "Public";
+      if (path.includes("/private-pool")) pool = "Private";
+      else if (path.includes("/service-pool")) pool = "Service";
+      else if (path.includes("/gmbv-pool")) pool = "GMBV";
+      else if (path.includes("/public-pool")) pool = "Public";
     }
     if (pool && ["Private", "Service", "GMBV", "Public"].includes(pool)) {
       setActivePool(pool);
@@ -506,6 +523,9 @@ export default function LeadPools() {
     }
     if (historyTab === "gm" && viewLead) {
       fetchGmHistory(viewLead.id);
+    }
+    if (historyTab === "invoice" && viewLead) {
+      fetchInvoiceHistory(viewLead.id);
     }
   }, [historyTab, viewLead]);
 
@@ -580,8 +600,8 @@ export default function LeadPools() {
     },
     onSuccess: () => {
       toast({
-        title: "Lead Claimed",
-        description: "The lead has been added to your private pool.",
+        title: "Customer Picked",
+        description: `The customer has been moved to your Private Pool.`,
       });
       setClaimDialogOpen(false);
       setSelectedCustomer(null);
@@ -591,9 +611,26 @@ export default function LeadPools() {
     onError: (error: Error) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to claim lead.",
+        description: error.message || "Failed to pick customer.",
         variant: "destructive",
       });
+    },
+  });
+
+  const moveToPublicMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      const res = await apiRequest("POST", `/api/sales/customers/${customerId}/pick`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Customer Moved to Public Pool", description: "Customer is now available in Public Pool for all Sales Executives." });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/list"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/summary"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/customers"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/customers/stats"], exact: false });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to move customer", description: err?.message || "Please try again", variant: "destructive" });
     },
   });
 
@@ -811,9 +848,10 @@ export default function LeadPools() {
     contactNo: item.contactNo || "",
     phone: item.contactNo || "",
     email: item.email || "",
-    ntnCnic: null,
-    ntn: null,
-    cnic: null,
+    ntnCnic: (item as any).ntn || (item as any).cnic || null,
+    ntn: (item as any).ntn || null,
+    cnic: (item as any).cnic || null,
+    salesPersonName: (item as any).salesPersonName || null,
     expiresAt: null,
     expiryDate: null,
     createdAt: item.reportDate || item.createdAt || null,
@@ -912,6 +950,23 @@ export default function LeadPools() {
     }
   };
 
+  const fetchInvoiceHistory = async (leadId: string) => {
+    try {
+      setInvoiceLoading(true);
+      const res = await apiRequest("GET", `/api/sales/customers/${leadId}/invoices`);
+      const data = await res.json();
+      setInvoiceHistory(Array.isArray(data) ? data : []);
+    } catch (err) {
+      toast({
+        title: "Unable to load invoice history",
+        description: err instanceof Error ? err.message : "Failed to fetch invoices",
+        variant: "destructive",
+      });
+    } finally {
+      setInvoiceLoading(false);
+    }
+  };
+
   const handleEditOpen = async (lead: PoolCustomer) => {
     const cid = await ensureCustomerId(lead, "edit lead");
     if (!cid) return;
@@ -925,7 +980,36 @@ export default function LeadPools() {
       status: (lead as any).status || "",
       source: (lead as any).source || "",
       serviceTypes: (lead as any).service_types || lead.serviceTypes || [],
+      mobile: (lead as any).mobile || "",
+      website: "",
+      address: "",
+      comment: "",
+      title: "",
+      companyType: "",
+      country: "",
+      city: "",
     });
+    // The list row doesn't carry website/address/comment/title/companyType/
+    // country/city — fetch the full profile so the edit form isn't blank
+    // for fields that already have real saved values.
+    try {
+      const res = await apiRequest("GET", `/api/sales/leads/${cid}/profile`);
+      const data = await res.json();
+      const full = data?.lead || {};
+      setEditForm((prev) => ({
+        ...prev,
+        mobile: full.mobile || prev.mobile,
+        website: full.website || "",
+        address: full.address || "",
+        comment: full.comment || "",
+        title: full.title || "",
+        companyType: full.companyType || "",
+        country: full.country || "",
+        city: full.city || "",
+      }));
+    } catch (err) {
+      console.warn("Failed to load full profile for edit", err);
+    }
     logLeadAction(lead.id, "edit");
   };
 
@@ -990,15 +1074,22 @@ export default function LeadPools() {
   };
 
   const handleWhatsApp = async (lead: PoolCustomer) => {
-    const cid = await ensureCustomerId(lead, "open WhatsApp");
-    if (!cid) return;
     const phone = normalizePhone(lead.phone || (lead as any).contactNo || (lead as any).mobile || "");
     if (!phone) {
       toast({ title: "No phone available", variant: "destructive" });
       return;
     }
-    await logLeadAction(cid, "whatsapp", { phone });
-    window.open(`https://wa.me/${phone}`, "_blank");
+    setWhatsappLead(lead);
+  };
+
+  const useWhatsAppTemplate = async (message: string) => {
+    if (!whatsappLead) return;
+    const cid = await ensureCustomerId(whatsappLead, "open WhatsApp");
+    setWhatsappLead(null);
+    if (!cid) return;
+    const phone = normalizePhone(whatsappLead.phone || (whatsappLead as any).contactNo || (whatsappLead as any).mobile || "");
+    await logLeadAction(cid, "whatsapp", { phone, message });
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, "_blank");
   };
 
   const handleCall = async (lead: PoolCustomer) => {
@@ -1568,6 +1659,10 @@ export default function LeadPools() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  if (activeTracingDetail) {
+    return <PrivatePoolFollowupDetail activeService={activeTracingDetail} onBack={() => setActiveTracingDetail(null)} />;
+  }
+
   return (
     <>
       <div className="flex-1 overflow-auto wide-page">
@@ -1667,24 +1762,16 @@ export default function LeadPools() {
                   {activePool === "Private" && (
                     <div className="flex w-full rounded overflow-hidden mb-2">
                       {[
-                        { label: "Alibaba Membership", value: "Alibaba.com", color: "bg-[#34d399]", count: tracingSummary?.["Alibaba_Membership"] ?? 0 },
-                        { label: "Alibaba Services", value: "VAS (Value Added Services)", color: "bg-[#f43f5e]", count: tracingSummary?.["Alibaba_Services"] ?? 0 },
-                        { label: "Design Development", value: "Website Development", color: "bg-[#3b82f6]", count: tracingSummary?.["Design_Development"] ?? 0 },
-                        { label: "Domain Hosting", value: "Domain Hosting", color: "bg-[#334155]", count: tracingSummary?.["Domain_Hosting"] ?? 0 },
+                        { label: "Alibaba Membership", value: "ALIBABA_MEMBERSHIP", color: "bg-[#34d399]", count: tracingSummary?.["Alibaba_Membership"] ?? 0 },
+                        { label: "Alibaba Services", value: "ALIBABA_SERVICES", color: "bg-[#f43f5e]", count: tracingSummary?.["Alibaba_Services"] ?? 0 },
+                        { label: "Design Development", value: "DESIGN_DEVELOPMENT", color: "bg-[#3b82f6]", count: tracingSummary?.["Design_Development"] ?? 0 },
+                        { label: "Domain Hosting", value: "DOMAIN_HOSTING", color: "bg-[#334155]", count: tracingSummary?.["Domain_Hosting"] ?? 0 },
                       ].map((tab, idx) => {
-                        const isActive = serviceFilter === tab.value;
                         return (
                           <div
                             key={idx}
-                            onClick={() => {
-                              if (isActive) {
-                                setServiceFilter("all");
-                              } else {
-                                setServiceFilter(tab.value);
-                              }
-                              setPage(1);
-                            }}
-                            className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-opacity hover:opacity-90 ${isActive ? "bg-[#059669]" : tab.color}`}
+                            onClick={() => setActiveTracingDetail(tab.label)}
+                            className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-opacity hover:opacity-90 ${tab.color}`}
                           >
                             {tab.label} {tab.count}
                           </div>
@@ -1887,12 +1974,14 @@ export default function LeadPools() {
                                   onCheckedChange={(checked) => handleToggleAll(!!checked, visibleIds)}
                                 />
                               </TableHead>
-                              <TableHead className="w-[100px] text-[10px] font-bold uppercase py-2">Company ID</TableHead>
+                              <TableHead className="w-[100px] text-[10px] font-bold uppercase py-2">DRM ID</TableHead>
                               <TableHead className="w-[150px] text-[10px] font-bold uppercase py-2">Co Name</TableHead>
+                              <TableHead className="w-[110px] text-[10px] font-bold uppercase py-2">Sale Person</TableHead>
                               <TableHead className="w-[120px] text-[10px] font-bold uppercase py-2">Acc Holder</TableHead>
                               <TableHead className="w-[180px] text-[10px] font-bold uppercase py-2">Email</TableHead>
                               <TableHead className="w-[120px] text-[10px] font-bold uppercase py-2">Contact No</TableHead>
-                              <TableHead className="w-[100px] text-[10px] font-bold uppercase py-2">NTN / CNIC</TableHead>
+                              <TableHead className="w-[90px] text-[10px] font-bold uppercase py-2">NTN</TableHead>
+                              <TableHead className="w-[90px] text-[10px] font-bold uppercase py-2">CNIC</TableHead>
                               <TableHead className="w-[110px] text-[10px] font-bold uppercase py-2">Account Create Date</TableHead>
                               <TableHead className="text-[10px] font-bold uppercase py-2 text-center">Action</TableHead>
                             </TableRow>
@@ -1903,7 +1992,6 @@ export default function LeadPools() {
                               const accountName = customer.accountName || (customer as any).accHolder || "-";
                               const phone = customer.phone || (customer as any).contactNo || (customer as any).mobile || "";
                               const email = (customer as any).email || "";
-                              const ntnCnic = (customer as any).ntn || (customer as any).cnic || (customer as any).ntnCnic || null;
                               const expiresAt = (customer as any).expiresAt || (customer as any).expiryDate || null;
                               const createdAt = (customer as any).createdAt;
                               const isApproved = (customer as any).approvalStatus === 'approved';
@@ -1925,6 +2013,7 @@ export default function LeadPools() {
                                     {customer.drmId || (customer.id || "").slice(0, 8) || "—"}
                                   </TableCell>
                                   <TableCell className="py-2 font-bold text-[11px] text-foreground truncate">{companyName}</TableCell>
+                                  <TableCell className="py-2 text-[11px] text-muted-foreground truncate">{(customer as any).salesPersonName || "—"}</TableCell>
                                   <TableCell className="py-2 text-[11px] text-muted-foreground truncate">{accountName}</TableCell>
                                   <TableCell className="py-2 text-[11px] text-muted-foreground truncate">
                                     {email || "-"}
@@ -1933,13 +2022,16 @@ export default function LeadPools() {
                                     {phone || "-"}
                                   </TableCell>
                                   <TableCell className="py-2 font-mono text-[10px] text-muted-foreground whitespace-nowrap text-center">
-                                    {(ntnCnic && String(ntnCnic).toLowerCase() !== "null") ? ntnCnic : "—"}
+                                    {(customer as any).ntn && String((customer as any).ntn).toLowerCase() !== "null" ? (customer as any).ntn : "—"}
+                                  </TableCell>
+                                  <TableCell className="py-2 font-mono text-[10px] text-muted-foreground whitespace-nowrap text-center">
+                                    {(customer as any).cnic && String((customer as any).cnic).toLowerCase() !== "null" ? (customer as any).cnic : "—"}
                                   </TableCell>
                                   <TableCell className="py-2 text-[10px] text-muted-foreground whitespace-nowrap">
                                     {formatDate(createdAt)}
                                   </TableCell>
                                   <TableCell className="py-1 text-center" onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-center justify-center gap-0.5 px-0.5">
+                                    <div className="flex items-center justify-start gap-0.5 px-0.5">
                                       <ActionIcon onClick={() => handleView(customer)} icon={User} label="User Profile" />
                                       <ActionIcon onClick={() => handleView(customer)} icon={Eye} label="View" />
                                       <ActionIcon onClick={() => handleFollowupOpen(customer)} icon={Clock} label="Follow up" />
@@ -1969,7 +2061,10 @@ export default function LeadPools() {
                                       )}
                                       <ActionIcon onClick={() => handlePrint(customer)} icon={Printer} label="Print" />
                                       {activePool === "Public" && (
-                                        <ActionIcon onClick={() => handleClaim(customer)} icon={UserPlus} label="Claim" />
+                                        <ActionIcon onClick={() => handleClaim(customer)} icon={UserPlus} label="Pick" />
+                                      )}
+                                      {activePool === "Private" && (
+                                        <ActionIcon onClick={() => moveToPublicMutation.mutate(customer.id)} icon={UserPlus} label="Move Customer" />
                                       )}
                                       {/* ── GMBV-specific actions ── */}
                                       {activePool === "GMBV" && (() => {
@@ -2372,9 +2467,9 @@ export default function LeadPools() {
         <Dialog open={claimDialogOpen} onOpenChange={setClaimDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Claim Lead</DialogTitle>
+              <DialogTitle>Pick Customer</DialogTitle>
               <DialogDescription>
-                Are you sure you want to claim "{selectedCustomer?.companyName}"? This will add the lead to your private pool.
+                Are you sure you want to pick "{selectedCustomer?.companyName}"? This will move the customer to your Private Pool.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -2383,12 +2478,12 @@ export default function LeadPools() {
                 {claimMutation.isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Claiming...
+                    Picking...
                   </>
                 ) : (
                   <>
                     <UserPlus className="w-4 h-4 mr-2" />
-                    Claim Lead
+                    Pick Customer
                   </>
                 )}
               </Button>
@@ -2413,9 +2508,12 @@ export default function LeadPools() {
                       </div>
                       <p className="text-sm font-medium">{(profileData?.lead?.accountName) || viewLead.accountName || (viewLead as any).accHolder}</p>
                       <p className="text-xs text-muted-foreground">{(profileData?.lead?.email) || (viewLead as any).email || "-"}</p>
-                      <div className="flex justify-center gap-2 mt-2">
-                        {(profileData?.phones || []).map((p: string, idx: number) => (
-                          <button key={idx} className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs">{p}</button>
+                      <div className="flex justify-center gap-3 mt-2">
+                        {(profileData?.phones || []).map((p: { label: string; value: string }, idx: number) => (
+                          <div key={idx} className="flex flex-col items-center gap-1">
+                            <button className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs">{p.value}</button>
+                            <span className="text-[10px] text-muted-foreground">{p.label}</span>
+                          </div>
                         ))}
                       </div>
                       <div className="flex justify-center gap-4 mt-3 text-sm">
@@ -2498,57 +2596,6 @@ export default function LeadPools() {
                     </div>
                   </div>
 
-                  <div className="lead-history border rounded-lg p-4 bg-card shadow-sm">
-                    <div className="lead-card-body">
-                      <p className="font-semibold mb-2">Expiry Date</p>
-                      <div className="space-y-3">
-                        {["domain", "ssl", "hosting"].map((svc) => {
-                          const entry = (profileData?.services || []).find((s: any) => s.serviceType === svc);
-                          return (
-                            <div key={svc} className="flex items-center justify-between text-sm border rounded-md px-3 py-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-emerald-600">●</span>
-                                <span className="capitalize">{svc}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button size="sm" variant="outline" className="h-7 px-2 text-xs">
-                                  {entry?.expiryDate ? formatDate(entry.expiryDate) : "Date"}
-                                </Button>
-                                <span className="text-rose-600 text-xs bg-rose-50 px-2 py-1 rounded-md">Day Left</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="lead-history border rounded-lg p-4 bg-card shadow-sm">
-                    <div className="lead-card-body">
-                      <p className="font-semibold">Whatsapp Message</p>
-                      <textarea
-                        className="w-full mt-2 border rounded-md p-2 text-sm"
-                        placeholder="Message..."
-                        rows={4}
-                        onChange={(e) => setEditForm((prev) => ({ ...prev, source: e.target.value }))}
-                      />
-                      <Button
-                        className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white"
-                        onClick={() => handleWhatsApp(viewLead)}
-                      >
-                        Whatsapp
-                      </Button>
-                    </div>
-                    <div className="border rounded-md p-3 bg-emerald-50">
-                      <p className="font-semibold text-sm mb-2 text-emerald-800">Duplicate Company Details</p>
-                      <Button
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                        onClick={() => openHistory(viewLead)}
-                      >
-                        Find Duplicate Companies
-                      </Button>
-                    </div>
-                  </div>
                 </div>
 
                 <div className="lead-history border rounded-lg p-4 bg-card shadow-sm">
@@ -2647,7 +2694,39 @@ export default function LeadPools() {
                       </div>
                     </TabsContent>
                     <TabsContent value="invoice">
-                      <p className="text-sm text-muted-foreground mt-3">No invoice history</p>
+                      <div className="overflow-x-auto mt-3">
+                        {invoiceLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading invoice history...
+                          </div>
+                        ) : invoiceHistory.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No invoice history found</p>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Date</TableHead>
+                                <TableHead>Invoice ID</TableHead>
+                                <TableHead>Type</TableHead>
+                                <TableHead>Amount</TableHead>
+                                <TableHead>Status</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {invoiceHistory.map((inv: any) => (
+                                <TableRow key={inv.id}>
+                                  <TableCell>{inv.createdAt ? formatDate(inv.createdAt) : "-"}</TableCell>
+                                  <TableCell className="font-mono text-xs">{inv.id.substring(0, 8)}</TableCell>
+                                  <TableCell>{inv.invoiceType || inv.projectName || "-"}</TableCell>
+                                  <TableCell>{inv.amount ? `$${inv.amount}` : "0"}</TableCell>
+                                  <TableCell>{getApprovalBadge(inv.status)}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </div>
                     </TabsContent>
                     <TabsContent value="gm">
                       <div className="overflow-x-auto mt-3">
@@ -2835,29 +2914,119 @@ export default function LeadPools() {
         </Dialog>
 
         <Dialog open={!!editLead} onOpenChange={() => setEditLead(null)}>
-          <DialogContent>
+          <DialogContent className="max-w-[750px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Lead</DialogTitle>
+              <DialogTitle>Edit Company Detail</DialogTitle>
               <DialogDescription>{editLead?.companyName || (editLead as any)?.company}</DialogDescription>
             </DialogHeader>
-            <div className="space-y-3">
-              <Input placeholder="Company" value={editForm.companyName} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} />
-              <Input placeholder="Account" value={editForm.accountName} onChange={(e) => setEditForm({ ...editForm, accountName: e.target.value })} />
-              <Input placeholder="Email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
-              <Input placeholder="Phone" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
-              <Select value={editForm.grade || "unassigned"} onValueChange={(val) => setEditForm({ ...editForm, grade: val === "unassigned" ? "" : val })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Grade" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">No Grade</SelectItem>
-                  {["A+", "A-", "B+", "B-", "B", "C+", "C", "D"].map(g => (
-                    <SelectItem key={g} value={g}>{g}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input placeholder="Status" value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })} />
-              <Input placeholder="Source" value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} />
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Company name *</label>
+                  <Input value={editForm.companyName} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Country /Region *</label>
+                  <Select value={editForm.country || "none"} onValueChange={(val) => setEditForm({ ...editForm, country: val === "none" ? "" : val })}>
+                    <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Choose...</SelectItem>
+                      <SelectItem value="Pakistan">Pakistan</SelectItem>
+                      <SelectItem value="USA">USA</SelectItem>
+                      <SelectItem value="UAE">UAE</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Company type</label>
+                  <Input placeholder="e.g. Finances & Insurance" value={editForm.companyType} onChange={(e) => setEditForm({ ...editForm, companyType: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">City *</label>
+                  <Input value={editForm.city} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Landline No</label>
+                  <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Mobile No</label>
+                  <Input value={editForm.mobile} onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value })} />
+                </div>
+              </div>
+
+              <h3 className="text-sm font-bold pt-1">Primary Detail</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Title</label>
+                  <Select value={editForm.title || "none"} onValueChange={(val) => setEditForm({ ...editForm, title: val === "none" ? "" : val })}>
+                    <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Choose...</SelectItem>
+                      <SelectItem value="Mr.">Mr.</SelectItem>
+                      <SelectItem value="Mrs.">Mrs.</SelectItem>
+                      <SelectItem value="Ms.">Ms.</SelectItem>
+                      <SelectItem value="Dr.">Dr.</SelectItem>
+                      <SelectItem value="M/S">M/S</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Person Full Name</label>
+                  <Input value={editForm.accountName} onChange={(e) => setEditForm({ ...editForm, accountName: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Website</label>
+                  <Input value={editForm.website} onChange={(e) => setEditForm({ ...editForm, website: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Email *</label>
+                  <Input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Address</label>
+                  <Input value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-muted-foreground">Your Comment</label>
+                <Textarea rows={2} value={editForm.comment} onChange={(e) => setEditForm({ ...editForm, comment: e.target.value })} />
+              </div>
+
+              <h3 className="text-sm font-bold pt-1 border-t pt-4">Sales Pipeline</h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Grade</label>
+                  <Select value={editForm.grade || "unassigned"} onValueChange={(val) => setEditForm({ ...editForm, grade: val === "unassigned" ? "" : val })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Grade" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="unassigned">No Grade</SelectItem>
+                      {["A+", "A-", "B+", "B-", "B", "C+", "C", "D"].map(g => (
+                        <SelectItem key={g} value={g}>{g}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Status</label>
+                  <Input value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Source</label>
+                  <Input value={editForm.source} onChange={(e) => setEditForm({ ...editForm, source: e.target.value })} />
+                </div>
+              </div>
               <Select value={editForm.serviceTypes?.[0] || "none"} onValueChange={(val) => setEditForm({ ...editForm, serviceTypes: val === "none" ? [] : [val] })}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select Service" />
@@ -3301,6 +3470,47 @@ export default function LeadPools() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!whatsappLead} onOpenChange={(open) => !open && setWhatsappLead(null)}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden gap-0">
+          <DialogHeader className="p-5 border-b border-slate-100 dark:border-zinc-800">
+            <DialogTitle className="text-[18px] font-semibold text-[#475569] tracking-tight dark:text-zinc-400">
+              Whats App Template
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-6">
+            <div className="border border-slate-100 rounded dark:border-zinc-800">
+              <Table>
+                <TableHeader className="bg-[#f1f5f9] dark:bg-zinc-800">
+                  <TableRow className="border-none hover:bg-transparent">
+                    <TableHead className="font-bold text-[#475569] py-4 w-20 dark:text-zinc-400">ID</TableHead>
+                    <TableHead className="font-bold text-[#475569] py-4 w-48 dark:text-zinc-400">Title</TableHead>
+                    <TableHead className="font-bold text-[#475569] py-4 dark:text-zinc-400">Message</TableHead>
+                    <TableHead className="font-bold text-[#475569] py-4 text-right pr-6 w-32 dark:text-zinc-400">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {WHATSAPP_TEMPLATES.map((tpl) => (
+                    <TableRow key={tpl.id} className="border-b-0 hover:bg-slate-50/50 dark:hover:bg-zinc-800">
+                      <TableCell className="font-medium text-slate-500 py-6 dark:text-zinc-400">{tpl.id}</TableCell>
+                      <TableCell className="font-medium text-slate-500 py-6 dark:text-zinc-400">{tpl.title}</TableCell>
+                      <TableCell className="text-slate-500 font-medium py-6 dark:text-zinc-400">{tpl.message}</TableCell>
+                      <TableCell className="text-right pr-6 py-6">
+                        <button
+                          onClick={() => useWhatsAppTemplate(tpl.message)}
+                          className="bg-[#059669] hover:bg-emerald-700 transition-colors text-white px-6 py-2 rounded text-[14px] font-bold"
+                        >
+                          use
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -3369,4 +3579,332 @@ function ActionIcon({
     );
   }
   return body;
+}
+
+function PrivatePoolFollowupDetail({ activeService, onBack }: { activeService: string; onBack: () => void }) {
+  const { toast } = useToast();
+  const [followStartDate, setFollowStartDate] = useState("");
+  const [followEndDate, setFollowEndDate] = useState("");
+  const [appliedStartDate, setAppliedStartDate] = useState("");
+  const [appliedEndDate, setAppliedEndDate] = useState("");
+  const [activeFollowService, setActiveFollowService] = useState<string>(activeService);
+  const [activeFollowSubtype, setActiveFollowSubtype] = useState<string>("All");
+  const [activeFollowGrade, setActiveFollowGrade] = useState<string>("All");
+  const [followPage, setFollowPage] = useState(1);
+  const followPageSize = 10;
+
+  const { data: followupsRes } = useQuery({ queryKey: ["/api/dashboard/followups?pageSize=50&pool=private"] });
+  const followupsData = (followupsRes as any)?.data?.items || [];
+
+  const handleFollowFilter = () => {
+    setAppliedStartDate(followStartDate);
+    setAppliedEndDate(followEndDate);
+  };
+
+  const getCount = (serviceName: string) => {
+    if (serviceName === "All") return followupsData.length;
+    return followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === serviceName.toLowerCase()).length;
+  };
+
+  const filteredByServiceAndDate = followupsData.filter((row: any) => {
+    if (activeFollowService && activeFollowService !== "All") {
+      const sType = row.serviceType || "";
+      if (sType.toLowerCase() !== activeFollowService.toLowerCase()) return false;
+    }
+    if (appliedStartDate && appliedEndDate) {
+      const rowDate = row.createdAt ? new Date(row.createdAt) : new Date();
+      const start = new Date(appliedStartDate);
+      const end = new Date(appliedEndDate);
+      end.setHours(23, 59, 59, 999);
+      if (rowDate < start || rowDate > end) return false;
+    }
+    return true;
+  });
+
+  const getSubtypeCount = (subtype: string) => {
+    if (subtype === "All") return filteredByServiceAndDate.filter((r: any) => activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase()).length;
+    return filteredByServiceAndDate.filter((r: any) => {
+      const matchSub = (r.subserviceName || r.serviceType || "General").toLowerCase() === subtype.toLowerCase();
+      const matchGrade = activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase();
+      return matchSub && matchGrade;
+    }).length;
+  };
+
+  const getGradeCount = (grade: string) => {
+    if (grade === "All") return filteredByServiceAndDate.filter((r: any) => activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase()).length;
+    return filteredByServiceAndDate.filter((r: any) => {
+      const matchGrade = (r.grade || "A").toLowerCase() === grade.toLowerCase();
+      const matchSub = activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase();
+      return matchGrade && matchSub;
+    }).length;
+  };
+
+  const uniqueSubtypes = Array.from(new Set(
+    filteredByServiceAndDate
+      .filter((r: any) => activeFollowGrade === "All" || (r.grade || "A").toLowerCase() === activeFollowGrade.toLowerCase())
+      .map((r: any) => r.subserviceName || r.serviceType || "General")
+  )).filter(Boolean) as string[];
+
+  const uniqueGrades = Array.from(new Set(
+    filteredByServiceAndDate
+      .filter((r: any) => activeFollowSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeFollowSubtype.toLowerCase())
+      .map((r: any) => r.grade || "A")
+  )).filter(Boolean) as string[];
+
+  const filteredFollowups = filteredByServiceAndDate
+    .filter((row: any) => {
+      if (activeFollowSubtype !== "All" && (row.subserviceName || row.serviceType || "General").toLowerCase() !== activeFollowSubtype.toLowerCase()) return false;
+      if (activeFollowGrade !== "All" && (row.grade || "A").toLowerCase() !== activeFollowGrade.toLowerCase()) return false;
+      return true;
+    })
+    .map((row: any, index: number) => ({
+      id: index + 1,
+      company: row.company || "Unknown",
+      service: row.serviceType || activeFollowService,
+      subtype: row.subserviceName || row.serviceType || "General",
+      grade: row.grade || "A",
+      purpose: row.purpose || "-",
+      method: row.method || "-",
+      comment: row.notes || "-",
+      person: row.salesPerson || "-",
+      note: row.followupNote || "-",
+      next: row.dueAt ? new Date(row.dueAt).toLocaleDateString() : "-",
+      created: row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-",
+    }));
+
+  const handleTabClick = (serviceName: string) => {
+    setActiveFollowService(serviceName);
+    setActiveFollowSubtype("All");
+    setActiveFollowGrade("All");
+    setFollowPage(1);
+  };
+
+  const standardServices = ["Alibaba Membership", "Alibaba Services", "Design Development", "Domain Hosting"];
+  const uniqueServices = Array.from(new Set(followupsData.map((r: any) => r.serviceType || "Alibaba Membership"))).filter(Boolean) as string[];
+  const allTabServices = Array.from(new Set([...standardServices, ...uniqueServices]));
+
+  const totalFollowPages = Math.max(1, Math.ceil(filteredFollowups.length / followPageSize));
+  const pagedFollowups = filteredFollowups.slice((followPage - 1) * followPageSize, followPage * followPageSize);
+
+  const exportColumns = [
+    { key: "id", header: "#" },
+    { key: "company", header: "Company" },
+    { key: "service", header: "Main Service" },
+    { key: "subtype", header: "Sub Type" },
+    { key: "grade", header: "Grade" },
+    { key: "purpose", header: "Purpose" },
+    { key: "method", header: "Method" },
+    { key: "comment", header: "Comment" },
+    { key: "person", header: "Sale Person" },
+    { key: "note", header: "Followup Note" },
+    { key: "next", header: "Next Date" },
+    { key: "created", header: "Created Date" },
+  ];
+
+  const handleExcel = () => {
+    if (!filteredFollowups.length) {
+      toast({ title: "No data available to export.", variant: "destructive" });
+      return;
+    }
+    exportToCSV(filteredFollowups, exportColumns, "private-pool-followups");
+  };
+
+  const handlePDF = () => {
+    if (!filteredFollowups.length) {
+      toast({ title: "No data available to export.", variant: "destructive" });
+      return;
+    }
+    exportToPDF(filteredFollowups, exportColumns, "private-pool-followups");
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <button onClick={onBack} className="flex items-center gap-1 text-[13px] font-bold text-muted-foreground hover:text-primary transition-colors">
+        <ChevronLeft className="h-4 w-4" /> Back to Private Pool
+      </button>
+
+      <div className="bg-white shadow-sm border border-slate-200 rounded-[8px] dark:bg-zinc-900 dark:border-zinc-800">
+        <div className="px-5 py-4 flex justify-between items-center border-b border-slate-100 dark:border-zinc-800">
+          <h2 className="text-[16px] font-bold text-slate-700 dark:text-zinc-400">Follow Up Details</h2>
+          <div className="flex gap-2 items-center">
+            <input
+              type="date"
+              value={followStartDate}
+              onChange={(e) => setFollowStartDate(e.target.value)}
+              className="border border-slate-300 bg-transparent rounded-[4px] px-2 h-8 text-[13px] w-[130px] focus:outline-none focus:border-[#00a65a] dark:border-zinc-800"
+            />
+            <span className="mx-0.5 text-slate-400">-</span>
+            <input
+              type="date"
+              value={followEndDate}
+              onChange={(e) => setFollowEndDate(e.target.value)}
+              className="border border-slate-300 bg-transparent rounded-[4px] px-2 h-8 text-[13px] w-[130px] focus:outline-none focus:border-[#00a65a] dark:border-zinc-800"
+            />
+            <button onClick={handleFollowFilter} className="bg-[#00a65a] text-white text-[13px] px-5 h-8 rounded-[4px] font-bold hover:bg-[#008d4c] transition-colors shadow-sm ml-1">Filter</button>
+          </div>
+        </div>
+        <div className="p-5">
+          <div className="flex flex-wrap gap-2 mb-5">
+            <div onClick={() => handleTabClick("All")} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${activeFollowService === "All" ? "bg-slate-700 dark:bg-slate-600" : "bg-slate-500 hover:bg-slate-600 dark:bg-slate-700"}`}>All {getCount("All")}</div>
+            {allTabServices.map((svc) => {
+              const isActive = activeFollowService === svc;
+              let colorClass = "bg-blue-500 hover:bg-blue-600";
+              let activeColorClass = "bg-blue-600";
+              if (svc === "Alibaba Membership") { colorClass = "bg-[#38c172]/80 hover:bg-[#38c172]"; activeColorClass = "bg-[#38c172]"; }
+              else if (svc === "Alibaba Services") { colorClass = "bg-[#e3342f]/80 hover:bg-[#e3342f]"; activeColorClass = "bg-[#e3342f]"; }
+              else if (svc === "Design Development") { colorClass = "bg-[#3490dc]/80 hover:bg-[#3490dc]"; activeColorClass = "bg-[#3490dc]"; }
+              else if (svc === "Domain Hosting") { colorClass = "bg-[#343a40]/80 hover:bg-[#343a40]"; activeColorClass = "bg-[#343a40]"; }
+              return (
+                <div key={svc} onClick={() => handleTabClick(svc)} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${isActive ? activeColorClass : colorClass}`}>
+                  {svc} {getCount(svc)}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-col md:flex-row gap-4 mb-5">
+            {uniqueSubtypes.length > 0 && (
+              <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-4 dark:bg-zinc-900 dark:border-zinc-800">
+                <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Service Type Summary</h3>
+                <div className="flex flex-wrap gap-2">
+                  {["All", ...uniqueSubtypes].map(sub => {
+                    const count = getSubtypeCount(sub);
+                    if (count === 0 && sub !== "All") return null;
+                    const isActive = activeFollowSubtype === sub;
+                    return (
+                      <span
+                        key={sub}
+                        onClick={() => setActiveFollowSubtype(sub)}
+                        className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#059669] text-white border border-[#059669]" : "bg-white border border-[#059669] text-[#059669] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"}`}
+                      >
+                        {sub} ({count})
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {uniqueGrades.length > 0 && (
+              <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-4 dark:bg-zinc-900 dark:border-zinc-800">
+                <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Grade Summary</h3>
+                <div className="flex flex-wrap gap-2">
+                  {["All", ...uniqueGrades].map(grade => {
+                    const count = getGradeCount(grade);
+                    if (count === 0 && grade !== "All") return null;
+                    const isActive = activeFollowGrade === grade;
+                    return (
+                      <span
+                        key={grade}
+                        onClick={() => setActiveFollowGrade(grade)}
+                        className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#1e293b] text-white border border-[#1e293b]" : "bg-white border border-slate-300 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"}`}
+                      >
+                        {grade} ({count})
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex gap-2">
+              <button onClick={handleExcel} className="px-4 py-1.5 bg-[#64748b] hover:bg-[#475569] text-white text-[13px] rounded-[4px] font-medium transition-colors">Excel</button>
+              <button onClick={handlePDF} className="px-4 py-1.5 bg-[#64748b] hover:bg-[#475569] text-white text-[13px] rounded-[4px] font-medium transition-colors">PDF</button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-[6px] dark:border-zinc-800">
+            <table className="w-full text-[13px] text-left">
+              <thead className="bg-[#fbfcfd] border-b border-slate-200 dark:border-zinc-800 dark:bg-zinc-900">
+                <tr>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">#</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Company</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Main Service</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Sub Type</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Grade</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Purpose</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Method</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Comment</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Sale Person</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Followup Note</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Next Date</th>
+                  <th className="py-3.5 px-4 font-bold text-slate-600 dark:text-zinc-300">Created Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pagedFollowups.length > 0 ? (
+                  pagedFollowups.map((row: any, i: number) => (
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.id}</td>
+                      <td className="py-3 px-4 text-slate-700 font-bold border-r border-slate-100 dark:border-zinc-800 dark:text-zinc-400">{row.company}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.service}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.subtype}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.grade}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.purpose}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.method}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.comment}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.person}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.note}</td>
+                      <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.next}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.created}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={12} className="py-8 px-4 text-slate-500 text-center font-medium bg-slate-50/50 dark:bg-zinc-900 dark:text-zinc-400">
+                      No Data Found for {activeFollowService}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 flex justify-between items-center text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+            <div>
+              Showing {filteredFollowups.length > 0 ? (followPage - 1) * followPageSize + 1 : 0} to {Math.min(followPage * followPageSize, filteredFollowups.length)} of {filteredFollowups.length} entries
+            </div>
+            <div className="flex gap-1 items-center">
+              <button
+                onClick={() => setFollowPage(p => Math.max(1, p - 1))}
+                disabled={followPage === 1}
+                className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+              >
+                Previous
+              </button>
+              {Array.from({ length: totalFollowPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalFollowPages || Math.abs(p - followPage) <= 1)
+                .reduce((acc: (number | string)[], p, idx, arr) => {
+                  if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('...');
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((p, idx) =>
+                  p === '...' ? (
+                    <span key={`dots-${idx}`} className="px-2 text-slate-400">...</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setFollowPage(p as number)}
+                      className={`w-8 h-8 rounded-[4px] border text-[12px] font-medium transition-colors ${followPage === p ? 'bg-[#00a65a] text-white border-[#00a65a]' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+              <button
+                onClick={() => setFollowPage(p => Math.min(totalFollowPages, p + 1))}
+                disabled={followPage >= totalFollowPages}
+                className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

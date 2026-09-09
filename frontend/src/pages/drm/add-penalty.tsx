@@ -451,7 +451,7 @@ export default function AddPenaltyPage() {
                   const isVoided = row.status === "VOIDED";
                   const isPending = row.approvalStatus === "PENDING" && !isVoided;
                   return (
-                    <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
+                    <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{no}</td>
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{row.employeeName ?? "—"}</td>
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{row.penaltyHead}</td>

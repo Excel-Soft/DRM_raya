@@ -31,6 +31,7 @@ interface EventRow {
   amount: number;
   attendeeCount: number;
   mapUrl: string | null;
+  location: string | null;
   status: string;
   notes: string | null;
   createdByName: string | null;
@@ -53,6 +54,7 @@ const EMPTY_EVENT_FORM = {
   attendeeCount: "",
   eventDate: "",
   mapUrl: "",
+  location: "",
   amount: "",
   venue: "",
   status: "Draft",
@@ -109,6 +111,7 @@ export default function EventsAdd() {
         attendeeCount: eventForm.attendeeCount === "" ? 0 : Number(eventForm.attendeeCount),
         eventDate: eventForm.eventDate,
         mapUrl: eventForm.mapUrl.trim() || null,
+        location: eventForm.location.trim() || null,
         amount: eventForm.amount === "" ? 0 : Number(eventForm.amount),
         venue: eventForm.venue || null,
         status: eventForm.status,
@@ -201,6 +204,7 @@ export default function EventsAdd() {
       attendeeCount: ev.attendeeCount != null ? String(ev.attendeeCount) : "",
       eventDate: ev.eventDate ? String(ev.eventDate).slice(0, 10) : "",
       mapUrl: ev.mapUrl ?? "",
+      location: ev.location ?? "",
       amount: ev.amount != null ? String(ev.amount) : "",
       venue: ev.venue ?? "",
       status: ev.status ?? "Draft",
@@ -283,6 +287,10 @@ export default function EventsAdd() {
               <div>
                 <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Date</label>
                 <Input type="date" value={eventForm.eventDate} onChange={e => setEventForm(f => ({ ...f, eventDate: e.target.value }))} className="text-sm h-9" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Location</label>
+                <Input value={eventForm.location} onChange={e => setEventForm(f => ({ ...f, location: e.target.value }))} placeholder="Address or coordinates (lat, long)" className="text-sm h-9" />
               </div>
               <div>
                 <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Map</label>
@@ -389,6 +397,7 @@ export default function EventsAdd() {
                   <th className="px-4 py-4 whitespace-nowrap">Attending</th>
                   <th className="px-4 py-4 whitespace-nowrap w-[350px]">Speaker</th>
                   <th className="px-4 py-4 whitespace-nowrap">Venue</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Location</th>
                   <th className="px-4 py-4 whitespace-nowrap">Status</th>
                   <th className="px-4 py-4 whitespace-nowrap">Map</th>
                   <th className="px-4 py-4 whitespace-nowrap">Event Date</th>
@@ -464,6 +473,7 @@ export default function EventsAdd() {
                       )}
                     </td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.venue}</td>
+                    <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.location || "-"}</td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.status}</td>
                     <td className="px-4 py-4 text-[#00a65a] align-top dark:text-zinc-400">
                       {ev.mapUrl ? (

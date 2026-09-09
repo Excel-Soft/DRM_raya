@@ -11,8 +11,8 @@
  * Cross-user access returns 403. Approve/Hold/Reject requires a managerial role.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import {
   fetchUsers,
   fetchUserById,
@@ -24,7 +24,7 @@ import {
   applyDecision,
   getEvaluationOwner,
   type DecisionStatus,
-} from "../services/increment.service";
+} from "./services/increment.service";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"];
 const MAX_RANGE_MONTHS = 24;

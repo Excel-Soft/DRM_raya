@@ -146,7 +146,23 @@ export class ServiceDocumentsRepository {
     return res.rows[0];
   }
 
-  async update(id: string, data: { name?: string; url?: string; packageName?: string; dueDate?: string | null; remarks?: string; userId: string }) {
+  // Phase 2 (PCH-001/DS-002/SEC-DA-001/PCH-012): update/setVerification/remove
+  // previously had NO ownership check at all — any authenticated caller could
+  // mutate any document regardless of department. `allowedUserIds` mirrors the
+  // same scoping already used by list() (null = org-wide/admin, array = the
+  // caller's own-or-department id set) so a caller can only act on a document
+  // uploaded/created by someone within their own scope.
+  async update(
+    id: string,
+    data: { name?: string; url?: string; packageName?: string; dueDate?: string | null; remarks?: string; userId: string },
+    allowedUserIds: string[] | null = null,
+  ) {
+    const params: any[] = [id, data.name ?? null, data.url ?? null, data.packageName ?? null, data.dueDate ?? null, data.remarks ?? null, data.userId];
+    let scopeClause = "";
+    if (allowedUserIds !== null) {
+      params.push(allowedUserIds);
+      scopeClause = ` AND (uploaded_by::text = ANY($${params.length}::text[]) OR created_by::text = ANY($${params.length}::text[]))`;
+    }
     const res = await pool.query(
       `UPDATE drm.service_documents
        SET name = COALESCE($2, name),
@@ -156,25 +172,38 @@ export class ServiceDocumentsRepository {
            remarks = COALESCE($6, remarks),
            updated_by = $7,
            updated_at = now()
-       WHERE id = $1
+       WHERE id = $1${scopeClause}
        RETURNING id`,
-      [id, data.name ?? null, data.url ?? null, data.packageName ?? null, data.dueDate ?? null, data.remarks ?? null, data.userId],
+      params,
     );
     return res.rows[0] || null;
   }
 
-  async setVerification(id: string, status: string, userId: string) {
+  async setVerification(id: string, status: string, userId: string, allowedUserIds: string[] | null = null) {
+    const params: any[] = [id, status, userId];
+    let scopeClause = "";
+    if (allowedUserIds !== null) {
+      params.push(allowedUserIds);
+      scopeClause = ` AND (uploaded_by::text = ANY($${params.length}::text[]) OR created_by::text = ANY($${params.length}::text[]))`;
+    }
     const res = await pool.query(
       `UPDATE drm.service_documents
        SET verification_status = $2, updated_by = $3, updated_at = now()
-       WHERE id = $1 RETURNING id`,
-      [id, status, userId],
+       WHERE id = $1${scopeClause} RETURNING id`,
+      params,
     );
     return res.rows[0] || null;
   }
 
-  async remove(id: string) {
-    await pool.query(`DELETE FROM drm.service_documents WHERE id = $1`, [id]);
+  async remove(id: string, allowedUserIds: string[] | null = null) {
+    const params: any[] = [id];
+    let scopeClause = "";
+    if (allowedUserIds !== null) {
+      params.push(allowedUserIds);
+      scopeClause = ` AND (uploaded_by::text = ANY($${params.length}::text[]) OR created_by::text = ANY($${params.length}::text[]))`;
+    }
+    const res = await pool.query(`DELETE FROM drm.service_documents WHERE id = $1${scopeClause} RETURNING id`, params);
+    return res.rows.length > 0;
   }
 }
 

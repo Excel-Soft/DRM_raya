@@ -78,12 +78,15 @@ const LEAVE_TYPES = [
   { value: "Casual", label: "Casual Leave" },
   { value: "Annual", label: "Annual Leave" },
   { value: "Emergency", label: "Emergency Leave" },
-  { value: "HalfDay", label: "Half Day" },
   { value: "Unpaid", label: "Unpaid Leave" },
   { value: "Maternity", label: "Maternity Leave" },
   { value: "Paternity", label: "Paternity Leave" },
   { value: "Other", label: "Other" },
 ];
+
+const DURATION_TYPES = ["Full Day", "Half Day", "Short Leave"] as const;
+
+const PURPOSE_OPTIONS = ["Wedding", "Unhealthy", "Urgent Work", "Passing Away", "Accident", "Other"] as const;
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; icon: typeof CheckCircle2 }> = {
   Pending: { bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-700 dark:text-amber-400", icon: Clock },
@@ -93,8 +96,9 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; icon: typeof Che
 };
 
 const leaveFormSchema = z.object({
-  purpose: z.string().min(3, "Purpose must be at least 3 characters"),
-  leaveType: z.enum(["Sick", "Casual", "Annual", "Emergency", "HalfDay", "Unpaid", "Maternity", "Paternity", "Other"]),
+  purpose: z.enum(PURPOSE_OPTIONS),
+  leaveType: z.enum(["Sick", "Casual", "Annual", "Emergency", "Unpaid", "Maternity", "Paternity", "Other"]),
+  duration: z.enum(DURATION_TYPES),
   alternative: z.string().min(1, "Alternative contact is required"),
   fromDate: z.date({ required_error: "Start date is required" }),
   toDate: z.date({ required_error: "End date is required" }),
@@ -141,8 +145,9 @@ export default function LeaveRequestPage() {
   const form = useForm<LeaveFormValues>({
     resolver: zodResolver(leaveFormSchema),
     defaultValues: {
-      purpose: "",
+      purpose: "Wedding",
       leaveType: "Casual",
+      duration: "Full Day",
       alternative: "",
       fromDate: new Date(),
       toDate: new Date(),
@@ -190,6 +195,7 @@ export default function LeaveRequestPage() {
       return apiRequest("POST", "/api/leave", {
         purpose: data.purpose,
         leaveType: data.leaveType,
+        duration: data.duration,
         alternative: data.alternative,
         fromDate: data.fromDate.toISOString(),
         toDate: data.toDate.toISOString(),
@@ -351,20 +357,27 @@ export default function LeaveRequestPage() {
               <CardContent>
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 md:grid-cols-3">
                       <FormField
                         control={form.control}
                         name="purpose"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Purpose</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="e.g., Medical appointment, Family event"
-                                {...field}
-                                data-testid="input-purpose"
-                              />
-                            </FormControl>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-purpose">
+                                  <SelectValue placeholder="Select purpose" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {PURPOSE_OPTIONS.map((purpose) => (
+                                  <SelectItem key={purpose} value={purpose}>
+                                    {purpose}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -386,6 +399,31 @@ export default function LeaveRequestPage() {
                                 {LEAVE_TYPES.map((type) => (
                                   <SelectItem key={type.value} value={type.value}>
                                     {type.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="duration"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Duration</FormLabel>
+                            <Select onValueChange={field.onChange} defaultValue={field.value}>
+                              <FormControl>
+                                <SelectTrigger data-testid="select-duration">
+                                  <SelectValue placeholder="Select duration" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {DURATION_TYPES.map((duration) => (
+                                  <SelectItem key={duration} value={duration}>
+                                    {duration}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -573,6 +611,7 @@ export default function LeaveRequestPage() {
                       <TableRow>
                         <TableHead>Purpose</TableHead>
                         <TableHead>Type</TableHead>
+                        <TableHead>Duration</TableHead>
                         <TableHead>From Date</TableHead>
                         <TableHead>To Date</TableHead>
                         <TableHead>Status</TableHead>
@@ -584,14 +623,14 @@ export default function LeaveRequestPage() {
                       {loadingRequests ? (
                         Array.from({ length: 5 }).map((_, i) => (
                           <TableRow key={i}>
-                            <TableCell colSpan={7}>
+                            <TableCell colSpan={8}>
                               <Skeleton className="h-10 w-full" />
                             </TableCell>
                           </TableRow>
                         ))
                       ) : !leaveRequests || leaveRequests.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={7} className="text-center py-12">
+                          <TableCell colSpan={8} className="text-center py-12">
                             <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
                             <p className="text-muted-foreground">No leave requests found</p>
                             <Button
@@ -612,6 +651,9 @@ export default function LeaveRequestPage() {
                             </TableCell>
                             <TableCell>
                               <Badge variant="outline">{getLeaveTypeLabel((request as any).type || request.leaveType)}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">{(request as any).duration || "Full Day"}</Badge>
                             </TableCell>
                             <TableCell>{formatDate(request.fromDate)}</TableCell>
                             <TableCell>{formatDate(request.toDate)}</TableCell>

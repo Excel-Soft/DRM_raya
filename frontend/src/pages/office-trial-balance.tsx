@@ -49,16 +49,16 @@ function MultiSelect({ options, selected, onChange }: { options: {label: string,
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <div className="flex min-h-[38px] w-full items-center justify-between rounded-md border border-input bg-white px-3 py-1.5 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 cursor-pointer">
+        <div className="flex min-h-[38px] w-full items-center justify-between rounded-md border border-input bg-white dark:bg-zinc-900 px-3 py-1.5 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 cursor-pointer">
           <div className="flex flex-wrap gap-1.5 items-center flex-1">
             {selected.length === 0 ? (
-              <span className="text-slate-500">All</span>
+              <span className="text-slate-500 dark:text-zinc-400">All</span>
             ) : (
               selected.map(val => {
                 const opt = options.find(o => o.value === val);
                 return (
-                  <span key={val} className="flex items-center gap-1 bg-[#f1f5f9] text-slate-700 px-2 py-0.5 rounded text-xs font-medium border border-slate-200">
-                    <X className="h-3 w-3 cursor-pointer text-slate-400 hover:text-slate-900 transition-colors" onClick={(e) => remove(e, val)} />
+                  <span key={val} className="flex items-center gap-1 bg-[#f1f5f9] dark:bg-zinc-800 text-slate-700 dark:text-zinc-300 px-2 py-0.5 rounded text-xs font-medium border border-slate-200 dark:border-zinc-700">
+                    <X className="h-3 w-3 cursor-pointer text-slate-400 hover:text-slate-900 dark:hover:text-zinc-100 transition-colors" onClick={(e) => remove(e, val)} />
                     {opt?.label || val}
                   </span>
                 );
@@ -67,7 +67,7 @@ function MultiSelect({ options, selected, onChange }: { options: {label: string,
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-2">
             {selected.length > 0 && (
-              <X className="h-3.5 w-3.5 text-slate-400 hover:text-slate-900 cursor-pointer transition-colors" onClick={clearAll} />
+              <X className="h-3.5 w-3.5 text-slate-400 hover:text-slate-900 dark:hover:text-zinc-100 cursor-pointer transition-colors" onClick={clearAll} />
             )}
             <ChevronDown className="h-4 w-4 opacity-50" />
           </div>

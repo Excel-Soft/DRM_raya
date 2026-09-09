@@ -1,18 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Pencil, Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Pencil, Trash2, Loader2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2 } from "lucide-react";
-
-import { useEffect } from "react";
 
 export default function SetTarget() {
   const [activeTab, setActiveTab] = useState<"user" | "role" | "same">("user");
@@ -174,8 +172,54 @@ export default function SetTarget() {
     deleteUserTargetMutation.mutate(id);
   };
 
-  const handleEditUserTarget = (id: number) => {
-    toast({ title: "Edit mode triggered for target #" + id });
+  const toDateInputValue = (value: any) => (value ? new Date(value).toISOString().slice(0, 10) : "");
+
+  const [editTarget, setEditTarget] = useState<any | null>(null);
+  const [editForm, setEditForm] = useState({
+    target: "",
+    price: "",
+    bonus: "",
+    vas: "",
+    kwa: "",
+    reward: "",
+    total: "",
+    startDate: "",
+    endDate: "",
+  });
+
+  const updateUserTargetMutation = useMutation({
+    mutationFn: async (vars: { id: number; data: Record<string, any> }) => {
+      const res = await apiRequest("PATCH", `/api/target-system/user-targets/${vars.id}`, vars.data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
+      toast({ title: "Target updated successfully!" });
+      setEditTarget(null);
+    },
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to update target.", variant: "destructive" });
+    }
+  });
+
+  const handleEditUserTarget = (row: any) => {
+    setEditTarget(row);
+    setEditForm({
+      target: String(row.target ?? ""),
+      price: String(row.price ?? ""),
+      bonus: row.bonus ?? "",
+      vas: String(row.vas ?? ""),
+      kwa: String(row.kwa ?? ""),
+      reward: String(row.reward ?? ""),
+      total: String(row.total ?? ""),
+      startDate: toDateInputValue(row.startDate),
+      endDate: toDateInputValue(row.endDate),
+    });
+  };
+
+  const handleSaveEditUserTarget = () => {
+    if (!editTarget) return;
+    updateUserTargetMutation.mutate({ id: editTarget.id, data: editForm });
   };
 
   // Assign Same Target logic
@@ -304,13 +348,13 @@ export default function SetTarget() {
                     <Table>
                       <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                         <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                          <TableHead className="font-bold text-black">Target Name</TableHead>
-                          <TableHead className="font-bold text-black text-center">Category</TableHead>
-                          <TableHead className="font-bold text-black text-center w-32">Number</TableHead>
-                          <TableHead className="font-bold text-black text-center">Price</TableHead>
-                          <TableHead className="font-bold text-black text-center">Bonus</TableHead>
-                          <TableHead className="font-bold text-black text-center w-40">Start Date</TableHead>
-                          <TableHead className="font-bold text-black text-center w-40">End Date</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-32">Number</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">Start Date</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">End Date</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -413,20 +457,20 @@ export default function SetTarget() {
                 <Table>
                   <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                     <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                      <TableHead className="font-bold text-black w-12 text-center">#</TableHead>
-                      <TableHead className="font-bold text-black">Target Name</TableHead>
-                      <TableHead className="font-bold text-black text-center">Category</TableHead>
-                      <TableHead className="font-bold text-black text-center">Target</TableHead>
-                      <TableHead className="font-bold text-black text-center">Price</TableHead>
-                      <TableHead className="font-bold text-black text-center">Bonus</TableHead>
-                      <TableHead className="font-bold text-black text-center">Vas</TableHead>
-                      <TableHead className="font-bold text-black text-center">Kwa</TableHead>
-                      <TableHead className="font-bold text-black text-center">Reward</TableHead>
-                      <TableHead className="font-bold text-black text-center">Total</TableHead>
-                      <TableHead className="font-bold text-black text-center">Start Date</TableHead>
-                      <TableHead className="font-bold text-black text-center">End Date</TableHead>
-                      <TableHead className="font-bold text-black text-center">Sign Date</TableHead>
-                      <TableHead className="font-bold text-black text-center">Action</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-12 text-center">#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Vas</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Start Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">End Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Sign Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -454,7 +498,7 @@ export default function SetTarget() {
                           <TableCell className="text-center text-xs">{row.signDate ? new Date(row.signDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '') : ""}</TableCell>
                           <TableCell className="text-center">
                             <div className="flex justify-center space-x-2">
-                              <Pencil className="w-4 h-4 text-[#00a65a] cursor-pointer hover:text-[#008d4c] dark:text-zinc-400" onClick={() => handleEditUserTarget(row.id)} />
+                              <Pencil className="w-4 h-4 text-[#00a65a] cursor-pointer hover:text-[#008d4c] dark:text-zinc-400" onClick={() => handleEditUserTarget(row)} />
                               <Trash2 
                                 className={`w-4 h-4 text-red-500 cursor-pointer hover:text-red-700 ${deleteUserTargetMutation.isPending ? 'opacity-50' : ''}`} 
                                 onClick={() => !deleteUserTargetMutation.isPending && handleDeleteUserTarget(row.id)} 
@@ -538,13 +582,13 @@ export default function SetTarget() {
                 <Table>
                   <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                     <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                      <TableHead className="font-bold text-black">Target Name</TableHead>
-                      <TableHead className="font-bold text-black text-center">Category</TableHead>
-                      <TableHead className="font-bold text-black text-center w-32">Number</TableHead>
-                      <TableHead className="font-bold text-black text-center">Price</TableHead>
-                      <TableHead className="font-bold text-black text-center">Bonus</TableHead>
-                      <TableHead className="font-bold text-black text-center w-40">Start Date</TableHead>
-                      <TableHead className="font-bold text-black text-center w-40">End Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-32">Number</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">Start Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">End Date</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -616,6 +660,61 @@ export default function SetTarget() {
           </Card>
         </div>
       )}
+
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Target — {editTarget?.targetName}</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Target</label>
+              <Input value={editForm.target} onChange={(e) => setEditForm((f) => ({ ...f, target: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Price</label>
+              <Input value={editForm.price} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Bonus</label>
+              <Input value={editForm.bonus} onChange={(e) => setEditForm((f) => ({ ...f, bonus: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Vas</label>
+              <Input value={editForm.vas} onChange={(e) => setEditForm((f) => ({ ...f, vas: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Kwa</label>
+              <Input value={editForm.kwa} onChange={(e) => setEditForm((f) => ({ ...f, kwa: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Reward</label>
+              <Input value={editForm.reward} onChange={(e) => setEditForm((f) => ({ ...f, reward: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Total</label>
+              <Input value={editForm.total} onChange={(e) => setEditForm((f) => ({ ...f, total: e.target.value }))} />
+            </div>
+            <div />
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Start Date</label>
+              <Input type="date" value={editForm.startDate} onChange={(e) => setEditForm((f) => ({ ...f, startDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">End Date</label>
+              <Input type="date" value={editForm.endDate} onChange={(e) => setEditForm((f) => ({ ...f, endDate: e.target.value }))} />
+            </div>
+          </div>
+          <Button
+            className="bg-[#00a65a] hover:bg-[#008d4c] mt-2"
+            onClick={handleSaveEditUserTarget}
+            disabled={updateUserTargetMutation.isPending}
+          >
+            {updateUserTargetMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Save
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

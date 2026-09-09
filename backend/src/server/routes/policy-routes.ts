@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { db } from "../db";
+import { db } from "./db";
 import { drmPolicies, insertDrmPolicySchema } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
+import { authMiddleware } from "./auth.middleware";
+import { isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
 
 const router = Router();
 

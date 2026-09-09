@@ -80,13 +80,13 @@ export default function ServiceVasSystem() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    <TableRow className="border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                                    <TableRow className="border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                         <TableCell className="text-center text-sm font-medium text-slate-700 py-3 dark:text-zinc-400">trusmile surgical</TableCell>
                                         <TableCell className="text-center text-sm text-slate-600 dark:text-zinc-300">10000</TableCell>
                                         <TableCell className="text-center text-sm text-slate-600 dark:text-zinc-300">364</TableCell>
                                         <TableCell className="text-center text-sm text-slate-600 dark:text-zinc-300">2021-07-13 17:08:25</TableCell>
                                     </TableRow>
-                                    <TableRow className="border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                                    <TableRow className="border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                         <TableCell className="text-center text-sm font-medium text-slate-700 py-3 dark:text-zinc-400">trusmile surgical</TableCell>
                                         <TableCell className="text-center text-sm text-slate-600 dark:text-zinc-300">10000</TableCell>
                                         <TableCell className="text-center text-sm text-slate-600 dark:text-zinc-300">364</TableCell>

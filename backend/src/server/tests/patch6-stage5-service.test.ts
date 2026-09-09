@@ -1,4 +1,27 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// Phase 2 (section C): mock the database module before importing anything
+// that transitively loads it. service-bridge.service.ts imports `pool`
+// directly from server/db.ts, whose module body constructs a real pg.Pool and
+// logs the configured (shared Supabase) host/port. No test below exercises a
+// real query, so a minimal stub is sufficient — no real Pool is ever
+// constructed and no hostname is ever logged.
+vi.mock("./db", () => ({
+  pool: {
+    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    connect: vi.fn(async () => ({ query: vi.fn(async () => ({ rows: [] })), release: vi.fn() })),
+    on: vi.fn(),
+    end: vi.fn(async () => {}),
+  },
+  db: {},
+  isDbAvailable: () => true,
+  isNetworkOrDnsError: () => false,
+  markDbUnavailable: () => {},
+  getDbUnavailableReason: () => null,
+  ensureDbAvailable: async () => true,
+  checkDbHealth: async () => ({ ok: true }),
+}));
+
 import {
   serviceFollowupCompleteSchema,
   serviceComplaintResolveSchema,

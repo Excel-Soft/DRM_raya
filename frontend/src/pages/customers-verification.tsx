@@ -74,7 +74,7 @@ export default function CustomersVerification() {
                             </thead>
                             <tbody>
                                 {paymentReceivedData.map((row, idx) => (
-                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
+                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.no}</td>
                                         <td className="px-3 py-4 text-gray-500 font-medium uppercase dark:text-zinc-400">{row.company}</td>
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.person}</td>
@@ -109,7 +109,7 @@ export default function CustomersVerification() {
                             </thead>
                             <tbody>
                                 {dataVerificationData.map((row, idx) => (
-                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
+                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.no}</td>
                                         <td className="px-3 py-4 text-gray-500 font-medium uppercase dark:text-zinc-400">{row.company}</td>
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.person}</td>
@@ -144,7 +144,7 @@ export default function CustomersVerification() {
                             </thead>
                             <tbody>
                                 {alibabaPaymentData.map((row, idx) => (
-                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-zinc-800">
+                                    <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.no}</td>
                                         <td className="px-3 py-4 text-gray-500 font-medium uppercase dark:text-zinc-400">{row.company}</td>
                                         <td className="px-3 py-4 text-gray-500 dark:text-zinc-400">{row.person}</td>
@@ -177,7 +177,7 @@ export default function CustomersVerification() {
                             <Input
                                 value={selectedCompany}
                                 readOnly
-                                className="bg-[#f0f2f5]/60 text-gray-600 border-gray-200 focus-visible:ring-0 text-[13px] h-9 dark:text-zinc-300 dark:border-zinc-800"
+                                className="bg-[#f0f2f5]/60 dark:bg-zinc-800 text-gray-600 border-gray-200 focus-visible:ring-0 text-[13px] h-9 dark:text-zinc-300 dark:border-zinc-800"
                             />
                         </div>
 

@@ -44,7 +44,9 @@ const now = new Date();
 // UI-only role gating (server enforces the real rules). Bonus management is
 // limited to admin/super_hod, accounts, and HR — the same set as salary edit.
 function canManageBonus() {
-  const r = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
+  const stored = sessionStorage.getItem("userRole");
+  if (!stored) return true;
+  const r = stored.toLowerCase().replace(/\s+/g, "_");
   const full = r.includes("super_admin") || r.includes("administrator") || r === "admin" || r.includes("super_hod");
   const accounts = r.includes("account");
   const hr = /\bhr\b/.test(r) || r.includes("hr_") || r === "hr" || r.includes("human_resource");
@@ -58,10 +60,10 @@ function fmt(n: number) {
 function statusBadge(status: string) {
   const s = status.toUpperCase();
   const cls = s === "APPROVED"
-    ? "bg-[#dff0d8] text-[#3c763d]"
+    ? "bg-[#dff0d8] text-[#3c763d] dark:bg-green-950 dark:text-green-400"
     : s === "REJECTED"
-    ? "bg-[#f2dede] text-[#a94442]"
-    : "bg-[#fcf8e3] text-[#8a6d3b]";
+    ? "bg-[#f2dede] text-[#a94442] dark:bg-red-950 dark:text-red-400"
+    : "bg-[#fcf8e3] text-[#8a6d3b] dark:bg-amber-950 dark:text-amber-400";
   return <span className={`inline-block px-2 py-0.5 rounded-sm text-[11px] font-semibold ${cls}`}>{s}</span>;
 }
 
@@ -154,7 +156,17 @@ export default function SalaryBonuses() {
     },
   });
 
-  const canSubmit = formEmployee !== "" && formAmount !== "" && Number(formAmount) >= 0 && !createBonus.isPending;
+  function handleAddBonus() {
+    if (!formEmployee) {
+      toast({ title: "Employee required", description: "Please select an employee from the dropdown list.", variant: "destructive" });
+      return;
+    }
+    if (!formAmount || isNaN(Number(formAmount)) || Number(formAmount) <= 0) {
+      toast({ title: "Valid amount required", description: "Please enter a bonus amount greater than 0.", variant: "destructive" });
+      return;
+    }
+    createBonus.mutate();
+  }
 
   const approvedTotal = bonuses
     .filter((b) => b.status.toUpperCase() === "APPROVED")
@@ -162,11 +174,11 @@ export default function SalaryBonuses() {
 
   if (!canManage) {
     return (
-      <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+      <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
         <div className="p-4 max-w-[1400px] mx-auto space-y-6">
-          <h1 className="text-[17px] font-bold uppercase text-[#555]">EMPLOYEE BONUSES</h1>
-          <Card className="border-none shadow-sm bg-white rounded-sm">
-            <CardContent className="p-8 text-center text-[#d9534f] text-sm">
+          <h1 className="text-[17px] font-bold uppercase text-[#555] dark:text-zinc-300">EMPLOYEE BONUSES</h1>
+          <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
+            <CardContent className="p-8 text-center text-[#d9534f] dark:text-red-400 text-sm">
               You are not authorized to manage employee bonuses.
             </CardContent>
           </Card>
@@ -176,51 +188,51 @@ export default function SalaryBonuses() {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1400px] mx-auto space-y-6">
-        <h1 className="text-[17px] font-bold uppercase text-[#555]">EMPLOYEE BONUSES</h1>
+        <h1 className="text-[17px] font-bold uppercase text-[#555] dark:text-zinc-300">EMPLOYEE BONUSES</h1>
 
         {/* Create a bonus */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
-            <h2 className="text-[13px] font-bold uppercase text-[#777]">Add Bonus</h2>
+            <h2 className="text-[13px] font-bold uppercase text-[#777] dark:text-zinc-400">Add Bonus</h2>
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Employee</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Employee</Label>
                 <Select value={formEmployee} onValueChange={setFormEmployee}>
-                  <SelectTrigger className="h-9 w-[220px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="Select employee" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[220px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="Select employee" /></SelectTrigger>
                   <SelectContent>
                     {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Month</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Month</Label>
                 <Select value={formMonth} onValueChange={setFormMonth}>
-                  <SelectTrigger className="h-9 w-[140px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[140px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Year</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Year</Label>
                 <Select value={formYear} onValueChange={setFormYear}>
-                  <SelectTrigger className="h-9 w-[100px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[100px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Amount</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Amount</Label>
                 <Input type="number" min="0" step="0.01" value={formAmount} placeholder="0.00"
                   onChange={(e) => setFormAmount(e.target.value)}
-                  className="h-9 w-[140px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[140px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </div>
               <div className="flex flex-col gap-1.5 flex-1 min-w-[200px]">
-                <Label className="text-xs font-bold text-[#555]">Reason</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Reason</Label>
                 <Input value={formReason} placeholder="Reason (optional)"
                   onChange={(e) => setFormReason(e.target.value)}
-                  className="h-9 bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </div>
-              <Button onClick={() => createBonus.mutate()} disabled={!canSubmit}
+              <Button onClick={handleAddBonus} disabled={createBonus.isPending}
                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 font-semibold h-9 rounded-sm">
                 {createBonus.isPending ? "Adding..." : "Add Bonus"}
               </Button>
@@ -233,27 +245,27 @@ export default function SalaryBonuses() {
         </Card>
 
         {/* Bonus list */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Month</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Month</Label>
                 <Select value={month} onValueChange={setMonth}>
-                  <SelectTrigger className="h-9 w-[150px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Year</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Year</Label>
                 <Select value={year} onValueChange={setYear}>
-                  <SelectTrigger className="h-9 w-[110px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[110px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Status</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Status</Label>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="h-9 w-[150px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All statuses</SelectItem>
                     <SelectItem value="PENDING">Pending</SelectItem>
@@ -262,7 +274,7 @@ export default function SalaryBonuses() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="ml-auto text-[13px] text-[#555]">
+              <div className="ml-auto text-[13px] text-[#555] dark:text-zinc-300">
                 Approved total: <b>{fmt(approvedTotal)}</b>
               </div>
             </div>

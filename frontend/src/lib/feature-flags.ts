@@ -31,3 +31,22 @@ export function isSupportModuleEnabled(): boolean {
 export function isDemoModeEnabled(): boolean {
   return import.meta.env.VITE_DEMO_MODE_ENABLED === "true";
 }
+
+/**
+ * MD-22 (Project Owner, 2026-07-27): mirrors server/feature-flags.ts's
+ * BOT_SYSTEM_ENABLED / ONLINE_FORM_ENABLED / FB_POST_ENABLED. These gate the
+ * Bot System, Online Form, and FB Post pages — each is a mock chat-widget
+ * stub with no real provider behind it, hidden until its own flag is
+ * explicitly turned on for an approved integration.
+ */
+export function isBotSystemEnabled(): boolean {
+  return import.meta.env.VITE_BOT_SYSTEM_ENABLED === "true";
+}
+
+export function isOnlineFormEnabled(): boolean {
+  return import.meta.env.VITE_ONLINE_FORM_ENABLED === "true";
+}
+
+export function isFbPostEnabled(): boolean {
+  return import.meta.env.VITE_FB_POST_ENABLED === "true";
+}

@@ -30,16 +30,49 @@ export default function AddKwa() {
   // Use Kwa Modal State
   const [isUseModalOpen, setIsUseModalOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<any>(null);
-  
+  const [useAmount, setUseAmount] = useState("");
+  const [useAction, setUseAction] = useState<"Used" | "Refund">("Used");
+  const [useDetail, setUseDetail] = useState("");
+
   const handleOpenUseModal = (row: any) => {
     setSelectedRow(row);
+    setUseAmount("");
+    setUseAction("Used");
+    setUseDetail("");
     setIsUseModalOpen(true);
   };
 
+  const useKwaMutation = useMutation({
+    mutationFn: async (vars: { id: number; amount: number; action: string; detail?: string }) => {
+      const res = await apiRequest("PATCH", `/api/target-system/kwa-records/${vars.id}/use`, {
+        amount: vars.amount,
+        action: vars.action,
+        detail: vars.detail,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to update KWA record.");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/target-system/kwa-records"] });
+      toast({ title: "Kwa Used Successfully!" });
+      setIsUseModalOpen(false);
+      setSelectedRow(null);
+    },
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to update KWA record.", variant: "destructive" });
+    }
+  });
+
   const handleUseKwaSubmit = () => {
-    toast({ title: "Kwa Used Successfully!" });
-    setIsUseModalOpen(false);
-    setSelectedRow(null);
+    const amount = Number(useAmount);
+    if (!selectedRow || !amount || amount <= 0) {
+      toast({ title: "Please enter a valid amount.", variant: "destructive" });
+      return;
+    }
+    useKwaMutation.mutate({ id: selectedRow.id, amount, action: useAction, detail: useDetail || undefined });
   };
 
   const saveKwaMutation = useMutation({
@@ -191,29 +224,24 @@ export default function AddKwa() {
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Person:</label>
                   <Input value={selectedRow?.employee || ""} disabled className="bg-gray-100 text-gray-600 h-10 dark:text-zinc-300 dark:bg-zinc-900" />
                 </div>
-                
-                <div className="col-span-2">
-                  <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Person:</label>
-                  <Select defaultValue="none">
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Choose...</SelectItem>
-                      <SelectItem value="Zohaib Nisar Ahmad">Zohaib Nisar Ahmad</SelectItem>
-                      <SelectItem value="Faiza Khalid">Faiza Khalid</SelectItem>
-                      <SelectItem value="Hina Arij">Hina Arij</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div>
+                  <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Remaining:</label>
+                  <Input value={selectedRow ? `${selectedRow.remaining}$` : ""} disabled className="bg-gray-100 text-gray-600 h-10 dark:text-zinc-300 dark:bg-zinc-900" />
                 </div>
-                
+
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Kwa($):</label>
-                  <Input placeholder="Kwa($)" type="number" className="h-10" />
+                  <Input
+                    placeholder="Kwa($)"
+                    type="number"
+                    className="h-10"
+                    value={useAmount}
+                    onChange={(e) => setUseAmount(e.target.value)}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Kwa Type:</label>
-                  <Select defaultValue="Used">
+                  <Select value={useAction} onValueChange={(v) => setUseAction(v as "Used" | "Refund")}>
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="Used" />
                     </SelectTrigger>
@@ -223,15 +251,17 @@ export default function AddKwa() {
                     </SelectContent>
                   </Select>
                 </div>
-                
+
                 <div className="col-span-2">
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Detail:</label>
-                  <Textarea className="min-h-[100px] resize-y" />
+                  <Textarea className="min-h-[100px] resize-y" value={useDetail} onChange={(e) => setUseDetail(e.target.value)} />
                 </div>
               </div>
               <DialogFooter className="border-t pt-4">
                 <Button variant="secondary" onClick={() => setIsUseModalOpen(false)}>Close</Button>
-                <Button className="bg-[#00a65a] hover:bg-[#008d4c]" onClick={handleUseKwaSubmit}>Save</Button>
+                <Button className="bg-[#00a65a] hover:bg-[#008d4c]" onClick={handleUseKwaSubmit} disabled={useKwaMutation.isPending}>
+                  {useKwaMutation.isPending ? "Saving…" : "Save"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

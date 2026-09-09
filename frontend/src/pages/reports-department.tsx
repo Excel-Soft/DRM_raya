@@ -153,28 +153,28 @@ export default function DepartmentReport() {
   const rows = query.data?.rows ?? [];
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1600px] mx-auto space-y-6">
 
         {/* Header */}
-        <h1 className="text-[17px] font-bold text-[#555] uppercase tracking-wide">
+        <h1 className="text-[17px] font-bold text-[#555] dark:text-zinc-300 uppercase tracking-wide">
           DEPARTMENT PROJECT
         </h1>
 
         {/* Filter Card */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
 
               {/* Department */}
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Department</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Department</Label>
                 <Select value={selectedDept} onValueChange={setSelectedDept}>
-                  <SelectTrigger className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus:ring-0">
+                  <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
                     <SelectValue placeholder="Choose ..." />
                   </SelectTrigger>
                   <SelectContent className="p-0">
-                    <div className="p-2 sticky top-0 bg-white z-10 border-b border-slate-100">
+                    <div className="p-2 sticky top-0 bg-white dark:bg-zinc-900 z-10 border-b border-slate-100">
                       <Input
                         placeholder="Search department..."
                         value={deptSearch}
@@ -195,13 +195,13 @@ export default function DepartmentReport() {
 
               {/* City */}
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Select City</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Select City</Label>
                 <Select value={selectedCity} onValueChange={setSelectedCity}>
-                  <SelectTrigger className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus:ring-0">
+                  <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
                     <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
                   <SelectContent className="p-0">
-                    <div className="p-2 sticky top-0 bg-white z-10 border-b border-slate-100">
+                    <div className="p-2 sticky top-0 bg-white dark:bg-zinc-900 z-10 border-b border-slate-100">
                       <Input
                         placeholder="Search city..."
                         value={citySearch}
@@ -222,13 +222,13 @@ export default function DepartmentReport() {
 
               {/* Status */}
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Select Status</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Select Status</Label>
                 <Select value={selectedStatus} onValueChange={setSelectedStatus}>
-                  <SelectTrigger className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus:ring-0">
+                  <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
                     <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
                   <SelectContent className="p-0">
-                    <div className="p-2 sticky top-0 bg-white z-10 border-b border-slate-100">
+                    <div className="p-2 sticky top-0 bg-white dark:bg-zinc-900 z-10 border-b border-slate-100">
                       <Input
                         placeholder="Search status..."
                         value={statusSearch}
@@ -249,26 +249,26 @@ export default function DepartmentReport() {
 
               {/* Start Date */}
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">Start Date</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Start Date</Label>
                 <div className="relative">
                   <Input
                     type="date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                    className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                   />
                 </div>
               </div>
 
               {/* End Date */}
               <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555]">End Date</Label>
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">End Date</Label>
                 <div className="relative">
                   <Input
                     type="date"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="h-9 bg-white border-slate-200 text-[#555] text-[13px] focus-visible:ring-0"
+                    className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                   />
                 </div>
               </div>
@@ -284,26 +284,26 @@ export default function DepartmentReport() {
         </Card>
 
         {/* Data Table Card */}
-        <Card className="border-none shadow-sm bg-white rounded-sm overflow-hidden mt-6">
-          <div className="border-b border-slate-100 py-4 px-6 bg-white">
-            <h2 className="text-[15px] font-bold text-[#555]">List</h2>
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm overflow-hidden mt-6">
+          <div className="border-b border-slate-100 dark:border-zinc-800 py-4 px-6 bg-white dark:bg-zinc-900">
+            <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300">List</h2>
           </div>
           <CardContent className="p-4">
             <div className="overflow-x-auto">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6]">
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">#</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Company</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Package</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Status</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Type</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Amount</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Method</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] text-left">Create/verify</TableHead>
+                  <TableRow className="border-b-0 bg-[#d9f2e6] dark:bg-zinc-900 hover:bg-[#d9f2e6] dark:hover:bg-zinc-900">
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">#</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Company</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Package</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Status</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Type</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Amount</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Method</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Create/verify</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {!applied ? (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
@@ -318,7 +318,7 @@ export default function DepartmentReport() {
                     </TableRow>
                   ) : query.isError ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center text-[#d9534f] py-8">
+                      <TableCell colSpan={8} className="text-center text-[#d9534f] dark:text-red-400 py-8">
                         Could not load the department report. Please try again.
                       </TableCell>
                     </TableRow>
@@ -330,15 +330,15 @@ export default function DepartmentReport() {
                     </TableRow>
                   ) : (
                     rows.map((item, idx) => (
-                      <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
-                        <TableCell className="py-4 px-4 text-[#555]">{idx + 1}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.company_name || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.package_type || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.status || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.entry_type || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.amount_pkr ?? item.amount_usd ?? "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{item.payment_status || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555]">{fmtDate(item.approved_at || item.created_at)}</TableCell>
+                      <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.company_name || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.package_type || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.entry_type || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.amount_pkr ?? item.amount_usd ?? "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.payment_status || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{fmtDate(item.approved_at || item.created_at)}</TableCell>
                       </TableRow>
                     ))
                   )}

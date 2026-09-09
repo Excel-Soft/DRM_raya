@@ -1,9 +1,9 @@
 import { Router, type Request, type Response, type Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { rolesRepository } from "../repositories/roles.repository";
-import { urlPermissionsRepository } from "../repositories/url-permissions.repository";
-import { policiesRepository } from "../repositories/policies.repository";
-import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
+import { authMiddleware } from "./auth.middleware";
+import { rolesRepository } from "./repositories/roles.repository";
+import { urlPermissionsRepository } from "./repositories/url-permissions.repository";
+import { policiesRepository } from "./repositories/policies.repository";
+import { allowedIpsRepository } from "./repositories/allowed-ips.repository";
 import {
   insertRoleSchema,
   insertUrlPermissionSchema,
@@ -11,9 +11,11 @@ import {
   insertAllowedIpSchema,
   attributes
 } from "@shared/schema";
-import { db } from "../db";
+import { db } from "./db";
 import { eq } from "drizzle-orm";
-import { ActivityLogService } from "../services/activity-service";
+import { ActivityLogService } from "./services/activity-service";
+import { getConfig, patchConfig } from "./services/gm-sales-config.service";
+import { AuditLogService } from "./services/audit-log.service";
 
 // Accepts a bare IPv4/IPv6 address or a CIDR block (e.g. 192.168.1.0/24,
 // 2001:db8::/32). Kept intentionally conservative — it rejects obviously
@@ -383,6 +385,47 @@ export function registerSettingsRoutes(app: Express) {
     } catch (error: any) {
       console.error("Error deleting allowed IP:", error);
       res.status(500).json({ error: "Failed to delete allowed IP" });
+    }
+  });
+
+  // ========================================
+  // GM Sales Workflow Config Routes (MD-8 Admin Feature Toggle Controls)
+  // ========================================
+  settingsRouter.get("/gm-sales-config", async (req: Request, res: Response) => {
+    try {
+      const data = await getConfig();
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error fetching GM sales config:", error);
+      res.status(500).json({ error: "Failed to fetch GM sales config" });
+    }
+  });
+
+  settingsRouter.patch("/gm-sales-config", async (req: Request, res: Response) => {
+    try {
+      const userId = (req.user as any)?.userId;
+      const userRole = String((req.user as any)?.activeRoleId || (req.user as any)?.roleId || "").toLowerCase();
+      if (!["admin", "super_hod"].includes(userRole)) {
+        return res.status(403).json({ error: "Only Admins and Super HODs can update GM sales configuration." });
+      }
+
+      const result = await patchConfig(req.body, userId);
+      await AuditLogService.record({
+        actorUserId: userId,
+        actorRole: userRole,
+        action: "gm_sales_config.update",
+        module: "settings",
+        entityType: "gm_sales_config",
+        entityId: "system",
+        after: result.config,
+        reason: "Administrative configuration update",
+        req,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (error: any) {
+      console.error("Error updating GM sales config:", error);
+      res.status(400).json({ error: error.message || "Failed to update GM sales config" });
     }
   });
 

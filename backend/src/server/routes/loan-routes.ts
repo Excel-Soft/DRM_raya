@@ -1,12 +1,16 @@
 import type { Express } from "express";
-import { loanRepository } from "../repositories/loan.repository";
+import { loanRepository } from "./repositories/loan.repository";
 import { insertLoanRequestSchema, insertLoanRequestAdminSchema } from "@shared/schema";
-import { db } from "../db";
+import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "../utils/role-utils";
-import { requireActionPermission } from "../middleware/action-permission";
-import { ActivityLogService } from "../services/activity-service";
+import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
+import { ActivityLogService } from "./services/activity-service";
+import { z } from "zod";
+
+const loanRejectSchema = z.object({ reason: z.string().trim().max(2000).optional() }).strict();
+const loanPayInstallmentSchema = z.object({ amount: z.coerce.number().positive("Valid payment amount is required") }).strict();
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -120,8 +124,11 @@ export function registerLoanRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
+      const { amount, detail, installmentAmount } = req.body ?? {};
       const parseResult = insertLoanRequestSchema.safeParse({
-        ...req.body,
+        amount,
+        detail,
+        installmentAmount,
         userId,
       });
 
@@ -136,6 +143,13 @@ export function registerLoanRoutes(app: Express) {
       console.log(`[LOAN] Creating request for user:`, userId);
       const record = await loanRepository.create(parseResult.data);
       console.log(`[LOAN] Created successfully:`, record.id);
+      await ActivityLogService.log({
+        userId,
+        action: "LOAN_REQUEST_CREATED",
+        resourceType: "loan_request",
+        resourceId: record.id,
+        details: `Requested amount: ${record.amount}, installment: ${record.installmentAmount}`,
+      });
       res.status(201).json(record);
     } catch (error) {
       console.error("[LOAN] Error creating loan request:", error);
@@ -181,6 +195,13 @@ export function registerLoanRoutes(app: Express) {
       console.log(`[LOAN_ADMIN] Creating loan for user: ${parseResult.data.userId} by admin: ${req.user.userId}`);
       const record = await loanRepository.create(parseResult.data);
       console.log(`[LOAN_ADMIN] Created successfully:`, record.id);
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "LOAN_REQUEST_CREATED_BY_ADMIN",
+        resourceType: "loan_request",
+        resourceId: record.id,
+        details: `Requested on behalf of ${parseResult.data.userId}. Amount: ${record.amount}`,
+      });
       res.status(201).json(record);
     } catch (error) {
       console.error("[LOAN_ADMIN] Error creating loan request:", error);
@@ -203,6 +224,14 @@ export function registerLoanRoutes(app: Express) {
           error: "Cannot delete this request. It may not exist, not belong to you, or is no longer pending."
         });
       }
+
+      await ActivityLogService.log({
+        userId,
+        action: "LOAN_REQUEST_CANCELLED",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `Cancelled by owner`,
+      });
 
       res.json({ message: "Loan request deleted successfully" });
     } catch (error) {
@@ -307,7 +336,8 @@ export function registerLoanRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { reason } = req.body;
+      const _rejParsed = loanRejectSchema.safeParse(req.body);
+      const reason = _rejParsed.success ? _rejParsed.data.reason : undefined;
 
       // Only managerial roles may reject loan requests.
       if (!isManagerialRole(callerRole(req))) {
@@ -364,6 +394,14 @@ export function registerLoanRoutes(app: Express) {
         });
       }
 
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "LOAN_COMPLETED",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `Marked completed by admin`,
+      });
+
       res.json(record);
     } catch (error) {
       console.error("Error completing loan:", error);
@@ -383,10 +421,11 @@ export function registerLoanRoutes(app: Express) {
         return res.status(403).json({ error: "You are not authorized to record loan payments." });
       }
 
-      const { amount } = req.body;
-      if (!amount || isNaN(parseFloat(amount))) {
-        return res.status(400).json({ error: "Valid payment amount is required" });
+      const _payParsed = loanPayInstallmentSchema.safeParse(req.body);
+      if (!_payParsed.success) {
+        return res.status(400).json({ error: "Valid payment amount is required", issues: _payParsed.error.issues });
       }
+      const { amount } = _payParsed.data;
 
       const loan = await loanRepository.findById(req.params.id);
       if (!loan) {
@@ -398,7 +437,7 @@ export function registerLoanRoutes(app: Express) {
       }
 
       const currentRemaining = parseFloat(loan.remainingAmount as string) || 0;
-      const paymentAmount = parseFloat(amount);
+      const paymentAmount = Number(amount);
       const newRemaining = currentRemaining - paymentAmount;
 
       const record = await loanRepository.updateRemainingAmount(req.params.id, newRemaining);
@@ -406,6 +445,14 @@ export function registerLoanRoutes(app: Express) {
       if (!record) {
         return res.status(400).json({ error: "Failed to update loan" });
       }
+
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "LOAN_INSTALLMENT_PAID",
+        resourceType: "loan_request",
+        resourceId: req.params.id,
+        details: `Installment amount: ${paymentAmount}, new remaining: ${newRemaining}`,
+      });
 
       res.json(record);
     } catch (error) {

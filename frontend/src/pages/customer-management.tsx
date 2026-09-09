@@ -63,6 +63,7 @@ import {
   ChevronLeft,
   ChevronRight,
   UserCheck,
+  UserPlus,
   Loader2,
   Download,
 } from "lucide-react";
@@ -71,6 +72,7 @@ import type { Customer, Opportunity, Service } from "@shared/schema";
 type CustomerWithOpportunity = Customer & {
   opportunity?: Opportunity;
   isTemp?: boolean;
+  salesPersonName?: string | null;
 };
 
 type FollowUpDetail = {
@@ -215,6 +217,9 @@ export default function CustomerManagement() {
     if (gradeFilter && gradeFilter !== "all") params.append("grade", gradeFilter);
     params.append("sortBy", sortBy);
     params.append("sortOrder", sortOrder);
+    // Customer Management is the sales exec's Private Pool workspace — scope
+    // to it so customers sitting in other pools (Service, Public) don't leak in.
+    params.append("poolType", "Private");
     return params.toString();
   };
 
@@ -233,6 +238,7 @@ export default function CustomerManagement() {
       if (gradeFilter && gradeFilter !== "all") params.append("grade", gradeFilter);
       params.append("sortBy", sortBy);
       params.append("sortOrder", sortOrder);
+      params.append("poolType", "Private");
 
       const res = await apiRequest("GET", `/api/sales/customers?${params.toString()}`);
       const json = await res.json();
@@ -248,6 +254,7 @@ export default function CustomerManagement() {
 
       const columns: { key: string; label: string; get: (r: any) => any }[] = [
         { key: "drmId", label: "DRM ID", get: (r) => r.drmId },
+        { key: "crmId", label: "CRM ID", get: (r) => r.crmId },
         { key: "companyName", label: "Company Name", get: (r) => r.companyName },
         { key: "accountName", label: "Account Name", get: (r) => r.accountName },
         { key: "personName", label: "Contact Person", get: (r) => r.personName },
@@ -364,6 +371,43 @@ export default function CustomerManagement() {
     },
     onError: () => {
       toast({ title: "Failed to update stage", variant: "destructive" });
+    },
+  });
+
+  const pickCustomerMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      return apiRequest("POST", `/api/sales/customers/${customerId}/pick`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/customers/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/list"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/summary"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/tracing/summary"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/pools"], exact: false });
+      toast({ title: "Customer Moved to Public Pool", description: "Customer is now available in Public Pool for all Sales Executives." });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to pick customer",
+        description: err?.message || "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const markFocusMutation = useMutation({
+    mutationFn: async (customerIds: string[]) => {
+      return apiRequest("PATCH", "/api/sales/customers/mark-focus", { customerIds, focus: true });
+    },
+    onSuccess: (_data, customerIds) => {
+      queryClient.invalidateQueries({ queryKey: ["customers"] });
+      setSelectedCustomers(new Set());
+      toast({ title: `Marked ${customerIds.length} customer${customerIds.length > 1 ? "s" : ""} as focus` });
+    },
+    onError: () => {
+      toast({ title: "Failed to mark as focus", variant: "destructive" });
     },
   });
 
@@ -686,20 +730,23 @@ export default function CustomerManagement() {
         <Card className="shadow-none border-none">
           <CardContent className="p-0">
             <div className="w-full overflow-x-auto min-w-0">
-              <Table className="w-full table-fixed min-w-[950px]">
+              <Table className="w-full table-fixed min-w-[1420px]">
                 <colgroup>
                   <col className="w-[30px]" />
-                  <col className="w-[70px]" />
-                  <col className="w-[120px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[150px]" />
-                  <col className="w-[100px]" />
-                  <col className="w-[90px]" />
-                  <col className="w-[60px]" />
                   <col className="w-[80px]" />
+                  <col className="w-[90px]" />
                   <col className="w-[130px]" />
+                  <col className="w-[90px]" />
+                  <col className="w-[110px]" />
+                  <col className="w-[160px]" />
+                  <col className="w-[100px]" />
+                  <col className="w-[80px]" />
                   <col className="w-[100px]" />
                   <col className="w-[70px]" />
+                  <col className="w-[90px]" />
+                  <col className="w-[110px]" />
+                  <col className="w-[90px]" />
+                  <col className="w-[90px]" />
                 </colgroup>
                 <TableHeader>
                   <TableRow className="h-8">
@@ -714,7 +761,8 @@ export default function CustomerManagement() {
                         data-testid="checkbox-select-all"
                       />
                     </TableHead>
-                    <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">ID</TableHead>
+                    <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">DRM ID</TableHead>
+                    <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">CRM ID</TableHead>
                     <TableHead
                       className="py-1 px-1 text-[10px] font-medium cursor-pointer hover:bg-muted/50 transition-colors"
                       onClick={() => handleSort("companyName")}
@@ -725,6 +773,7 @@ export default function CustomerManagement() {
                         {sortBy === "companyName" && (sortOrder === "asc" ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />)}
                       </div>
                     </TableHead>
+                    <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">Sale Person</TableHead>
                     <TableHead className="py-1 px-1 text-[10px] font-medium">Account Holder</TableHead>
                     <TableHead
                       className="py-1 px-1 text-[10px] font-medium cursor-pointer hover:bg-muted/50 transition-colors"
@@ -738,6 +787,7 @@ export default function CustomerManagement() {
                     </TableHead>
                     <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">Phone</TableHead>
                     <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">NTN</TableHead>
+                    <TableHead className="py-1 px-1 text-[10px] font-medium whitespace-nowrap">CNIC</TableHead>
                     <TableHead
                       className="py-1 px-1 text-[10px] font-medium cursor-pointer hover:bg-muted/50 transition-colors whitespace-nowrap text-center"
                       onClick={() => handleSort("grade")}
@@ -767,14 +817,14 @@ export default function CustomerManagement() {
                   {loadingCustomers ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <TableRow key={i}>
-                        <TableCell colSpan={12} className="py-3 px-3">
+                        <TableCell colSpan={15} className="py-3 px-3">
                           <Skeleton className="h-6 w-full" />
                         </TableCell>
                       </TableRow>
                     ))
                   ) : customerRows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} className="text-center py-12">
+                      <TableCell colSpan={15} className="text-center py-12">
                         <Users className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
                         <p className="text-muted-foreground">No customers found</p>
                       </TableCell>
@@ -796,6 +846,9 @@ export default function CustomerManagement() {
                           </TableCell>
                           <TableCell className="py-1 px-1 font-mono text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 whitespace-nowrap bg-emerald-50/30 dark:bg-emerald-950/30">
                             {customer.drmId || (customer.id || "").slice(0, 8)}
+                          </TableCell>
+                          <TableCell className="py-1 px-1 font-mono text-[10px] whitespace-nowrap text-muted-foreground">
+                            {(customer as any).crmId || "—"}
                           </TableCell>
                           <TableCell className="py-1 px-1 font-medium text-[10px]">
                             <div className="flex items-center gap-2">
@@ -820,14 +873,24 @@ export default function CustomerManagement() {
                                   Lead
                                 </Badge>
                               )}
+                              {(customer as any).isFocus && (
+                                <Star
+                                  className="h-3 w-3 shrink-0 fill-amber-400 text-amber-500"
+                                  data-testid={`icon-focus-${customer.id}`}
+                                >
+                                  <title>Marked as Focus</title>
+                                </Star>
+                              )}
                             </div>
                           </TableCell>
+                          <TableCell className="py-1 px-1 text-[10px] truncate max-w-[110px]">{customer.salesPersonName || "—"}</TableCell>
                           <TableCell className="py-1 px-1 text-[10px] truncate max-w-[100px]">{customer.accountName || "—"}</TableCell>
                           <TableCell className="py-1 px-1 text-[10px]">
                             <div className="truncate max-w-[140px]" title={customer.email || ""}>{customer.email || "—"}</div>
                           </TableCell>
                           <TableCell className="py-1 px-1 font-mono text-[10px] whitespace-nowrap">{customer.phone || "—"}</TableCell>
                           <TableCell className="py-1 px-1 text-muted-foreground whitespace-nowrap text-[10px]">{customer.ntn || "—"}</TableCell>
+                          <TableCell className="py-1 px-1 text-muted-foreground whitespace-nowrap text-[10px]">{(customer as any).cnic || "—"}</TableCell>
                           <TableCell className="py-1 px-1 text-center">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -876,7 +939,7 @@ export default function CustomerManagement() {
                               {customer.lastNote || "-"}
                             </p>
                           </TableCell>
-                          <TableCell className="py-1 px-1 text-[10px] text-muted-foreground whitespace-nowrap">
+                          <TableCell className="py-1 px-1 text-[10px] text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis">
                             {customer.createdAt ? format(new Date(customer.createdAt), "MMM dd, yy") : "—"}
                           </TableCell>
                           <TableCell className="text-right">
@@ -918,6 +981,10 @@ export default function CustomerManagement() {
                                     <History className="h-4 w-4 mr-2" />
                                     View History
                                   </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => pickCustomerMutation.mutate(customer.id)}>
+                                    <UserPlus className="h-4 w-4 mr-2 text-emerald-600" />
+                                    Move Customer
+                                  </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
                                     onClick={() =>
@@ -952,7 +1019,7 @@ export default function CustomerManagement() {
                         {/* Expandable Follow-up Details */}
                         {expandedCustomer === customer.id && (
                           <TableRow className="bg-muted/30">
-                            <TableCell colSpan={12} className="p-4">
+                            <TableCell colSpan={15} className="p-4">
                               <div className="space-y-3">
                                 <h4 className="font-semibold text-sm flex items-center gap-2">
                                   <History className="h-4 w-4" />
@@ -1069,9 +1136,24 @@ export default function CustomerManagement() {
               <Button size="sm" variant="outline" onClick={() => setSelectedCustomers(new Set())}>
                 Clear Selection
               </Button>
-              <Button size="sm">
+              <Button
+                size="sm"
+                disabled={markFocusMutation.isPending}
+                onClick={() => {
+                  // Only real customers carry the focus flag — Temp Contact
+                  // "leads" in the same list (customer.isTemp) don't have it.
+                  const focusableIds = customerRows
+                    .filter((c: any) => selectedCustomers.has(c.id) && !c.isTemp)
+                    .map((c: any) => c.id);
+                  if (focusableIds.length === 0) {
+                    toast({ title: "Selected leads can't be marked as focus", description: "Only customers support the focus flag.", variant: "destructive" });
+                    return;
+                  }
+                  markFocusMutation.mutate(focusableIds);
+                }}
+              >
                 <Star className="h-4 w-4 mr-1" />
-                Mark as Focus
+                {markFocusMutation.isPending ? "Marking..." : "Mark as Focus"}
               </Button>
             </CardContent>
           </Card>

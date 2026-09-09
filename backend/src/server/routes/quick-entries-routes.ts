@@ -1,7 +1,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { authMiddleware } from "./auth.middleware";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { safePage, safePageSize } from "./utils/sql-safety";
 
 function shortLog(method: string, path: string, status: number, ms: number) {
   console.log(`[${new Date().toISOString()}] ${method} ${path} -> ${status} (${ms}ms)`);
@@ -25,8 +26,8 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.get("/api/duplicates", requireRoles(["sales_executive", "manager", "hod", "admin"]), async (req, res) => {
     const start = Date.now();
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const offset = (page - 1) * pageSize;
       const company = (req.query.company as string) || "";
       const email = (req.query.email as string) || "";
@@ -41,7 +42,7 @@ export function registerQuickEntriesRoutes(app: Express) {
       if (ntn) { params.push(`%${ntn}%`); where += ` and cc.ntn ilike $${params.length}`; }
 
       const listSql = `
-        select c.id, c.company_name as "companyName", cc.email, cc.phone, cc.ntn, c.created_by as "ownerUserId"
+        select c.id, c.drm_id as "drmId", c.company_name as "companyName", cc.email, cc.phone, cc.ntn, c.created_by as "ownerUserId"
           from drm.customers c
           left join customer_contacts cc on cc.customer_id = c.id and cc.is_primary = true
           ${where}
@@ -98,8 +99,8 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.get("/api/leaves", async (req, res) => {
     const start = Date.now();
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const status = (req.query.status as string) || "";
       const mine = String(req.query.mine ?? "true") === "true";
       const offset = (page - 1) * pageSize;
@@ -222,8 +223,8 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.get("/api/overtime", async (req, res) => {
     const start = Date.now();
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const status = (req.query.status as string) || "";
       const mine = String(req.query.mine ?? "true") === "true";
       const offset = (page - 1) * pageSize;
@@ -307,8 +308,8 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.get("/api/tasks", async (req, res) => {
     const start = Date.now();
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const status = (req.query.status as string) || "";
       const offset = (page - 1) * pageSize;
       const isManager = isManagerialRole(req.user!.roleId);
@@ -386,8 +387,8 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.get("/api/team-targets", requireRoles(["manager", "hod", "admin"]), async (req, res) => {
     const start = Date.now();
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const offset = (page - 1) * pageSize;
       const userId = req.query.userId as string | undefined;
       const periodType = (req.query.periodType as string) || "monthly";

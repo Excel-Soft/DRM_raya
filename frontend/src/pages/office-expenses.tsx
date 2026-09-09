@@ -66,12 +66,12 @@ const TRANSACTIONAL_HEADS = [
 const MultiSelectDropdown = ({ options, selected, onChange, placeholder }: { options: string[], selected: string[], onChange: (val: string[]) => void, placeholder: string }) => {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex h-9 w-full items-center justify-between whitespace-nowrap rounded-[4px] border border-gray-300 bg-white px-3 py-2 text-[13px] text-gray-500 shadow-sm focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
+      <DropdownMenuTrigger className="flex h-9 w-full items-center justify-between whitespace-nowrap rounded-[4px] border border-gray-300 bg-white dark:bg-zinc-900 px-3 py-2 text-[13px] text-gray-500 shadow-sm focus:outline-none disabled:cursor-not-allowed disabled:opacity-50">
         <span className="truncate">{selected.length > 0 ? (selected.includes("all") ? "All" : selected.join(", ")) : placeholder}</span>
         <ChevronDown className="h-4 w-4 opacity-50" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[200px] p-0 bg-white shadow-md border border-gray-200">
-        <div className="px-3 py-2 border-b border-gray-100 text-[13px] text-gray-500 font-sans cursor-text bg-white">
+      <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] min-w-[200px] p-0 bg-white dark:bg-zinc-900 shadow-md border border-gray-200">
+        <div className="px-3 py-2 border-b border-gray-100 text-[13px] text-gray-500 font-sans cursor-text bg-white dark:bg-zinc-900">
           |{placeholder}
         </div>
         <DropdownMenuCheckboxItem 
@@ -382,7 +382,7 @@ export default function OfficeExpenses() {
 
   return (
     <ScrollArea className="flex-1 bg-[#f4f6f9] dark:bg-zinc-950">
-      <div className="p-4 space-y-4 font-sans text-[#333]">
+      <div className="p-4 space-y-4 font-sans text-[#333] dark:text-zinc-300">
         
         {/* Page Title */}
         <h1 className="text-[16px] font-semibold text-[#555] uppercase mb-2">
@@ -390,7 +390,7 @@ export default function OfficeExpenses() {
         </h1>
 
         {/* Filter Block */}
-        <div className="bg-white p-5 rounded shadow-sm border border-gray-100">
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100">
           <div className="mb-6">
             <Button 
               onClick={openCreate} 
@@ -456,7 +456,7 @@ export default function OfficeExpenses() {
         </div>
 
         {/* List Block */}
-        <div className="bg-white p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
           <h2 className="text-[15px] font-semibold text-[#555] mb-4">Expense List</h2>
           
           <div className="flex gap-2 mb-4">
@@ -478,18 +478,18 @@ export default function OfficeExpenses() {
 
           <div className="w-full">
             <Table>
-              <TableHeader className="bg-[#fce9e8]">
+              <TableHeader className="bg-[#fce9e8] dark:bg-zinc-900">
                 <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10 w-12 text-center">#</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Date</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Branch</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Head</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Detail</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Voucher Number</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Amount</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10">Created By</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10 text-center">Receipt</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[12px] h-10 text-center">Action</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10 w-12 text-center">#</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Date</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Branch</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Head</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Detail</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Voucher Number</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Amount</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10">Created By</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10 text-center">Receipt</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[12px] h-10 text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -507,7 +507,7 @@ export default function OfficeExpenses() {
                   </TableRow>
                 ) : (
                   paginatedExpenses.map((expense, index) => (
-                    <TableRow key={expense.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                    <TableRow key={expense.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
                       <TableCell className="text-center text-[13px] text-gray-700 py-2.5">
                         {(currentPage - 1) * rowsPerPage + index + 1}
                       </TableCell>
@@ -562,7 +562,7 @@ export default function OfficeExpenses() {
             </Table>
             
             {/* Table Footer */}
-            <div className="flex bg-[#f8f9fa] border-t border-gray-200">
+            <div className="flex bg-[#f8f9fa] dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800">
               <div className="flex-1 flex justify-end pr-10 items-center py-2">
                 <span className="text-[13px] font-bold text-gray-800 mr-12">Total:</span>
                 <span className="text-[13px] text-gray-800">{formatCurrency(totalAmount.toString())}</span>
@@ -713,7 +713,7 @@ export default function OfficeExpenses() {
                   <div className="bg-[#f4f6f9] border border-r-0 border-gray-300 text-gray-600 px-4 py-2 text-[13px] rounded-l shrink-0 h-10 flex items-center pointer-events-none">
                     Choose Files
                   </div>
-                  <div className="border border-gray-300 px-3 py-2 text-[13px] text-gray-500 flex-1 h-10 flex items-center bg-white truncate pointer-events-none">
+                  <div className="border border-gray-300 px-3 py-2 text-[13px] text-gray-500 flex-1 h-10 flex items-center bg-white dark:bg-zinc-900 truncate pointer-events-none">
                     {formData.fileName || "No file chosen"}
                   </div>
                   <div className="bg-[#2bc185] hover:bg-[#25a873] flex items-center justify-center w-12 rounded-r shrink-0 h-10 border border-[#2bc185] pointer-events-none">
@@ -739,11 +739,11 @@ export default function OfficeExpenses() {
 
             </div>
 
-            <DialogFooter className="bg-[#f8f9fa] p-4 border-t border-gray-100 flex gap-2 justify-end rounded-b-md sm:justify-end">
+            <DialogFooter className="bg-[#f8f9fa] dark:bg-zinc-900 p-4 border-t border-gray-100 dark:border-zinc-800 flex gap-2 justify-end rounded-b-md sm:justify-end">
               <Button 
                 variant="outline" 
                 onClick={() => setDialogOpen(false)}
-                className="bg-[#f0f1f5] text-[#333] hover:bg-[#e2e4e9] border-0 h-10 px-6 font-medium text-sm rounded-[4px]"
+                className="bg-[#f0f1f5] text-[#333] dark:text-zinc-300 hover:bg-[#e2e4e9] border-0 h-10 px-6 font-medium text-sm rounded-[4px]"
               >
                 Close
               </Button>

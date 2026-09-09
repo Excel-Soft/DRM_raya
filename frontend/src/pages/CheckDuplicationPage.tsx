@@ -32,32 +32,6 @@ function parseEmailOrPhone(value: string): { email?: string; phone?: string } {
   return { phone: v };
 }
 
-function generateFallbackDrmId(company: string, country: string, id: string): string {
-  let countryCode = "PK";
-  if (country) {
-    const c = country.trim().toUpperCase();
-    if (c === "PAKISTAN" || c === "OTHER") countryCode = "PK";
-    else if (c === "UNITED ARAB EMIRATES" || c === "UAE") countryCode = "AE";
-    else if (c.length >= 2) countryCode = c.substring(0, 2);
-  }
-
-  let initials = "";
-  if (company) {
-    const words = company.trim().split(/\s+/);
-    if (words.length > 0) {
-      initials = words
-        .map((w) => w[0])
-        .join("")
-        .toUpperCase()
-        .substring(0, 5);
-    }
-  }
-  if (!initials) initials = "CO";
-
-  const uniquePart = (id || "").substring(0, 8);
-  return `${countryCode}${initials}${uniquePart}`.trim();
-}
-
 export default function CheckDuplicationPage() {
   const [companyQuery, setCompanyQuery] = useState("");
   const [emailQuery, setEmailQuery] = useState("");
@@ -267,7 +241,7 @@ export default function CheckDuplicationPage() {
             <tbody>
               {hasSearch && visibleRows.length > 0 ? (
                 visibleRows.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors dark:border-zinc-800">
+                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
                     <td className="py-4 px-4 w-12 text-[13px]">
                       <input
                         type="checkbox"
@@ -278,7 +252,7 @@ export default function CheckDuplicationPage() {
                       />
                     </td>
                     <td className="py-4 px-4 text-[13px] font-bold text-slate-600 dark:text-zinc-300">
-                      {r.drmId || generateFallbackDrmId(r.company, r.country || "", r.id)}
+                      {r.drmId || "—"}
                     </td>
                     <td className="py-4 px-4 text-[13px] font-semibold text-slate-500 uppercase dark:text-zinc-400">{r.company}</td>
                     <td className="py-4 px-4 text-[13px] font-medium text-slate-500 dark:text-zinc-400">{r.holder}</td>

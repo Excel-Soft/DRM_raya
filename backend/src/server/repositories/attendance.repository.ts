@@ -10,6 +10,7 @@ export type Attendance = {
   status: string;
   notes: string | null;
   workingHours?: number;
+  lateMinutes?: number;
   createdAt?: Date;
   updatedAt?: Date;
 };
@@ -32,6 +33,10 @@ export type SalaryDetails = {
   daysOnLeave: number;
   effectiveWorkingDays: number;
   totalWorkingHours: number;
+  // Sum of minutes late across all late check-ins in the period. Informational
+  // only — there is no defined deduction-per-late-minute rate/policy anywhere
+  // in this system, so this value is surfaced but never converted to money.
+  totalLateMinutes: number;
 };
 
 export class AttendanceRepository {
@@ -43,11 +48,13 @@ export class AttendanceRepository {
       alter table attendance
         add column if not exists late_checkin boolean not null default false,
         add column if not exists late_checkout boolean not null default false,
-        add column if not exists is_late boolean not null default false;
+        add column if not exists is_late boolean not null default false,
+        add column if not exists late_minutes integer not null default 0;
       update attendance
          set late_checkin = coalesce(late_checkin, false),
              late_checkout = coalesce(late_checkout, false),
-             is_late = coalesce(is_late, false)
+             is_late = coalesce(is_late, false),
+             late_minutes = coalesce(late_minutes, 0)
        where 1=1;
     `);
     this.ensured = true;
@@ -78,10 +85,19 @@ export class AttendanceRepository {
   private computeLateFlags(checkIn?: Date | null, checkOut?: Date | null) {
     let lateCheckin = false;
     let lateCheckout = false;
+    let lateMinutes = 0;
     if (checkIn) {
       const { hour, minute } = this.getLocalHM(checkIn);
       const cutoff = attendancePolicy.checkInCutoff;
       lateCheckin = hour > cutoff.hour || (hour === cutoff.hour && minute > cutoff.minute);
+      if (lateCheckin) {
+        // Minutes late = actual check-in time minus the policy cutoff, in
+        // minutes-since-midnight. This is the only numeric "late minutes"
+        // quantity tracked by the system — see getSalaryDetails/attendance
+        // routes for how it is surfaced (informational; no deduction rate
+        // is defined, so it is never converted to money).
+        lateMinutes = Math.max(0, (hour * 60 + minute) - (cutoff.hour * 60 + cutoff.minute));
+      }
     }
     if (checkOut) {
       const { hour, minute } = this.getLocalHM(checkOut);
@@ -92,6 +108,7 @@ export class AttendanceRepository {
       lateCheckin,
       lateCheckout,
       isLate: lateCheckin || lateCheckout,
+      lateMinutes,
     };
   }
 
@@ -117,6 +134,7 @@ export class AttendanceRepository {
               late_checkin as "lateCheckin",
               late_checkout as "lateCheckout",
               is_late as "isLate",
+              late_minutes as "lateMinutes",
               notes,
               created_at as "createdAt",
               updated_at as "updatedAt"
@@ -144,6 +162,7 @@ export class AttendanceRepository {
         timeIn,
         timeOut,
         workingHours,
+        lateMinutes: Number(row.lateMinutes || 0),
       } as Attendance;
     });
   }
@@ -231,6 +250,7 @@ export class AttendanceRepository {
       daysOnLeave: 0,
       effectiveWorkingDays: 0,
       totalWorkingHours: 0,
+      totalLateMinutes: 0,
     };
 
     for (const record of records) {
@@ -239,6 +259,8 @@ export class AttendanceRepository {
         const hoursWorked = (record.timeOut.getTime() - record.timeIn.getTime()) / (1000 * 60 * 60);
         details.totalWorkingHours += Math.max(0, hoursWorked);
       }
+
+      details.totalLateMinutes += record.lateMinutes || 0;
 
       switch (record.status) {
         case "Present":
@@ -288,10 +310,10 @@ export class AttendanceRepository {
     this.logDebugFlags(flags, "create");
     const status = data.status ?? (flags.isLate ? "Late" : "Present");
     const result = await pool.query(
-      `insert into attendance (user_id, date, check_in, check_out, status, notes, late_checkin, late_checkout, is_late, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+      `insert into attendance (user_id, date, check_in, check_out, status, notes, late_checkin, late_checkout, is_late, late_minutes, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
        returning id, user_id as "userId", date, check_in as "timeIn", check_out as "timeOut", status, notes,
-                 late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate",
+                 late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate", late_minutes as "lateMinutes",
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         data.userId,
@@ -303,6 +325,7 @@ export class AttendanceRepository {
         flags.lateCheckin,
         flags.lateCheckout,
         flags.isLate,
+        flags.lateMinutes,
       ],
     );
     const row = result.rows[0];
@@ -315,6 +338,7 @@ export class AttendanceRepository {
       lateCheckin: row.lateCheckin ?? flags.lateCheckin ?? false,
       lateCheckout: row.lateCheckout ?? flags.lateCheckout ?? false,
       isLate: row.isLate ?? flags.isLate ?? false,
+      lateMinutes: Number(row.lateMinutes ?? flags.lateMinutes ?? 0),
       workingHours:
         timeIn && timeOut
           ? Math.max(0, (new Date(timeOut).getTime() - new Date(timeIn).getTime()) / (1000 * 60 * 60))
@@ -338,10 +362,10 @@ export class AttendanceRepository {
 
     if (existing.rows[0]) {
       const updated = await pool.query(
-        `update attendance set check_in = $1, late_checkin = $2, is_late = $3, status = case when status = 'Absent' then $4 else (case when $3 then 'Late' else 'Present' end) end, updated_at = now() where id = $5
+        `update attendance set check_in = $1, late_checkin = $2, is_late = $3, late_minutes = $4, status = case when status = 'Absent' then $5 else (case when $3 then 'Late' else 'Present' end) end, updated_at = now() where id = $6
          returning id, user_id as "userId", date, check_in as "timeIn", check_out as "timeOut", status, notes,
-                   late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate"`,
-        [now, flags.lateCheckin, flags.isLate, status, existing.rows[0].id],
+                   late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate", late_minutes as "lateMinutes"`,
+        [now, flags.lateCheckin, flags.isLate, flags.lateMinutes, status, existing.rows[0].id],
       );
       const row = updated.rows[0];
       const timeIn = row.timeIn ?? row.check_in ?? null;
@@ -353,6 +377,7 @@ export class AttendanceRepository {
         lateCheckin: row.lateCheckin ?? flags.lateCheckin ?? false,
         lateCheckout: row.lateCheckout ?? false,
         isLate: row.isLate ?? flags.isLate ?? false,
+        lateMinutes: Number(row.lateMinutes ?? flags.lateMinutes ?? 0),
         workingHours:
           timeIn && timeOut
             ? Math.max(0, (new Date(timeOut).getTime() - new Date(timeIn).getTime()) / (1000 * 60 * 60))
@@ -394,10 +419,10 @@ export class AttendanceRepository {
              updated_at = now()
        where id = $5
        returning id, user_id as "userId", date, check_in as "timeIn", check_out as "timeOut", status, notes,
-                 late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate"`,
+                 late_checkin as "lateCheckin", late_checkout as "lateCheckout", is_late as "isLate", late_minutes as "lateMinutes"`,
       [now, flags.lateCheckin, flags.lateCheckout, flags.isLate ? "Late" : "Present", existing.rows[0].id],
     );
-    
+
     const row = updated.rows[0];
     const timeIn = row.timeIn ?? row.check_in ?? null;
     const timeOut = row.timeOut ?? row.check_out ?? null;
@@ -408,6 +433,7 @@ export class AttendanceRepository {
       lateCheckin: row.lateCheckin ?? flags.lateCheckin ?? false,
       lateCheckout: row.lateCheckout ?? flags.lateCheckout ?? false,
       isLate: row.isLate ?? flags.isLate ?? false,
+      lateMinutes: Number(row.lateMinutes ?? flags.lateMinutes ?? 0),
       workingHours:
         timeIn && timeOut
           ? Math.max(0, (new Date(timeOut).getTime() - new Date(timeIn).getTime()) / (1000 * 60 * 60))

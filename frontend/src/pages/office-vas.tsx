@@ -47,15 +47,15 @@ export default function OfficeVasPage() {
 
   return (
     <ScrollArea className="flex-1 bg-[#f4f6f9] dark:bg-zinc-950">
-      <div className="p-5 space-y-5 font-sans text-[#333]">
+      <div className="p-5 space-y-5 font-sans text-[#333] dark:text-zinc-300">
         
         {/* Page Title */}
-        <h1 className="text-[16px] font-bold text-[#555] uppercase mb-4 tracking-wide">
+        <h1 className="text-[16px] font-bold text-[#555] dark:text-zinc-300 uppercase mb-4 tracking-wide">
           VAS SYSTEM
         </h1>
 
         {/* Filter Block */}
-        <div className="bg-white p-5 rounded shadow-sm border border-gray-100">
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 mb-5">
             <div className="space-y-2">
               <Label className="text-[13px] font-semibold text-gray-700">Start Date</Label>
@@ -86,18 +86,18 @@ export default function OfficeVasPage() {
         </div>
 
         {/* List Block */}
-        <div className="bg-white p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
-          <h2 className="text-[14px] font-bold text-[#555] mb-4">VAS View</h2>
+        <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
+          <h2 className="text-[14px] font-bold text-[#555] dark:text-zinc-300 mb-4">VAS View</h2>
           
           <div className="w-full border border-gray-100 rounded-[4px] overflow-hidden">
             <Table>
-              <TableHeader className="bg-[#fef4e8]">
+              <TableHeader className="bg-[#fef4e8] dark:bg-zinc-900">
                 <TableRow className="hover:bg-transparent border-none">
-                  <TableHead className="text-[#333] font-bold text-[13px] h-12 w-16 text-center">#</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center">Company</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center">Amount</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center">Method</TableHead>
-                  <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center">Date</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[13px] h-12 w-16 text-center">#</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[13px] h-12 text-center">Company</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[13px] h-12 text-center">Amount</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[13px] h-12 text-center">Method</TableHead>
+                  <TableHead className="text-[#333] dark:text-zinc-300 dark:text-zinc-300 font-bold text-[13px] h-12 text-center">Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -115,7 +115,7 @@ export default function OfficeVasPage() {
                   </TableRow>
                 ) : (
                   vasEntriesList.map((entry, index) => (
-                    <TableRow key={entry.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                    <TableRow key={entry.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
                       <TableCell className="text-center text-[13px] text-gray-700 py-3">
                         {index + 1}
                       </TableCell>

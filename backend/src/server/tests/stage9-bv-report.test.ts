@@ -27,9 +27,9 @@
 import express, { type Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../db";
-import { registerRoutes } from "../routes";
-import { authService } from "../auth.service";
+import { pool } from "./db";
+import { registerRoutes } from "./routes";
+import { authService } from "./auth.service";
 
 const SUFFIX = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const FROM = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
@@ -52,9 +52,9 @@ async function seedUser(role: string, branch = "Lahore Gulburg"): Promise<Seeded
   const username = `__s9_${role}_${SUFFIX}_${createdUserIds.length}`;
   const email = `${username}@example.invalid`;
   const r = await pool.query(
-    `INSERT INTO drm.users (username, email, role_id, role, branch, is_active)
-     VALUES ($1, $2, $3, $3, $4, true) RETURNING id`,
-    [username, email, role, branch],
+    `INSERT INTO drm.users (username, email, role_id, role, branch, is_active, full_name, password_hash)
+     VALUES ($1, $2, $3, $3, $4, true, $5, $6) RETURNING id`,
+    [username, email, role, branch, `Full Name ${username}`, "test_hash"],
   );
   const id = String(r.rows[0].id);
   createdUserIds.push(id);

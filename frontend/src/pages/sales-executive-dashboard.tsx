@@ -9,6 +9,9 @@ import { QuickEntriesCard } from "@/components/quick-entries-card";
 import { ImportantMetrics } from "@/components/important-metrics";
 import { ChartDataWidget } from "@/components/chart-data-widget";
 import { ProductPostingSalesWidget } from "@/components/product-posting-sales-widget";
+import { CustomerMonthlyWidget } from "@/components/customer-monthly";
+import { PromotionalBanner } from "@/components/promotional-banner";
+import { MyGmCommissionWidget } from "@/components/my-gm-commission-widget";
 import {
   Select,
   SelectContent,
@@ -266,11 +269,14 @@ export default function SalesExecutiveDashboard() {
             <ActivitiesGrid />
             <PipelineSummary period={period} />
             <ChartDataWidget period={period} />
+            <CustomerMonthlyWidget />
           </div>
 
           <div className="space-y-6">
+            <PromotionalBanner />
             <ProductPostingSalesWidget />
             <TargetAchieve />
+            <MyGmCommissionWidget />
             <QuickEntriesCard />
             <ImportantMetrics />
           </div>
@@ -422,7 +428,7 @@ export default function SalesExecutiveDashboard() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={12} className="py-8 px-4 text-slate-500 text-center font-medium bg-slate-50/50 dark:text-zinc-400">
+                      <td colSpan={12} className="py-8 px-4 text-slate-500 text-center font-medium bg-slate-50/50 dark:bg-zinc-900 dark:text-zinc-400">
                         No Data Found for {activeFollowService}
                       </td>
                     </tr>

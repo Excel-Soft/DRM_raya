@@ -1,9 +1,142 @@
 import { Router } from "express";
-import { db } from "../db";
-import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemUserTargets, users } from "../../shared/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { z } from "zod";
+import { db } from "./db";
+import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemUserTargets, users } from "../shared/schema";
+import { eq, desc, and, or, inArray, lte, gte, isNull } from "drizzle-orm";
+import { requireRole } from "./auth.middleware";
 
 const router = Router();
+
+// Phase 3 — this module previously had no role gate at all (the global
+// checkUrlPermission middleware only matches frontend menu paths like
+// "target-system/create", not these API paths, so it silently no-op'd here).
+// Restrict to the roles already documented for this module in
+// ROUTE_PERMISSION_MATRIX.md.
+router.use(requireRole("admin", "sales_manager", "hod", "super_hod", "account_manager"));
+
+function sendValidationError(res: import("express").Response, error: unknown) {
+  if (error instanceof z.ZodError) {
+    return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
+  }
+  throw error;
+}
+
+const numeric = z.union([z.string(), z.number()]);
+
+export const createTargetSchema = z
+  .object({
+    targetName: z.string().trim().min(1, "targetName is required").max(200),
+    package: z.string().trim().max(200).optional(),
+    reward: z.coerce.number().int().nonnegative().optional().default(0),
+    bonus: z.string().trim().max(200).optional(),
+    price: z.coerce.number().finite().nonnegative().optional().default(0),
+    maxPrice: z.coerce.number().finite().nonnegative().optional().default(0),
+    penalty: z.coerce.number().finite().nonnegative().optional().default(0),
+    amount: z.string().trim().max(200).optional(),
+  })
+  .strict();
+
+export const dailyTargetSchema = z
+  .object({
+    role: z.string().trim().min(1, "role is required").max(100),
+    method: z.string().trim().min(1, "method is required").max(100),
+    target: z.coerce.number().int().nonnegative(),
+  })
+  .strict();
+
+export const kwaRecordSchema = z
+  .object({
+    company: z.string().trim().min(1, "company is required").max(200),
+    employee: z.string().trim().min(1, "employee is required").max(200),
+    kwa: z.coerce.number().finite().nonnegative(),
+    detail: z.string().trim().max(500).optional(),
+    type: z.string().trim().min(1, "type is required").max(100),
+  })
+  .strict();
+
+// MD-17: KWA becomes a real dual-stage ledger — "kwa" is the sold total, "remaining"
+// is what hasn't been used yet; a Use/Refund action is the only transition event.
+export const kwaUseSchema = z
+  .object({
+    amount: z.coerce.number().finite().positive("Amount must be greater than 0"),
+    action: z.enum(["Used", "Refund"]).default("Used"),
+    detail: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+const targetItemSchema = z
+  .object({
+    targetName: z.string().trim().max(200).optional(),
+    name: z.string().trim().max(200).optional(),
+    category: z.string().trim().max(100).optional(),
+    target: numeric.optional(),
+    number: numeric.optional(),
+    price: numeric.optional(),
+    bonus: z.string().trim().max(200).optional(),
+    vas: numeric.optional(),
+    kwa: numeric.optional(),
+    reward: numeric.optional(),
+    total: numeric.optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+  })
+  .strict();
+
+export const assignRoleSchema = z
+  .object({
+    role: z.string().trim().min(1, "role is required").max(100),
+    targets: z.array(targetItemSchema).min(1, "No targets provided"),
+  })
+  .strict();
+
+const bulkDatesSchema = z
+  .object({
+    targetIds: z.array(z.coerce.number().int()).min(1, "No targets provided to update"),
+    startDate: z.string().min(1, "Start date is required"),
+    endDate: z.string().min(1, "End date is required"),
+  })
+  .strict();
+
+const userTargetItemSchema = z
+  .object({
+    userId: z.string().trim().min(1, "userId is required").max(200),
+    targetName: z.string().trim().min(1, "targetName is required").max(200),
+    category: z.string().trim().max(100).optional(),
+    target: numeric.optional(),
+    price: numeric.optional(),
+    bonus: z.string().trim().max(200).optional(),
+    vas: numeric.optional(),
+    kwa: numeric.optional(),
+    reward: numeric.optional(),
+    total: numeric.optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    signDate: z.string().optional(),
+  })
+  .strict();
+
+const bulkCreateSchema = z
+  .object({
+    targets: z.array(userTargetItemSchema).min(1, "No targets provided"),
+  })
+  .strict();
+
+const userTargetUpdateSchema = z
+  .object({
+    targetName: z.string().trim().min(1).max(200).optional(),
+    category: z.string().trim().max(100).optional(),
+    target: numeric.optional(),
+    price: numeric.optional(),
+    bonus: z.string().trim().max(200).optional(),
+    vas: numeric.optional(),
+    kwa: numeric.optional(),
+    reward: numeric.optional(),
+    total: numeric.optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    signDate: z.string().optional(),
+  })
+  .strict();
 
 // Get all targets
 router.get("/targets", async (req, res) => {
@@ -22,8 +155,8 @@ router.get("/targets", async (req, res) => {
 // Create a new target
 router.post("/targets", async (req, res) => {
   try {
-    const data = req.body;
-    
+    const data = createTargetSchema.parse(req.body);
+
     const [target] = await db
       .insert(targetSystemTargets)
       .values({
@@ -31,18 +164,19 @@ router.post("/targets", async (req, res) => {
         package: data.package,
         reward: data.reward,
         bonus: data.bonus,
-        price: data.price !== undefined ? String(data.price) : "0",
-        maxPrice: data.maxPrice !== undefined ? String(data.maxPrice) : "0",
-        penalty: data.penalty !== undefined ? String(data.penalty) : "0",
+        price: String(data.price),
+        maxPrice: String(data.maxPrice),
+        penalty: String(data.penalty),
         amount: data.amount,
         number: 0,
         kwa: 0,
         vas: 0
       })
       .returning();
-      
+
     res.status(201).json(target);
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error creating target system target:", error);
     res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create target" });
   }
@@ -66,17 +200,13 @@ router.get("/daily-targets", async (req, res) => {
 // Create a daily target
 router.post("/daily-targets", async (req, res) => {
   try {
-    const { role, method, target } = req.body;
-    
-    if (!role || !method || target === undefined) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    const { role, method, target } = dailyTargetSchema.parse(req.body);
 
     const existing = await db
       .select()
       .from(targetSystemDailyTargets)
       .where(and(
-        eq(targetSystemDailyTargets.role, role), 
+        eq(targetSystemDailyTargets.role, role),
         eq(targetSystemDailyTargets.method, method)
       ))
       .limit(1);
@@ -87,15 +217,12 @@ router.post("/daily-targets", async (req, res) => {
 
     const [newTarget] = await db
       .insert(targetSystemDailyTargets)
-      .values({
-        role,
-        method,
-        target: parseInt(target) || 0
-      })
+      .values({ role, method, target })
       .returning();
 
     res.status(201).json(newTarget);
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error creating daily target:", error);
     res.status(500).json({ error: "Failed to create daily target" });
   }
@@ -105,7 +232,7 @@ router.post("/daily-targets", async (req, res) => {
 router.delete("/daily-targets/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     await db
       .delete(targetSystemDailyTargets)
       .where(eq(targetSystemDailyTargets.id, parseInt(id)));
@@ -121,18 +248,14 @@ router.delete("/daily-targets/:id", async (req, res) => {
 router.put("/daily-targets/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { role, method, target } = req.body;
-    
-    if (!role || !method || target === undefined) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    const { role, method, target } = dailyTargetSchema.parse(req.body);
 
     // Check if updating to a duplicate (another row with same role/method)
     const existing = await db
       .select()
       .from(targetSystemDailyTargets)
       .where(and(
-        eq(targetSystemDailyTargets.role, role), 
+        eq(targetSystemDailyTargets.role, role),
         eq(targetSystemDailyTargets.method, method)
       ));
 
@@ -144,16 +267,13 @@ router.put("/daily-targets/:id", async (req, res) => {
 
     const [updatedTarget] = await db
       .update(targetSystemDailyTargets)
-      .set({
-        role,
-        method,
-        target: parseInt(target) || 0
-      })
+      .set({ role, method, target })
       .where(eq(targetSystemDailyTargets.id, parseInt(id)))
       .returning();
 
     res.json(updatedTarget);
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error updating daily target:", error);
     res.status(500).json({ error: "Failed to update daily target" });
   }
@@ -176,11 +296,7 @@ router.get("/kwa-records", async (req, res) => {
 // Create a new KWA record
 router.post("/kwa-records", async (req, res) => {
   try {
-    const { company, employee, kwa, detail, type } = req.body;
-    
-    if (!company || !employee || !kwa || !type) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    const { company, employee, kwa, detail, type } = kwaRecordSchema.parse(req.body);
 
     const [newRecord] = await db
       .insert(targetSystemKwaRecords)
@@ -196,18 +312,74 @@ router.post("/kwa-records", async (req, res) => {
 
     res.status(201).json(newRecord);
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error creating KWA record:", error);
     res.status(500).json({ error: "Failed to create KWA record" });
   }
 });
 
-// Get user targets
+// Use (or refund) part of a KWA record's remaining balance
+router.patch("/kwa-records/:id/use", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount, action, detail } = kwaUseSchema.parse(req.body);
+
+    const [existing] = await db
+      .select()
+      .from(targetSystemKwaRecords)
+      .where(eq(targetSystemKwaRecords.id, parseInt(id)));
+    if (!existing) return res.status(404).json({ error: "KWA record not found" });
+
+    const remaining = Number(existing.remaining);
+    const total = Number(existing.kwa);
+    const newRemaining = action === "Refund" ? remaining + amount : remaining - amount;
+
+    if (newRemaining < 0) {
+      return res.status(400).json({ error: `Only ${remaining} KWA remaining — cannot use ${amount}` });
+    }
+    if (newRemaining > total) {
+      return res.status(400).json({ error: `Cannot refund more than the total ${total} KWA` });
+    }
+
+    const logLine = `${action} ${amount}${detail ? `: ${detail}` : ""}`;
+    const newDetail = existing.detail ? `${existing.detail}\n${logLine}` : logLine;
+
+    const [updated] = await db
+      .update(targetSystemKwaRecords)
+      .set({ remaining: String(newRemaining), detail: newDetail })
+      .where(eq(targetSystemKwaRecords.id, parseInt(id)))
+      .returning();
+
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
+    console.error("Error using KWA record:", error);
+    res.status(500).json({ error: "Failed to use KWA record" });
+  }
+});
+
+// Get user targets. ?current=true restricts to targets whose start/end date
+// window covers today — i.e. the quarter a manager most recently, manually set
+// (MD-19: quarter-close regeneration is a manual re-set, not an auto-carried-forward value).
 router.get("/user-targets", async (req, res) => {
   try {
-    const targets = await db
-      .select()
-      .from(targetSystemUserTargets)
-      .orderBy(desc(targetSystemUserTargets.createdAt));
+    const onlyCurrent = req.query.current === "true";
+    const now = new Date();
+    const targets = onlyCurrent
+      ? await db
+          .select()
+          .from(targetSystemUserTargets)
+          .where(
+            and(
+              or(isNull(targetSystemUserTargets.startDate), lte(targetSystemUserTargets.startDate, now)),
+              or(isNull(targetSystemUserTargets.endDate), gte(targetSystemUserTargets.endDate, now)),
+            ),
+          )
+          .orderBy(desc(targetSystemUserTargets.createdAt))
+      : await db
+          .select()
+          .from(targetSystemUserTargets)
+          .orderBy(desc(targetSystemUserTargets.createdAt));
     res.json(targets);
   } catch (error) {
     console.error("Error fetching user targets:", error);
@@ -218,14 +390,7 @@ router.get("/user-targets", async (req, res) => {
 // Assign targets to all users in a specific role
 router.post("/assign-role", async (req, res) => {
   try {
-    const { role, targets } = req.body;
-    
-    if (!role) {
-      return res.status(400).json({ error: "Role is required" });
-    }
-    if (!targets || !Array.isArray(targets) || targets.length === 0) {
-      return res.status(400).json({ error: "No targets provided" });
-    }
+    const { role, targets } = assignRoleSchema.parse(req.body);
 
     // Get all users with the specified role
     const matchingUsers = await db
@@ -243,15 +408,15 @@ router.post("/assign-role", async (req, res) => {
       for (const t of targets) {
         assignmentsToInsert.push({
           userId: user.fullName || user.username,
-          targetName: t.targetName || t.name,
+          targetName: t.targetName || t.name || "",
           category: t.category || "none",
-          target: String(t.target || t.number || "0"),
-          price: String(t.price || "0"),
+          target: String(t.target ?? t.number ?? "0"),
+          price: String(t.price ?? "0"),
           bonus: t.bonus || "",
-          vas: String(t.vas || "0"),
-          kwa: String(t.kwa || "0"),
-          reward: String(t.reward || "0"),
-          total: String(t.total || "0"),
+          vas: String(t.vas ?? "0"),
+          kwa: String(t.kwa ?? "0"),
+          reward: String(t.reward ?? "0"),
+          total: String(t.total ?? "0"),
           startDate: t.startDate ? new Date(t.startDate) : null,
           endDate: t.endDate ? new Date(t.endDate) : null,
           signDate: new Date()
@@ -266,6 +431,7 @@ router.post("/assign-role", async (req, res) => {
 
     res.status(201).json({ message: "Targets assigned to role successfully", count: inserted.length });
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error assigning targets by role:", error);
     res.status(500).json({ error: "Failed to assign targets by role" });
   }
@@ -274,20 +440,7 @@ router.post("/assign-role", async (req, res) => {
 // Update multiple user targets dates (Assign Same Target)
 router.put("/user-targets/bulk-dates", async (req, res) => {
   try {
-    const { targetIds, startDate, endDate } = req.body;
-    
-    if (!targetIds || !Array.isArray(targetIds) || targetIds.length === 0) {
-      return res.status(400).json({ error: "No targets provided to update" });
-    }
-
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: "Start date and end date are required" });
-    }
-
-    // Since SQLite/Postgres might not support bulk update of different rows easily,
-    // and we are updating them all to the same startDate and endDate,
-    // we can use an 'inArray' clause.
-    const { inArray } = await import("drizzle-orm");
+    const { targetIds, startDate, endDate } = bulkDatesSchema.parse(req.body);
 
     await db
       .update(targetSystemUserTargets)
@@ -299,6 +452,7 @@ router.put("/user-targets/bulk-dates", async (req, res) => {
 
     res.json({ message: "Targets updated successfully" });
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error bulk updating user target dates:", error);
     res.status(500).json({ error: "Failed to update user targets" });
   }
@@ -307,25 +461,21 @@ router.put("/user-targets/bulk-dates", async (req, res) => {
 // Create multiple user targets (bulk assign)
 router.post("/user-targets/bulk", async (req, res) => {
   try {
-    const { targets } = req.body;
-    
-    if (!targets || !Array.isArray(targets) || targets.length === 0) {
-      return res.status(400).json({ error: "No targets provided" });
-    }
+    const { targets } = bulkCreateSchema.parse(req.body);
 
     const inserted = await db
       .insert(targetSystemUserTargets)
-      .values(targets.map((t: any) => ({
+      .values(targets.map((t) => ({
         userId: t.userId,
         targetName: t.targetName,
         category: t.category || "none",
-        target: String(t.target || "0"),
-        price: String(t.price || "0"),
+        target: String(t.target ?? "0"),
+        price: String(t.price ?? "0"),
         bonus: t.bonus || "",
-        vas: String(t.vas || "0"),
-        kwa: String(t.kwa || "0"),
-        reward: String(t.reward || "0"),
-        total: String(t.total || "0"),
+        vas: String(t.vas ?? "0"),
+        kwa: String(t.kwa ?? "0"),
+        reward: String(t.reward ?? "0"),
+        total: String(t.total ?? "0"),
         startDate: t.startDate ? new Date(t.startDate) : null,
         endDate: t.endDate ? new Date(t.endDate) : null,
         signDate: t.signDate ? new Date(t.signDate) : null,
@@ -334,8 +484,47 @@ router.post("/user-targets/bulk", async (req, res) => {
 
     res.status(201).json(inserted);
   } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error bulk creating user targets:", error);
     res.status(500).json({ error: "Failed to bulk create user targets" });
+  }
+});
+
+// Update a single user target (e.g. correcting a manually re-set quarterly target)
+router.patch("/user-targets/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = userTargetUpdateSchema.parse(req.body);
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    const updates: Record<string, unknown> = {};
+    if (data.targetName !== undefined) updates.targetName = data.targetName;
+    if (data.category !== undefined) updates.category = data.category;
+    if (data.target !== undefined) updates.target = String(data.target);
+    if (data.price !== undefined) updates.price = String(data.price);
+    if (data.bonus !== undefined) updates.bonus = data.bonus;
+    if (data.vas !== undefined) updates.vas = String(data.vas);
+    if (data.kwa !== undefined) updates.kwa = String(data.kwa);
+    if (data.reward !== undefined) updates.reward = String(data.reward);
+    if (data.total !== undefined) updates.total = String(data.total);
+    if (data.startDate !== undefined) updates.startDate = new Date(data.startDate);
+    if (data.endDate !== undefined) updates.endDate = new Date(data.endDate);
+    if (data.signDate !== undefined) updates.signDate = new Date(data.signDate);
+
+    const [updated] = await db
+      .update(targetSystemUserTargets)
+      .set(updates)
+      .where(eq(targetSystemUserTargets.id, parseInt(id)))
+      .returning();
+
+    if (!updated) return res.status(404).json({ error: "User target not found" });
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) return sendValidationError(res, error);
+    console.error("Error updating user target:", error);
+    res.status(500).json({ error: "Failed to update user target" });
   }
 });
 
@@ -343,7 +532,7 @@ router.post("/user-targets/bulk", async (req, res) => {
 router.delete("/user-targets/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     await db
       .delete(targetSystemUserTargets)
       .where(eq(targetSystemUserTargets.id, parseInt(id)));

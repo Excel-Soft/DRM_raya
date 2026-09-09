@@ -36,14 +36,78 @@
  *   schedule/submit/cancel/delete. Approve/reject/get-by-id re-verify scope per row.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { AuditLogService } from "../services/audit-log.service";
-import { NotificationService } from "../services/notification-service";
+import { z } from "zod";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { AuditLogService } from "./services/audit-log.service";
+import { NotificationService } from "./services/notification-service";
 import {
   ensureSocialAccountsTable,
   registerSocialAccountHandlers,
 } from "./social-accounts-routes";
+
+const MAX_CONTENT = 5000;
+const MAX_TITLE = 300;
+
+// Phase 3 — z.string().url() only checks that the value parses as SOME URL;
+// it does NOT reject non-http(s) schemes (the JS URL constructor happily
+// parses "javascript:alert(1)"). Enforce http(s) explicitly so a stored
+// mediaUrl can never carry a script-executing scheme if ever rendered as a
+// clickable link.
+const httpUrl = z
+  .string()
+  .trim()
+  .url("mediaUrl must be a valid http(s) URL")
+  .refine((v) => /^https?:\/\//i.test(v), "mediaUrl must be a valid http(s) URL");
+
+// ---------------------------------------------------------------------------
+// Strict Zod schemas — unknown fields are rejected (.strict())
+// ---------------------------------------------------------------------------
+export const createPostSchema = z.object({
+  platform: z.string().trim().min(1, "platform is required"),
+  socialAccountId: z.string().trim().min(1, "account is required"),
+  content: z.string().trim().min(1, "content is required").max(MAX_CONTENT, `content must be at most ${MAX_CONTENT} characters`),
+  title: z.string().trim().max(MAX_TITLE, `title must be at most ${MAX_TITLE} characters`).nullable().optional(),
+  mediaUrl: httpUrl.nullable().optional(),
+  mediaName: z.string().trim().nullable().optional(),
+  linkedCustomerId: z.string().trim().nullable().optional(),
+  linkedProjectId: z.string().trim().nullable().optional(),
+  scheduledAt: z.string().datetime({ message: "scheduledAt must be a valid ISO date/time" }).nullable().optional(),
+  likes: z.number().int().min(0).optional(),
+  comments: z.number().int().min(0).optional(),
+  shares: z.number().int().min(0).optional(),
+}).strict();
+
+const patchPostSchema = z.object({
+  platform: z.string().trim().min(1, "platform cannot be empty").optional(),
+  socialAccountId: z.string().trim().min(1, "account cannot be empty").optional(),
+  content: z.string().trim().min(1, "content is required").max(MAX_CONTENT, `content must be at most ${MAX_CONTENT} characters`).optional(),
+  title: z.string().trim().max(MAX_TITLE, `title must be at most ${MAX_TITLE} characters`).nullable().optional(),
+  mediaUrl: httpUrl.nullable().optional(),
+  mediaName: z.string().trim().nullable().optional(),
+  linkedCustomerId: z.string().trim().nullable().optional(),
+  linkedProjectId: z.string().trim().nullable().optional(),
+  likes: z.number().int().min(0).optional(),
+  comments: z.number().int().min(0).optional(),
+  shares: z.number().int().min(0).optional(),
+}).strict();
+
+const rejectPostSchema = z.object({
+  reason: z.string().trim().min(1, "A rejection reason is required"),
+}).strict();
+
+const schedulePostSchema = z.object({
+  scheduledAt: z.string().trim().min(1, "scheduledAt is required"),
+}).strict();
+
+const publishPostSchema = z.object({
+  confirmManual: z.boolean().optional(),
+  confirm: z.boolean().optional(),
+}).strict();
+
+const cancelPostSchema = z.object({
+  reason: z.string().trim().min(1, "A cancellation reason is required"),
+}).strict();
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -64,8 +128,24 @@ const PUBLISHING_STATUSES = [
   "CANCELLED",
 ];
 
-const MAX_CONTENT = 5000;
-const MAX_TITLE = 300;
+
+/** Parse a Zod schema from req.body and return 400 on failure. */
+function parseBody<T extends z.ZodTypeAny>(
+  res: Response,
+  schema: T,
+  body: unknown,
+): z.infer<T> | null {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    res.status(400).json({
+      error: "BadRequest",
+      message: result.error.errors[0]?.message ?? "Invalid request body",
+      details: result.error.errors,
+    });
+    return null;
+  }
+  return result.data;
+}
 const TARGET_URL = "/social-media";
 
 // ---------------------------------------------------------------------------
@@ -275,6 +355,9 @@ const SELECT_COLS = `
   p.rejection_reason as "rejectionReason",
   p.cancel_reason as "cancelReason",
   p.external_ref as "externalRef",
+  p.likes,
+  p.comments,
+  p.shares,
   p.created_by as "createdBy",
   cb.name as "createdByName",
   p.approved_by as "approvedBy",
@@ -347,10 +430,19 @@ export async function ensureSocialMediaPostsTable(): Promise<void> {
       created_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
       approved_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
       published_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
+      likes integer NOT NULL DEFAULT 0,
+      comments integer NOT NULL DEFAULT 0,
+      shares integer NOT NULL DEFAULT 0,
       created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now(),
       deleted_at timestamptz
     )
+  `);
+  await pool.query(`
+    ALTER TABLE drm.social_media_posts
+      ADD COLUMN IF NOT EXISTS likes integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS comments integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS shares integer NOT NULL DEFAULT 0
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS smp_created_by_idx ON drm.social_media_posts (created_by)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS smp_account_idx ON drm.social_media_posts (social_account_id)`);
@@ -616,39 +708,19 @@ export async function registerSocialMediaRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const myId = getUserId(req);
       if (!myId) return res.status(401).json({ error: "Unauthorized" });
-      const b = req.body ?? {};
 
-      const platform = String(b.platform ?? "").trim();
-      if (!platform) return badRequest(res, "platform is required");
+      const b = parseBody(res, createPostSchema, req.body);
+      if (!b) return;
 
-      const socialAccountId = String(b.socialAccountId ?? "").trim();
-      if (!socialAccountId) return badRequest(res, "account is required");
       const acc = await pool.query(
         `select id from drm.social_accounts where id::text = $1::text and deleted_at is null limit 1`,
-        [socialAccountId],
+        [b.socialAccountId],
       );
       if (acc.rows.length === 0) return badRequest(res, "selected account does not exist");
 
-      const content = String(b.content ?? "").trim();
-      if (!content) return badRequest(res, "content is required");
-      if (content.length > MAX_CONTENT)
-        return badRequest(res, `content must be at most ${MAX_CONTENT} characters`);
-
-      const title = b.title != null ? String(b.title).trim() : null;
-      if (title && title.length > MAX_TITLE)
-        return badRequest(res, `title must be at most ${MAX_TITLE} characters`);
-
-      const mediaUrl = b.mediaUrl != null ? String(b.mediaUrl).trim() : null;
-      if (mediaUrl && !isHttpUrl(mediaUrl))
-        return badRequest(res, "mediaUrl must be a valid http(s) URL");
-      const mediaName = b.mediaName != null ? String(b.mediaName).trim() : null;
-
-      const linkedCustomerId = b.linkedCustomerId ? String(b.linkedCustomerId).trim() : null;
-      const linkedProjectId = b.linkedProjectId ? String(b.linkedProjectId).trim() : null;
-
       let scheduledAt: Date | null = null;
       if (b.scheduledAt) {
-        const d = new Date(String(b.scheduledAt));
+        const d = new Date(b.scheduledAt);
         if (isNaN(d.getTime())) return badRequest(res, "scheduledAt must be a valid date/time");
         if (d.getTime() <= Date.now())
           return badRequest(res, "scheduledAt cannot be in the past");
@@ -659,24 +731,27 @@ export async function registerSocialMediaRoutes(app: Express) {
         `insert into drm.social_media_posts
            (platform, social_account_id, title, content, media_url, media_name,
             linked_customer_id, linked_project_id, scheduled_at,
-            approval_status, publishing_status, created_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'DRAFT','DRAFT',$10)
+            approval_status, publishing_status, created_by, likes, comments, shares)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'DRAFT','DRAFT',$10,$11,$12,$13)
          returning id`,
         [
-          platform,
-          socialAccountId,
-          title,
-          content,
-          mediaUrl,
-          mediaName,
-          linkedCustomerId,
-          linkedProjectId,
+          b.platform,
+          b.socialAccountId,
+          b.title ?? null,
+          b.content,
+          b.mediaUrl ?? null,
+          b.mediaName ?? null,
+          b.linkedCustomerId ?? null,
+          b.linkedProjectId ?? null,
           scheduledAt,
           myId,
+          b.likes ?? 0,
+          b.comments ?? 0,
+          b.shares ?? 0,
         ],
       );
       const id = rows[0].id;
-      await audit(req, "social_post.create", id, { after: { platform, socialAccountId } });
+      await audit(req, "social_post.create", id, { after: { platform: b.platform, socialAccountId: b.socialAccountId } });
       const row = await getFullRow(id);
       res.status(201).json(row);
     } catch (err) {
@@ -699,61 +774,49 @@ export async function registerSocialMediaRoutes(app: Express) {
       if (!isFull(role) && !["DRAFT", "REJECTED"].includes(raw.approval_status))
         return conflict(res, "Only draft or rejected posts can be edited");
 
-      const b = req.body ?? {};
+      const b = parseBody(res, patchPostSchema, req.body);
+      if (!b) return;
+
       const sets: string[] = [];
       const params: any[] = [];
       let i = 1;
 
       if (b.platform !== undefined) {
-        const platform = String(b.platform ?? "").trim();
-        if (!platform) return badRequest(res, "platform cannot be empty");
         sets.push(`platform = $${i++}`);
-        params.push(platform);
+        params.push(b.platform);
       }
       if (b.socialAccountId !== undefined) {
-        const socialAccountId = String(b.socialAccountId ?? "").trim();
-        if (!socialAccountId) return badRequest(res, "account cannot be empty");
         const acc = await pool.query(
           `select id from drm.social_accounts where id::text = $1::text and deleted_at is null limit 1`,
-          [socialAccountId],
+          [b.socialAccountId],
         );
         if (acc.rows.length === 0) return badRequest(res, "selected account does not exist");
         sets.push(`social_account_id = $${i++}`);
-        params.push(socialAccountId);
+        params.push(b.socialAccountId);
       }
       if (b.title !== undefined) {
-        const title = b.title != null ? String(b.title).trim() : null;
-        if (title && title.length > MAX_TITLE)
-          return badRequest(res, `title must be at most ${MAX_TITLE} characters`);
         sets.push(`title = $${i++}`);
-        params.push(title);
+        params.push(b.title ?? null);
       }
       if (b.content !== undefined) {
-        const content = String(b.content ?? "").trim();
-        if (!content) return badRequest(res, "content is required");
-        if (content.length > MAX_CONTENT)
-          return badRequest(res, `content must be at most ${MAX_CONTENT} characters`);
         sets.push(`content = $${i++}`);
-        params.push(content);
+        params.push(b.content);
       }
       if (b.mediaUrl !== undefined) {
-        const mediaUrl = b.mediaUrl != null ? String(b.mediaUrl).trim() : null;
-        if (mediaUrl && !isHttpUrl(mediaUrl))
-          return badRequest(res, "mediaUrl must be a valid http(s) URL");
         sets.push(`media_url = $${i++}`);
-        params.push(mediaUrl);
+        params.push(b.mediaUrl ?? null);
       }
       if (b.mediaName !== undefined) {
         sets.push(`media_name = $${i++}`);
-        params.push(b.mediaName != null ? String(b.mediaName).trim() : null);
+        params.push(b.mediaName ?? null);
       }
       if (b.linkedCustomerId !== undefined) {
         sets.push(`linked_customer_id = $${i++}`);
-        params.push(b.linkedCustomerId ? String(b.linkedCustomerId).trim() : null);
+        params.push(b.linkedCustomerId ?? null);
       }
       if (b.linkedProjectId !== undefined) {
         sets.push(`linked_project_id = $${i++}`);
-        params.push(b.linkedProjectId ? String(b.linkedProjectId).trim() : null);
+        params.push(b.linkedProjectId ?? null);
       }
 
       if (sets.length === 0) return badRequest(res, "No editable fields supplied");
@@ -769,6 +832,47 @@ export async function registerSocialMediaRoutes(app: Express) {
     } catch (err) {
       console.error("[social-media] update failed:", err);
       res.status(500).json({ error: "InternalError", message: "Failed to update post" });
+    }
+  });
+
+  // Separate from the main edit endpoint, which refuses non-DRAFT/REJECTED rows — engagement only matters once a post is PUBLISHED.
+  app.patch(`${POSTS}/:id/engagement`, async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const id = String(req.params.id);
+      const raw = await getRawRow(id);
+      if (!raw || raw.deleted_at) return notFound(res);
+      if (!(await canManageRow(req, raw.created_by)))
+        return forbidden(res, "You cannot update this post's engagement counters");
+
+      const engagementSchema = z.object({
+        likes: z.number().int().min(0).optional(),
+        comments: z.number().int().min(0).optional(),
+        shares: z.number().int().min(0).optional(),
+      }).strict();
+      const b = parseBody(res, engagementSchema, req.body);
+      if (!b) return;
+      if (b.likes === undefined && b.comments === undefined && b.shares === undefined)
+        return badRequest(res, "Supply at least one of likes, comments, shares");
+
+      const sets: string[] = [];
+      const params: any[] = [];
+      let i = 1;
+      if (b.likes !== undefined) { sets.push(`likes = $${i++}`); params.push(b.likes); }
+      if (b.comments !== undefined) { sets.push(`comments = $${i++}`); params.push(b.comments); }
+      if (b.shares !== undefined) { sets.push(`shares = $${i++}`); params.push(b.shares); }
+      sets.push(`updated_at = now()`);
+      params.push(id);
+      await pool.query(
+        `update drm.social_media_posts set ${sets.join(", ")} where id::text = $${i}::text`,
+        params,
+      );
+      await audit(req, "social_post.engagement_update", id, { after: b });
+      const row = await getFullRow(id);
+      res.json(row);
+    } catch (err) {
+      console.error("[social-media] engagement update failed:", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to update engagement" });
     }
   });
 
@@ -853,8 +957,9 @@ export async function registerSocialMediaRoutes(app: Express) {
       const role = getActiveRole(req);
       if (!isApprover(role)) return forbidden(res, "You cannot reject posts");
       const id = String(req.params.id);
-      const reason = String((req.body ?? {}).reason ?? "").trim();
-      if (!reason) return badRequest(res, "A rejection reason is required");
+      const parsed = parseBody(res, rejectPostSchema, req.body);
+      if (!parsed) return;
+      const reason = parsed.reason;
       const raw = await getRawRow(id);
       if (!raw || raw.deleted_at) return notFound(res);
       if (raw.approval_status !== "PENDING")
@@ -898,9 +1003,9 @@ export async function registerSocialMediaRoutes(app: Express) {
       if (!isFull(role) && !(await canManageRow(req, raw.created_by)))
         return forbidden(res, "You cannot schedule this post");
 
-      const value = String((req.body ?? {}).scheduledAt ?? "").trim();
-      if (!value) return badRequest(res, "scheduledAt is required");
-      const d = new Date(value);
+      const parsedSched = parseBody(res, schedulePostSchema, req.body);
+      if (!parsedSched) return;
+      const d = new Date(parsedSched.scheduledAt);
       if (isNaN(d.getTime())) return badRequest(res, "scheduledAt must be a valid date/time");
       if (d.getTime() <= Date.now()) return badRequest(res, "scheduledAt cannot be in the past");
 
@@ -940,8 +1045,9 @@ export async function registerSocialMediaRoutes(app: Express) {
       const role = getActiveRole(req);
       if (!canPublish(role)) return forbidden(res, "You cannot publish posts");
       const id = String(req.params.id);
-      const b = req.body ?? {};
-      if (b.confirmManual !== true && b.confirm !== true)
+      const parsedPub = parseBody(res, publishPostSchema, req.body);
+      if (!parsedPub) return;
+      if (parsedPub.confirmManual !== true && parsedPub.confirm !== true)
         return badRequest(
           res,
           "Manual publish requires explicit confirmation (confirmManual: true)",
@@ -1001,8 +1107,9 @@ export async function registerSocialMediaRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const id = String(req.params.id);
-      const reason = String((req.body ?? {}).reason ?? "").trim();
-      if (!reason) return badRequest(res, "A cancellation reason is required");
+      const parsedCancel = parseBody(res, cancelPostSchema, req.body);
+      if (!parsedCancel) return;
+      const reason = parsedCancel.reason;
       const raw = await getRawRow(id);
       if (!raw || raw.deleted_at) return notFound(res);
 

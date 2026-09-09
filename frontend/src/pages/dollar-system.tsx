@@ -22,17 +22,36 @@ import {
   Clock,
   FileSpreadsheet,
   ArrowRight,
-  User
+  User,
+  Loader2
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
 export default function DollarSystem() {
-    const [searchTerm, setSearchTerm] = useState("");
+    const [fullSearchTerm, setFullSearchTerm] = useState("");
+    const [fullStartDate, setFullStartDate] = useState("");
+    const [fullEndDate, setFullEndDate] = useState("");
+    const [partialSearchTerm, setPartialSearchTerm] = useState("");
+    const [partialStartDate, setPartialStartDate] = useState("");
+    const [partialEndDate, setPartialEndDate] = useState("");
+    const [abSearchTerm, setAbSearchTerm] = useState("");
+    const [abStartDate, setAbStartDate] = useState("");
+    const [abEndDate, setAbEndDate] = useState("");
+    const [pendingSearchTerm, setPendingSearchTerm] = useState("");
+    const [pendingStartDate, setPendingStartDate] = useState("");
+    const [pendingEndDate, setPendingEndDate] = useState("");
+    const [loanSearchTerm, setLoanSearchTerm] = useState("");
+    const [loanStartDate, setLoanStartDate] = useState("");
+    const [loanEndDate, setLoanEndDate] = useState("");
     const [activeTab, setActiveTab] = useState("full"); // Tab State: full, partial, term, ab_liabilities
+    const [viewItem, setViewItem] = useState<any>(null);      // For View Detail Modal
+    const [attachItem, setAttachItem] = useState<any>(null);  // For Attach Modal
+    const [uploading, setUploading] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const { data: fullData, isLoading } = useQuery({
         queryKey: ["/api/account/dollar-system/list"],
@@ -45,23 +64,153 @@ export default function DollarSystem() {
 
     const { 
         walletStats = {
-            availableCash: "663.5",
-            availableCashPkr: "183789.5",
-            availableLoan: "2339",
-            availableLoanPkr: "654967.99",
-            requiredToPay: "131625.51",
-            cashInHand: "672653",
-            cashRecovered: "14371273.29",
-            dollarRecovered: "6522.39"
+            availableCash: "0",
+            availableCashPkr: "0",
+            availableLoan: "0",
+            availableLoanPkr: "0",
+            requiredToPay: "0",
+            cashInHand: "0",
+            cashRecovered: "0",
+            dollarRecovered: "0",
+            abPaidUsd: "0",
+            abPaidPkr: "0",
         }, 
         fullPayments = [], 
         partialPayments = [], 
         loans = [], 
         pendingApprovals = [], 
         alibabaPayments = [],
+        abLiabilities = {},
         transactions = [],
         counts = { full: 0, partial: 0, pending: 0, temp: 0, liabilities: 0 }
     } = fullData || {};
+
+    const filteredFullPayments = useMemo(() => {
+        return (fullPayments || []).filter((item: any) => {
+            if (fullSearchTerm) {
+                const term = fullSearchTerm.toLowerCase();
+                const matches = 
+                    (item.drmId || "").toLowerCase().includes(term) ||
+                    (item.company || "").toLowerCase().includes(term) ||
+                    (item.salePerson || "").toLowerCase().includes(term) ||
+                    (item.orderId || "").toLowerCase().includes(term) ||
+                    (item.package || "").toLowerCase().includes(term) ||
+                    (item.type || "").toLowerCase().includes(term);
+                if (!matches) return false;
+            }
+            if (item.date) {
+                const itemDateStr = format(new Date(item.date), "yyyy-MM-dd");
+                if (fullStartDate && itemDateStr < fullStartDate) return false;
+                if (fullEndDate && itemDateStr > fullEndDate) return false;
+            } else if (fullStartDate || fullEndDate) {
+                return false;
+            }
+            return true;
+        });
+    }, [fullPayments, fullSearchTerm, fullStartDate, fullEndDate]);
+
+    const filteredPartialPayments = useMemo(() => {
+        return (partialPayments || []).filter((item: any) => {
+            if (partialSearchTerm) {
+                const term = partialSearchTerm.toLowerCase();
+                const matches = 
+                    (item.drmId || "").toLowerCase().includes(term) ||
+                    (item.company || "").toLowerCase().includes(term) ||
+                    (item.salePerson || "").toLowerCase().includes(term) ||
+                    (item.orderId || "").toLowerCase().includes(term) ||
+                    (item.package || "").toLowerCase().includes(term) ||
+                    (item.type || "").toLowerCase().includes(term);
+                if (!matches) return false;
+            }
+            if (item.date) {
+                const itemDateStr = format(new Date(item.date), "yyyy-MM-dd");
+                if (partialStartDate && itemDateStr < partialStartDate) return false;
+                if (partialEndDate && itemDateStr > partialEndDate) return false;
+            } else if (partialStartDate || partialEndDate) {
+                return false;
+            }
+            return true;
+        });
+    }, [partialPayments, partialSearchTerm, partialStartDate, partialEndDate]);
+
+    const filteredAlibabaPayments = useMemo(() => {
+        return (alibabaPayments || []).filter((item: any) => {
+            if (abSearchTerm) {
+                const term = abSearchTerm.toLowerCase();
+                const matches = 
+                    (item.drmId || "").toLowerCase().includes(term) ||
+                    (item.company || "").toLowerCase().includes(term) ||
+                    (item.abId || "").toLowerCase().includes(term) ||
+                    (item.orderId || "").toLowerCase().includes(term) ||
+                    (item.status || "").toLowerCase().includes(term);
+                if (!matches) return false;
+            }
+            const checkDate = item.abDate || item.date;
+            if (checkDate) {
+                const itemDateStr = format(new Date(checkDate), "yyyy-MM-dd");
+                if (abStartDate && itemDateStr < abStartDate) return false;
+                if (abEndDate && itemDateStr > abEndDate) return false;
+            } else if (abStartDate || abEndDate) {
+                return false;
+            }
+            return true;
+        });
+    }, [alibabaPayments, abSearchTerm, abStartDate, abEndDate]);
+
+    const filteredPendingApprovals = useMemo(() => {
+        return (pendingApprovals || []).filter((item: any) => {
+            if (pendingSearchTerm) {
+                const term = pendingSearchTerm.toLowerCase();
+                const matches = 
+                    (item.drmId || "").toLowerCase().includes(term) ||
+                    (item.company || "").toLowerCase().includes(term) ||
+                    (item.salePerson || "").toLowerCase().includes(term) ||
+                    (item.package || "").toLowerCase().includes(term) ||
+                    (item.type || "").toLowerCase().includes(term) ||
+                    (item.status || "").toLowerCase().includes(term);
+                if (!matches) return false;
+            }
+            const checkDate = item.date || item.createdAt;
+            if (checkDate) {
+                const itemDateStr = format(new Date(checkDate), "yyyy-MM-dd");
+                if (pendingStartDate && itemDateStr < pendingStartDate) return false;
+                if (pendingEndDate && itemDateStr > pendingEndDate) return false;
+            } else if (pendingStartDate || pendingEndDate) {
+                return false;
+            }
+            return true;
+        });
+    }, [pendingApprovals, pendingSearchTerm, pendingStartDate, pendingEndDate]);
+
+    const filteredLoans = useMemo(() => {
+        return (loans || []).filter((item: any) => {
+            if (loanSearchTerm) {
+                const term = loanSearchTerm.toLowerCase();
+                const matches = 
+                    (item.drmId || "").toLowerCase().includes(term) ||
+                    (item.company || "").toLowerCase().includes(term) ||
+                    (item.salePerson || "").toLowerCase().includes(term) ||
+                    (item.orderId || "").toLowerCase().includes(term) ||
+                    (item.package || "").toLowerCase().includes(term) ||
+                    (item.type || "").toLowerCase().includes(term);
+                if (!matches) return false;
+            }
+            if (item.date) {
+                const itemDateStr = format(new Date(item.date), "yyyy-MM-dd");
+                if (loanStartDate && itemDateStr < loanStartDate) return false;
+                if (loanEndDate && itemDateStr > loanEndDate) return false;
+            } else if (loanStartDate || loanEndDate) {
+                return false;
+            }
+            return true;
+        });
+    }, [loans, loanSearchTerm, loanStartDate, loanEndDate]);
+
+    const fullTotalUsd = useMemo(() => (filteredFullPayments || []).reduce((acc: number, item: any) => acc + (Number(item.dollar) || 0), 0), [filteredFullPayments]);
+    const fullTotalPkr = useMemo(() => (filteredFullPayments || []).reduce((acc: number, item: any) => acc + (Number(item.pkr) || 0), 0), [filteredFullPayments]);
+
+    const partialTotalUsd = useMemo(() => (filteredPartialPayments || []).reduce((acc: number, item: any) => acc + (Number(item.dollar) || 0), 0), [filteredPartialPayments]);
+    const partialTotalPkr = useMemo(() => (filteredPartialPayments || []).reduce((acc: number, item: any) => acc + (Number(item.pkr) || 0), 0), [filteredPartialPayments]);
 
     if (isLoading) return (
         <div className="flex h-screen items-center justify-center bg-white flex-col gap-4 dark:bg-zinc-900">
@@ -71,6 +220,130 @@ export default function DollarSystem() {
 
     return (
         <>
+            {/* ─── VIEW DETAIL MODAL ─── */}
+            {viewItem && createPortal(
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:'blur(4px)'}} onClick={() => setViewItem(null)}>
+                    <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="bg-[#f39c12] px-6 py-4 flex items-center justify-between">
+                            <div className="text-white font-[1000] text-lg uppercase tracking-tight">Record Details</div>
+                            <button onClick={() => setViewItem(null)} className="text-white hover:text-white/70 transition-colors">
+                                <X size={20}/>
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-3">
+                            {[
+                                { label: 'DRM ID', value: viewItem.drmId },
+                                { label: 'Company', value: viewItem.company },
+                                { label: 'Channel Partner', value: viewItem.salePerson },
+                                { label: 'Member ID', value: viewItem.memberId },
+                                { label: 'Date', value: viewItem.date ? format(new Date(viewItem.date), 'dd MMM yyyy') : '-' },
+                                { label: 'Product', value: viewItem.package },
+                                { label: 'Order Type', value: viewItem.type },
+                                { label: 'Contract No', value: viewItem.orderId },
+                                { label: 'Contract Amount', value: viewItem.dollar ? `$ ${viewItem.dollar}` : '-' },
+                                { label: 'PKR Amount', value: viewItem.pkr ? `PKR ${Number(viewItem.pkr).toLocaleString()}` : '-' },
+                                { label: 'Rate', value: viewItem.rate ? `PKR ${viewItem.rate}` : '-' },
+                                { label: 'Notes', value: viewItem.notes || '-' },
+                            ].map(({ label, value }) => (
+                                <div key={label} className="flex items-start gap-2 text-[12px]">
+                                    <span className="w-36 font-black text-gray-500 uppercase shrink-0 dark:text-zinc-400">{label}</span>
+                                    <span className="font-bold text-gray-800 dark:text-zinc-200">{value || '-'}</span>
+                                </div>
+                            ))}
+                            {viewItem.proofUrl && (
+                                <div className="pt-3 border-t border-gray-100 dark:border-zinc-800">
+                                    <a href={viewItem.proofUrl} target="_blank" rel="noreferrer"
+                                        className="inline-flex items-center gap-2 bg-[#00a65a] text-white px-4 py-2 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c] transition-colors">
+                                        <Eye size={14}/> View Attached File
+                                    </a>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            , document.body)}
+
+            {/* ─── ATTACH MODAL ─── */}
+            {attachItem && createPortal(
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:'blur(4px)'}} onClick={() => setAttachItem(null)}>
+                    <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="bg-[#f39c12] px-6 py-4 flex items-center justify-between">
+                            <div className="text-white font-[1000] text-lg uppercase tracking-tight">Attach File</div>
+                            <button onClick={() => setAttachItem(null)} className="text-white hover:text-white/70 transition-colors">
+                                <X size={20}/>
+                            </button>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">
+                                Record: <span className="text-gray-800 dark:text-zinc-200">{attachItem.company || attachItem.drmId}</span>
+                            </div>
+                            {attachItem.proofUrl ? (
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3 dark:bg-zinc-800 dark:border-zinc-700">
+                                        <FileText size={16} className="text-[#00a65a]"/>
+                                        <span className="text-[11px] font-bold text-[#00a65a]">File already attached</span>
+                                    </div>
+                                    <a href={attachItem.proofUrl} target="_blank" rel="noreferrer"
+                                        className="w-full flex items-center justify-center gap-2 bg-[#00a65a] text-white px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c] transition-colors">
+                                        <Eye size={14}/> View Current File
+                                    </a>
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="w-full flex items-center justify-center gap-2 border border-gray-300 text-gray-600 px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-gray-50 transition-colors dark:border-zinc-700 dark:text-zinc-400"
+                                    >Replace File</button>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    <div className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center dark:border-zinc-700">
+                                        <FileText size={32} className="text-gray-300 mx-auto mb-2"/>
+                                        <div className="text-[11px] text-gray-400 font-bold">No file attached yet</div>
+                                    </div>
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="w-full flex items-center justify-center gap-2 bg-[#f39c12] text-white px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-[#d97706] transition-colors"
+                                    >
+                                        {uploading ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>}
+                                        {uploading ? 'Uploading...' : 'Choose & Upload File'}
+                                    </button>
+                                </div>
+                            )}
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*,application/pdf"
+                                className="hidden"
+                                onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    setUploading(true);
+                                    try {
+                                        const fd = new FormData();
+                                        fd.append('file', file);
+                                        fd.append('entryId', String(attachItem.id));
+                                        const res = await fetch('/api/account/dollar-system/attach', {
+                                            method: 'POST',
+                                            headers: getAuthHeader(),
+                                            credentials: 'include',
+                                            body: fd
+                                        });
+                                        if (res.ok) {
+                                            const data = await res.json();
+                                            setAttachItem((prev: any) => ({ ...prev, proofUrl: data.proofUrl }));
+                                        } else {
+                                            alert('Upload failed. Please try again.');
+                                        }
+                                    } catch {
+                                        alert('Upload failed. Please try again.');
+                                    } finally {
+                                        setUploading(false);
+                                        if (fileInputRef.current) fileInputRef.current.value = '';
+                                    }
+                                }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            , document.body)}
             <div className="flex flex-col min-h-screen bg-[#f4f6f9] font-sans text-gray-700 dark:bg-zinc-950 dark:text-zinc-400">
                 <div className="max-w-[1920px] mx-auto p-6 space-y-6">
                 
@@ -206,7 +479,7 @@ export default function DollarSystem() {
                 </aside>
                     
                     {/* SECTION 1: DYNAMIC TOP SECTION */}
-                    <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden min-w-0 h-fit dark:bg-zinc-900 dark:border-zinc-800">
+                    <div className="flex-1 bg-white border border-gray-200 rounded-lg shadow-sm min-w-0 h-fit dark:bg-zinc-900 dark:border-zinc-800">
                         <section className="p-6 space-y-6">
                         <div className="flex flex-wrap items-center gap-2 mb-6">
                             {[
@@ -233,10 +506,10 @@ export default function DollarSystem() {
                             <div className="flex flex-wrap items-center justify-between gap-y-4">
                                 <div className="space-y-1">
                                     <div className="text-2xl font-[1000] text-gray-900 uppercase tracking-tighter flex items-center gap-3 dark:text-zinc-100">
-                                        Full Payment Received <span className="text-red-500">{fullPayments.length}</span>
+                                        Full Payment Received <span className="text-red-500">{filteredFullPayments.length}</span>
                                     </div>
                                     <div className="flex gap-4 text-[13px] font-[1000] tracking-tighter uppercase whitespace-nowrap">
-                                        <span>NC(<span className="text-[#00a65a] dark:text-zinc-400">{fullPayments.length}</span>)</span>
+                                        <span>NC(<span className="text-[#00a65a] dark:text-zinc-400">{filteredFullPayments.length}</span>)</span>
                                         <span>RC(<span className="text-blue-500">0</span>)</span>
                                         <span>EC(<span className="text-red-500">0</span>)</span>
                                     </div>
@@ -245,71 +518,104 @@ export default function DollarSystem() {
                                     <div className="flex flex-col items-start font-[1000] uppercase text-[11px] border-r border-gray-200 pr-6 gap-0.5 dark:border-zinc-800">
                                         <span className="text-gray-400">Cash Received</span>
                                         <div className="flex gap-2">
-                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ 42924</Badge>
-                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr 9067030</Badge>
+                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ {fullTotalUsd.toLocaleString(undefined, {minimumFractionDigits:2})}</Badge>
+                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr {fullTotalPkr.toLocaleString()}</Badge>
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-start font-[1000] uppercase text-[11px] border-r border-gray-200 pr-6 gap-0.5 dark:border-zinc-800">
                                         <span className="text-gray-400">Online Paid</span>
                                         <div className="flex gap-2">
-                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ 32408</Badge>
-                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr 6487210</Badge>
+                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ {Number(abLiabilities.fullOnlinePaidUsd || 0).toLocaleString(undefined, {minimumFractionDigits:2})}</Badge>
+                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr {Number(abLiabilities.fullOnlinePaidPkr || 0).toLocaleString()}</Badge>
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-start font-[1000] uppercase text-[11px] gap-0.5">
                                         <span className="text-gray-400">Customer Paid</span>
                                         <div className="flex gap-2">
-                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ 4919</Badge>
-                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr 979995</Badge>
+                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ {fullTotalUsd.toLocaleString(undefined, {minimumFractionDigits:2})}</Badge>
+                                            <Badge className="bg-rose-50 text-red-400 border-none px-2 py-0.5 shadow-none font-black italic">Pkr {fullTotalPkr.toLocaleString()}</Badge>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-3 bg-gray-50/50 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
-                                <div className="relative w-72"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" /><Input placeholder="Search..." className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" /></div>
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <Button className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase">Clear Filter</Button>
+                            <div className="flex flex-wrap items-center gap-3 bg-gray-50/50 dark:bg-zinc-900 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={fullSearchTerm}
+                                        onChange={(e) => setFullSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={fullStartDate}
+                                        onChange={(e) => setFullStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={fullEndDate}
+                                        onChange={(e) => setFullEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <Button 
+                                    onClick={() => {
+                                        setFullSearchTerm("");
+                                        setFullStartDate("");
+                                        setFullEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
                             </div>
 
-                            <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm shadow-emerald-500/5 dark:border-zinc-800">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1800px] border-separate border-spacing-0">
-                                        <thead className="bg-[#f39c12] border-b text-white font-black h-10 tracking-tighter shadow-sm dark:bg-zinc-900">
+                            <div className="border border-gray-100 rounded-sm shadow-sm shadow-emerald-500/5 dark:border-zinc-800">
+                                <div style={{display:'block', width:'100%', overflowX:'auto', overflowY:'visible', paddingBottom:'16px'}} className="custom-scrollbar">
+                                    <table style={{width:'1650px', tableLayout:'fixed', minWidth:'1650px'}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                                        <thead className="bg-[#f39c12] border-b text-white font-bold text-[11px] tracking-normal shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
                                             <tr>
-                                                <th className="p-3 border-r border-white/20">No</th>
-                                                <th className="p-3 border-r border-white/20">Date</th>
-                                                <th className="p-3 border-r border-white/20">Channel Partner</th>
-                                                <th className="p-3 border-r border-white/20">Mmem Id</th>
-                                                <th className="p-3 border-r border-white/20">Company Name</th>
-                                                <th className="p-3 border-r border-white/20">Product Purchased</th>
-                                                <th className="p-3 border-r border-white/20">Order Type</th>
-                                                <th className="p-3 border-r border-white/20">Contract No</th>
-                                                <th className="p-3 border-r border-white/20">Contact Amount</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Account</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Amount</th>
-                                                <th className="p-3 border-r border-white/20">Attach</th>
-                                                <th className="p-3">Action</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[50px]">No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Date</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Channel Partner</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[120px]">Mem ID</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[240px]">Company Name</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[160px]">Product Purchased</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Order Type</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[180px]">PayPal Account</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">PayPal Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[70px]">Attach</th>
+                                                <th className="py-2.5 px-2 text-center w-[70px]">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="bg-white font-bold dark:bg-zinc-900">
-                                            {fullPayments.length > 0 ? (
-                                                fullPayments.map((item: any, i: number) => (
-                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 transition-colors">
-                                                        <td className="p-3 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
-                                                        <td className="p-3 border-r font-bold italic text-gray-500 dark:text-zinc-400">{item.salePerson || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{item.drmId || '-'}</td>
-                                                        <td className="p-3 border-r font-black uppercase text-gray-700 dark:text-zinc-400">{item.company || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.package || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.type || 'Full'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.orderId || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">-</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r flex justify-center py-2"><FileText size={16} className="text-gray-400 cursor-pointer"/></td>
-                                                        <td className="p-3 text-center"><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></td>
+                                            {filteredFullPayments.length > 0 ? (
+                                                filteredFullPayments.map((item: any, i: number) => (
+                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="p-2.5 border-r font-bold text-gray-400 text-center w-[50px]">{i + 1}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px] truncate" title={item.date}>{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
+                                                        <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 w-[140px] truncate" title={item.salePerson}>{item.salePerson || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 w-[120px] truncate" title={item.drmId}>{item.drmId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 w-[240px] truncate" title={item.company}>{item.company || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[160px] truncate" title={item.package}>{item.package || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px]">{item.type || 'Full'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[130px] truncate" title={item.orderId}>{item.orderId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100 w-[130px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[180px] truncate">-</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[140px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r w-[70px] py-2"><div className="flex justify-center"><button onClick={() => setAttachItem(item)}><FileText size={16} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button></div></td>
+                                                        <td className="p-2.5 text-center w-[70px]"><button onClick={() => setViewItem(item)}><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></button></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -330,7 +636,7 @@ export default function DollarSystem() {
                              <div className="flex flex-wrap items-center justify-between gap-y-4">
                                 <div className="space-y-1">
                                     <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">
-                                        Partial Full Payment Received <span className="text-red-500">{partialPayments.length}</span>
+                                        Partial Full Payment Received <span className="text-red-500">{filteredPartialPayments.length}</span>
                                     </div>
                                     <div className="text-[11px] font-black text-red-400 italic">Pkr 0</div>
                                 </div>
@@ -338,64 +644,95 @@ export default function DollarSystem() {
                                     <div className="flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5">
                                         <span className="text-gray-400">Cash Received</span>
                                         <div className="flex gap-2">
-                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ 0</Badge>
-                                            <Badge className="bg-rose-50 text-red-500 border-none px-2 py-0.5 shadow-none font-black italic">Pkr 0</Badge>
+                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ {partialTotalUsd.toLocaleString(undefined, {minimumFractionDigits:2})}</Badge>
+                                            <Badge className="bg-rose-50 text-red-500 border-none px-2 py-0.5 shadow-none font-black italic">Pkr {partialTotalPkr.toLocaleString()}</Badge>
                                         </div>
                                     </div>
                                     <div className="flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5 border-l border-gray-100 pl-4 dark:border-zinc-800">
                                         <span className="text-gray-400">Online Paid</span>
                                         <div className="flex gap-2">
-                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ 0</Badge>
-                                            <Badge className="bg-rose-50 text-red-500 border-none px-2 py-0.5 shadow-none font-black italic">Pkr 0</Badge>
+                                            <Badge className="bg-emerald-50 text-[#00a65a] border-none px-2 py-0.5 shadow-none font-black dark:text-zinc-400">$ {Number(abLiabilities.partialOnlinePaidUsd || 0).toLocaleString(undefined, {minimumFractionDigits:2})}</Badge>
+                                            <Badge className="bg-rose-50 text-red-500 border-none px-2 py-0.5 shadow-none font-black italic">Pkr {Number(abLiabilities.partialOnlinePaidPkr || 0).toLocaleString()}</Badge>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                                                         <div className="flex flex-wrap items-center gap-3 bg-gray-50/50 dark:bg-zinc-900 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={partialSearchTerm}
+                                        onChange={(e) => setPartialSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={partialStartDate}
+                                        onChange={(e) => setPartialStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={partialEndDate}
+                                        onChange={(e) => setPartialEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <Button 
+                                    onClick={() => {
+                                        setPartialSearchTerm("");
+                                        setPartialStartDate("");
+                                        setPartialEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
+                            </div>  </div>
 
-                            <div className="flex flex-wrap items-center gap-3">
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <Button className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-6 h-10 rounded-md font-bold text-sm">Filter</Button>
-                                <Button className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-6 h-10 rounded-md font-bold text-sm">Clear</Button>
-                            </div>
-
-                             <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1800px] border-separate border-spacing-0">
-                                        <thead className="bg-[#f39c12] border-b text-white font-black h-10 tracking-tighter shadow-sm dark:bg-zinc-900">
+                             <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800">
+                                <div style={{display:'block', width:'100%', overflowX:'auto', overflowY:'visible', paddingBottom:'16px'}} className="custom-scrollbar">
+                                    <table style={{width:'1650px', tableLayout:'fixed', minWidth:'1650px'}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                                        <thead className="bg-[#f39c12] border-b text-white font-bold text-[11px] tracking-normal shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
                                             <tr>
-                                                <th className="p-3 border-r border-white/20">No</th>
-                                                <th className="p-3 border-r border-white/20">Date</th>
-                                                <th className="p-3 border-r border-white/20">Channel Partner</th>
-                                                <th className="p-3 border-r border-white/20">Mmem Id</th>
-                                                <th className="p-3 border-r border-white/20">Company Name</th>
-                                                <th className="p-3 border-r border-white/20">Product Purchased</th>
-                                                <th className="p-3 border-r border-white/20">Order Type</th>
-                                                <th className="p-3 border-r border-white/20">Contract No</th>
-                                                <th className="p-3 border-r border-white/20">Contact Amount</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Account</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Amount</th>
-                                                <th className="p-3 border-r border-white/20">Attach</th>
-                                                <th className="p-3">Action</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[50px]">No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Date</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Channel Partner</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[120px]">Mem ID</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[240px]">Company Name</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[160px]">Product Purchased</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Order Type</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[180px]">PayPal Account</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">PayPal Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[70px]">Attach</th>
+                                                <th className="py-2.5 px-2 text-center w-[70px]">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="bg-white font-bold dark:bg-zinc-900">
-                                            {partialPayments.length > 0 ? (
-                                                partialPayments.map((item: any, i: number) => (
-                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 transition-colors">
-                                                        <td className="p-3 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
-                                                        <td className="p-3 border-r font-bold italic text-gray-500 dark:text-zinc-400">{item.salePerson || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{item.drmId || '-'}</td>
-                                                        <td className="p-3 border-r font-black uppercase text-gray-700 dark:text-zinc-400">{item.company || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.package || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.type || 'Partial'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.orderId || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">-</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r flex justify-center py-2"><FileText size={16} className="text-gray-400 cursor-pointer"/></td>
-                                                        <td className="p-3 text-center"><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></td>
+                                            {filteredPartialPayments.length > 0 ? (
+                                                filteredPartialPayments.map((item: any, i: number) => (
+                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="p-2.5 border-r font-bold text-gray-400 text-center w-[50px]">{i + 1}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px] truncate" title={item.date}>{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
+                                                        <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 w-[140px] truncate" title={item.salePerson}>{item.salePerson || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 w-[120px] truncate" title={item.drmId}>{item.drmId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 w-[240px] truncate" title={item.company}>{item.company || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[160px] truncate" title={item.package}>{item.package || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px]">{item.type || 'Partial'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[130px] truncate" title={item.orderId}>{item.orderId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100 w-[130px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[180px] truncate">-</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[140px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r w-[70px] py-2"><div className="flex justify-center"><button onClick={() => setAttachItem(item)}><FileText size={16} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button></div></td>
+                                                        <td className="p-2.5 text-center w-[70px]"><button onClick={() => setViewItem(item)}><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></button></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -414,7 +751,7 @@ export default function DollarSystem() {
                         {activeTab === "term" && (
                         <div className="space-y-6 animate-in fade-in duration-300">
                             <div className="flex flex-col gap-4">
-                                <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 dark:border-zinc-800 dark:text-zinc-100">Tem Payment <span className="text-[#00a65a] dark:text-zinc-400">0</span></div>
+                                <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 dark:border-zinc-800 dark:text-zinc-100">Term Payment <span className="text-[#00a65a] dark:text-zinc-400">0</span></div>
                                 <Button className="bg-[#f06464] hover:bg-[#d9534f] text-white w-fit h-9 px-4 font-black uppercase text-[11px] rounded-md shadow-sm dark:bg-zinc-900 dark:hover:bg-zinc-800">Generate Email</Button>
                                 
                                 <div className="flex items-center justify-between">
@@ -431,23 +768,23 @@ export default function DollarSystem() {
                             </div>
 
                             <div className="border border-gray-100 rounded-sm overflow-hidden dark:border-zinc-800">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1800px] border-separate border-spacing-0">
-                                        <thead className="bg-[#f39c12] border-b text-white font-black h-10 tracking-tighter shadow-sm dark:bg-zinc-900">
+                                <div className="overflow-x-auto w-full custom-scrollbar pb-1">
+                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1300px] border-separate border-spacing-0">
+                                        <thead className="bg-[#f39c12] border-b text-white font-bold text-[11px] tracking-normal shadow-sm dark:bg-zinc-900">
                                             <tr>
-                                                <th className="p-3 border-r border-white/20">No</th>
-                                                <th className="p-3 border-r border-white/20">Date</th>
-                                                <th className="p-3 border-r border-white/20">Channel Partner</th>
-                                                <th className="p-3 border-r border-white/20">Mmem Id</th>
-                                                <th className="p-3 border-r border-white/20">Company Name</th>
-                                                <th className="p-3 border-r border-white/20">Product Purchased</th>
-                                                <th className="p-3 border-r border-white/20">Order Type</th>
-                                                <th className="p-3 border-r border-white/20">Contract No</th>
-                                                <th className="p-3 border-r border-white/20">Contact Amount</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Account</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Amount</th>
-                                                <th className="p-3 border-r border-white/20">Attach</th>
-                                                <th className="p-3">Action</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-10">No</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Date</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Channel Partner</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Mem ID</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Company Name</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Product Purchased</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Order Type</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Contract No</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">Contract Amount</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">PayPal Account</th>
+                                                <th className="py-2.5 px-2.5 border-r border-white/20">PayPal Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-12">Attach</th>
+                                                <th className="py-2.5 px-2 text-center w-12">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="bg-white dark:bg-zinc-900">
@@ -465,7 +802,7 @@ export default function DollarSystem() {
                         {/* --- TAB CONTENT: AB LIABILITIES --- */}
                         {activeTab === "ab_liabilities" && (
                         <div className="space-y-6 animate-in fade-in duration-300">
-                             <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 uppercase tracking-tighter dark:border-zinc-800 dark:text-zinc-100">AB Liabilities <span className="text-red-500">0</span></div>
+                             <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 uppercase tracking-tighter dark:border-zinc-800 dark:text-zinc-100">AB Liabilities <span className="text-red-500">{counts.liabilities}</span></div>
                              
                              <div className="max-w-4xl border border-gray-200 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
                                 <Table className="text-[12px]">
@@ -481,30 +818,44 @@ export default function DollarSystem() {
                                         <TableRow className="border-b border-gray-100 dark:border-zinc-800">
                                             <TableCell rowSpan={2} className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">Full Payment</TableCell>
                                             <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">Online Paid</TableCell>
-                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 32,408.00</TableCell>
-                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr 6,487,210.00</TableCell>
+                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {Number(abLiabilities.fullOnlinePaidUsd || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
+                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {Number(abLiabilities.fullOnlinePaidPkr || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
                                         </TableRow>
                                         <TableRow className="border-b border-gray-200 dark:border-zinc-800">
                                             <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">Cash Received</TableCell>
-                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {walletStats.dollarRecovered || '42,924.00'}</TableCell>
-                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {walletStats.cashRecovered || '9,067,030.00'}</TableCell>
+                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {Number(abLiabilities.fullCashReceivedUsd || walletStats.dollarRecovered || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
+                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {Number(abLiabilities.fullCashReceivedPkr || walletStats.cashRecovered || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
                                         </TableRow>
                                         <TableRow className="border-b border-gray-100 dark:border-zinc-800">
                                             <TableCell rowSpan={2} className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">Partial Payment</TableCell>
                                             <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">Online Paid</TableCell>
-                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 10,662.95</TableCell>
-                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr 2,991,900.00</TableCell>
+                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {Number(abLiabilities.partialOnlinePaidUsd || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
+                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {Number(abLiabilities.partialOnlinePaidPkr || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
                                         </TableRow>
                                         <TableRow className="border-b border-gray-200 dark:border-zinc-800">
                                             <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">Cash Received</TableCell>
-                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 25,335.86</TableCell>
-                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr 7,094,067.00</TableCell>
+                                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {Number(abLiabilities.partialCashReceivedUsd || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
+                                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr {Number(abLiabilities.partialCashReceivedPkr || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</TableCell>
                                         </TableRow>
-                                        <TableRow className="bg-gray-50/50">
+                                        <TableRow className="bg-gray-50/50 dark:bg-zinc-900">
                                             <TableCell className="p-4 border-r text-gray-700 font-black uppercase dark:text-zinc-400">Total</TableCell>
                                             <TableCell className="p-4 border-r text-gray-500 font-black text-sm italic dark:text-zinc-400">All Payments</TableCell>
-                                            <TableCell className="p-4 border-r text-[#3c8dbc] text-lg font-[1000] dark:text-zinc-100">$ 111,330.81</TableCell>
-                                            <TableCell className="p-4 text-red-500 text-lg font-[1000]">Pkr 25,640,207.00</TableCell>
+                                            <TableCell className="p-4 border-r text-[#3c8dbc] text-lg font-[1000] dark:text-zinc-100">
+                                                $ {(
+                                                    Number(abLiabilities.fullOnlinePaidUsd || 0) +
+                                                    Number(abLiabilities.fullCashReceivedUsd || 0) +
+                                                    Number(abLiabilities.partialOnlinePaidUsd || 0) +
+                                                    Number(abLiabilities.partialCashReceivedUsd || 0)
+                                                ).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}
+                                            </TableCell>
+                                            <TableCell className="p-4 text-red-500 text-lg font-[1000]">
+                                                Pkr {(
+                                                    Number(abLiabilities.fullOnlinePaidPkr || 0) +
+                                                    Number(abLiabilities.fullCashReceivedPkr || 0) +
+                                                    Number(abLiabilities.partialOnlinePaidPkr || 0) +
+                                                    Number(abLiabilities.partialCashReceivedPkr || 0)
+                                                ).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}
+                                            </TableCell>
                                         </TableRow>
                                     </TableBody>
                                 </Table>
@@ -518,47 +869,83 @@ export default function DollarSystem() {
                 {/* SECTION 2: LOAN PAYMENT RECEIVED (DYNAMIC) */}
                 <section className="p-6 bg-white border border-gray-200 rounded-lg shadow-sm space-y-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <div className="space-y-4">
-                            <div className="text-[20px] font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">Loan Payment Received NC({loans.length}) RC(0) EC(0)</div>
+                            <div className="text-[20px] font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">Loan Payment Received NC({filteredLoans.length}) RC(0) EC(0)</div>
                             <div className="flex flex-wrap items-center gap-3">
-                                <div className="relative w-64"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" /><Input placeholder="Search..." className="h-10 pl-10 rounded-md border-gray-200 dark:border-zinc-800" /></div>
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={loanSearchTerm}
+                                        onChange={(e) => setLoanSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={loanStartDate}
+                                        onChange={(e) => setLoanStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={loanEndDate}
+                                        onChange={(e) => setLoanEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <Button 
+                                    onClick={() => {
+                                        setLoanSearchTerm("");
+                                        setLoanStartDate("");
+                                        setLoanEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
                             </div>
-                            <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1800px] border-separate border-spacing-0">
-                                        <thead className="bg-[#f39c12] border-b text-white font-black h-10 tracking-tighter shadow-sm dark:bg-zinc-900">
+                            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800">
+                                <div style={{display:'block', width:'100%', overflowX:'auto', overflowY:'visible', paddingBottom:'16px'}} className="custom-scrollbar">
+                                    <table style={{width:'1650px', tableLayout:'fixed', minWidth:'1650px'}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                                        <thead className="bg-[#f39c12] border-b text-white font-bold text-[11px] tracking-normal shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
                                             <tr>
-                                                <th className="p-3 border-r border-white/20">No</th>
-                                                <th className="p-3 border-r border-white/20">Date</th>
-                                                <th className="p-3 border-r border-white/20">Channel Partner</th>
-                                                <th className="p-3 border-r border-white/20">Mmem Id</th>
-                                                <th className="p-3 border-r border-white/20">Company Name</th>
-                                                <th className="p-3 border-r border-white/20">Product Purchased</th>
-                                                <th className="p-3 border-r border-white/20">Order Type</th>
-                                                <th className="p-3 border-r border-white/20">Contract No</th>
-                                                <th className="p-3 border-r border-white/20">Contact Amount</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Account</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Amount</th>
-                                                <th className="p-3 border-r border-white/20">Attach</th>
-                                                <th className="p-3">Action</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[50px]">No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Date</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Channel Partner</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[120px]">Mem ID</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[240px]">Company Name</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[160px]">Product Purchased</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Order Type</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[180px]">PayPal Account</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">PayPal Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[70px]">Attach</th>
+                                                <th className="py-2.5 px-2 text-center w-[70px]">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="bg-white font-bold dark:bg-zinc-900">
-                                            {loans.length > 0 ? (
-                                                loans.map((item: any, i: number) => (
-                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 transition-colors">
-                                                        <td className="p-3 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
-                                                        <td className="p-3 border-r font-bold italic text-gray-500 dark:text-zinc-400">{item.salePerson || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{item.drmId || '-'}</td>
-                                                        <td className="p-3 border-r font-black uppercase text-gray-700 dark:text-zinc-400">{item.company || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.package || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">Loan</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.orderId || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">-</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r flex justify-center py-2"><FileText size={16} className="text-gray-400 cursor-pointer"/></td>
-                                                        <td className="p-3 text-center"><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></td>
+                                            {filteredLoans.length > 0 ? (
+                                                filteredLoans.map((item: any, i: number) => (
+                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="p-2.5 border-r font-bold text-gray-400 text-center w-[50px]">{i + 1}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px] truncate" title={item.date}>{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
+                                                        <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 w-[140px] truncate" title={item.salePerson}>{item.salePerson || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 w-[120px] truncate" title={item.drmId}>{item.drmId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 w-[240px] truncate" title={item.company}>{item.company || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[160px] truncate" title={item.package}>{item.package || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px]">Loan</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[130px] truncate" title={item.orderId}>{item.orderId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100 w-[130px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[180px] truncate">-</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[140px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r w-[70px] py-2"><div className="flex justify-center"><button onClick={() => setAttachItem(item)}><FileText size={16} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button></div></td>
+                                                        <td className="p-2.5 text-center w-[70px]"><button onClick={() => setViewItem(item)}><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></button></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -578,55 +965,88 @@ export default function DollarSystem() {
                         <div className="space-y-6">
                             <div className="flex flex-wrap items-center justify-between gap-y-4">
                                 <div className="space-y-1 text-blue-500">
-                                    <div className="text-2xl font-[1000] uppercase tracking-tighter">Partial Payment Received <span className="text-red-500">{partialPayments.length}</span></div>
+                                    <div className="text-2xl font-[1000] uppercase tracking-tighter">Partial Payment Received <span className="text-red-500">{filteredPartialPayments.length}</span></div>
                                     <Badge className="bg-[#f8d7da] text-[#721c24] border-none shadow-none text-[10px] font-bold px-2 dark:bg-zinc-900">Pkr 0</Badge>
                                 </div>
                             </div>
 
                             <div className="flex flex-wrap items-center gap-3">
-                                <div className="relative w-64"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" /><Input placeholder="Search..." className="h-10 pl-10 rounded-md border-gray-200 dark:border-zinc-800" /></div>
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-40 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <div className="relative"><Input value="dd/mm/yyyy" readOnly className="h-10 w-40 text-sm border-gray-200 dark:border-zinc-800" /><Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/></div>
-                                <Button className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-black text-xs uppercase shadow-md">Clear</Button>
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={partialSearchTerm}
+                                        onChange={(e) => setPartialSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={partialStartDate}
+                                        onChange={(e) => setPartialStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={partialEndDate}
+                                        onChange={(e) => setPartialEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <Button 
+                                    onClick={() => {
+                                        setPartialSearchTerm("");
+                                        setPartialStartDate("");
+                                        setPartialEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
                             </div>
 
-                            <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1800px] border-separate border-spacing-0">
-                                        <thead className="bg-[#f39c12] border-b text-white font-black h-10 tracking-tighter shadow-sm dark:bg-zinc-900">
+                            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800">
+                                <div style={{display:'block', width:'100%', overflowX:'auto', overflowY:'visible', paddingBottom:'16px'}} className="custom-scrollbar">
+                                    <table style={{width:'1650px', tableLayout:'fixed', minWidth:'1650px'}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                                        <thead className="bg-[#f39c12] border-b text-white font-bold text-[11px] tracking-normal shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
                                             <tr>
-                                                <th className="p-3 border-r border-white/20">No</th>
-                                                <th className="p-3 border-r border-white/20">Date</th>
-                                                <th className="p-3 border-r border-white/20">Channel Partner</th>
-                                                <th className="p-3 border-r border-white/20">Mmem Id</th>
-                                                <th className="p-3 border-r border-white/20">Company Name</th>
-                                                <th className="p-3 border-r border-white/20">Product Purchased</th>
-                                                <th className="p-3 border-r border-white/20">Order Type</th>
-                                                <th className="p-3 border-r border-white/20">Contract No</th>
-                                                <th className="p-3 border-r border-white/20">Contact Amount</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Account</th>
-                                                <th className="p-3 border-r border-white/20">PayPal Amount</th>
-                                                <th className="p-3 border-r border-white/20">Attach</th>
-                                                <th className="p-3">Action</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[50px]">No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Date</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Channel Partner</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[120px]">Mem ID</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[240px]">Company Name</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[160px]">Product Purchased</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Order Type</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract No</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[130px]">Contract Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[180px]">PayPal Account</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">PayPal Amount</th>
+                                                <th className="py-2.5 px-2 border-r border-white/20 text-center w-[70px]">Attach</th>
+                                                <th className="py-2.5 px-2 text-center w-[70px]">Action</th>
                                             </tr>
                                         </thead>
                                         <tbody className="bg-white font-bold dark:bg-zinc-900">
-                                            {partialPayments.length > 0 ? (
-                                                partialPayments.map((item: any, i: number) => (
-                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 transition-colors">
-                                                        <td className="p-3 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
-                                                        <td className="p-3 border-r font-bold italic text-gray-500 dark:text-zinc-400">{item.salePerson || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{item.drmId || '-'}</td>
-                                                        <td className="p-3 border-r font-black uppercase text-gray-700 dark:text-zinc-400">{item.company || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.package || '-'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.type || 'Partial'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">{item.orderId || '-'}</td>
-                                                        <td className="p-3 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">-</td>
-                                                        <td className="p-3 border-r text-gray-500 dark:text-zinc-400">$ {item.dollar || '0'}</td>
-                                                        <td className="p-3 border-r flex justify-center py-2"><FileText size={16} className="text-gray-400 cursor-pointer"/></td>
-                                                        <td className="p-3 text-center"><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></td>
+                                            {filteredPartialPayments.length > 0 ? (
+                                                filteredPartialPayments.map((item: any, i: number) => (
+                                                    <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="p-2.5 border-r font-bold text-gray-400 text-center w-[50px]">{i + 1}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px] truncate" title={item.date}>{item.date ? format(new Date(item.date), "yyyy-MM-dd") : '-' }</td>
+                                                        <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 w-[140px] truncate" title={item.salePerson}>{item.salePerson || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 w-[120px] truncate" title={item.drmId}>{item.drmId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 w-[240px] truncate" title={item.company}>{item.company || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[160px] truncate" title={item.package}>{item.package || '-'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[110px]">{item.type || 'Partial'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[130px] truncate" title={item.orderId}>{item.orderId || '-'}</td>
+                                                        <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100 w-[130px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[180px] truncate">-</td>
+                                                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 w-[140px]">$ {item.dollar || '0'}</td>
+                                                        <td className="p-2.5 border-r w-[70px] py-2"><div className="flex justify-center"><button onClick={() => setAttachItem(item)}><FileText size={16} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button></div></td>
+                                                        <td className="p-2.5 text-center w-[70px]"><button onClick={() => setViewItem(item)}><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block dark:text-zinc-400"/></button></td>
                                                     </tr>
                                                 ))
                                             ) : (
@@ -647,8 +1067,49 @@ export default function DollarSystem() {
                         <div className="space-y-6">
                             <div className="flex flex-wrap items-center justify-between gap-y-4">
                                 <div className="space-y-1">
-                                    <div className="text-2xl font-[1000] text-rose-500 uppercase tracking-tighter">Pending Approvals <span className="text-red-500 font-black">{pendingApprovals.length}</span></div>
+                                    <div className="text-2xl font-[1000] text-rose-500 uppercase tracking-tighter">Pending Approvals <span className="text-red-500 font-black">{filteredPendingApprovals.length}</span></div>
                                 </div>
+                            </div>
+
+                            {/* FILTER BAR - SEARCH & DATE RANGE */}
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={pendingSearchTerm}
+                                        onChange={(e) => setPendingSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={pendingStartDate}
+                                        onChange={(e) => setPendingStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={pendingEndDate}
+                                        onChange={(e) => setPendingEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                </div>
+                                <Button 
+                                    onClick={() => {
+                                        setPendingSearchTerm("");
+                                        setPendingStartDate("");
+                                        setPendingEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
                             </div>
 
                             <div className="flex gap-1.5 mb-2">
@@ -660,27 +1121,27 @@ export default function DollarSystem() {
                             <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
                                 <div className="overflow-x-auto custom-scrollbar">
                                     <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1500px] border-separate border-spacing-0">
-                                        <TableHeader className="bg-[#f8f9fa] border-b text-gray-800 font-extrabold h-10 uppercase tracking-tighter shadow-inner dark:bg-zinc-900 dark:text-zinc-100">
+                                        <TableHeader className="bg-[#f8f9fa] border-b text-gray-800 font-bold text-xs uppercase tracking-normal shadow-inner dark:bg-zinc-900 dark:text-zinc-100">
                                             <TableRow>
-                                                <TableHead className="p-3 border-r">#</TableHead>
-                                                <TableHead className="p-3 border-r">Drm id</TableHead>
-                                                <TableHead className="p-3 border-r">Company</TableHead>
-                                                <TableHead className="p-3 border-r">Sale Person</TableHead>
-                                                <TableHead className="p-3 border-r">Dollar</TableHead>
-                                                <TableHead className="p-3 border-r">Pkr</TableHead>
-                                                <TableHead className="p-3 border-r">Dollar Rate</TableHead>
-                                                <TableHead className="p-3 border-r">Ab Disc</TableHead>
-                                                <TableHead className="p-3 border-r">Extra Disc</TableHead>
-                                                <TableHead className="p-3 border-r">Package</TableHead>
-                                                <TableHead className="p-3 border-r">Type</TableHead>
-                                                <TableHead className="p-3 border-r">Dropout</TableHead>
-                                                <TableHead className="p-3 border-r">Status</TableHead>
-                                                <TableHead className="p-3 border-r">Action</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r text-center">#</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">DRM ID</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Company</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Sales Person</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Dollar</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">PKR</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Dollar Rate</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">AB Disc</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Extra Disc</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Package</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Type</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Dropout</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Status</TableHead>
+                                                <TableHead className="p-3.5 px-4 text-center">Action</TableHead>
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody className="bg-white dark:bg-zinc-900">
-                                            {pendingApprovals.length > 0 ? (
-                                                pendingApprovals.map((tx: any, i: number) => (
+                                            {filteredPendingApprovals.length > 0 ? (
+                                                filteredPendingApprovals.map((tx: any, i: number) => (
                                                     <TableRow key={i} className="hover:bg-rose-50/10 transition-colors">
                                                         <TableCell className="p-3 border-r border-b font-bold text-gray-400">{i+1}</TableCell>
                                                         <TableCell className="p-3 border-r border-b font-[1000] text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
@@ -717,53 +1178,97 @@ export default function DollarSystem() {
                                 <h2 className="text-[20px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2>
                             </div>
 
-                            {/* FILTER BAR - MATCHING SCREENSHOT (FULL WIDTH) */}
-                            <div className="flex items-center gap-4 w-full">
-                                <div className="relative flex-1">
-                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
-                                    <Input placeholder="Search..." className="h-12 pl-12 rounded-md border-gray-100 bg-gray-50/30 dark:border-zinc-800" />
+                            {/* FILTER BAR - COMPACT AND FUNCTIONAL */}
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="relative w-72">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
+                                    <Input 
+                                        placeholder="Search..." 
+                                        value={abSearchTerm}
+                                        onChange={(e) => setAbSearchTerm(e.target.value)}
+                                        className="h-10 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" 
+                                    />
                                 </div>
-                                <div className="relative w-48">
-                                    <Input value="dd/mm/yyyy" readOnly className="h-12 text-sm border-gray-100 bg-gray-50/30 dark:border-zinc-800" />
-                                    <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={abStartDate}
+                                        onChange={(e) => setAbStartDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
                                 </div>
-                                <div className="relative w-48">
-                                    <Input value="dd/mm/yyyy" readOnly className="h-12 text-sm border-gray-100 bg-gray-50/30 dark:border-zinc-800" />
-                                    <Calendar className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+                                <div className="relative">
+                                    <Input 
+                                        type="date"
+                                        value={abEndDate}
+                                        onChange={(e) => setAbEndDate(e.target.value)}
+                                        className="h-10 w-44 text-sm border-gray-200 dark:border-zinc-800 pr-10" 
+                                    />
+                                    <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
                                 </div>
-                                <Button className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-10 h-12 rounded-md font-black text-sm uppercase tracking-wider">Clear</Button>
+                                <Button 
+                                    onClick={() => {
+                                        setAbSearchTerm("");
+                                        setAbStartDate("");
+                                        setAbEndDate("");
+                                    }}
+                                    className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-8 h-10 rounded-md font-bold text-sm uppercase"
+                                >
+                                    Clear Filter
+                                </Button>
                             </div>
 
                             <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm shadow-blue-500/5 dark:border-zinc-800">
                                 <div className="overflow-x-auto custom-scrollbar">
                                     <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1200px] border-separate border-spacing-0">
-                                        <TableHeader className="bg-[#f8f9fa] border-b text-gray-800 font-extrabold h-11 uppercase tracking-tighter dark:bg-zinc-900 dark:text-zinc-100">
+                                        <TableHeader className="bg-[#f8f9fa] border-b text-gray-800 font-bold text-xs uppercase tracking-normal dark:bg-zinc-900 dark:text-zinc-100">
                                             <TableRow>
-                                                <TableHead className="p-4 border-r w-12 text-center items-center justify-center flex"><Checkbox className="rounded-sm border-emerald-500" /></TableHead>
-                                                <TableHead className="p-4 border-r">Ab Date</TableHead>
-                                                <TableHead className="p-4 border-r">Bv Date</TableHead>
-                                                <TableHead className="p-4 border-r">Drm Id</TableHead>
-                                                <TableHead className="p-4 border-r">Ab Id</TableHead>
-                                                <TableHead className="p-4 border-r">Order Id</TableHead>
-                                                <TableHead className="p-4 border-r">Company</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r w-12 text-center items-center justify-center flex"><Checkbox className="rounded-sm border-emerald-500" /></TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">AB Date</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">BV Date</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">DRM ID</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">AB ID</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Order ID</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Company</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Amount</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Status</TableHead>
+                                                <TableHead className="p-3.5 px-4 border-r">Paid Date</TableHead>
+                                                <TableHead className="p-3.5 px-4 text-center">Proof</TableHead>
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody className="bg-white dark:bg-zinc-900">
-                                            {alibabaPayments.length > 0 ? (
-                                                alibabaPayments.map((tx: any, i: number) => (
+                                            {filteredAlibabaPayments.length > 0 ? (
+                                                filteredAlibabaPayments.map((tx: any, i: number) => (
                                                     <TableRow key={i} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
                                                         <TableCell className="p-4 border-r border-b text-center"><Checkbox className="rounded-sm border-emerald-500" /></TableCell>
                                                         <TableCell className="p-4 border-r border-b text-gray-500 dark:text-zinc-400">{tx.abDate ? format(new Date(tx.abDate), "MM/dd/yyyy") : '-'}</TableCell>
                                                         <TableCell className="p-4 border-r border-b text-[#dd4b39]">{tx.date ? format(new Date(tx.date), "MM/dd/yyyy") : '-'}</TableCell>
-                                                        <TableCell className="p-4 border-r border-b font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
-                                                        <TableCell className="p-4 border-r border-b font-bold text-blue-500">{tx.abId}</TableCell>
-                                                        <TableCell className="p-4 border-r border-b">{tx.orderId}</TableCell>
-                                                        <TableCell className="p-4 border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId || '-'}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b font-black text-gray-600 dark:text-zinc-300">{tx.abId || <span className="text-gray-300 italic text-[10px]">not linked</span>}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b text-gray-500 dark:text-zinc-400">{tx.orderId || '-'}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company || '-'}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {Number(tx.dollar || 0).toLocaleString(undefined, {minimumFractionDigits:2})}</TableCell>
+                                                        <TableCell className="p-4 border-r border-b text-center">
+                                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                                                tx.paymentStatus === 'paid'       ? 'bg-emerald-100 text-emerald-700' :
+                                                                tx.paymentStatus === 'processing' ? 'bg-blue-100 text-blue-700' :
+                                                                tx.paymentStatus === 'rejected'   ? 'bg-red-100 text-red-700' :
+                                                                tx.paymentStatus === 'cancelled'  ? 'bg-gray-100 text-gray-500' :
+                                                                'bg-yellow-100 text-yellow-700'
+                                                            }`}>{tx.paymentStatus || 'pending'}</span>
+                                                        </TableCell>
+                                                        <TableCell className="p-4 border-r border-b text-gray-400 text-[10px]">{tx.paidDate ? format(new Date(tx.paidDate), 'MM/dd/yyyy') : '-'}</TableCell>
+                                                        <TableCell className="p-4 border-b text-center">
+                                                            {tx.proofUrl
+                                                                ? <a href={tx.proofUrl} target="_blank" rel="noreferrer"><Eye size={16} className="text-[#00a65a] cursor-pointer inline-block"/></a>
+                                                                : <FileText size={16} className="text-gray-300"/>}
+                                                        </TableCell>
                                                     </TableRow>
                                                 ))
                                             ) : (
                                                 <TableRow>
-                                                    <TableCell colSpan={7} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No payments to Alibaba found</TableCell>
+                                                    <TableCell colSpan={11} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No paid Alibaba records found</TableCell>
                                                 </TableRow>
                                             )}
                                         </TableBody>
@@ -780,10 +1285,20 @@ export default function DollarSystem() {
             <style>{`
                 .no-scrollbar::-webkit-scrollbar { display: none; }
                 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-                .custom-scrollbar::-webkit-scrollbar { height: 6px; width: 6px; }
-                .custom-scrollbar::-webkit-scrollbar-track { background: #f8f9fa; }
-                .custom-scrollbar::-webkit-scrollbar-thumb { background: #00a65a; border-radius: 10px; }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #008d4c; }
+                .custom-scrollbar {
+                    overflow-x: scroll !important;
+                    scrollbar-width: auto !important;
+                    scrollbar-color: #f39c12 #cbd5e1 !important;
+                }
+                .custom-scrollbar::-webkit-scrollbar { height: 20px !important; width: 20px !important; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: #cbd5e1 !important; border-radius: 10px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #f39c12 !important; border-radius: 10px; border: 3px solid #cbd5e1 !important; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #d97706 !important; }
+
+                .dark .custom-scrollbar { scrollbar-color: #f39c12 #27272a !important; }
+                .dark .custom-scrollbar::-webkit-scrollbar-track { background: #27272a !important; }
+                .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #f39c12 !important; border: 3px solid #27272a !important; }
+                .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #d97706 !important; }
             `}</style>
         </>
     );

@@ -143,7 +143,7 @@ export default function MonthlyCompleteProject() {
                                     </tr>
                                 ) : (
                                     filteredProjects.map((p, idx) => (
-                                        <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 transition-colors text-[13px] dark:border-zinc-800">
+                                        <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors text-[13px] dark:border-zinc-800">
                                             <td className="p-3 pl-4 flex items-center gap-2 text-gray-500 dark:text-zinc-400">
                                                 <Checkbox className="mr-1 border-gray-300 w-3.5 h-3.5 rounded-sm dark:border-zinc-800" /> {(idx + 1).toString().padStart(2, '0')}
                                             </td>

@@ -113,7 +113,7 @@ static async listUsers(req: Request | any, res: Response | any) {
       counter++;
     }
     if (search) {
-      query += ` and (name ilike $${counter} or full_name ilike $${counter} or email ilike $${counter} or phone ilike $${counter})`;
+      query += ` and (name ilike $${counter} or full_name ilike $${counter} or email ilike $${counter} or phone ilike $${counter} or role_id ilike $${counter} or role ilike $${counter} or department ilike $${counter} or designation ilike $${counter})`;
       params.push(`%${search}%`);
       counter++;
     }
@@ -395,14 +395,9 @@ static async updateUser(req: Request | any, res: Response | any) {
       values.push(data.designation);
       counter++;
     }
-    if (data.phone) {
+    if (data.phone || data.mobile) {
       query += `, phone = $${counter}`;
-      values.push(data.phone);
-      counter++;
-    }
-    if (data.mobile) {
-      query += `, phone = $${counter}`;
-      values.push(data.mobile);
+      values.push(data.mobile || data.phone);
       counter++;
     }
     if (data.guardianMobile !== void 0) {

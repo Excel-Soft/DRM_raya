@@ -269,7 +269,7 @@ export default function PmsProjectReport() {
                 </TableRow>
               ) : (
                 rows.map((row) => (
-                  <TableRow key={row.id} className="hover:bg-gray-50/50 transition-colors">
+                  <TableRow key={row.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                     <TableCell className={`${tdClass} font-bold`}>{row.rowNumber}</TableCell>
                     <TableCell className={`${tdClass} font-bold`}>{txt(row.displayId)}</TableCell>
                     <TableCell className={`${tdClass} uppercase`}>{txt(row.name)}</TableCell>

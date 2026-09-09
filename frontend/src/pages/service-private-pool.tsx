@@ -1,25 +1,41 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { User, Mail, MessageCircle, Eye, Archive, Link as LinkIcon, Edit2, ArrowRight, ArrowLeft, UserPlus, FileText, Cloud, Search, Phone, Database } from "lucide-react";
+import { User, Mail, MessageCircle, Eye, Edit2, ArrowRight, ArrowLeft, FileText, Search, Phone, Clock, Printer, Archive } from "lucide-react";
+import { useServiceExecutiveCreateGates } from "@/hooks/use-ui-workflow-config";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { exportToCSV, exportToPDF } from "@/lib/export-utils";
+import { FollowCustomerServicesPanel, SubserviceDetail, FollowupServiceOption } from "@/components/FollowCustomerServicesPanel";
+
+const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
 
 export default function ServicePrivatePool() {
     const { toast } = useToast();
+    const [, setLocation] = useLocation();
+    const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
     const [searchCustomer, setSearchCustomer] = useState("");
     const [teamCustomer, setTeamCustomer] = useState("");
     const [modalType, setModalType] = useState<string | null>(null);
     const [serviceFilter, setServiceFilter] = useState<string>("all");
     const [gradeFilter, setGradeFilter] = useState<string>("all");
     const [activeCustomerAction, setActiveCustomerAction] = useState<string | null>(null);
-    const [isCreateQuotationOpen, setCreateQuotationOpen] = useState(false);
+    const [activeTracingTab, setActiveTracingTab] = useState<string | null>(null);
     const [editCompanyId, setEditCompanyId] = useState<string | null>(null);
     const [isDuplicateModalOpen, setDuplicateModalOpen] = useState(false);
+    const [quickFollowupCustomer, setQuickFollowupCustomer] = useState<{ id: string; companyName: string } | null>(null);
+
+    const logCustomerAction = async (customerId: string, action: string, meta?: Record<string, any>) => {
+        try {
+            await apiRequest("POST", `/api/sales/leads/${customerId}/actions`, { action, meta });
+        } catch (err) {
+            console.warn("Failed to log action", err);
+        }
+    };
 
     const topTabs = [
         { label: "Yet to Contact", color: "bg-[#059669]" },
@@ -42,10 +58,10 @@ export default function ServicePrivatePool() {
     });
 
     const tracingTabs = [
-        { label: `Alibaba Membership ${tracingSummary?.["Alibaba_Membership"] ?? 0}`, value: "Alibaba.com", color: "bg-[#34d399]" },
-        { label: `Alibaba Services ${tracingSummary?.["Alibaba_Services"] ?? 0}`, value: "VAS (Value Added Services)", color: "bg-[#f43f5e]" },
-        { label: `Design Development ${tracingSummary?.["Design_Development"] ?? 0}`, value: "Website Development", color: "bg-[#3b82f6]" },
-        { label: `Domain Hosting ${tracingSummary?.["Domain_Hosting"] ?? 0}`, value: "Domain Hosting", color: "bg-[#334155]" },
+        { label: `Alibaba Membership ${tracingSummary?.["Alibaba_Membership"] ?? 0}`, value: "Alibaba.com", followupTab: "ALIBABA MEMBERSHIP", color: "bg-[#34d399]" },
+        { label: `Alibaba Services ${tracingSummary?.["Alibaba_Services"] ?? 0}`, value: "VAS (Value Added Services)", followupTab: "ALIBABA SERVICES", color: "bg-[#f43f5e]" },
+        { label: `Design Development ${tracingSummary?.["Design_Development"] ?? 0}`, value: "Website Development", followupTab: "DESIGN DEVELOPMENT", color: "bg-[#3b82f6]" },
+        { label: `Domain Hosting ${tracingSummary?.["Domain_Hosting"] ?? 0}`, value: "Domain Hosting", followupTab: "DOMAIN HOSTING", color: "bg-[#334155]" },
     ];
 
     const grades = [
@@ -59,7 +75,7 @@ export default function ServicePrivatePool() {
         { label: `D ${tracingSummary?.["D"] ?? 0}`, value: "D", color: "bg-[#059669]" },
     ];
 
-    const { data: listData, isFetching: isLoadingList } = useQuery<any>({
+    const { data: listData, isLoading: isLoadingList } = useQuery<any>({
         queryKey: ["/api/sales/lead-pools/list", "Private", 1, 50, gradeFilter, serviceFilter, searchCustomer, null],
         queryFn: async () => {
             const params = new URLSearchParams({
@@ -73,12 +89,21 @@ export default function ServicePrivatePool() {
             const response = await apiRequest("GET", `/api/sales/lead-pools/list?${params.toString()}`);
             return response.json();
         },
+        // The global default polls every 30s (refetchInterval) with staleTime 0 —
+        // using isFetching here made the whole table flash back to a bare
+        // "Loading..." row on every single background refetch. isLoading only
+        // fires on the very first load (no cached data yet), so background
+        // refreshes now update the rows silently instead of flickering.
     });
 
     const displayData = listData?.items || [];
 
     if (activeCustomerAction) {
         return <CustomerAttributeView customerId={activeCustomerAction as string} onBack={() => setActiveCustomerAction(null)} />;
+    }
+
+    if (activeTracingTab) {
+        return <FollowupListView activeTracingTab={activeTracingTab} setActiveTracingTab={setActiveTracingTab} />;
     }
 
 
@@ -144,10 +169,7 @@ export default function ServicePrivatePool() {
                         return (
                             <div
                                 key={idx}
-                                onClick={() => {
-                                    if (isActive) setServiceFilter("all");
-                                    else setServiceFilter(tab.value);
-                                }}
+                                onClick={() => setActiveTracingTab(tab.followupTab)}
                                 className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-opacity hover:opacity-90 ${isActive ? "bg-[#059669]" : tab.color}`}
                             >
                                 {tab.label}
@@ -181,12 +203,14 @@ export default function ServicePrivatePool() {
                         <TableHeader className="bg-[#f1f5f9] dark:bg-zinc-800">
                             <TableRow className="border-none hover:bg-transparent">
                                 <TableHead className="w-10 pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Company ID</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">DRM ID</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Co Name</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Sale Person</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Acc Holder</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Email</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Contact No</TableHead>
-                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">NTN/CINC</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">NTN</TableHead>
+                                <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">CNIC</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Account Create</TableHead>
                                 <TableHead className="text-[12px] font-bold text-slate-600 py-3 dark:text-zinc-300">Action</TableHead>
                             </TableRow>
@@ -194,33 +218,90 @@ export default function ServicePrivatePool() {
                         <TableBody>
                             {isLoadingList ? (
                                 <TableRow>
-                                    <TableCell colSpan={9} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">Loading...</TableCell>
+                                    <TableCell colSpan={11} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">Loading...</TableCell>
                                 </TableRow>
                             ) : displayData.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={9} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No customers found.</TableCell>
+                                    <TableCell colSpan={11} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No customers found.</TableCell>
                                 </TableRow>
                             ) : displayData.map((row: any) => (
-                                <TableRow key={row.id} className="border-b-0 hover:bg-slate-50/50">
-                                    <TableCell className="pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
-                                    <TableCell className="text-[12px] font-semibold text-slate-500 py-3 dark:text-zinc-400">{row.id.substring(0, 8)}</TableCell>
+                                <TableRow
+                                    key={row.id}
+                                    onClick={() => setQuickFollowupCustomer({ id: row.id, companyName: row.companyName })}
+                                    className="border-b-0 hover:bg-slate-50/50 cursor-pointer dark:hover:bg-zinc-800/50"
+                                >
+                                    <TableCell onClick={(e) => e.stopPropagation()} className="pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
+                                    <TableCell className="text-[12px] font-semibold text-emerald-600 py-3 dark:text-emerald-400">{row.drmId || row.id.substring(0, 8)}</TableCell>
                                     <TableCell className="text-[12px] font-semibold text-slate-600 py-3 dark:text-zinc-300">{row.companyName}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.salesPersonName || "—"}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.accountName || <div className="w-24 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.email || <div className="w-16 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.phone || <div className="w-20 h-5 bg-[#34d399]/30 rounded"></div>}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.ntnCnic || "null"}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.ntn || "—"}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.cnic || "—"}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{new Date(row.createdAt).toLocaleDateString()}</TableCell>
-                                    <TableCell className="py-3">
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                            <div onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors tooltip"><User className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setModalType("email")} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Mail className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setModalType("whatsapp")} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><MessageCircle className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => { }} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Phone className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setCreateQuotationOpen(true)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Eye className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setModalType("archive")} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Archive className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => { }} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Database className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setModalType("link")} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><LinkIcon className="w-3.5 h-3.5" /></div>
-                                            <div onClick={() => setEditCompanyId(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm"><Edit2 className="w-3.5 h-3.5" /></div>
+                                    <TableCell onClick={(e) => e.stopPropagation()} className="py-3">
+                                        <div className="flex items-center gap-1.5 flex-nowrap py-0.5">
+                                            <div title="User Profile" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shrink-0"><User className="w-3.5 h-3.5" /></div>
+                                            <div title="View" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Eye className="w-3.5 h-3.5" /></div>
+                                            <div title="Follow up" onClick={() => setQuickFollowupCustomer({ id: row.id, companyName: row.companyName })} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Clock className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Email"
+                                                onClick={async () => {
+                                                    if (!row.email) {
+                                                        toast({ title: "No email available", variant: "destructive" });
+                                                        return;
+                                                    }
+                                                    await logCustomerAction(row.id, "email", { email: row.email });
+                                                    window.location.href = `mailto:${row.email}`;
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Mail className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="WhatsApp"
+                                                onClick={async () => {
+                                                    const phone = (row.phone || "").replace(/\D+/g, "");
+                                                    if (!phone) {
+                                                        toast({ title: "No phone available", variant: "destructive" });
+                                                        return;
+                                                    }
+                                                    await logCustomerAction(row.id, "whatsapp", { phone });
+                                                    window.open(`https://wa.me/${phone}`, "_blank");
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><MessageCircle className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Call"
+                                                onClick={async () => {
+                                                    if (!row.phone) {
+                                                        toast({ title: "No phone available", variant: "destructive" });
+                                                        return;
+                                                    }
+                                                    await logCustomerAction(row.id, "call", { phone: row.phone });
+                                                    window.location.href = `tel:${row.phone}`;
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Phone className="w-3.5 h-3.5" /></div>
+                                            <button
+                                                title={canCreateManualInvoice ? "Create Invoice" : "Access Denied"}
+                                                onClick={() => {
+                                                    if (!canCreateManualInvoice) {
+                                                        toast({ title: "Access Denied", description: "You are not authorized to create invoices.", variant: "destructive" });
+                                                        return;
+                                                    }
+                                                    setLocation(`/sales/create-invoice/${row.id}`);
+                                                }}
+                                                className={`h-6 px-2 rounded-[4px] text-white text-[10px] font-bold uppercase transition-colors flex items-center gap-1 shrink-0 ${canCreateManualInvoice ? "bg-[#059669] hover:bg-emerald-700 cursor-pointer" : "bg-slate-400 opacity-60 cursor-not-allowed"}`}
+                                            ><FileText className="w-3 h-3" />Invoice</button>
+                                            <div title="Edit" onClick={() => setEditCompanyId(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Edit2 className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Print"
+                                                onClick={async () => {
+                                                    await logCustomerAction(row.id, "print", { companyName: row.companyName });
+                                                    window.print();
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Printer className="w-3.5 h-3.5" /></div>
                                         </div>
                                     </TableCell>
                                 </TableRow>
@@ -230,28 +311,23 @@ export default function ServicePrivatePool() {
                 </div>
             </div>
 
-            <CreateQuotationModal open={isCreateQuotationOpen} onClose={() => setCreateQuotationOpen(false)} />
             <EditCompanyModal customerId={editCompanyId} onClose={() => setEditCompanyId(null)} />
             <DuplicateCompaniesModal open={isDuplicateModalOpen} onClose={() => setDuplicateModalOpen(false)} />
+            <FollowupModal
+                open={!!quickFollowupCustomer}
+                onClose={() => setQuickFollowupCustomer(null)}
+                customerId={quickFollowupCustomer?.id}
+                companyName={quickFollowupCustomer?.companyName}
+            />
             {/* Template Modals */}
             <Dialog open={!!modalType} onOpenChange={(open) => !open && setModalType(null)}>
                 <DialogContent className="max-w-4xl p-0 overflow-hidden bg-white gap-0 border-slate-100 dark:bg-zinc-900 dark:border-zinc-800">
                     <DialogHeader className="p-5 border-b border-slate-100 dark:border-zinc-800">
                         <DialogTitle className="text-[20px] font-semibold text-[#475569] tracking-tight dark:text-zinc-400">
-                            {modalType === "whatsapp" ? "Whats App Template" : modalType === "email" ? "Email Template" : modalType === "archive" ? "Archive Actions" : "Manage Links"}
+                            {modalType === "whatsapp" ? "Whats App Template" : "Email Template"}
                         </DialogTitle>
                     </DialogHeader>
                     <div className="p-6">
-
-                        {(modalType === 'archive' || modalType === 'link') ? (
-                            <div className="py-16 text-center">
-                                <span className="w-16 h-16 rounded-full bg-[#059669]/10 mx-auto flex items-center justify-center mb-4">
-                                    {modalType === 'archive' ? <Archive className="w-8 h-8 text-[#059669] dark:text-zinc-400" /> : <LinkIcon className="w-8 h-8 text-[#059669] dark:text-zinc-400" />}
-                                </span>
-                                <h3 className="text-[18px] font-bold text-slate-700 mb-2 dark:text-zinc-400">Coming Soon</h3>
-                                <p className="text-[14px] text-slate-500 dark:text-zinc-400">The dynamic {modalType} dashboard will be placed here.</p>
-                            </div>
-                        ) : (
                             <div className="border border-slate-100 rounded dark:border-zinc-800">
 
                                 <Table>
@@ -270,7 +346,6 @@ export default function ServicePrivatePool() {
                                     </TableBody>
                                 </Table>
                             </div>
-                        )}
                     </div>
                 </DialogContent>
             </Dialog>
@@ -281,39 +356,111 @@ export default function ServicePrivatePool() {
 function FollowupListView({
     activeTracingTab,
     setActiveTracingTab,
-    setActiveCustomerAction
 }: {
     activeTracingTab: string;
     setActiveTracingTab: (val: string | null) => void;
-    setActiveCustomerAction: (val: string | number | null) => void;
 }) {
     const { toast } = useToast();
+    const [activeSubtype, setActiveSubtype] = useState<string>("All");
+    const [activeGrade, setActiveGrade] = useState<string>("All");
+    const [searchTerm, setSearchTerm] = useState("");
+    const [page, setPage] = useState(1);
+    const pageSize = 10;
     const [cols, setCols] = useState({
         id: { label: "#", visible: true },
         company: { label: "Company", visible: true },
-        serviceType: { label: "Service Type", visible: true },
+        service: { label: "Main Service", visible: true },
+        subtype: { label: "Sub Type", visible: true },
+        grade: { label: "Grade", visible: true },
         purpose: { label: "Purpose", visible: true },
         method: { label: "Method", visible: true },
-        grade: { label: "Grade", visible: true },
         comment: { label: "Comment", visible: true },
+        person: { label: "Sale Person", visible: true },
+        note: { label: "Followup Note", visible: true },
         nextDate: { label: "Next Date", visible: true },
-        note: { label: "Note", visible: true },
-        addedBy: { label: "Added By", visible: true },
-        date: { label: "Date", visible: true },
-        action: { label: "Update Follow Up", visible: true },
+        createdDate: { label: "Created Date", visible: true },
     });
 
-    // This followup list does not yet have a backend data source wired in, so the
-    // export buttons operate on the real (currently empty) row set rather than a
-    // fabricated mock array. When the rows are wired in, replace displayData with
-    // the fetched items.
-    const displayData: any[] = [];
+    const { data: followupsRes } = useQuery({ queryKey: ["/api/dashboard/followups?pageSize=50&pool=private"] });
+    const followupsData = (followupsRes as any)?.data?.items || [];
 
-    // Export columns derive from the visible, non-action columns; rows come from the
-    // real row set (displayData), never a mock array.
+    const getCount = (serviceName: string) =>
+        followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === serviceName.toLowerCase()).length;
+
+    const byService = followupsData.filter((r: any) => (r.serviceType || "").toLowerCase() === activeTracingTab.toLowerCase());
+
+    const uniqueSubtypes = Array.from(new Set(
+        byService
+            .filter((r: any) => activeGrade === "All" || (r.grade || "A").toLowerCase() === activeGrade.toLowerCase())
+            .map((r: any) => r.subserviceName || r.serviceType || "General")
+    )).filter(Boolean) as string[];
+
+    const uniqueGrades = Array.from(new Set(
+        byService
+            .filter((r: any) => activeSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeSubtype.toLowerCase())
+            .map((r: any) => r.grade || "A")
+    )).filter(Boolean) as string[];
+
+    const getSubtypeCount = (subtype: string) => {
+        if (subtype === "All") return byService.filter((r: any) => activeGrade === "All" || (r.grade || "A").toLowerCase() === activeGrade.toLowerCase()).length;
+        return byService.filter((r: any) => {
+            const matchSub = (r.subserviceName || r.serviceType || "General").toLowerCase() === subtype.toLowerCase();
+            const matchGrade = activeGrade === "All" || (r.grade || "A").toLowerCase() === activeGrade.toLowerCase();
+            return matchSub && matchGrade;
+        }).length;
+    };
+
+    const getGradeCount = (grade: string) => {
+        if (grade === "All") return byService.filter((r: any) => activeSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeSubtype.toLowerCase()).length;
+        return byService.filter((r: any) => {
+            const matchGrade = (r.grade || "A").toLowerCase() === grade.toLowerCase();
+            const matchSub = activeSubtype === "All" || (r.subserviceName || r.serviceType || "General").toLowerCase() === activeSubtype.toLowerCase();
+            return matchGrade && matchSub;
+        }).length;
+    };
+
+    const displayData = byService
+        .filter((r: any) => {
+            if (activeSubtype !== "All" && (r.subserviceName || r.serviceType || "General").toLowerCase() !== activeSubtype.toLowerCase()) return false;
+            if (activeGrade !== "All" && (r.grade || "A").toLowerCase() !== activeGrade.toLowerCase()) return false;
+            return true;
+        })
+        .map((row: any, index: number) => ({
+            id: index + 1,
+            company: row.company || "Unknown",
+            service: row.serviceType || activeTracingTab,
+            subtype: row.subserviceName || row.serviceType || "General",
+            grade: row.grade || "A",
+            purpose: row.purpose || "-",
+            method: row.method || "-",
+            comment: row.notes || "-",
+            person: row.salesPerson || "-",
+            note: row.followupNote || "-",
+            nextDate: row.dueAt ? new Date(row.dueAt).toLocaleDateString() : "-",
+            createdDate: row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-",
+        }))
+        .filter((row: any) => {
+            if (!searchTerm.trim()) return true;
+            const needle = searchTerm.trim().toLowerCase();
+            return Object.values(row).some((v) => String(v ?? "").toLowerCase().includes(needle));
+        });
+
+    const totalPages = Math.max(1, Math.ceil(displayData.length / pageSize));
+    const pageData = displayData.slice((page - 1) * pageSize, page * pageSize);
+
+    const handleTabClick = (tab: string) => {
+        setActiveTracingTab(tab);
+        setActiveSubtype("All");
+        setActiveGrade("All");
+        setSearchTerm("");
+        setPage(1);
+    };
+
+    // Export columns derive from the visible columns; rows come from the real,
+    // currently-filtered row set (displayData), not a mock array.
     const exportColumns = () =>
         Object.entries(cols)
-            .filter(([, c]) => c.visible && c.label !== "Update Follow Up")
+            .filter(([, c]) => c.visible)
             .map(([key, c]) => ({ key, header: c.label }));
 
     const handleCopy = () => {
@@ -347,35 +494,63 @@ function FollowupListView({
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen dark:bg-zinc-950">
             <button onClick={() => setActiveTracingTab(null)} className="flex items-center gap-2 mb-4 text-[#475569] font-bold text-[14px] uppercase tracking-tight hover:text-[#059669] transition-colors dark:text-zinc-400">
-                <ArrowRight className="w-4 h-4 text-[#059669] dark:text-zinc-400" />
+                <ArrowLeft className="w-4 h-4 text-[#059669] dark:text-zinc-400" />
                 {activeTracingTab} FOLLOWUP LIST
             </button>
 
             {/* Top Tabs */}
             <div className="flex w-full mb-6 rounded overflow-hidden shadow-sm">
-                <div onClick={() => setActiveTracingTab("ALIBABA MEMBERSHIP")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA MEMBERSHIP" ? "bg-[#059669]" : "bg-[#34d399]"}`}>Alibaba Membership (0)</div>
-                <div onClick={() => setActiveTracingTab("ALIBABA SERVICES")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA SERVICES" ? "bg-[#059669]" : "bg-[#f43f5e]"}`}>Alibaba Services (0)</div>
-                <div onClick={() => setActiveTracingTab("DESIGN DEVELOPMENT")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DESIGN DEVELOPMENT" ? "bg-[#2563eb]" : "bg-[#60a5fa]"}`}>Design Development (0)</div>
-                <div onClick={() => setActiveTracingTab("DOMAIN HOSTING")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors bg-[#334155]`}>Domain Hosting (0)</div>
+                <div onClick={() => handleTabClick("ALIBABA MEMBERSHIP")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA MEMBERSHIP" ? "bg-[#059669]" : "bg-[#34d399]"}`}>Alibaba Membership ({getCount("ALIBABA MEMBERSHIP")})</div>
+                <div onClick={() => handleTabClick("ALIBABA SERVICES")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA SERVICES" ? "bg-[#059669]" : "bg-[#f43f5e]"}`}>Alibaba Services ({getCount("ALIBABA SERVICES")})</div>
+                <div onClick={() => handleTabClick("DESIGN DEVELOPMENT")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DESIGN DEVELOPMENT" ? "bg-[#2563eb]" : "bg-[#60a5fa]"}`}>Design Development ({getCount("DESIGN DEVELOPMENT")})</div>
+                <div onClick={() => handleTabClick("DOMAIN HOSTING")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DOMAIN HOSTING" ? "bg-[#059669]" : "bg-[#334155]"}`}>Domain Hosting ({getCount("DOMAIN HOSTING")})</div>
             </div>
 
-            {/* Summaries (Only for Alibaba Membership 1 mockup) */}
-            {activeTracingTab === "ALIBABA MEMBERSHIP" && (
-                <>
-                    <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
+            {/* Summaries */}
+            <div className="flex flex-col md:flex-row gap-4 mb-6">
+                {uniqueSubtypes.length > 0 && (
+                    <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Service Type Summary</h3>
-                        <div className="flex gap-2">
-                            <span className="px-3 py-1 bg-[#059669] text-white text-[12px] font-medium rounded">All</span>
+                        <div className="flex flex-wrap gap-2">
+                            {["All", ...uniqueSubtypes].map((sub) => {
+                                const count = getSubtypeCount(sub);
+                                if (count === 0 && sub !== "All") return null;
+                                const isActive = activeSubtype === sub;
+                                return (
+                                    <span
+                                        key={sub}
+                                        onClick={() => setActiveSubtype(sub)}
+                                        className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#059669] text-white" : "bg-white border border-[#059669] text-[#059669] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"}`}
+                                    >
+                                        {sub} ({count})
+                                    </span>
+                                );
+                            })}
                         </div>
                     </div>
-                    <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
+                )}
+                {uniqueGrades.length > 0 && (
+                    <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Grade Summary</h3>
-                        <div className="flex gap-2">
-                            <span className="px-3 py-1 bg-[#1e293b] text-white text-[12px] font-medium rounded">All</span>
+                        <div className="flex flex-wrap gap-2">
+                            {["All", ...uniqueGrades].map((grade) => {
+                                const count = getGradeCount(grade);
+                                if (count === 0 && grade !== "All") return null;
+                                const isActive = activeGrade === grade;
+                                return (
+                                    <span
+                                        key={grade}
+                                        onClick={() => setActiveGrade(grade)}
+                                        className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#1e293b] text-white" : "bg-white border border-slate-300 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"}`}
+                                    >
+                                        {grade} ({count})
+                                    </span>
+                                );
+                            })}
                         </div>
                     </div>
-                </>
-            )}
+                )}
+            </div>
 
             <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 dark:bg-zinc-900 dark:border-zinc-800">
                 <h3 className="text-[14px] font-bold text-slate-600 mb-4 dark:text-zinc-300">View Detail</h3>
@@ -410,7 +585,11 @@ function FollowupListView({
                     </div>
                     <div className="flex flex-col items-end gap-1 text-[13px] text-slate-600 font-medium dark:text-zinc-300">
                         <label>Search:</label>
-                        <Input className="w-[200px] h-8 text-[13px] border-slate-200 dark:border-zinc-800" />
+                        <Input
+                            value={searchTerm}
+                            onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
+                            className="w-[200px] h-8 text-[13px] border-slate-200 dark:border-zinc-800"
+                        />
                     </div>
                 </div>
 
@@ -421,35 +600,135 @@ function FollowupListView({
                             <TableRow className="border-b border-slate-200 hover:bg-[#d1fae5]/50 dark:border-zinc-800">
                                 {cols.id.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">#</TableHead>}
                                 {cols.company.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Company</TableHead>}
-                                {cols.serviceType.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Service Type</TableHead>}
+                                {cols.service.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Main Service</TableHead>}
+                                {cols.subtype.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Sub Type</TableHead>}
+                                {cols.grade.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Grade</TableHead>}
                                 {cols.purpose.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Purpose</TableHead>}
                                 {cols.method.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Method</TableHead>}
-                                {cols.grade.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Grade</TableHead>}
                                 {cols.comment.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Comment</TableHead>}
+                                {cols.person.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Sale Person</TableHead>}
+                                {cols.note.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Followup Note</TableHead>}
                                 {cols.nextDate.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Next Date</TableHead>}
-                                {cols.note.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Note</TableHead>}
-                                {cols.addedBy.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Added By</TableHead>}
-                                {cols.date.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Date</TableHead>}
-                                {cols.action.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Update Follow Up</TableHead>}
+                                {cols.createdDate.visible && <TableHead className="text-[12px] font-bold text-[#059669] py-4 whitespace-nowrap dark:text-zinc-400">Created Date</TableHead>}
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            <TableRow>
-                                <TableCell colSpan={Object.values(cols).filter(c => c.visible).length} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No companies found for this filter selection.</TableCell>
-                            </TableRow>
+                            {pageData.length > 0 ? (
+                                pageData.map((row: any) => (
+                                    <TableRow key={row.id} className="border-b border-slate-100 hover:bg-slate-50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                        {cols.id.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.id}</TableCell>}
+                                        {cols.company.visible && <TableCell className="text-[13px] font-bold text-slate-700 dark:text-zinc-300">{row.company}</TableCell>}
+                                        {cols.service.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.service}</TableCell>}
+                                        {cols.subtype.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.subtype}</TableCell>}
+                                        {cols.grade.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.grade}</TableCell>}
+                                        {cols.purpose.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.purpose}</TableCell>}
+                                        {cols.method.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.method}</TableCell>}
+                                        {cols.comment.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.comment}</TableCell>}
+                                        {cols.person.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.person}</TableCell>}
+                                        {cols.note.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.note}</TableCell>}
+                                        {cols.nextDate.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.nextDate}</TableCell>}
+                                        {cols.createdDate.visible && <TableCell className="text-[13px] text-slate-600 dark:text-zinc-300">{row.createdDate}</TableCell>}
+                                    </TableRow>
+                                ))
+                            ) : (
+                                <TableRow>
+                                    <TableCell colSpan={Object.values(cols).filter(c => c.visible).length} className="text-center py-6 text-slate-500 text-[13px] font-medium border-b-0 dark:text-zinc-400">No companies found for this filter selection.</TableCell>
+                                </TableRow>
+                            )}
                         </TableBody>
                     </Table>
+                </div>
+
+                <div className="mt-4 flex justify-between items-center text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+                    <div>
+                        Showing {displayData.length > 0 ? (page - 1) * pageSize + 1 : 0} to {Math.min(page * pageSize, displayData.length)} of {displayData.length} entries
+                    </div>
+                    <div className="flex gap-1 items-center">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+                        >
+                            Previous
+                        </button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter(p => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
+                            .reduce((acc: (number | string)[], p, idx, arr) => {
+                                if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('...');
+                                acc.push(p);
+                                return acc;
+                            }, [])
+                            .map((p, idx) =>
+                                p === '...' ? (
+                                    <span key={`dots-${idx}`} className="px-2 text-slate-400">...</span>
+                                ) : (
+                                    <button
+                                        key={p}
+                                        onClick={() => setPage(p as number)}
+                                        className={`w-8 h-8 rounded-[4px] border text-[12px] font-medium transition-colors ${page === p ? 'bg-[#059669] text-white border-[#059669]' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
+                                    >
+                                        {p}
+                                    </button>
+                                )
+                            )}
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+                        >
+                            Next
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     );
 }
 
-function CustomerAttributeView({ customerId, onBack }: { customerId: string; onBack: () => void }) {
+export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO PRIVATE POOL" }: { customerId: string; onBack: () => void; backLabel?: string }) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [, setLocation] = useLocation();
     const [activeHistoryTab, setActiveHistoryTab] = useState("Contact History");
     const [isQuotationTemplateModalOpen, setQuotationTemplateModalOpen] = useState(false);
     const [activeCardModal, setActiveCardModal] = useState<string | null>(null);
-    const [isDuplicateModalOpen, setDuplicateModalOpen] = useState(false);
+    const [isRatingModalOpen, setRatingModalOpen] = useState(false);
+    const [ratingValue, setRatingValue] = useState("5");
+    const [ratingNote, setRatingNote] = useState("");
+    const [isSampleModalOpen, setSampleModalOpen] = useState(false);
+    const [sampleProduct, setSampleProduct] = useState("");
+    const [sampleNote, setSampleNote] = useState("");
+
+    const ratingMutation = useMutation({
+        mutationFn: async () => apiRequest("POST", "/api/service/feedback", {
+            customerId,
+            rating: Number(ratingValue),
+            note: ratingNote || undefined,
+        }),
+        onSuccess: () => {
+            toast({ title: "Rating recorded" });
+            setRatingModalOpen(false);
+            setRatingNote("");
+            queryClient.invalidateQueries({ queryKey: ["/api/service/manager/team-work-performance"] });
+        },
+        onError: () => toast({ title: "Failed to record rating", variant: "destructive" }),
+    });
+
+    const sampleMutation = useMutation({
+        mutationFn: async () => apiRequest("POST", "/api/service/sample-requests", {
+            customerId,
+            productName: sampleProduct || undefined,
+            note: sampleNote || undefined,
+        }),
+        onSuccess: () => {
+            toast({ title: "Sample request logged" });
+            setSampleModalOpen(false);
+            setSampleProduct("");
+            setSampleNote("");
+            queryClient.invalidateQueries({ queryKey: ["/api/service/manager/team-work-performance"] });
+        },
+        onError: () => toast({ title: "Failed to log sample request", variant: "destructive" }),
+    });
 
     const { data: profileData, isLoading } = useQuery<any>({
         queryKey: [`/api/sales/leads/${customerId}/profile`],
@@ -460,9 +739,52 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
         enabled: !!customerId,
     });
 
+    const { data: invoiceHistory = [], isLoading: isInvoiceLoading } = useQuery<any[]>({
+        queryKey: [`/api/sales/customers/${customerId}/invoices`],
+        queryFn: async () => {
+            const response = await apiRequest("GET", `/api/sales/customers/${customerId}/invoices`);
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        },
+        enabled: !!customerId && activeHistoryTab === "Invoice History",
+    });
+
+    // Same real endpoints the Sales Executive's own Attribute view already
+    // uses (lead-pools.tsx) — this view previously left these three tabs as
+    // static "No X recorded" placeholders despite the data existing.
+    const { data: contactHistory = [], isLoading: isContactLoading } = useQuery<any[]>({
+        queryKey: [`/api/sales/customers/${customerId}/followups`],
+        queryFn: async () => {
+            const response = await apiRequest("GET", `/api/sales/customers/${customerId}/followups`);
+            const data = await response.json();
+            const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+            return rows;
+        },
+        enabled: !!customerId && activeHistoryTab === "Contact History",
+    });
+
+    const { data: quotationHistory = [], isLoading: isQuotationLoading } = useQuery<any[]>({
+        queryKey: [`/api/quotations?leadId=${customerId}`],
+        queryFn: async () => {
+            const response = await apiRequest("GET", `/api/quotations?leadId=${customerId}`);
+            const data = await response.json().catch(() => ({}));
+            return Array.isArray(data?.data) ? data.data : data?.data?.items ?? [];
+        },
+        enabled: !!customerId && activeHistoryTab === "Quotation History",
+    });
+
+    const { data: gmHistory = [], isLoading: isGmLoading } = useQuery<any[]>({
+        queryKey: [`/api/sales/customers/${customerId}/gm-entries`],
+        queryFn: async () => {
+            const response = await apiRequest("GET", `/api/sales/customers/${customerId}/gm-entries`);
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        },
+        enabled: !!customerId && activeHistoryTab === "GM History",
+    });
+
     const lead = profileData?.lead || {};
     const phones = profileData?.phones || [];
-    const mainPhone = phones[0] || "No Phone";
     const grade = lead.grade || "-";
     const contactCount = profileData?.activities?.length || 0;
     const lastContact = profileData?.lastContactAt ? new Date(profileData.lastContactAt).toLocaleString() : "Never";
@@ -470,10 +792,9 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen relative dark:bg-zinc-950">
             <QuotationTemplateModal open={isQuotationTemplateModalOpen} onClose={() => setQuotationTemplateModalOpen(false)} />
-            <AttributeActionModal type={activeCardModal} onClose={() => setActiveCardModal(null)} />
-            <DuplicateCompaniesModal open={isDuplicateModalOpen} onClose={() => setDuplicateModalOpen(false)} />
+            <AttributeActionModal type={activeCardModal} onClose={() => setActiveCardModal(null)} customerId={customerId} companyName={lead.companyName} />
             <button onClick={onBack} className="flex items-center gap-2 mb-4 text-[#475569] font-bold text-[14px] uppercase tracking-tight hover:text-[#059669] transition-colors dark:text-zinc-400">
-                <ArrowLeft className="w-4 h-4 text-[#059669] dark:text-zinc-400" /> BACK TO PRIVATE POOL
+                <ArrowLeft className="w-4 h-4 text-[#059669] dark:text-zinc-400" /> {backLabel}
             </button>
             <div className="mb-4 text-[#475569] font-bold text-[15px] uppercase tracking-tight dark:text-zinc-400">ATTRIBUTE</div>
 
@@ -481,14 +802,25 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                 <div className="flex justify-center items-center py-20 text-slate-500 font-medium">Loading profile...</div>
             ) : (
                 <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div className="grid grid-cols-1 gap-6 mb-6">
                     {/* Column 1: Info */}
                     <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 flex flex-col items-center dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-[#475569] mb-3 text-center w-full dark:text-zinc-400">{lead.companyName || "Unknown Company"}</h3>
                         <div className="bg-[#e2e8f0]/40 text-[#475569] border border-[#cbd5e1]/50 rounded-full w-[36px] h-[36px] flex items-center justify-center text-[12px] font-bold mb-4 dark:text-zinc-400 dark:border-zinc-800">{grade}</div>
                         <p className="text-[13px] font-bold text-[#475569] mb-1 dark:text-zinc-400">{lead.accountName || "Unknown Contact"}</p>
                         <p className="text-[13px] text-slate-400 mb-2">{lead.email || "No Email"}</p>
-                        <div className="bg-[#059669] text-white px-5 py-1 rounded-[4px] text-[13px] font-bold mb-6">{mainPhone}</div>
+                        <div className="flex justify-center gap-3 mb-6">
+                            {phones.length > 0 ? (
+                                phones.map((p: { label: string; value: string }, idx: number) => (
+                                    <div key={idx} className="flex flex-col items-center gap-1">
+                                        <span className="bg-[#059669] text-white px-5 py-1 rounded-[4px] text-[13px] font-bold">{p.value}</span>
+                                        <span className="text-[10px] text-slate-400">{p.label}</span>
+                                    </div>
+                                ))
+                            ) : (
+                                <span className="bg-[#059669] text-white px-5 py-1 rounded-[4px] text-[13px] font-bold">No Phone</span>
+                            )}
+                        </div>
 
                         <div className="flex w-full justify-evenly items-start mb-6 px-4">
                             <div className="flex flex-col items-center">
@@ -508,81 +840,62 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
 
                     <div className="flex flex-wrap justify-center gap-[4px] w-full px-2">
                         <span onClick={() => setActiveCardModal('followup')} className="bg-[#059669] hover:bg-[#047857] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Followup</span>
-                        <span onClick={() => setActiveCardModal('quotation')} className="bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Quotation</span>
+                        <span onClick={() => setLocation(`/sales/quotation?leadId=${customerId}`)} className="bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Quotation</span>
                         <span onClick={() => setActiveCardModal('invoice')} className="bg-[#6366f1] hover:bg-[#4f46e5] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Invoice</span>
                         <span onClick={() => setActiveCardModal('gmdoc')} className="bg-[#ef4444] hover:bg-[#dc2626] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900 dark:hover:bg-zinc-800">Gm Doc</span>
                         <span onClick={() => setActiveCardModal('gmbv')} className="bg-[#d97706] hover:bg-[#b45309] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900">Gm BV submit</span>
                         <span onClick={() => setActiveCardModal('update_expiry')} className="bg-[#3b82f6] hover:bg-[#2563eb] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Update Expiry</span>
+                        <span onClick={() => setRatingModalOpen(true)} className="bg-[#f59e0b] hover:bg-[#d97706] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Rate Customer</span>
+                        <span onClick={() => setSampleModalOpen(true)} className="bg-[#0ea5e9] hover:bg-[#0284c7] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Log Sample</span>
                     </div>
                 </div>
 
-                {/* Column 2: Expiry */}
-                <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 dark:bg-zinc-900 dark:border-zinc-800">
-                    <h3 className="text-[14px] font-bold text-[#475569] mb-8 dark:text-zinc-400">Expiry Date</h3>
-
-                    <div className="relative pl-7 space-y-12 before:content-[''] before:absolute before:left-3 before:top-2 before:bottom-0 before:w-px before:border-l-[1.5px] before:border-dashed before:border-slate-200">
-                        {/* Domain */}
-                        <div className="relative">
-                            <div className="absolute -left-[32px] top-0 w-3 h-3 rounded-full border-[2.5px] border-slate-300 bg-white z-10 flex items-center justify-center dark:bg-zinc-900 dark:border-zinc-800"><div className="w-1 h-1 bg-slate-300 rounded-full" /></div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <UserPlus className="w-4 h-4 text-[#059669] dark:text-zinc-400" />
-                                <span className="text-[13px] font-bold text-[#475569] dark:text-zinc-400">Domain</span>
+                <Dialog open={isRatingModalOpen} onOpenChange={(v) => !v && setRatingModalOpen(false)}>
+                    <DialogContent className="max-w-[380px] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                        <DialogHeader className="border-b border-slate-100 pb-3 dark:border-zinc-800">
+                            <DialogTitle className="text-[16px] font-bold text-slate-800 dark:text-zinc-100">Rate Customer Satisfaction</DialogTitle>
+                        </DialogHeader>
+                        <div className="pt-2 pb-2 flex flex-col gap-4">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Rating (1-5)</label>
+                                <select value={ratingValue} onChange={(e) => setRatingValue(e.target.value)} className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2.5 text-[13px] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
+                                    {[5, 4, 3, 2, 1].map((n) => (<option key={n} value={n}>{n} {n === 1 ? "star" : "stars"}</option>))}
+                                </select>
                             </div>
-                            <div className="flex gap-2 ml-6">
-                                <span className="bg-[#1e293b] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium">Date</span>
-                                <span className="bg-[#ef4444] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium dark:bg-zinc-900">Day Left</span>
-                            </div>
-                        </div>
-
-                        {/* Ssl */}
-                        <div className="relative">
-                            <div className="absolute -left-[32px] top-0 w-3 h-3 rounded-full border-[2.5px] border-slate-300 bg-white z-10 flex items-center justify-center dark:bg-zinc-900 dark:border-zinc-800"><div className="w-1 h-1 bg-slate-300 rounded-full" /></div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <FileText className="w-4 h-4 text-[#059669] dark:text-zinc-400" />
-                                <span className="text-[13px] font-bold text-[#475569] dark:text-zinc-400">Ssl</span>
-                            </div>
-                            <div className="flex gap-2 ml-6">
-                                <span className="bg-[#1e293b] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium">Date</span>
-                                <span className="bg-[#ef4444] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium dark:bg-zinc-900">Day Left</span>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Note (optional)</label>
+                                <textarea rows={3} value={ratingNote} onChange={(e) => setRatingNote(e.target.value)} className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 resize-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
                             </div>
                         </div>
+                        <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-100 dark:border-zinc-800">
+                            <button onClick={() => setRatingModalOpen(false)} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-[6px] text-[13px] font-bold dark:bg-zinc-900 dark:text-zinc-400">Cancel</button>
+                            <button onClick={() => ratingMutation.mutate()} disabled={ratingMutation.isPending} className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold disabled:opacity-60">{ratingMutation.isPending ? "Saving…" : "Submit"}</button>
+                        </div>
+                    </DialogContent>
+                </Dialog>
 
-                        {/* Hosting */}
-                        <div className="relative">
-                            <div className="absolute -left-[32px] top-0 w-3 h-3 rounded-full border-[2.5px] border-slate-300 bg-white z-10 flex items-center justify-center dark:bg-zinc-900 dark:border-zinc-800"><div className="w-1 h-1 bg-slate-300 rounded-full" /></div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <Cloud className="w-4 h-4 text-[#059669] dark:text-zinc-400" />
-                                <span className="text-[13px] font-bold text-[#475569] dark:text-zinc-400">Hosting</span>
+                <Dialog open={isSampleModalOpen} onOpenChange={(v) => !v && setSampleModalOpen(false)}>
+                    <DialogContent className="max-w-[380px] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                        <DialogHeader className="border-b border-slate-100 pb-3 dark:border-zinc-800">
+                            <DialogTitle className="text-[16px] font-bold text-slate-800 dark:text-zinc-100">Log Sample Request</DialogTitle>
+                        </DialogHeader>
+                        <div className="pt-2 pb-2 flex flex-col gap-4">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Product</label>
+                                <input type="text" value={sampleProduct} onChange={(e) => setSampleProduct(e.target.value)} className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2.5 text-[13px] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
                             </div>
-                            <div className="flex gap-2 ml-6">
-                                <span className="bg-[#1e293b] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium">Date</span>
-                                <span className="bg-[#ef4444] text-white px-2.5 py-[2px] rounded-[3px] text-[11px] font-medium dark:bg-zinc-900">Day Left</span>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Note (optional)</label>
+                                <textarea rows={3} value={sampleNote} onChange={(e) => setSampleNote(e.target.value)} className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 resize-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                {/* Column 3: Messaging & Duplicate */}
-                <div className="flex flex-col gap-6">
-                    <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 relative dark:bg-zinc-900 dark:border-zinc-800">
-                        <h3 className="text-[14px] font-bold text-[#475569] mb-4 dark:text-zinc-400">Whatsapp Message</h3>
-                        <div className="mb-4">
-                            <label className="block text-[12px] font-medium text-slate-500 mb-1 dark:text-zinc-400">Message:</label>
-                            <textarea id="wa-msg" className="w-full text-[13px] text-[#475569] p-3 border border-slate-200 rounded-[5px] min-h-[80px] focus:outline-none focus:border-[#059669] resize-none dark:text-zinc-400 dark:border-zinc-800" />
+                        <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-100 dark:border-zinc-800">
+                            <button onClick={() => setSampleModalOpen(false)} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-[6px] text-[13px] font-bold dark:bg-zinc-900 dark:text-zinc-400">Cancel</button>
+                            <button onClick={() => sampleMutation.mutate()} disabled={sampleMutation.isPending} className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold disabled:opacity-60">{sampleMutation.isPending ? "Saving…" : "Submit"}</button>
                         </div>
-                        <button onClick={() => { const ta = document.getElementById('wa-msg') as HTMLTextAreaElement; if (ta) { alert('WhatsApp message prepared: ' + ta.value); ta.value = ''; } }} className="bg-[#059669] hover:bg-emerald-700 transition-colors text-white px-4 py-[6px] rounded-[4px] text-[13px] font-bold w-fit shadow-sm">Whatsapp</button>
-                    </div>
+                    </DialogContent>
+                </Dialog>
 
-                    <div className="bg-white rounded-[10px] shadow-sm border border-slate-50 p-6 flex-1 flex flex-col justify-center relative dark:bg-zinc-900 dark:border-zinc-800">
-                        <h3 className="text-[14px] font-bold text-[#475569] mb-4 dark:text-zinc-400">Duplicate Company Details</h3>
-                        <div className="w-full">
-                            <button onClick={() => setDuplicateModalOpen(true)} className="bg-[#059669] hover:bg-emerald-700 transition-colors text-white px-4 py-[8px] rounded-[4px] text-[13px] font-bold flex items-center gap-2 w-max shadow-sm">
-                                <Search className="w-4 h-4 text-white" />
-                                Find Duplicate Companies
-                            </button>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             {/* History Section */}
@@ -591,7 +904,7 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
 
                 {/* Tabs */}
                 <div className="flex border-b-[2px] border-slate-100 w-full overflow-x-auto select-none gap-6 px-1 dark:border-zinc-800">
-                    {["Contact History", "Company History", "Quotation History", "Invoice History", "Quotation Templates"].map(tab => (
+                    {["Contact History", "Company History", "Quotation History", "Invoice History", "GM History", "Quotation Templates"].map(tab => (
                         <div
                             key={tab}
                             onClick={() => setActiveHistoryTab(tab)}
@@ -608,16 +921,35 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                             <TableHeader className="bg-[#f1f5f9] border-none dark:bg-zinc-800">
                                 <TableRow className="border-none hover:bg-transparent">
                                     <TableHead className="font-bold text-[#475569] text-[12px] py-4 w-48 dark:text-zinc-400">Date</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 w-32 dark:text-zinc-400">CM</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 w-48 dark:text-zinc-400">Next CD</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 w-32 dark:text-zinc-400">Next CM</TableHead>
                                     <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Note</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 w-32 dark:text-zinc-400">Action</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow>
-                                    <TableCell colSpan={5} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No contact history recorded.</TableCell>
-                                </TableRow>
+                                {isContactLoading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">Loading contact history...</TableCell>
+                                    </TableRow>
+                                ) : contactHistory.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No contact history recorded.</TableCell>
+                                    </TableRow>
+                                ) : (
+                                    contactHistory.map((item: any) => (
+                                        <TableRow key={item.id}>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{item.notes || item.method || "-"}</TableCell>
+                                            <TableCell className="py-3">
+                                                <button
+                                                    onClick={() => setActiveCardModal('followup')}
+                                                    className="px-3 py-1 border border-slate-300 rounded-[6px] text-[12px] font-bold text-slate-600 hover:bg-slate-50 dark:border-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                                                >
+                                                    Edit
+                                                </button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
                             </TableBody>
                         </Table>
                     )}
@@ -645,17 +977,61 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                             <TableHeader className="bg-[#f1f5f9] border-none dark:bg-zinc-800">
                                 <TableRow className="border-none hover:bg-transparent">
                                     <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Date</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Sub Total</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Discount</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Total</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Pay First</TableHead>
-                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Send By</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Grand Total</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Status</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow>
-                                    <TableCell colSpan={6} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotations recorded.</TableCell>
+                                {isQuotationLoading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">Loading quotations...</TableCell>
+                                    </TableRow>
+                                ) : quotationHistory.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotations recorded.</TableCell>
+                                    </TableRow>
+                                ) : (
+                                    quotationHistory.map((q: any) => (
+                                        <TableRow key={q.id}>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.createdAt ? new Date(q.createdAt).toLocaleString() : "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.grandTotal ?? q.totalAmount ?? "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.saveStatus ?? "Saved"}</TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    )}
+
+                    {activeHistoryTab === "GM History" && (
+                        <Table>
+                            <TableHeader className="bg-[#f1f5f9] border-none dark:bg-zinc-800">
+                                <TableRow className="border-none hover:bg-transparent">
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Date</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Order ID</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Package</TableHead>
+                                    <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Status</TableHead>
                                 </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {isGmLoading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">Loading GM history...</TableCell>
+                                    </TableRow>
+                                ) : gmHistory.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={4} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No GM history found.</TableCell>
+                                    </TableRow>
+                                ) : (
+                                    gmHistory.map((gm: any) => (
+                                        <TableRow key={gm.id}>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{gm.createdAt ? new Date(gm.createdAt).toLocaleString() : "-"}</TableCell>
+                                            <TableCell className="font-mono text-[12px] py-3 text-slate-600 dark:text-zinc-300">{gm.orderId || "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{gm.package || "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{gm.status || "-"}</TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
                             </TableBody>
                         </Table>
                     )}
@@ -683,8 +1059,41 @@ function CustomerAttributeView({ customerId, onBack }: { customerId: string; onB
                     )}
 
                     {activeHistoryTab === "Invoice History" && (
-                        <div className="py-8 text-center text-[13px] font-medium text-slate-500 dark:text-zinc-400">
-                            No invoices recorded.
+                        <div className="overflow-x-auto">
+                            {isInvoiceLoading ? (
+                                <div className="py-8 text-center text-[13px] font-medium text-slate-500 dark:text-zinc-400">
+                                    Loading invoice history...
+                                </div>
+                            ) : invoiceHistory.length === 0 ? (
+                                <div className="py-8 text-center text-[13px] font-medium text-slate-500 dark:text-zinc-400">
+                                    No invoices recorded.
+                                </div>
+                            ) : (
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Date</TableHead>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Invoice ID</TableHead>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Type</TableHead>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Amount</TableHead>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Status</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {invoiceHistory.map((inv: any) => (
+                                            <TableRow key={inv.id}>
+                                                <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">
+                                                    {inv.createdAt ? new Date(inv.createdAt).toLocaleString() : "-"}
+                                                </TableCell>
+                                                <TableCell className="font-mono text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.id.substring(0, 8)}</TableCell>
+                                                <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.invoiceType || inv.projectName || "-"}</TableCell>
+                                                <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.amount ? `$${inv.amount}` : "0"}</TableCell>
+                                                <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.status}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            )}
                         </div>
                     )}
                 </div>
@@ -907,11 +1316,10 @@ function QuotationTemplateModal({ open, onClose }: { open: boolean; onClose: () 
 }
 
 
-export function AttributeActionModal({ type, onClose }: { type: string | null; onClose: () => void }) {
+export function AttributeActionModal({ type, onClose, customerId, companyName }: { type: string | null; onClose: () => void; customerId?: string; companyName?: string }) {
     if (!type) return null;
-    if (type === 'quotation') return <CreateQuotationModal open={true} onClose={onClose} />;
 
-    if (type === 'followup') return <FollowupModal open={true} onClose={onClose} />;
+    if (type === 'followup') return <FollowupModal open={true} onClose={onClose} customerId={customerId} companyName={companyName} />;
     if (type === 'invoice') {
         return (
             <Dialog open={true} onOpenChange={(val) => !val && onClose()}>
@@ -1036,315 +1444,247 @@ export function AttributeActionModal({ type, onClose }: { type: string | null; o
     );
 }
 
-export function CreateQuotationModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-    return (
-        <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
-            <DialogContent className="max-w-[95vw] w-[1400px] h-[95vh] p-0 flex flex-col bg-slate-50 overflow-hidden gap-0 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
-                <DialogHeader className="px-6 py-5 border-b border-slate-200 bg-white shadow-sm z-10 flex flex-row items-center justify-between dark:bg-zinc-900 dark:border-zinc-800">
-                    <DialogTitle className="text-[18px] font-bold text-slate-800 dark:text-zinc-100">Invoice Quotation <span className="text-[#059669] font-normal text-[15px] ml-2 dark:text-zinc-400">01-04-2026 10:03 PM</span></DialogTitle>
-                </DialogHeader>
-                <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-                    <div className="mx-auto flex flex-col gap-6">
 
-                        {/* Client Details */}
-                        <div className="bg-white p-5 rounded-[10px] shadow-sm border border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Account Holder</label>
-                                    <input type="text" defaultValue="M.Ibrahim" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Company</label>
-                                    <input type="text" defaultValue="Al khar store" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Email</label>
-                                    <input type="text" defaultValue="null" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Contact</label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
-                                </div>
-                            </div>
-                        </div>
+const RESERVATION_OPTIONS = [
+    { value: "MOBILE", label: "Mobile" },
+    { value: "W_CALL", label: "W-Call" },
+    { value: "ON_SITE_APPOINTMENT", label: "On-Site Appointment" },
+    { value: "E_MAIL", label: "E-mail" },
+    { value: "VM_APPOINTMENT", label: "Vm Appointment" },
+    { value: "FAX", label: "Fax" },
+    { value: "NO_NEED", label: "No Need" },
+];
 
-                        {/* Order Grid */}
-                        <div className="bg-white p-5 rounded-[10px] shadow-sm border border-slate-200 overflow-x-auto relative dark:bg-zinc-900 dark:border-zinc-800">
-                            <div className="min-w-[1200px]">
-                                {/* Headers */}
-                                <div className="grid grid-cols-[140px_minmax(180px,1fr)_80px_80px_90px_80px_100px_100px_100px_120px_80px] gap-3 mb-3 bg-slate-50 p-3 rounded-[6px] border border-slate-100 dark:bg-zinc-900 dark:border-zinc-800">
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Product <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Detail <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Min Time <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Max Time <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Unit Price <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Quantity <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Total</div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Start Year</div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">End Year <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] dark:text-zinc-300">Domain URL <span className="text-red-500">*</span></div>
-                                    <div className="font-bold text-slate-600 text-[12px] text-center dark:text-zinc-300">Action</div>
-                                </div>
+export function FollowupModal({ open, onClose, customerId, companyName }: { open: boolean; onClose: () => void; customerId?: string; companyName?: string }) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
 
-                                {/* Row */}
-                                <div className="grid grid-cols-[140px_minmax(180px,1fr)_80px_80px_90px_80px_100px_100px_100px_120px_80px] gap-3 mb-4 items-start p-1">
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-slate-600 shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select</option>
-                                    </select>
-                                    <textarea rows={1} className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white resize-none shadow-sm h-[34px] dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-center shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-center shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-right shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-center shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] text-slate-500 focus:outline-none bg-slate-50 text-right shadow-sm cursor-not-allowed dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800" readOnly />
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-1 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-slate-600 shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select Ye</option>
-                                    </select>
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-1 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white text-slate-600 shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select Ye</option>
-                                    </select>
-                                    <input type="text" placeholder="Enter domain" className="w-full border border-slate-200 rounded-[6px] px-2 py-2 text-[12px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    <button className="bg-red-500 hover:bg-red-600 text-white px-2 py-1.5 rounded-[6px] text-[12px] font-bold shadow-sm transition-colors w-full h-[34px]">Delete</button>
-                                </div>
+    const { data: servicesRes } = useQuery<{ success: boolean; items: FollowupServiceOption[] }>({
+        queryKey: ["/api/sales/services"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/sales/services");
+            return res.json();
+        },
+        enabled: open,
+    });
+    const followupServices = servicesRes?.items || [];
 
-                                <button className="bg-[#059669] hover:bg-[#047857] text-white px-5 py-2 rounded-[6px] text-[13px] font-bold shadow-sm transition-colors mt-2">Add Row</button>
-                            </div>
-                        </div>
+    const [selectedServiceCodes, setSelectedServiceCodes] = useState<Set<string>>(new Set());
+    const [selectedSubservices, setSelectedSubservices] = useState<Record<string, Set<string>>>({});
+    const [subserviceDetails, setSubserviceDetails] = useState<Record<string, SubserviceDetail>>({});
+    const [reservationType, setReservationType] = useState("");
+    const [note, setNote] = useState("");
+    const [nextDate, setNextDate] = useState("");
 
-                        {/* Summary Section */}
-                        <div className="bg-white p-6 rounded-[10px] shadow-sm border border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
-
-                            {/* Row 1 */}
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-5">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Sub Amount <span className="text-red-500">*</span></label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Delivery Time <span className="text-red-500">*</span></label>
-                                    <div className="flex items-center gap-2">
-                                        <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                        <span className="text-slate-400 font-bold">---</span>
-                                        <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                    </div>
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">GST % <span className="text-red-500">*</span></label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Payment Term % <span className="text-red-500">*</span></label>
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all text-slate-600 shadow-sm cursor-pointer dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            {/* Row 2 */}
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-5">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Total Amount <span className="text-red-500">*</span></label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Amount <span className="text-red-500">*</span></label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <div className="flex items-center gap-3">
-                                        <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Pkr Discount <span className="text-red-500">*</span></label>
-                                        <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600 cursor-pointer dark:text-zinc-300"><input type="checkbox" className="accent-[#059669]" /> In Percentage</label>
-                                        <label className="flex items-center gap-1 text-[11px] font-medium text-slate-600 cursor-pointer dark:text-zinc-300"><input type="checkbox" className="accent-[#059669]" /> In Amount</label>
-                                    </div>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">$Grand Total</label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                            </div>
-
-                            {/* Row 3 */}
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Pkr Total</label>
-                                    <input type="text" className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Save <span className="text-red-500">*</span></label>
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all text-slate-600 shadow-sm cursor-pointer dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select</option>
-                                    </select>
-                                </div>
-                                <div className="flex flex-col gap-1.5 md:col-span-2">
-                                    <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Note</label>
-                                    <textarea rows={2} className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm resize-none dark:border-zinc-800" />
-                                </div>
-                            </div>
-
-                            {/* Buttons */}
-                            <div className="flex gap-3">
-                                <button className="bg-[#059669] hover:bg-[#047857] text-white px-6 py-2.5 rounded-[6px] text-[13px] font-bold shadow-sm transition-colors">Save Change</button>
-                                <button className="bg-[#059669] hover:bg-[#047857] text-white px-6 py-2.5 rounded-[6px] text-[13px] font-bold shadow-sm transition-colors">Reset</button>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-            </DialogContent>
-        </Dialog>
-    );
-}
-
-
-export function FollowupModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-    const [loadMore, setLoadMore] = useState(false);
-    const [showAdditional, setShowAdditional] = useState(false);
-
-    // Default checked states exactly as image 1 
-    const [selectedServices, setSelectedServices] = useState<string[]>(['Alibaba Membership']);
-    const [selectedSubServices, setSelectedSubServices] = useState<string[]>(['GGS Digital']);
-
-    const toggleService = (val: string) => {
-        setSelectedServices(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
-    };
-    const toggleSubService = (val: string) => {
-        setSelectedSubServices(prev => prev.includes(val) ? prev.filter(s => s !== val) : [...prev, val]);
+    const resetForm = () => {
+        setSelectedServiceCodes(new Set());
+        setSelectedSubservices({});
+        setSubserviceDetails({});
+        setReservationType("");
+        setNote("");
+        setNextDate("");
     };
 
-    const initialSubServices = ["GGS Digital", "Basic Basic Plus", "GGS Pro", "Standard", "Verified Supplier Rc-Up"];
-    const extraSubServices = ["KAP", "Kwa Psa", "KWA-KAP", "Cat", "AI", "S-Brand", "China Trip", "RFQs"];
-    const subServices = loadMore ? [...initialSubServices, ...extraSubServices] : initialSubServices;
+    const handleToggleService = (serviceId: string, checked: boolean) => {
+        const svc = followupServices.find((s) => s.id === serviceId);
+        const serviceCode = svc ? normalizeCode(svc.code) : null;
+        if (!serviceCode) return;
+        setSelectedServiceCodes((prev) => {
+            const next = new Set(prev);
+            if (checked) next.add(serviceCode);
+            else next.delete(serviceCode);
+            return next;
+        });
+        if (!checked) {
+            setSelectedSubservices((prev) => {
+                const next = { ...prev };
+                delete next[serviceCode];
+                return next;
+            });
+            setSubserviceDetails((prev) => {
+                const next = { ...prev };
+                (svc?.subServices || []).forEach((sub) => { delete next[sub.id]; });
+                return next;
+            });
+        }
+    };
+
+    const handleToggleSubservice = (serviceId: string, subserviceId: string, checked: boolean) => {
+        const svc = followupServices.find((s) => s.id === serviceId);
+        const serviceCode = svc ? normalizeCode(svc.code) : null;
+        if (!serviceCode) return;
+        if (checked) {
+            setSelectedServiceCodes((prev) => {
+                const next = new Set(prev);
+                next.add(serviceCode);
+                return next;
+            });
+        }
+        setSelectedSubservices((prev) => {
+            const next = { ...prev };
+            const current = new Set(next[serviceCode] ?? []);
+            if (checked) current.add(subserviceId);
+            else current.delete(subserviceId);
+            if (current.size > 0) next[serviceCode] = current;
+            else delete next[serviceCode];
+            return next;
+        });
+        if (!checked) {
+            setSubserviceDetails((prev) => {
+                const next = { ...prev };
+                delete next[subserviceId];
+                return next;
+            });
+        }
+    };
+
+    const handleUpdateDetail = (subId: string, patch: Partial<SubserviceDetail>) => {
+        setSubserviceDetails((prev) => ({ ...prev, [subId]: { ...(prev[subId] || {}), ...patch } }));
+    };
+
+    const followupMutation = useMutation({
+        mutationFn: () => {
+            const subIdToMeta = new Map<string, { serviceId: string; subCode: string; serviceCode: string }>();
+            followupServices.forEach((svc) => {
+                const svcCode = normalizeCode(svc.code);
+                svc.subServices?.forEach((sub) => {
+                    subIdToMeta.set(sub.id, { serviceId: svc.id, subCode: normalizeCode(sub.code), serviceCode: svcCode });
+                });
+            });
+
+            const subServicesPayload: Record<string, string[]> = {};
+            Object.entries(selectedSubservices).forEach(([serviceCode, set]) => {
+                if (!selectedServiceCodes.has(serviceCode)) return;
+                const codes = Array.from(set)
+                    .map((subId) => subIdToMeta.get(subId))
+                    .filter((meta): meta is { serviceId: string; subCode: string; serviceCode: string } => Boolean(meta))
+                    .map((meta) => meta.subCode);
+                if (codes.length) subServicesPayload[serviceCode] = Array.from(new Set(codes));
+            });
+
+            const detailPayloads: any[] = [];
+            Object.entries(selectedSubservices).forEach(([serviceCode, set]) => {
+                if (!selectedServiceCodes.has(serviceCode)) return;
+                set.forEach((subId) => {
+                    const meta = subIdToMeta.get(subId);
+                    if (!meta) return;
+                    const detail = subserviceDetails[subId] || {};
+                    const purpose = detail.purpose ?? "";
+                    const grade = detail.grade ?? "";
+                    const method = detail.method ?? "";
+                    const comment = detail.comment ?? "";
+                    const noteValue = detail.note ?? comment ?? "Note";
+                    if ([purpose, grade, method, comment, noteValue].every((v) => !v)) return;
+                    detailPayloads.push({
+                        serviceCode: meta.serviceCode,
+                        subServiceCode: meta.subCode,
+                        serviceId: meta.serviceId,
+                        subServiceId: subId,
+                        purpose,
+                        grade,
+                        method,
+                        comment,
+                        note: noteValue,
+                        dateTime: detail.date ? new Date(detail.date).toISOString() : "",
+                        talkTimeMinutes: method ? detail.talkTimeMinutes ?? null : null,
+                        attachments: detail.attachments ?? [],
+                    });
+                });
+            });
+
+            return apiRequest("POST", "/api/sales/followups", {
+                customerId,
+                services: Array.from(selectedServiceCodes),
+                subServices: subServicesPayload,
+                subServiceDetails: detailPayloads,
+                reservationType: reservationType || undefined,
+                note: note || undefined,
+                nextDate: nextDate || undefined,
+            });
+        },
+        onSuccess: async () => {
+            toast({ title: "Follow-up logged" });
+            if (customerId) {
+                await queryClient.invalidateQueries({ queryKey: [`/api/sales/customers/${customerId}/followups`] });
+            }
+            resetForm();
+            onClose();
+        },
+        onError: async (err: any) => {
+            const message = typeof err?.message === "string" ? err.message : "Failed to log follow-up";
+            toast({ title: "Failed to log follow-up", description: message, variant: "destructive" });
+        },
+    });
 
     return (
         <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
-            <DialogContent className="max-w-[1600px] w-[98vw] max-h-[96vh] p-0 flex flex-col bg-white overflow-hidden gap-0 border-slate-200 shadow-2xl rounded-xl dark:bg-zinc-900 dark:border-zinc-800">
-                <DialogHeader className="px-6 py-5 border-b border-slate-200 bg-white shadow-sm z-10 flex flex-row items-center justify-between dark:bg-zinc-900 dark:border-zinc-800">
+            <DialogContent className="max-w-[1200px] w-[98vw] max-h-[92vh] p-0 flex flex-col bg-white overflow-hidden gap-0 border-slate-200 shadow-2xl rounded-xl dark:bg-zinc-900 dark:border-zinc-800">
+                <DialogHeader className="px-6 py-5 border-b border-slate-200 bg-white shadow-sm z-10 dark:bg-zinc-900 dark:border-zinc-800">
                     <DialogTitle className="text-[18px] font-bold text-slate-700 dark:text-zinc-400">Follow The Customer</DialogTitle>
+                    {companyName && <p className="text-[13px] text-slate-400">{companyName}</p>}
                 </DialogHeader>
 
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
                     <div className="mx-auto flex flex-col gap-6">
 
-                        {/* Selected Store */}
-                        <div className="bg-slate-100 border border-slate-200 px-4 py-3 rounded-[6px] text-slate-500 text-[14px] dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
-                            Al khar store
-                        </div>
+                        <FollowCustomerServicesPanel
+                            services={followupServices}
+                            selectedServiceCodes={selectedServiceCodes}
+                            selectedSubservices={selectedSubservices}
+                            subserviceDetails={subserviceDetails}
+                            onToggleService={handleToggleService}
+                            onToggleSubservice={handleToggleSubservice}
+                            onUpdateDetail={handleUpdateDetail}
+                        />
 
-                        {/* Select Services */}
-                        <div className="bg-white border border-slate-100 shadow-sm p-5 rounded-[10px] dark:bg-zinc-900 dark:border-zinc-800">
-                            <h3 className="text-[14px] font-bold text-[#059669] mb-4 dark:text-zinc-400">Select Services:<span className="text-red-500">*</span></h3>
-                            <div className="flex flex-wrap items-center gap-6">
-                                {['Alibaba Membership', 'Alibaba Services', 'Design Development', 'Domain Hosting'].map(srv => (
-                                    <label key={srv} className="flex items-center gap-2 cursor-pointer group">
-                                        <div className={`w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors ${selectedServices.includes(srv) ? 'bg-[#059669] border-[#059669]' : 'border-slate-300 bg-white dark:bg-zinc-900 group-hover:border-[#059669]/50'}`}>
-                                            {selectedServices.includes(srv) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                                        </div>
-                                        <span className="text-[13px] font-bold text-slate-600 group-hover:text-slate-900 transition-colors dark:text-zinc-300">{srv}</span>
-                                    </label>
-                                ))}
+                        {/* Reservation / Method */}
+                        <div className="bg-white p-5 rounded-[10px] shadow-sm border border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                            <div className="flex flex-col gap-1.5 w-full md:w-1/2">
+                                <label className="text-[13px] font-bold text-[#059669] dark:text-zinc-400">Reservation:</label>
+                                <select
+                                    value={reservationType}
+                                    onChange={(e) => setReservationType(e.target.value)}
+                                    className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:text-zinc-300 dark:border-zinc-800"
+                                >
+                                    <option value="">Select Reservation</option>
+                                    {RESERVATION_OPTIONS.map((r) => (
+                                        <option key={r.value} value={r.value}>{r.label}</option>
+                                    ))}
+                                </select>
                             </div>
                         </div>
 
-                        {/* Alibaba Membership - Sub Services */}
-                        {selectedServices.includes('Alibaba Membership') && (
-                            <div className="bg-white border text-[13px] border-slate-100 shadow-sm rounded-[10px] overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                                <div className="bg-slate-50 border-b border-slate-100 px-5 py-3 flex items-center justify-between dark:bg-zinc-900 dark:border-zinc-800">
-                                    <h3 className="text-[14px] font-bold text-[#059669] dark:text-zinc-400">Alibaba Membership - Sub Services</h3>
-                                    <button className="text-slate-400 hover:text-slate-600">
-                                        <svg xmlns="http://www.w-images.com/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                    </button>
-                                </div>
-                                <div className="p-5 flex flex-col gap-5">
-                                    {subServices.map(sub => {
-                                        const isChecked = selectedSubServices.includes(sub);
-                                        return (
-                                            <div key={sub} className="flex flex-col gap-2">
-                                                {/* Checkbox line */}
-                                                <div className="flex items-center gap-2">
-                                                    <label className="flex items-center gap-2 cursor-pointer group">
-                                                        <div className={`w-4 h-4 rounded-[4px] border flex items-center justify-center transition-colors ${isChecked ? 'bg-[#059669] border-[#059669]' : 'border-slate-300 bg-white dark:bg-zinc-900 group-hover:border-[#059669]/50'}`}>
-                                                            {isChecked && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                                                        </div>
-                                                        <span className="text-[12px] font-bold text-slate-600 dark:text-zinc-300">{sub}</span>
-                                                    </label>
-
-                                                    {/* Inline details if checked */}
-                                                    {isChecked && (
-                                                        <div className="flex flex-1 items-center gap-2 ml-4">
-                                                            <select className="flex-1 border border-slate-200 rounded-[6px] px-2 py-1.5 focus:outline-none focus:border-[#059669] dark:border-zinc-800">
-                                                                <option>New Sell</option>
-                                                            </select>
-                                                            <select className="flex-1 border border-slate-200 rounded-[6px] px-2 py-1.5 focus:outline-none focus:border-[#059669] dark:border-zinc-800">
-                                                                <option>B+</option>
-                                                            </select>
-                                                            <select className="flex-1 border border-slate-200 rounded-[6px] px-2 py-1.5 focus:outline-none focus:border-[#059669] dark:border-zinc-800">
-                                                                <option></option>
-                                                            </select>
-                                                            <select className="flex-1 border border-slate-200 rounded-[6px] px-2 py-1.5 focus:outline-none focus:border-[#059669] dark:border-zinc-800">
-                                                                <option>Introduction Me...</option>
-                                                            </select>
-                                                            <div className="relative flex-1">
-                                                                <input type="text" defaultValue="01/01/2026 10:22 PM" className="w-full border border-slate-200 rounded-[6px] px-2 py-1.5 pr-8 focus:outline-none focus:border-[#059669] dark:border-zinc-800" />
-                                                                <svg className="w-4 h-4 absolute right-2 top-2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                                                            </div>
-                                                            <input type="text" defaultValue="aaa" className="flex-1 border border-slate-200 rounded-[6px] px-2 py-1.5 focus:outline-none focus:border-[#059669] dark:border-zinc-800" />
-                                                            <div className="flex border border-slate-200 rounded-[6px] overflow-hidden flex-1 shrink-0 dark:border-zinc-800">
-                                                                <button className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 text-[12px] font-medium transition-colors border-r border-slate-200 dark:text-zinc-300 dark:border-zinc-800 dark:bg-zinc-900">Choose files</button>
-                                                                <span className="text-slate-400 px-3 py-1.5 text-[12px] bg-white w-full truncate dark:bg-zinc-900">N.</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
-
-                                    {/* Load More Button */}
-                                    <div className="flex justify-center mt-3 pt-4 border-t border-slate-100 dark:border-zinc-800">
-                                        <button onClick={() => setLoadMore(!loadMore)} className="flex items-center gap-1.5 border border-[#059669] text-[#059669] hover:bg-[#059669]/5 font-bold px-4 py-1.5 rounded-[6px] text-[13px] transition-colors dark:border-zinc-800 dark:text-zinc-400">
-                                            {loadMore ? <svg xmlns="http://www.w-images.com/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg> : <svg xmlns="http://www.w-images.com/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>}
-                                            {loadMore ? 'Show Less' : 'Load More'}
-                                        </button>
-                                    </div>
-                                </div>
+                        {/* Next Date & Note */}
+                        <div className="bg-white p-5 rounded-[10px] shadow-sm border border-slate-200 flex flex-col gap-4 dark:bg-zinc-900 dark:border-zinc-800">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-[#059669] dark:text-zinc-400">Next Date:</label>
+                                <input
+                                    type="datetime-local"
+                                    value={nextDate}
+                                    onChange={(e) => setNextDate(e.target.value)}
+                                    className="w-full md:w-1/2 border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] dark:text-zinc-300 dark:border-zinc-800"
+                                />
                             </div>
-                        )}
-
-                        {/* Additional Details Toggle */}
-                        <div className="w-full">
-                            <button onClick={() => setShowAdditional(!showAdditional)} className={`w-full flex justify-center items-center gap-1.5 border px-4 py-2.5 rounded-[6px] text-[13px] font-bold transition-colors ${showAdditional ? 'border-red-400 text-red-500 hover:bg-red-50' : 'border-[#059669] text-[#059669] hover:bg-[#059669]/5'}`}>
-                                {showAdditional ? <svg xmlns="http://www.w-images.com/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg> : <svg xmlns="http://www.w-images.com/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>}
-                                {showAdditional ? 'Hide Additional Details' : 'Show Additional Details'}
-                            </button>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-[#059669] dark:text-zinc-400">Note:</label>
+                                <textarea
+                                    rows={3}
+                                    value={note}
+                                    onChange={(e) => setNote(e.target.value)}
+                                    className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-600 resize-y focus:outline-none focus:border-[#059669] dark:text-zinc-300 dark:border-zinc-800"
+                                />
+                            </div>
                         </div>
-
-                        {/* Additional Details Form */}
-                        {showAdditional && (
-                            <div className="bg-white p-5 rounded-[10px] shadow-sm border border-slate-200 mt-[-12px] dark:bg-zinc-900 dark:border-zinc-800">
-                                <div className="flex flex-col gap-1.5 w-full md:w-1/2">
-                                    <label className="text-[13px] font-bold text-[#059669] dark:text-zinc-400">Reservation:<span className="text-red-500">*</span></label>
-                                    <select className="w-full border border-slate-200 rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:text-zinc-300 dark:border-zinc-800">
-                                        <option>Select Reservation</option>
-                                        <option>Mobile</option>
-                                        <option>WhatsApp</option>
-                                        <option>WH-Call</option>
-                                        <option>In-meeting</option>
-                                        <option>Out-meeting</option>
-                                        <option>E-mail</option>
-                                        <option>On-Site Appointment</option>
-                                        <option>Vm Appointment</option>
-                                        <option>Fax</option>
-                                        <option>No Need</option>
-                                        <option>Seminar</option>
-                                    </select>
-                                </div>
-                            </div>
-                        )}
 
                         {/* Submit Button */}
                         <div className="mt-1">
-                            <button className="w-full bg-[#059669] hover:bg-[#047857] text-white py-3 rounded-[6px] text-[14px] font-bold shadow-md hover:shadow-lg transition-all active:scale-[0.99]">Submit</button>
+                            <button
+                                onClick={() => followupMutation.mutate()}
+                                disabled={!customerId || selectedServiceCodes.size === 0 || followupMutation.isPending}
+                                className="w-full bg-[#059669] hover:bg-[#047857] text-white py-3 rounded-[6px] text-[14px] font-bold shadow-md hover:shadow-lg transition-all active:scale-[0.99] disabled:opacity-60"
+                            >
+                                {followupMutation.isPending ? "Submitting..." : "Submit"}
+                            </button>
                         </div>
 
                     </div>
@@ -1398,18 +1738,13 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
             website: formData.get("website"),
             address: formData.get("address"),
             comment: formData.get("comment"),
+            country: formData.get("country"),
+            city: formData.get("city"),
+            title: formData.get("title"),
+            companyType: formData.get("companyType"),
         };
         mutation.mutate(payload);
     };
-
-    const tagsList = [
-        "Expansion bolts", "Expansion anchors", "Drop in anchor & cut anchor",
-        "Curtain walling Contract manufacturing", "Continuity systems", "Channel",
-        "Cast in channels", "Build forming parts", "Brickwork ties", "Brickwork supports",
-        "Brickwork restraints", "Binu mathew", "Anker Anchoring systems Anchoring", "Sockets",
-        "Fixing", "Fasteners", "Channels", "Angles", "Anchors", "Nails", "Bolts",
-        "Manufacturer", "Ties", "Chains", "Building"
-    ];
 
     if (!customerId) return null;
 
@@ -1417,11 +1752,10 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
 
     return (
         <Dialog open={!!customerId} onOpenChange={(val) => !val && onClose()}>
-            <DialogContent className="max-w-[1100px] w-[95vw] h-[90vh] bg-[#f8fafc] border-slate-200 p-0 flex flex-col overflow-hidden shadow-2xl rounded-[12px] dark:bg-zinc-900 dark:border-zinc-800">
+            <DialogContent className="max-w-[750px] w-[95vw] h-[90vh] bg-[#f8fafc] border-slate-200 p-0 flex flex-col overflow-hidden shadow-2xl rounded-[12px] dark:bg-zinc-900 dark:border-zinc-800">
                 <div className="flex-1 overflow-y-auto w-full">
-                    <form onSubmit={handleSubmit} className="w-full flex flex-col lg:flex-row p-6 md:p-8 gap-8">
+                    <form onSubmit={handleSubmit} className="w-full flex flex-col p-6 md:p-8 gap-8">
 
-                        {/* Left Side: Form */}
                         <div className="flex-1 flex flex-col bg-white p-6 rounded-[10px] shadow-sm border border-slate-200 h-fit dark:bg-zinc-900 dark:border-zinc-800">
                             <h2 className="text-[16px] font-bold text-slate-700 mb-6 font-sans dark:text-zinc-400">Edit Company Detail</h2>
 
@@ -1433,19 +1767,20 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Company name <span className="text-red-500">*</span></label>
-                                        <input type="text" name="companyName" defaultValue={lead.companyName || ""} className="w-full border border-slate-200 bg-slate-50/50 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
+                                        <input type="text" name="companyName" defaultValue={lead.companyName || ""} className="w-full border border-slate-200 bg-slate-50/50 dark:bg-zinc-900 rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:border-zinc-800" />
                                     </div>
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Country /Region <span className="text-red-500">*</span></label>
-                                        <select className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                            <option>Choose...</option>
+                                        <select name="country" defaultValue={lead.country || ""} className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
+                                            <option value="">Choose...</option>
+                                            <option value="Pakistan">Pakistan</option>
+                                            <option value="USA">USA</option>
+                                            <option value="UAE">UAE</option>
                                         </select>
                                     </div>
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Company type</label>
-                                        <select className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                            <option>Finances & Insurance</option>
-                                        </select>
+                                        <input type="text" name="companyType" defaultValue={lead.companyType || ""} placeholder="e.g. Finances & Insurance" className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
                                     </div>
                                 </div>
 
@@ -1453,9 +1788,7 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">City <span className="text-red-500">*</span></label>
-                                        <select className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                            <option>Abu Dhabi</option>
-                                        </select>
+                                        <input type="text" name="city" defaultValue={lead.city || ""} placeholder="e.g. Abu Dhabi" className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
                                     </div>
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Landline No <span className="text-slate-400 font-normal ml-0.5">(+971-X-XXXXXXX)</span></label>
@@ -1470,20 +1803,21 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
                                 <h3 className="text-[15px] font-bold text-slate-700 mb-4 font-sans pb-1 dark:text-zinc-400">Primary Detail</h3>
 
                                 {/* Row 3 */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Title</label>
-                                        <select className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
-                                            <option>Choose...</option>
+                                        <select name="title" defaultValue={lead.title || ""} className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] text-slate-600 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">
+                                            <option value="">Choose...</option>
+                                            <option value="Mr.">Mr.</option>
+                                            <option value="Mrs.">Mrs.</option>
+                                            <option value="Ms.">Ms.</option>
+                                            <option value="Dr.">Dr.</option>
+                                            <option value="M/S">M/S</option>
                                         </select>
                                     </div>
                                     <div className="flex flex-col gap-1.5">
                                         <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Person Full Name</label>
                                         <input type="text" name="accountName" defaultValue={lead.accountName || ""} className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                                    </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-300">Personal Mobile No</label>
-                                        <input type="text" defaultValue="" className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
                                     </div>
                                 </div>
 
@@ -1517,24 +1851,6 @@ export function EditCompanyModal({ customerId, onClose }: { customerId: string |
                                 </div>
                                 </>
                             )}
-                        </div>
-
-                        {/* Right Side: Tags */}
-                        <div className="w-[300px] flex-shrink-0 flex flex-col pt-[4px] h-[550px]">
-                            <label className="text-[13px] font-bold text-slate-700 mb-2 font-sans pl-1 dark:text-zinc-400">Tags</label>
-                            <input type="text" className="w-full border border-slate-200 bg-white rounded-[6px] px-3 py-2 mb-2 text-[13px] focus:outline-none focus:border-[#059669] transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800" />
-                            <div className="flex-1 bg-white border border-slate-200 rounded-[6px] shadow-sm flex flex-col overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                                    <div className="flex flex-col gap-2.5">
-                                        {tagsList.map((tag) => (
-                                            <label key={tag} className="flex items-start gap-2.5 cursor-pointer group">
-                                                <input type="checkbox" className="mt-0.5 w-[14px] h-[14px] rounded-[3px] border-slate-300 text-[#059669] focus:ring-[#059669] accent-[#059669] dark:border-zinc-800 dark:text-zinc-400" />
-                                                <span className="text-[13px] text-slate-600 leading-[1.2] group-hover:text-[#059669] transition-colors dark:text-zinc-300">{tag}</span>
-                                            </label>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
                         </div>
 
                     </form>

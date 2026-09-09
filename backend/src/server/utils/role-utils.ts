@@ -1,35 +1,9 @@
-// Role Definitions
-export const ROLES = {
-  ADMIN: "admin",
-  SALES_MANAGER: "sales_manager",
-  SALES_ASSISTANT_MANAGER: "sales_assistant_manager",
-  SALES_EXECUTIVE: "sales_executive",
-  ACCOUNT_MANAGER: "account_manager",
-  DEVELOPER: "developer",
-  // Legacy roles (kept for backward compatibility)
-  HOD: "hod",
-  SUPER_HOD: "super_hod",
-  SERVICE_MANAGER: "service_manager",
-  SERVICE_ASSISTANT_MANAGER: "service_assistant_manager",
-  SERVICE_EXECUTIVE: "service_executive",
-  PRODUCT_POSTING_EXECUTIVE: "product_posting_executive",
-  PRODUCT_POSTING_MANAGER: "product_posting_manager",
-  QA_MANAGER: "qa_manager",
-  VERIFICATION_MANAGER: "verification_manager",
-  POSTING_EXECUTIVE: "posting_executive",
-  DD_MANAGER: "dd_manager",
-  DD_EXECUTIVE: "dd_executive",
-  IT_MANAGER: "it_manager",
-  RECEPTION_MANAGER: "reception_manager",
-  SEO_SMM_MANAGER: "seo_smm_manager",
-  SOFTWARE_MANAGER: "software_manager",
-  SOFTWARE_EXECUTIVE: "software_executive",
-  LEAD_MANAGER: "lead_manager",
-  LEAD_EXECUTIVE: "lead_executive",
-  MARKETING_MANAGER: "marketing_manager",
-} as const;
-
-export type RoleKey = (typeof ROLES)[keyof typeof ROLES] | string;
+// Role Definitions — re-exported from shared/roles.ts (the single source of
+// truth) so that shared/ modules can depend on ROLES without importing
+// server/, while every existing consumer of this module keeps working
+// unchanged.
+export { ROLES, type RoleKey } from "@shared/roles";
+import { ROLES, type RoleKey } from "@shared/roles";
 
 export function normalizeRole(role: string): RoleKey {
   if (!role) return ROLES.SALES_EXECUTIVE;
@@ -91,35 +65,67 @@ export function isHodAllowed(role?: string | null): boolean {
 
 export const HOD_ALLOWED_ROLES = ["super_hod", "hod", "admin", "manager", "seo_smm_manager"];
 
+/**
+ * P02-002 fix: the authoritative explicit managerial-role list, extracted out
+ * of `isManagerialRole` (below) into its own export so any OTHER code that
+ * needs a static role array (e.g. `report-permission.ts`'s
+ * `REPORT_PERMISSION_MATRIX`) can reference the exact same list instead of
+ * hand-maintaining a second, driftable copy. `isManagerialRole` itself is
+ * unchanged in behavior — this is a pure extraction, not a logic change —
+ * and still additionally treats any role string containing "manager"/
+ * "admin"/"hod"/"head"/"supervisor" (and not "exec") as managerial even if
+ * it isn't in this explicit list (e.g. the ungoverned literal "hr_manager" —
+ * see RBAC_ACTION_MATRIX.md's Table 4 finding on that role). That fallback
+ * exists to catch legacy/ungoverned role strings outside the central `ROLES`
+ * registry and is intentionally NOT reproduced in this static array, since a
+ * static list cannot express a substring match — REPORT_PERMISSION_MATRIX
+ * consumers should treat this list as the "known managerial roles" baseline,
+ * not a byte-for-byte guarantee against every possible role string.
+ *
+ * NOTE: `ROLES.ACCOUNT_MANAGER` is included explicitly here even though the
+ * original inline array (before this P02-002 extraction) omitted it — that
+ * was a latent gap: `isManagerialRole("account_manager")` already returned
+ * `true` today, but ONLY via the fallback substring match (the string
+ * "account_manager" contains "manager"), not explicit membership. Found by
+ * `report-permission-reconciliation.test.ts` comparing this list against the
+ * live route gates. Adding it here is output-preserving for
+ * `isManagerialRole` (still `true` for every caller, just via a robust path
+ * instead of an accidental one) and is what makes `account_manager` correctly
+ * appear in `MANAGERIAL_ROLES`-derived static lists like
+ * `REPORT_PERMISSION_MATRIX`, which cannot express the substring fallback.
+ */
+export const MANAGERIAL_ROLES: string[] = [
+  ROLES.ADMIN,
+  ROLES.ACCOUNT_MANAGER,
+  ROLES.SALES_MANAGER,
+  ROLES.SALES_ASSISTANT_MANAGER,
+  ROLES.HOD,
+  ROLES.SERVICE_MANAGER,
+  ROLES.SERVICE_ASSISTANT_MANAGER,
+  ROLES.SUPER_HOD,
+  ROLES.QA_MANAGER,
+  ROLES.VERIFICATION_MANAGER,
+  ROLES.PRODUCT_POSTING_MANAGER,
+  ROLES.DD_MANAGER,
+  ROLES.IT_MANAGER,
+  ROLES.RECEPTION_MANAGER,
+  ROLES.SEO_SMM_MANAGER,
+  ROLES.SOFTWARE_MANAGER,
+  ROLES.LEAD_MANAGER,
+  ROLES.MARKETING_MANAGER,
+];
+
 export function isManagerialRole(role?: string | null): boolean {
   if (!role) return false;
   const n = normalizeRole(role);
   const managerTerms = ["manager", "admin", "hod", "head", "supervisor"];
 
-  const isManager = [
-    ROLES.ADMIN,
-    ROLES.SALES_MANAGER,
-    ROLES.SALES_ASSISTANT_MANAGER,
-    ROLES.HOD,
-    ROLES.SERVICE_MANAGER,
-    ROLES.SERVICE_ASSISTANT_MANAGER,
-    ROLES.SUPER_HOD,
-    ROLES.QA_MANAGER,
-    ROLES.VERIFICATION_MANAGER,
-    ROLES.PRODUCT_POSTING_MANAGER,
-    ROLES.DD_MANAGER,
-    ROLES.IT_MANAGER,
-    ROLES.RECEPTION_MANAGER,
-    ROLES.SEO_SMM_MANAGER,
-    ROLES.SOFTWARE_MANAGER,
-    ROLES.LEAD_MANAGER,
-    ROLES.MARKETING_MANAGER,
-  ].includes(n as any);
+  const isManager = MANAGERIAL_ROLES.includes(n as any);
 
   if (isManager) return true;
 
   // Additional check for manager terms, but EXCLUDE executives
   if (n.toLowerCase().includes("exec")) return false;
-  
+
   return managerTerms.some(term => n.toLowerCase().includes(term));
 }

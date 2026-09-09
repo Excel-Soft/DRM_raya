@@ -1,7 +1,8 @@
 import { Express, Request, Response } from "express";
 
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { requireReportPermission } from "./middleware/report-permission";
 
 /**
  * Patch 2 Stage 6 — Diagnosis Report.
@@ -180,7 +181,10 @@ async function buildScopeAndFilters(req: Request): Promise<BuiltScope> {
 
 export function registerDiagnosisReportRoutes(app: Express) {
   // GET /api/reports/diagnose — filtered, scoped, paginated report + summary.
-  app.get("/api/reports/diagnose", async (req: Request, res: Response) => {
+  // Phase 13 — wires the documented view matrix (report-permission.ts's
+  // diagnosis_report entry) which previously existed but was never enforced
+  // here, so any authenticated user could view the report.
+  app.get("/api/reports/diagnose", requireReportPermission("diagnosis_report", "view"), async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const built = await buildScopeAndFilters(req);

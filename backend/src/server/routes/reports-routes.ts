@@ -1,8 +1,10 @@
 import { Router, type Express } from "express";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { normalizeRole } from "../utils/role-utils";
-import { db, pool } from "../db";
-import { mapToCanonical } from "../utils/gm-bv-state-machine";
+import { normalizeRole } from "./utils/role-utils";
+import { db, pool } from "./db";
+import { mapToCanonical } from "./utils/gm-bv-state-machine";
+import { resolveStoredOrDerivedGmType } from "../shared/gm-sales-constants";
+import { deriveQuarterKey, getGmCommissionQuarterSummary, syncGmCommissionLedger } from "./services/gm-commission.service";
 import { z } from "zod";
 import {
   loanRequests,
@@ -27,23 +29,24 @@ import {
   productPostingInvoices,
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, count, ilike, or, desc, inArray } from "drizzle-orm";
-import { bvReportsRepository, ensureBvReportsSchema } from "../repositories/bv-reports.repository";
+import { bvReportsRepository, ensureBvReportsSchema } from "./repositories/bv-reports.repository";
 import {
   loanReportsRepository,
   vasReportsRepository,
   gmReportsRepository,
-} from "../repositories/generic-report.repository";
-import { isManagerialRole } from "../utils/role-utils";
-import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "../utils/api-error";
-import { requireReportPermission, resolveReportRoles } from "../middleware/report-permission";
-import { ActivityLogService } from "../services/activity-service";
-import { exportTimestamp } from "../utils/export-filename";
-import { getBvReportData, type BvReportFilters } from "../services/bv-report.service";
+} from "./repositories/generic-report.repository";
+import { isManagerialRole } from "./utils/role-utils";
+import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
+import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
+import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
+import { ActivityLogService } from "./services/activity-service";
+import { exportTimestamp } from "./utils/export-filename";
+import { getBvReportData, type BvReportFilters } from "./services/bv-report.service";
 import {
   getDayTargetReport,
   buildDayTargetCsv,
   type DayTargetQuery,
-} from "../services/day-target.service";
+} from "./services/day-target.service";
 
 const router = Router();
 
@@ -55,7 +58,10 @@ const router = Router();
 const reconNorm = (s: string) =>
   `regexp_replace(lower(coalesce(${s}, '')), '[^a-z0-9]', '', 'g')`;
 
-router.get("/reports/gm-bv-reconciliation", async (req, res) => {
+router.get(
+  "/reports/gm-bv-reconciliation",
+  requireFinancialPermission(FINANCIAL_ACTIONS.gmBvReconciliationView, { roles: FINANCIAL_VIEW_ROLES }),
+  async (req, res) => {
   try {
     if (!(req as any).user) return res.status(401).json({ error: "Not authenticated" });
 
@@ -783,7 +789,7 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
     .where(and(...stdInvoiceConditions));
 
   // Combine them
-  const combinedDetails = [
+  const combinedDetails: any[] = [
     ...vasEntries.map(v => ({
       id: v.id,
       companyName: v.companyName,
@@ -791,7 +797,8 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
       method: v.method,
       date: v.vasDate,
       notes: v.notes,
-      type: "VAS"
+      type: "VAS",
+      userId: v.createdByUserId || null,
     })),
     ...invoiceEntriesRaw.map(i => ({
       id: i.id,
@@ -800,7 +807,8 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
       method: i.paymentMethod || "BankTransfer",
       date: i.updatedAt,
       notes: `Invoice Status: ${i.status}`,
-      type: "Invoice"
+      type: "Invoice",
+      userId: i.salesExecId || null,
     })),
     ...stdInvoiceEntriesRaw.map(i => ({
       id: i.id,
@@ -809,12 +817,40 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
       method: i.paymentMethod || "BankTransfer",
       date: i.updatedAt,
       notes: `Invoice Status: ${i.status}`,
-      type: "Invoice"
+      type: "Invoice",
+      userId: i.createdByUserId || null,
     }))
   ];
 
   // Sort by date descending
   combinedDetails.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+
+  // MD-18: attach each row's owning user's GM commission%/reward/final-commission
+  // for the quarter containing that row's date. The VAS report itself has no
+  // link to gm_entries (confirmed by research before this was written), so
+  // these columns show the GM commission engine's (MD-16(c)) period-level
+  // summary for that beneficiary/quarter — not a per-row VAS-transaction
+  // commission, which was never a defined concept here. Batched per unique
+  // (userId, quarterKey) pair to avoid an N+1 query pattern.
+  const vasCommissionSummaryCache = new Map<string, Awaited<ReturnType<typeof getGmCommissionQuarterSummary>>>();
+  const vasSyncedUserIds = new Set<string>();
+  for (const row of combinedDetails) {
+    if (!row.userId || !row.date) continue;
+    const quarterKey = deriveQuarterKey(new Date(row.date));
+    const cacheKey = `${row.userId}:${quarterKey}`;
+    if (!vasCommissionSummaryCache.has(cacheKey)) {
+      if (!vasSyncedUserIds.has(row.userId)) {
+        vasSyncedUserIds.add(row.userId);
+        await syncGmCommissionLedger(row.userId).catch((err) => console.error("[VAS report] GM commission sync failed:", err));
+      }
+      const summary = await getGmCommissionQuarterSummary(row.userId, quarterKey).catch(() => null);
+      if (summary) vasCommissionSummaryCache.set(cacheKey, summary);
+    }
+    const summary = vasCommissionSummaryCache.get(cacheKey);
+    row.commissionPercent = summary ? summary.effectiveRatePercent : 0;
+    row.reward = summary ? summary.approvedReward : 0;
+    row.finalCommission = summary ? summary.finalCommission : 0;
+  }
 
   const totalValue = combinedDetails.reduce((sum, item) => sum + Number(item.amount), 0);
   const chartData = generateChartData(combinedDetails.map(d => ({ ...d, createdAt: d.date })), fromDate, toDate, 'amount');
@@ -896,6 +932,7 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
       person: e.salesPersonName,
       rcNew: e.entryType,
       date: e.createdAt,
+      gmType: resolveStoredOrDerivedGmType(e),
     })),
   };
 }
@@ -1868,6 +1905,24 @@ router.get("/reports/:reportType/export-csv", async (req, res) => {
     const isPrivileged = isManagerialRole(user.roleId);
     const { reportType } = req.params;
     const { company, from, to } = req.query;
+
+    // Data-scope note (documented, not changed): this export already scopes by
+    // isPrivileged (any manager sees all records of this type; an individual
+    // contributor sees only their own, via the same eq(createdBy/salesPersonId,
+    // user.userId) condition used by each branch's view). That is the correct,
+    // already-established audience for this general-purpose staff export — it
+    // is NOT an Office-Accounts-only surface, so FINANCIAL_VIEW_ROLES (admin/
+    // account_manager/super_hod only) would wrongly break existing access for
+    // every other department's managers/executives exporting their own team's
+    // data. The genuine gap here (P00's "weakest financial export surface")
+    // was the missing audit trail, added below.
+    void ActivityLogService.log({
+      userId: user.userId,
+      action: "reports.export_csv",
+      resourceType: "report_export",
+      resourceId: reportType,
+      details: JSON.stringify({ company: company ?? null, from: from ?? null, to: to ?? null, scopedToSelf: !isPrivileged }),
+    });
 
     let data: any[] = [];
     let filename = "";

@@ -20,7 +20,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { Trash2, Plus, RotateCcw, Save } from "lucide-react";
+import { Trash2, Plus, RotateCcw, Save, Check, ChevronsUpDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -64,7 +64,6 @@ import {
     CommandItem,
     CommandList,
 } from "@/components/ui/command";
-import { Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCreateFormProps) {
@@ -270,7 +269,7 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
             {/* Items Table */}
             <div className="border rounded-lg overflow-hidden">
                 <Table>
-                    <TableHeader className="bg-gray-50/50">
+                    <TableHeader className="bg-gray-50/50 dark:bg-zinc-900">
                         <TableRow>
                             <TableHead className="text-[10px] font-bold uppercase w-[240px]">Product</TableHead>
                             <TableHead className="text-[10px] font-bold uppercase">Detail</TableHead>

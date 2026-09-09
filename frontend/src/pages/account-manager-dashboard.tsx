@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { GmApprovalCard } from "@/components/gm-approval-card";
 import { AccountsGmSummaryWidget } from "@/components/accounts-gm-summary-widget";
@@ -32,7 +32,9 @@ import {
     Eye,
     X,
     Edit,
-    PlusCircle
+    PlusCircle,
+    ChevronLeft,
+    ChevronRight
 } from "lucide-react";
 import {
     Select,
@@ -75,22 +77,99 @@ import {
     DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
 import { format, isToday, isSameMonth } from "date-fns";
+import { AccountApprovalModal } from "@/components/account-approval-modal";
+
+const DASHBOARD_PAGE_SIZE = 10;
 
 export default function AccountManagerDashboard() {
     const { toast } = useToast();
     const [, setLocation] = useLocation();
-    const [filterType, setFilterType] = useState<'today' | 'monthly' | 'monthly-task' | 'martini-status'>('today');
+    // Defaults to "all" — a HOD-approved invoice waiting on a project doesn't
+    // stop being actionable just because it wasn't approved today, so the
+    // Create Project queue must not hide it by default.
+    const [filterType, setFilterType] = useState<'all' | 'today' | 'monthly' | 'monthly-task' | 'martini-status'>('all');
+    const [createProjectPage, setCreateProjectPage] = useState(1);
+    const [invoicePage, setInvoicePage] = useState(1);
     const [createProjectOpen, setCreateProjectOpen] = useState(false);
     const [selectedGm, setSelectedGm] = useState<any>(null);
+    const [approvalModalOpen, setApprovalModalOpen] = useState(false);
+    const [approvalGm, setApprovalGm] = useState<any>(null);
     const [viewInvoiceOpen, setViewInvoiceOpen] = useState(false);
     const [viewGm, setViewGm] = useState<any>(null);
+
+    // Builds the shared InvoiceReceipt component's data shape from a GM pool
+    // entry or a mapped invoice entry (see setViewGm call sites below) so both
+    // "View" actions render the same canonical invoice design as HOD/Sales.
+    const buildInvoiceReceiptData = (g: any) => {
+        // Invoice-sourced rows (pending-quotations) don't carry a GM `packageType` —
+        // their real name lives in `note` (project_name/notes/note, depending on
+        // `source`), so that must be checked before falling back to the generic
+        // 'Invoice' tag the view-click handler stamps on for all invoice rows.
+        const sourceFallback = g?.source === "product_posting"
+            ? "Alibaba Product Posting"
+            : g?.source === "standard_invoice"
+                ? "Standard Invoice"
+                : g?.source === "quotation"
+                    ? "Quotation"
+                    : null;
+        const pkgName = g?.packageType || g?.note || sourceFallback || g?.entryType || "Product Posting Service";
+        const lowerPkg = pkgName.toLowerCase();
+        let finalItemName = pkgName;
+        let finalQty = 1;
+        let finalDetail = g?.notes || `${g?.companyName || ""} Details`;
+        if (lowerPkg.includes("minisite")) {
+            finalItemName = "Alibaba Minisite Service";
+            finalDetail = "1";
+        } else if (lowerPkg.includes("listing")) {
+            finalItemName = "Listing Page Service";
+            finalDetail = "1";
+        } else if (lowerPkg.includes("product posting")) {
+            finalItemName = "Product Posting Service";
+            finalQty = 100;
+            finalDetail = "100";
+        }
+        const amountUsd = Number(g?.amountUsd) || 0;
+        const amountPkr = Number(g?.amountPkr) || 0;
+        return {
+            invoiceNumber: g?.invoiceNumber || (g?.id ? g.id.toString().replace(/\D/g, "") : "9876"),
+            date: g?.createdAt ? new Date(g.createdAt) : new Date(),
+            from: {
+                name: "Web Excels",
+                whatsapp: "+92-334-8086611",
+                phone: "+92-52-4271592",
+                email: "Support@Webexcels.com",
+                address: "Al-Amin Center, Paris Rd, Opposite The Sialkot Chamber Of Commerce, Sialkot 51310 Pakistan.",
+            },
+            to: {
+                name: g?.companyName || "-",
+                phone: "-",
+                email: "-",
+                address: "Address:",
+            },
+            items: [
+                {
+                    name: finalItemName,
+                    detail: finalDetail,
+                    price: amountUsd,
+                    quantity: finalQty,
+                    total: amountUsd,
+                },
+            ],
+            subTotalUsd: amountUsd,
+            subTotalPkr: amountPkr,
+            taxUsd: 0,
+            discountPkr: 0,
+            totalPkr: amountPkr,
+        };
+    };
     const [projectForm, setProjectForm] = useState({
         name: '',
         due: '0',
         amount: '',
         method: '',
-        receiptNumber: '',
+        approvalStatus: 'approved',
         project: '',
     });
 
@@ -168,6 +247,76 @@ export default function AccountManagerDashboard() {
         });
     };
 
+    // Stats Overview period dropdown — same LD/WC/MC/QC/YC (Last Day/Week/Month/
+    // Quarter/Year Cumulative) convention as the HOD dashboard's Top Selling
+    // widget, kept independent of `filterType` above (which only scopes the
+    // separate Create Project table).
+    const STATS_PERIOD_DAYS: Record<string, number> = { LD: 1, WC: 7, MC: 30, QC: 90, YC: 365 };
+    const [statsPeriod, setStatsPeriod] = useState("LD");
+
+    const getStatsPeriodRange = (period: string) => {
+        const days = STATS_PERIOD_DAYS[period] ?? 1;
+        const now = new Date();
+        const dateTo = new Date(now);
+        const dateFrom = new Date(now);
+        if (period === "LD") {
+            dateFrom.setHours(0, 0, 0, 0);
+        } else {
+            dateFrom.setTime(now.getTime() - days * 24 * 60 * 60 * 1000);
+        }
+        const prevDateTo = new Date(dateFrom);
+        const prevDateFrom = new Date(dateFrom.getTime() - days * 24 * 60 * 60 * 1000);
+        return {
+            dateFrom: dateFrom.toISOString(),
+            dateTo: dateTo.toISOString(),
+            prevDateFrom: prevDateFrom.toISOString(),
+            prevDateTo: prevDateTo.toISOString(),
+        };
+    };
+    const statsRange = getStatsPeriodRange(statsPeriod);
+
+    // Same GM-entry source of truth the AccountsGmSummaryWidget below already
+    // uses (real amount_usd figures), instead of the near-empty legacy
+    // drm.invoices table this row previously read from.
+    const statsSummaryQuery = useQuery({
+        queryKey: ["account-stats-summary", statsPeriod],
+        queryFn: async () => {
+            const res = await apiRequest(
+                "GET",
+                `/api/accounts/dashboard/gm-summary?dateFrom=${encodeURIComponent(statsRange.dateFrom)}&dateTo=${encodeURIComponent(statsRange.dateTo)}&recentLimit=1`
+            );
+            if (!res.ok) throw new Error("Failed to load stats summary");
+            const body = await res.json();
+            return body.data;
+        },
+    });
+
+    const prevStatsSummaryQuery = useQuery({
+        queryKey: ["account-stats-summary-prev", statsPeriod],
+        queryFn: async () => {
+            const res = await apiRequest(
+                "GET",
+                `/api/accounts/dashboard/gm-summary?dateFrom=${encodeURIComponent(statsRange.prevDateFrom)}&dateTo=${encodeURIComponent(statsRange.prevDateTo)}&recentLimit=1`
+            );
+            if (!res.ok) throw new Error("Failed to load previous stats summary");
+            const body = await res.json();
+            return body.data;
+        },
+    });
+
+    const statsApprovedAmount = Number(
+        statsSummaryQuery.data?.byStatus?.find((s: any) => s.status === "Approved")?.amount || 0
+    );
+    const prevStatsApprovedAmount = Number(
+        prevStatsSummaryQuery.data?.byStatus?.find((s: any) => s.status === "Approved")?.amount || 0
+    );
+    const statsRevenueTrendPct = prevStatsApprovedAmount > 0
+        ? ((statsApprovedAmount - prevStatsApprovedAmount) / prevStatsApprovedAmount) * 100
+        : (statsApprovedAmount > 0 ? 100 : 0);
+    const statsPendingEntry = statsSummaryQuery.data?.byStatus?.find((s: any) => s.status === "Pending");
+    const statsPendingCount = statsPendingEntry?.count || 0;
+    const statsPendingAmount = Number(statsPendingEntry?.amount || 0);
+
     const getDateRange = () => {
         const now = new Date();
         const start = new Date(now);
@@ -231,9 +380,13 @@ export default function AccountManagerDashboard() {
             const res = await apiRequest("GET", "/api/account/invoices");
             if (!res.ok) throw new Error("Failed to fetch invoices");
             const data = await res.json();
-            return Array.isArray(data) ? data.slice(0, 5) : [];
+            return Array.isArray(data) ? data : [];
         },
     });
+
+    useEffect(() => {
+        setCreateProjectPage(1);
+    }, [filterType]);
 
     // Pending quotations/invoices forwarded by HOD
     const pendingQuotationsQuery = useQuery({
@@ -247,23 +400,46 @@ export default function AccountManagerDashboard() {
     });
 
     const processQuotationMutation = useMutation({
-        mutationFn: async ({ id, action, note, amount, paymentMethod, receiptNumber, projectName }: { 
-            id: string; 
-            action: "approve" | "reject"; 
+        // Fixed 2026-07-21 (D-015): this never checked res.ok before returning
+        // res.json() as the mutation's "result" -- a 403/404/500 error body was
+        // silently treated as success, so onSuccess fired ("Invoice Approved ✅")
+        // even when the Account Manager's approval was rejected server-side and
+        // nothing in the database actually changed. Matches the pattern
+        // createProjectFromGmMutation (below) already used correctly.
+        mutationFn: async ({ id, action, note, amount, paymentMethod, receiptNumber, projectName }: {
+            id: string;
+            action: "approve" | "reject";
             note?: string;
             amount?: string;
             paymentMethod?: string;
             receiptNumber?: string;
             projectName?: string;
         }) => {
-            const res = await apiRequest("POST", `/api/account/pending-quotations/${id}/approve`, { 
-                action, 
+            const res = await apiRequest("POST", `/api/account/pending-quotations/${id}/approve`, {
+                action,
                 note,
                 amount,
                 paymentMethod,
                 receiptNumber,
                 projectName
             });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                // Fixed 2026-07-21 (D-016): errorData.error is not always a string --
+                // this codebase's error envelope is sometimes {error:{message,code}}
+                // (the "Stage 10" shape used by ApiError/sendError) and sometimes the
+                // legacy {error:"some string"} shape. Passing the object form straight
+                // into `new Error(...)` stringifies it to the literal text
+                // "[object Object]" (matches auth.tsx's existing unwrapping for the
+                // same reason). Unwrap both shapes before throwing.
+                const message =
+                    errorData?.details ||
+                    errorData?.error?.message ||
+                    (typeof errorData?.error === "string" ? errorData.error : "") ||
+                    errorData?.message ||
+                    `Failed to ${action} invoice`;
+                throw new Error(message);
+            }
             return res.json();
         },
         onSuccess: (_, vars) => {
@@ -295,13 +471,14 @@ export default function AccountManagerDashboard() {
     const handleSaveProject = () => {
         if (!selectedGm) return;
 
+        const action = projectForm.approvalStatus === 'rejected' ? 'reject' : 'approve';
+
         if (selectedGm.entrySource === 'invoice') {
             processQuotationMutation.mutate({
                 id: selectedGm.id,
-                action: 'approve',
+                action,
                 amount: projectForm.amount,
                 paymentMethod: projectForm.method,
-                receiptNumber: projectForm.receiptNumber,
                 projectName: projectForm.name
             });
             setCreateProjectOpen(false);
@@ -312,7 +489,7 @@ export default function AccountManagerDashboard() {
                 dueAmount: Number(projectForm.due),
                 totalAmount: Number(projectForm.amount),
                 paymentMethod: projectForm.method,
-                receiptNumber: projectForm.receiptNumber
+                approvalStatus: projectForm.approvalStatus
             });
         }
     };
@@ -399,8 +576,36 @@ export default function AccountManagerDashboard() {
             : 'bg-slate-100 text-slate-700 border-emerald-500 hover:bg-slate-200'
         }`;
 
+    // "Create Project" section: ONLY pending invoices (GM entries excluded per requirement)
+    const createProjectPendingInvoices = Array.isArray(pendingQuotationsQuery.data?.data)
+        ? pendingQuotationsQuery.data.data.map((q: any) => ({ ...q, entrySource: 'invoice' }))
+        : [];
+    const createProjectCombined = createProjectPendingInvoices;
+    const createProjectFilteredItems = createProjectCombined.filter((item: any) => {
+        if (filterType === 'all') return true;
+        const itemDate = new Date(item.updatedAt || item.createdAt);
+        if (filterType === 'today') return isToday(itemDate);
+        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(itemDate, new Date());
+        return true;
+    });
+    const createProjectTotalPages = Math.max(1, Math.ceil(createProjectFilteredItems.length / DASHBOARD_PAGE_SIZE));
+    const createProjectCurrentPage = Math.min(createProjectPage, createProjectTotalPages);
+    const createProjectPagedItems = createProjectFilteredItems.slice(
+        (createProjectCurrentPage - 1) * DASHBOARD_PAGE_SIZE,
+        createProjectCurrentPage * DASHBOARD_PAGE_SIZE
+    );
+
+    // "Invoice" (Customer Monthly) section: paginate recent invoices
+    const invoiceItems = Array.isArray(recentInvoicesQuery.data) ? recentInvoicesQuery.data : [];
+    const invoiceTotalPages = Math.max(1, Math.ceil(invoiceItems.length / DASHBOARD_PAGE_SIZE));
+    const invoiceCurrentPage = Math.min(invoicePage, invoiceTotalPages);
+    const invoicePagedItems = invoiceItems.slice(
+        (invoiceCurrentPage - 1) * DASHBOARD_PAGE_SIZE,
+        invoiceCurrentPage * DASHBOARD_PAGE_SIZE
+    );
+
     return (
-        <div className="flex flex-col min-h-screen bg-slate-50/50 space-y-8 p-8">
+        <div className="flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 space-y-8 p-8">
 
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -413,43 +618,66 @@ export default function AccountManagerDashboard() {
             </div>
 
             {/* Stats Overview */}
+            <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide dark:text-zinc-400">Overview</h2>
+                <Select value={statsPeriod} onValueChange={setStatsPeriod}>
+                    <SelectTrigger className="w-[80px] h-8 bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                        <SelectValue placeholder="LD" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="LD">LD</SelectItem>
+                        <SelectItem value="WC">WC</SelectItem>
+                        <SelectItem value="MC">MC</SelectItem>
+                        <SelectItem value="QC">QC</SelectItem>
+                        <SelectItem value="YC">YC</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                     title="Total Revenue"
-                    value={`$${parseInt(invoiceStatsQuery.data?.paidAmount || "0").toLocaleString()}`}
+                    value={`$${statsApprovedAmount.toLocaleString()}`}
                     icon={TrendingUp}
                     colorClass="bg-emerald-500 text-emerald-500"
-                    trend="up"
-                    trendValue="+12.5%"
+                    trend={statsRevenueTrendPct >= 0 ? "up" : "down"}
+                    trendValue={`${statsRevenueTrendPct >= 0 ? "+" : ""}${statsRevenueTrendPct.toFixed(1)}%`}
                 />
                 <StatCard
                     title="Outstanding Invoices"
-                    value={invoiceStatsQuery.data?.overdueCount || 0}
-                    subValue={`$${parseInt(invoiceStatsQuery.data?.pendingAmount || "0").toLocaleString()}`}
+                    value={statsPendingCount}
+                    subValue={`$${statsPendingAmount.toLocaleString()}`}
                     icon={AlertCircle}
                     colorClass="bg-amber-500 text-amber-500"
                 />
                 <StatCard
                     title="Active Projects"
-                    value={gmStatsQuery.data?.totalCount || 0}
+                    value={statsSummaryQuery.data?.totals?.totalGmCount ?? 0}
                     icon={Briefcase}
                     colorClass="bg-blue-500 text-blue-500"
                 />
                 <StatCard
                     title="Total Clients"
-                    value={new Set((Array.isArray(recentGMsQuery.data) ? recentGMsQuery.data : []).map((g: any) => g.companyName)).size || 0}
+                    value={statsSummaryQuery.data?.totals?.distinctClientCount ?? 0}
                     icon={Users}
                     colorClass="bg-violet-500 text-violet-500"
                 />
             </div>
 
             {/* Patch 5 Stage 7 — GM type / invoice overview */}
-            <AccountsGmSummaryWidget />
+            <AccountsGmSummaryWidget onCreateProject={(gm) => {
+                setApprovalGm(gm);
+                setApprovalModalOpen(true);
+            }} />
 
             <div className="grid gap-8 lg:grid-cols-3">
                 {/* Main Content Area (2 Cols) */}
                 <div className="lg:col-span-2 space-y-8">
-
+                    
+                    <AccountApprovalModal 
+                        open={approvalModalOpen}
+                        onOpenChange={setApprovalModalOpen}
+                        gmEntry={approvalGm}
+                    />
 
                     {/* Create Project Section */}
                     <Card className="border-none shadow-md bg-white dark:bg-zinc-900">
@@ -457,6 +685,13 @@ export default function AccountManagerDashboard() {
                             <CardTitle className="text-xl font-bold text-slate-800 dark:text-zinc-100">Create Project</CardTitle>
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center gap-2">
+                                    <Button
+                                        variant={filterType === 'all' ? 'default' : 'ghost'}
+                                        onClick={() => setFilterType('all')}
+                                        className={filterType === 'all' ? 'bg-emerald-600 hover:bg-emerald-700 h-10 px-6 rounded-md' : 'text-slate-600 dark:text-slate-300 h-10 px-4'}
+                                    >
+                                        All
+                                    </Button>
                                     <Button
                                         variant={filterType === 'today' ? 'default' : 'ghost'}
                                         onClick={() => setFilterType('today')}
@@ -485,16 +720,7 @@ export default function AccountManagerDashboard() {
                                 >
                                     <span className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Martini Status</span>
                                     <div className="flex items-center justify-center bg-rose-500 text-white w-5 h-5 rounded-full text-[10px] font-bold">
-                                        {(() => {
-                                            const pendingInvoices = Array.isArray(pendingQuotationsQuery.data?.data) ? pendingQuotationsQuery.data.data.map((q: any) => ({ ...q, entrySource: 'invoice' })) : [];
-                                            const pendingInvoiceIds = new Set(pendingInvoices.map((i: any) => i.id.toString()));
-                                            const gms = Array.isArray(recentGMsQuery.data) ? recentGMsQuery.data.filter((g: any) => !pendingInvoiceIds.has(g.id?.toString())).map((g: any) => ({ ...g, entrySource: 'gm' })) : [];
-                                            const combined = [...pendingInvoices, ...gms];
-                                            return combined.filter(i => {
-                                                if (i.entrySource === 'invoice') return true;
-                                                return filterType === 'today' ? isToday(new Date(i.updatedAt || i.createdAt)) : (filterType === 'monthly' ? isSameMonth(new Date(i.updatedAt || i.createdAt), new Date()) : true);
-                                            }).length;
-                                        })()}
+                                        {createProjectFilteredItems.length}
                                     </div>
                                 </div>
                             </div>
@@ -516,36 +742,15 @@ export default function AccountManagerDashboard() {
                                 </TableHeader>
                                 <TableBody>
                                     {(() => {
-                                        const pendingInvoices = Array.isArray(pendingQuotationsQuery.data?.data) 
-                                            ? pendingQuotationsQuery.data.data
-                                                .map((q: any) => ({ ...q, entrySource: 'invoice' })) 
-                                            : [];
-                                        
-                                        const pendingInvoiceIds = new Set(pendingInvoices.map((i: any) => i.id.toString()));
-
-                                        const gms = Array.isArray(recentGMsQuery.data) 
-                                            ? recentGMsQuery.data
-                                                .filter((g: any) => !pendingInvoiceIds.has(g.id?.toString()))
-                                                .map((g: any) => ({ ...g, entrySource: 'gm' })) 
-                                            : [];
-                                            
-                                        const combined = [...pendingInvoices, ...gms];
-
-                                        const filteredItems = combined.filter(item => {
-                                            if (item.entrySource === 'invoice') return true;
-                                            const itemDate = new Date(item.updatedAt || item.createdAt);
-                                            if (filterType === 'today') return isToday(itemDate);
-                                            if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(itemDate, new Date());
-                                            return true;
-                                        });
-
-                                        return filteredItems.map((item: any, index: number) => {
+                                        return createProjectPagedItems.map((item: any, index: number) => {
                                             const isInvoice = item.entrySource === 'invoice';
                                             return (
-                                                <TableRow key={item.id} className={`hover:bg-slate-50/50 ${isInvoice ? 'border-l-4 border-l-purple-400' : 'border-l-4 border-l-blue-400'}`}>
-                                                    <TableCell className="font-medium text-slate-600 dark:text-zinc-300">{index + 1}</TableCell>
+                                                <TableRow key={item.id} className={`hover:bg-slate-50/50 dark:hover:bg-zinc-800 ${isInvoice ? 'border-l-4 border-l-purple-400' : 'border-l-4 border-l-blue-400'}`}>
+                                                    <TableCell className="font-medium text-slate-600 dark:text-zinc-300">{(createProjectCurrentPage - 1) * DASHBOARD_PAGE_SIZE + index + 1}</TableCell>
                                                     <TableCell className="text-slate-600 font-medium dark:text-zinc-300">
-                                                        {item.orderId || item.id.toString().substring(0, 4)}
+                                                        {isInvoice
+                                                            ? (item.invoiceNumber || item.orderId || item.id.toString().substring(0, 4))
+                                                            : (item.orderId || item.id.toString().substring(0, 4))}
                                                     </TableCell>
                                                     <TableCell>
                                                         {isInvoice ? (
@@ -577,9 +782,6 @@ export default function AccountManagerDashboard() {
                                                     <TableCell className="text-center">
                                                         <div className="flex flex-col gap-1 items-center justify-center">
                                                             <span className="text-emerald-600 font-medium">Approved</span>
-                                                            {!item.paymentProofUrl && (
-                                                                <Badge variant="outline" className="bg-red-50 text-red-600 border-red-200 text-[10px] py-0 h-4">Doc Pending</Badge>
-                                                            )}
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
@@ -613,7 +815,7 @@ export default function AccountManagerDashboard() {
                                                                                 due: "0",
                                                                                 amount: item.grandTotal?.toString() || "",
                                                                                 method: "",
-                                                                                receiptNumber: "",
+                                                                                approvalStatus: 'approved',
                                                                                 project: item.source === 'product_posting' ? 'Alibaba Product Posting' : (item.source === 'standard_invoice' ? 'Standard Invoice Project' : 'Project from Quotation')
                                                                             });
                                                                             setCreateProjectOpen(true);
@@ -645,7 +847,7 @@ export default function AccountManagerDashboard() {
                                                                                 due: "0",
                                                                                 amount: "",
                                                                                 method: "",
-                                                                                receiptNumber: ""
+                                                                                approvalStatus: 'approved'
                                                                             }));
                                                                             setCreateProjectOpen(true);
                                                                         }}
@@ -662,13 +864,40 @@ export default function AccountManagerDashboard() {
                                             );
                                         });
                                     })()}
-                                    {((!recentGMsQuery.data || recentGMsQuery.data.length === 0) && (!pendingQuotationsQuery.data?.data || pendingQuotationsQuery.data.data.length === 0)) && (
+                                    {createProjectFilteredItems.length === 0 && (
                                         <TableRow>
                                             <TableCell colSpan={8} className="text-center text-slate-400 py-8">No pending entries found for project creation</TableCell>
                                         </TableRow>
                                     )}
                                 </TableBody>
                             </Table>
+                            <div className="flex items-center justify-between px-6 py-3 border-t">
+                                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                                    Page {createProjectCurrentPage} of {createProjectTotalPages} · {createProjectFilteredItems.length} entries
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setCreateProjectPage((p) => Math.max(1, p - 1))}
+                                        disabled={createProjectCurrentPage <= 1}
+                                        data-testid="button-create-project-prev-page"
+                                    >
+                                        <ChevronLeft className="h-4 w-4 mr-1" />
+                                        Previous
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setCreateProjectPage((p) => Math.min(createProjectTotalPages, p + 1))}
+                                        disabled={createProjectCurrentPage >= createProjectTotalPages}
+                                        data-testid="button-create-project-next-page"
+                                    >
+                                        Next
+                                        <ChevronRight className="h-4 w-4 ml-1" />
+                                    </Button>
+                                </div>
+                            </div>
                         </CardContent>
                     </Card>
 
@@ -705,7 +934,7 @@ export default function AccountManagerDashboard() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {Array.isArray(recentInvoicesQuery.data) && recentInvoicesQuery.data.map((inv: any) => (
+                                    {invoicePagedItems.map((inv: any) => (
                                         <TableRow key={inv.id}>
                                             <TableCell className="font-medium">{inv.invoiceNumber}</TableCell>
                                             <TableCell>
@@ -735,13 +964,40 @@ export default function AccountManagerDashboard() {
                                         </TableRow>
                                     ))
                                     }
-                                    {(!recentInvoicesQuery.data || recentInvoicesQuery.data.length === 0) && (
+                                    {invoiceItems.length === 0 && (
                                         <TableRow>
                                             <TableCell colSpan={6} className="text-center text-slate-400 py-8">No invoices found</TableCell>
                                         </TableRow>
                                     )}
                                 </TableBody>
                             </Table>
+                            <div className="flex items-center justify-between pt-3 border-t">
+                                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                                    Page {invoiceCurrentPage} of {invoiceTotalPages} · {invoiceItems.length} entries
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setInvoicePage((p) => Math.max(1, p - 1))}
+                                        disabled={invoiceCurrentPage <= 1}
+                                        data-testid="button-invoice-prev-page"
+                                    >
+                                        <ChevronLeft className="h-4 w-4 mr-1" />
+                                        Previous
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setInvoicePage((p) => Math.min(invoiceTotalPages, p + 1))}
+                                        disabled={invoiceCurrentPage >= invoiceTotalPages}
+                                        data-testid="button-invoice-next-page"
+                                    >
+                                        Next
+                                        <ChevronRight className="h-4 w-4 ml-1" />
+                                    </Button>
+                                </div>
+                            </div>
                         </CardContent>
                     </Card>
 
@@ -765,7 +1021,7 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Ledger" href="/account/ledger" />
                                 <QuickLink label="Office Vas" href="/office/vas" />
                                 <QuickLink label="Expense" href="/office/expenses" />
-                                <QuickLink label="Set Target" href="/sales/targets" />
+                                <QuickLink label="Set Target" href="/target-system/set" />
                                 <QuickLink label="Salary Create" href="#" />
                                 <QuickLink label="Salary Report" href="#" />
                                 <QuickLink label="Attendance" href="/hr/attendance" />
@@ -903,12 +1159,23 @@ export default function AccountManagerDashboard() {
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-sm font-semibold text-slate-600 dark:text-zinc-300">Receipt Number</Label>
-                                <Input
-                                    value={projectForm.receiptNumber}
-                                    onChange={(e) => setProjectForm(prev => ({ ...prev, receiptNumber: e.target.value }))}
-                                    className="bg-slate-50 border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800"
-                                />
+                                <Label className="text-sm font-semibold text-slate-600 dark:text-zinc-300">Status</Label>
+                                <Select
+                                    value={projectForm.approvalStatus}
+                                    onValueChange={(val) => setProjectForm(prev => ({ ...prev, approvalStatus: val }))}
+                                >
+                                    <SelectTrigger className="bg-slate-50 border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800">
+                                        <SelectValue placeholder="Select status ..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="approved">
+                                            <span className="flex items-center gap-2 text-emerald-600 font-semibold">✅ Approved</span>
+                                        </SelectItem>
+                                        <SelectItem value="rejected">
+                                            <span className="flex items-center gap-2 text-rose-600 font-semibold">❌ Rejected</span>
+                                        </SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
 
@@ -942,11 +1209,17 @@ export default function AccountManagerDashboard() {
                             Close
                         </Button>
                         <Button
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6"
+                            className={`text-white px-6 ${
+                                projectForm.approvalStatus === 'rejected'
+                                    ? 'bg-rose-600 hover:bg-rose-700'
+                                    : 'bg-emerald-600 hover:bg-emerald-700'
+                            }`}
                             onClick={handleSaveProject}
                             disabled={createProjectFromGmMutation.isPending || !selectedGm}
                         >
-                            {createProjectFromGmMutation.isPending ? "Saving..." : "Save"}
+                            {createProjectFromGmMutation.isPending
+                                ? (projectForm.approvalStatus === 'rejected' ? "Rejecting..." : "Approving...")
+                                : (projectForm.approvalStatus === 'rejected' ? "Reject" : "Approve")}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -954,97 +1227,14 @@ export default function AccountManagerDashboard() {
 
             {/* Invoice View Modal */}
             <Dialog open={viewInvoiceOpen} onOpenChange={setViewInvoiceOpen}>
-                <DialogContent className="sm:max-w-[700px] p-0 gap-0 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
+                <DialogContent className="max-w-[750px] p-0 border-none bg-transparent shadow-none max-h-[95vh] overflow-y-auto thin-scrollbar">
                     <DialogDescription className="sr-only">Invoice details view</DialogDescription>
-                    <div className="p-8">
-                        {/* Header */}
-                        <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center gap-3">
-                                <div className="w-14 h-14 bg-emerald-600 rounded-full flex items-center justify-center text-white font-bold text-lg">WE</div>
-                                <div>
-                                    <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight dark:text-zinc-100">WEB EXCELS</h2>
-                                    <p className="text-xs text-emerald-600 italic font-medium">Design, Development & Marketing</p>
-                                </div>
-                            </div>
-                            <div className="text-right text-sm">
-                                <p><span className="font-bold">Invoice No:</span>{viewGm?.id ? viewGm.id.toString().slice(-4) : '7512'}</p>
-                                <p><span className="font-bold">Date:</span>{viewGm?.createdAt ? format(new Date(viewGm.createdAt), "yyyy-MM-dd HH:mm:ss") : format(new Date(), "yyyy-MM-dd HH:mm:ss")}</p>
-                            </div>
-                        </div>
-
-                        {/* Invoice Title Bar */}
-                        <div className="flex items-center gap-0 my-4">
-                            <div className="flex-1 h-10 bg-emerald-600 rounded-l-md"></div>
-                            <h1 className="text-3xl font-extrabold text-slate-800 px-6 tracking-wide dark:text-zinc-100">INVOICE</h1>
-                            <div className="flex-1 h-10 bg-emerald-600 rounded-r-md"></div>
-                        </div>
-
-                        {/* From / To */}
-                        <div className="grid grid-cols-2 gap-8 mb-6 text-sm">
-                            <div>
-                                <p className="font-bold text-slate-800 mb-1 dark:text-zinc-100">From:</p>
-                                <p className="font-semibold">Web Excels</p>
-                                <p className="text-blue-600">+92-334-8086611 (Whatsapp)</p>
-                                <p className="text-blue-600">+92-52-4271592</p>
-                                <p className="text-blue-600 underline">Support@Webexcels.com</p>
-                                <p className="text-slate-600 mt-1 dark:text-zinc-300">Al-Amin Center, Paris Rd, Opposite The<br />Sialkot Chamber Of Commerce, Sialkot<br />51310 Pakistan.</p>
-                            </div>
-                            <div>
-                                <p className="font-bold text-slate-800 mb-1 dark:text-zinc-100">To:</p>
-                                <p className="font-semibold">{viewGm?.companyName || '-'}</p>
-                                <p><span className="font-medium">Sales Person:</span> {viewGm?.salesPersonName || '-'}</p>
-                                <p><span className="font-medium">DRM ID:</span> {viewGm?.drmId || '-'}</p>
-                                <p><span className="font-medium">Order ID:</span> {viewGm?.orderId || '-'}</p>
-                            </div>
-                        </div>
-
-                        {/* Items Table */}
-                        <table className="w-full border-collapse mb-6">
-                            <thead>
-                                <tr className="bg-slate-700 text-white">
-                                    <th className="p-2 text-left text-sm font-bold w-12">Sl.</th>
-                                    <th className="p-2 text-left text-sm font-bold">Item Description</th>
-                                    <th className="p-2 text-right text-sm font-bold w-20">Price</th>
-                                    <th className="p-2 text-center text-sm font-bold w-20">Quantity</th>
-                                    <th className="p-2 text-right text-sm font-bold w-20">Total</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr className="border-b border-slate-200 dark:border-zinc-800">
-                                    <td className="p-3 text-sm font-bold">1</td>
-                                    <td className="p-3">
-                                        <p className="font-bold text-sm">{viewGm?.packageType || viewGm?.entryType || '-'}</p>
-                                        <p className="text-emerald-600 text-xs">{viewGm?.notes || `${viewGm?.packageType || ''} ${viewGm?.amountUsd || ''} Per Month`}</p>
-                                    </td>
-                                    <td className="p-3 text-right text-sm">${viewGm?.amountUsd || '0'}</td>
-                                    <td className="p-3 text-center text-sm">1</td>
-                                    <td className="p-3 text-right text-sm">{viewGm?.amountUsd || '0'}</td>
-                                </tr>
-                            </tbody>
-                        </table>
-
-                        {/* Totals */}
-                        <div className="flex justify-end">
-                            <div className="w-64 space-y-1 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="font-bold">Sub Total:</span>
-                                    <span>${viewGm?.amountUsd || '0'}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="font-bold">Sub Total:</span>
-                                    <span>{viewGm?.amountPkr || '0'} Pkr</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="font-bold">Dollar Rate:</span>
-                                    <span>{viewGm?.dollarRate || '0'}</span>
-                                </div>
-                                <div className="flex justify-between bg-emerald-500 text-white px-3 py-2 rounded mt-2">
-                                    <span className="font-bold">Total:</span>
-                                    <span>{viewGm?.amountPkr || '0'} Pkr</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    {viewGm && (
+                        <InvoiceReceipt
+                            invoiceData={buildInvoiceReceiptData(viewGm)}
+                            onClose={() => setViewInvoiceOpen(false)}
+                        />
+                    )}
                 </DialogContent>
             </Dialog>
             {/* Edit Invoice Modal */}

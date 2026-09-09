@@ -1,8 +1,8 @@
 import { pool } from "../db";
 import { ensureBvReportsSchema } from "./bv-reports.repository";
-import { generateDrmId } from "../utils/drm-id-utils";
+import { generateUniqueDrmId } from "../utils/drm-id-utils";
 import { isManagerialRole } from "../utils/role-utils";
-import { createProductPostingInvoices } from "../utils/invoice-utils";
+import { getDepartmentFilterUserIds } from "../dashboard-routes";
 import { generateDefaultInvoicesForGm } from "../services/gm-invoice-generation.service";
 import { GM_INVOICE_GENERATION_TIMING } from "../../shared/gm-sales-constants";
 import crypto from "crypto";
@@ -28,18 +28,28 @@ const DEFAULT_PAGE_SIZE = 10;
 
 const isManagerRole = (roleId?: string) => isManagerialRole(roleId);
 
-const buildScope = (userId: string, roleId?: string) => {
-  const params: any[] = [];
-  if (isManagerRole(roleId)) {
-    return { clause: "1=1", params };
+// A manager role previously got `1=1` here — fully unscoped, seeing every
+// department's GM/BV entries instead of just their own team's (the same gap
+// found and fixed across sales-routes.ts's lead-pool functions). Returns
+// null only for true global roles (admin/super_admin/hod/...); a real
+// department manager gets back their own team's user ids (self + reports).
+const resolveScopeUserIds = async (userId: string, roleId?: string): Promise<string[] | null> => {
+  if (!isManagerRole(roleId)) return [userId];
+  return getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } });
+};
+
+const buildScope = async (userId: string, roleId?: string) => {
+  const allowed = await resolveScopeUserIds(userId, roleId);
+  if (allowed === null) {
+    return { clause: "1=1", params: [] as any[] };
   }
-  params.push(userId);
-  const clause = `(br.assigned_to = $${params.length}
-    or br.user_id = $${params.length}
+  const params: any[] = [allowed];
+  const clause = `(br.assigned_to = ANY($${params.length}::uuid[])
+    or br.user_id = ANY($${params.length}::uuid[])
     or exists (
-      select 1 from drm.customers c 
-      where c.id = br.customer_id 
-        and (c.owner_user_id = $${params.length} or c.pool_type = 'Public')
+      select 1 from drm.customers c
+      where c.id = br.customer_id
+        and (c.owner_user_id = ANY($${params.length}::uuid[]) or c.pool_type = 'Public')
     ))`;
   return { clause, params };
 };
@@ -48,13 +58,17 @@ const mapRow = (row: any) => ({
   id: row.id,
   customerId: row.customer_id,
   companyName: row.company_name ?? row.bv_company_name ?? row.title ?? "BV Entry",
+  drmId: row.drm_id ?? null,
   accountName: row.account_name ?? null,
   contactNo: row.phone ?? null,
   email: row.email ?? null,
+  ntn: row.ntn ?? null,
+  cnic: row.cnic ?? null,
   status: row.status ?? null,
   reportDate: row.report_date ?? null,
   assignedTo: row.assigned_to ?? null,
   assignedToName: row.assigned_to_name ?? null,
+  salesPersonName: row.sales_person_name ?? null,
   createdAt: row.created_at ?? null,
   approvalStatus: row.approval_status ?? null,
   hodStatus: row.hod_status ?? null,
@@ -121,16 +135,16 @@ export const gmBvPoolRepository = {
     await ensureGmEntriesColumns();
     const page = Math.max(1, params.page ?? 1);
     const pageSize = Math.max(1, Math.min(100, params.pageSize ?? DEFAULT_PAGE_SIZE));
-    const manager = isManagerRole(params.roleId);
+    const allowedUserIds = await resolveScopeUserIds(params.userId, params.roleId);
     const offset = (page - 1) * pageSize;
 
     // ── 1. Query bv_reports ──────────────────────────────────────────────
     const bvParams: any[] = [];
     const bvWhere: string[] = [];
-    if (!manager) {
-      bvParams.push(params.userId);
-      bvWhere.push(`(br.assigned_to = $${bvParams.length} or br.user_id = $${bvParams.length} or exists (
-        select 1 from drm.customers c2 where c2.id = br.customer_id and (c2.owner_user_id = $${bvParams.length} or c2.pool_type = 'Public')
+    if (allowedUserIds !== null) {
+      bvParams.push(allowedUserIds);
+      bvWhere.push(`(br.assigned_to = ANY($${bvParams.length}::uuid[]) or br.user_id = ANY($${bvParams.length}::uuid[]) or exists (
+        select 1 from drm.customers c2 where c2.id = br.customer_id and (c2.owner_user_id = ANY($${bvParams.length}::uuid[]) or c2.pool_type = 'Public')
       ))`);
     }
     if (params.status) { bvParams.push(params.status); bvWhere.push(`br.status = $${bvParams.length}`); }
@@ -146,13 +160,16 @@ export const gmBvPoolRepository = {
       select
         br.id, br.customer_id,
         coalesce(br.company_name, c.company_name) as company_name,
-        c.account_name, c.phone, c.email,
+        c.drm_id,
+        c.account_name, c.phone, c.email, c.ntn, c.cnic,
         br.assigned_to, u.name as assigned_to_name,
+        coalesce(spu.full_name, spu.name, spu.username) as sales_person_name,
         br.status, br.title,
         br.report_date, br.created_at
       from drm.bv_reports br
       left join drm.customers c on c.id = br.customer_id
       left join drm.users u on u.id = br.assigned_to
+      left join drm.users spu on spu.id = coalesce(c.owner_user_id, c.created_by)
       ${bvWhereSql}
       order by br.report_date desc, br.created_at desc
     `;
@@ -160,10 +177,10 @@ export const gmBvPoolRepository = {
     // ── 2. Query gm_entries ──────────────────────────────────────────────
     const gmParams: any[] = [];
     const gmWhere: string[] = [`coalesce(g.is_deleted,false)=false`];
-    if (!manager) {
-      gmParams.push(params.userId);
-      gmWhere.push(`(g.created_by::text = $${gmParams.length}::text or exists (
-        select 1 from drm.customers c3 where c3.id = g.customer_id and (c3.owner_user_id::text = $${gmParams.length}::text or c3.created_by::text = $${gmParams.length}::text)
+    if (allowedUserIds !== null) {
+      gmParams.push(allowedUserIds);
+      gmWhere.push(`(g.created_by::text = ANY($${gmParams.length}::text[]) or exists (
+        select 1 from drm.customers c3 where c3.id = g.customer_id and (c3.owner_user_id::text = ANY($${gmParams.length}::text[]) or c3.created_by::text = ANY($${gmParams.length}::text[]))
       ))`);
     }
     if (params.status) { gmParams.push(params.status); gmWhere.push(`g.status = $${gmParams.length}`); }
@@ -179,8 +196,10 @@ export const gmBvPoolRepository = {
       select
         g.id, g.customer_id,
         coalesce(g.company_name, cg.company_name) as company_name,
-        cg.account_name, cg.phone, cg.email,
+        cg.drm_id,
+        cg.account_name, cg.phone, cg.email, cg.ntn, cg.cnic,
         g.created_by as assigned_to, ug.name as assigned_to_name,
+        g.sales_person_name as sales_person_name,
         g.status, g.package_type as title,
         g.created_at as report_date, g.created_at,
         g.approval_status, g.hod_status,
@@ -241,7 +260,7 @@ export const gmBvPoolRepository = {
 
   async summary(params: SummaryParams) {
     await ensureBvReportsSchema();
-    const { clause, params: scopeParams } = buildScope(params.userId, params.roleId);
+    const { clause, params: scopeParams } = await buildScope(params.userId, params.roleId);
     const range = periodToRange(params.period);
     const queryParams: any[] = [...scopeParams, range.from, range.to];
     const whereSql = `where ${clause} and br.report_date between $${queryParams.length - 1} and $${queryParams.length}`;
@@ -355,20 +374,31 @@ export const gmBvPoolRepository = {
     return res;
   },
 
-  async assign(id: string, assignedTo: string) {
+  // Phase 2 (PCH-001/DS-002/SEC-DA-001/PCH-012): assign/linkCustomer previously
+  // had no ownership gate at all — any authenticated caller could reassign or
+  // link-customer on ANY record. Mirrors the same "manager sees/acts on all,
+  // non-manager scoped to own-or-assigned" pattern already used by
+  // remove()/withdraw() below, rather than inventing a new rule.
+  async assign(id: string, assignedTo: string, userId: string, roleId?: string) {
     await ensureBvReportsSchema();
+    const isManager = isManagerRole(roleId);
     const res = await pool.query(
-      `update bv_reports set assigned_to = $1, updated_at = now() where id = $2 returning id`,
-      [assignedTo, id],
+      isManager
+        ? `update bv_reports set assigned_to = $1, updated_at = now() where id = $2 returning id`
+        : `update bv_reports set assigned_to = $1, updated_at = now() where id = $2 and (user_id = $3 or assigned_to = $3) returning id`,
+      isManager ? [assignedTo, id] : [assignedTo, id, userId],
     );
     return res;
   },
 
-  async linkCustomer(bvId: string, userId: string) {
+  async linkCustomer(bvId: string, userId: string, roleId?: string) {
     await ensureBvReportsSchema();
+    const isManager = isManagerRole(roleId);
     const bvRes = await pool.query(
-      `select id, customer_id, company_name from bv_reports where id = $1 limit 1`,
-      [bvId],
+      isManager
+        ? `select id, customer_id, company_name from bv_reports where id = $1 limit 1`
+        : `select id, customer_id, company_name from bv_reports where id = $1 and (user_id = $2 or assigned_to = $2) limit 1`,
+      isManager ? [bvId] : [bvId, userId],
     );
     const bv = bvRes.rows[0];
     if (!bv) return null;
@@ -386,11 +416,11 @@ export const gmBvPoolRepository = {
     }
 
     if (!customerId) {
-      const drmId = generateDrmId(
+      const drmId = await generateUniqueDrmId(
+        pool,
         companyName ?? "GM BV Entry",
         "Other",
-        companyName,
-        crypto.randomUUID()
+        companyName || crypto.randomUUID()
       );
       const insertRes = await pool.query(
         `insert into drm.customers (company_name, account_name, pool_type, owner_user_id, created_by, drm_id, created_at, updated_at)

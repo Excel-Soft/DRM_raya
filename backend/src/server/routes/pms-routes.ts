@@ -1,22 +1,26 @@
 import type { Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { projectsRepository } from "../repositories/projects.repository";
-import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
-import { tasksRepository } from "../repositories/tasks.repository";
-import { isManagerialRole } from "../utils/role-utils";
+import { authMiddleware } from "./auth.middleware";
+import { projectsRepository } from "./repositories/projects.repository";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
+import { tasksRepository } from "./repositories/tasks.repository";
+import { isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { handleProjectReport } from "./project-report-routes";
-import { taskCommentsRepository } from "../repositories/task-comments.repository";
-import { usersRepository } from "../repositories/users.repository";
-import { projectFinancialsRepository } from "../repositories/project-financials.repository";
-import { projectPaymentsRepository } from "../repositories/project-payments.repository";
-import { projectApprovalsRepository } from "../repositories/project-approvals.repository";
-import { projectAssignmentsRepository } from "../repositories/project-assignments.repository";
-import { taskTimeLogsRepository } from "../repositories/task-time-logs.repository";
-import { taskStatusHistoryRepository } from "../repositories/task-status-history.repository";
-import { taskTemplatesRepository } from "../repositories/task-templates.repository";
-import { changeTaskStatus, changeProjectStatus } from "../services/pms-transition.service";
-import { pool } from "../db";
+import { taskCommentsRepository } from "./repositories/task-comments.repository";
+import { usersRepository } from "./repositories/users.repository";
+import { projectFinancialsRepository } from "./repositories/project-financials.repository";
+import { projectPaymentsRepository } from "./repositories/project-payments.repository";
+import { projectApprovalsRepository } from "./repositories/project-approvals.repository";
+import { projectAssignmentsRepository } from "./repositories/project-assignments.repository";
+import { taskTimeLogsRepository } from "./repositories/task-time-logs.repository";
+import { taskStatusHistoryRepository } from "./repositories/task-status-history.repository";
+import { taskTemplatesRepository } from "./repositories/task-templates.repository";
+import { changeTaskStatus, changeProjectStatus } from "./services/pms-transition.service";
+import { getConfigValue, patchConfig } from "./services/gm-sales-config.service";
+import { PROJECT_GENERATION_MODE } from "../shared/gm-sales-constants";
+import { pool } from "./db";
+import { NotificationService } from "./services/notification-service";
+import { getOrCreateProductPostingWorkflow } from "./services/product-posting-workflow.service";
 import {
   insertProjectSchema,
   insertTaskSchema,
@@ -50,7 +54,7 @@ function collectActorRoles(user: any): string[] {
   return out;
 }
 
-function getStatsPeriodRange(period?: string) {
+export function getStatsPeriodRange(period?: string) {
   if (!period) return { from: undefined, to: undefined };
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -295,14 +299,17 @@ function getPeriodRange(periodRaw: string) {
       }
 
       const { rows } = await pool.query(`
-        SELECT 
-          p.id, 
-          COALESCE(i.project_name, p.name) as project, 
+        SELECT
+          p.id,
+          p.project_number as "projectNumber",
+          COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), i.project_name, p.name) as project,
           COALESCE(c.company_name, i.company_name, 'Unknown') as company, 
           p.status, 
           u.full_name as person, 
           p.created_at as date,
           COALESCE(fin.total_amount, 0) as "amount",
+          COALESCE(i.hod_approved_at, CASE WHEN i.status IN ('PENDING_ACCOUNT', 'APPROVED', 'PAID') THEN i.updated_at END) as "hodApprovedAt",
+          COALESCE(i.accounts_approved_at, CASE WHEN i.status IN ('APPROVED', 'PAID') THEN i.updated_at END) as "accountsApprovedAt",
           wf.data_verified_at as "verifiedAt",
           (SELECT remarks FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectionReason",
           (SELECT created_at FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectedAt",
@@ -322,11 +329,16 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
         LEFT JOIN drm.project_payments pay ON pay.project_id = p.id
         LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
-        WHERE (p.status = 'Documents Pending' OR p.status = 'Active')
+        -- OnHold is included: a project only lands there via the Listing-Page-QA
+        -- dependency gate, which blocks TASK ASSIGNMENT (see
+        -- assertProductPostingDependencySatisfied), not the initial document
+        -- upload — /api/projects/:id/documents has no status check at all, so
+        -- the sales exec should still be able to upload here while it's held.
+        WHERE (p.status = 'Documents Pending' OR p.status = 'Active' OR p.status = 'OnHold')
         AND ($1::uuid IS NULL OR p.owner_user_id = $1::uuid)
         ${roleFilter}
         AND coalesce(p.is_deleted, false) = false
-        ORDER BY p.created_at DESC
+        ORDER BY p.project_number::int ASC
       `, [scopeUserId]);
       
       // Add sentToManager flag for client display
@@ -373,18 +385,64 @@ function getPeriodRange(periodRaw: string) {
           }
       }
 
+      // Optional query filters wired from the client (Department / City / Status / Date range).
+      // These map to real columns already joined into this query:
+      //  - department -> u.department (project owner's department)
+      //  - city       -> c.city (customer's city)
+      //  - status     -> p.status (Active / OnHold / Completed)
+      //  - startDate / endDate -> p.created_at range
+      const { department, city, status, startDate, endDate } = req.query as Record<string, string | undefined>;
+      const params: any[] = [];
+      let extraFilter = "";
+
+      if (department && department.trim() && department.toLowerCase() !== "all") {
+        params.push(`%${department.trim()}%`);
+        extraFilter += ` AND u.department ILIKE $${params.length}`;
+      }
+      if (city && city.trim() && city.toLowerCase() !== "all") {
+        params.push(`%${city.trim()}%`);
+        extraFilter += ` AND c.city ILIKE $${params.length}`;
+      }
+      if (status && status.trim() && status.toLowerCase() !== "all") {
+        params.push(status.trim());
+        extraFilter += ` AND p.status = $${params.length}`;
+      }
+      if (startDate && startDate.trim()) {
+        params.push(startDate.trim());
+        extraFilter += ` AND p.created_at >= $${params.length}::date`;
+      }
+      if (endDate && endDate.trim()) {
+        params.push(endDate.trim());
+        extraFilter += ` AND p.created_at < ($${params.length}::date + interval '1 day')`;
+      }
+
       const { rows } = await pool.query(`
-        SELECT 
+        SELECT
           p.id,
           COALESCE(i.company_name, c.company_name, 'Unknown') as "company",
-          COALESCE(i.project_name, p.name) as "project",
+          COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), i.project_name, p.name) as "project",
           p.status,
           u.name as "assign",
+          u.department as "department",
+          c.city as "city",
           p.created_at as "date",
           COALESCE(fin.total_amount, 0) as "amount",
           i.status as "invoiceStatus",
           (SELECT COUNT(*) FROM drm.tasks t WHERE t.project_id = p.id) as "totalTasks",
-          (SELECT SUM(duration_minutes) FROM drm.task_time_logs tl JOIN drm.tasks t ON tl.task_id = t.id WHERE t.project_id = p.id) as "totalTime"
+          (SELECT SUM(duration_minutes) FROM drm.task_time_logs tl JOIN drm.tasks t ON tl.task_id = t.id WHERE t.project_id = p.id) as "totalTime",
+          (SELECT COALESCE(json_agg(DISTINCT link), '[]'::json)
+           FROM (
+             SELECT jsonb_build_object('url', el.url, 'label', el.label) as link
+             FROM drm.product_posting_evidence_links el WHERE el.project_id = p.id
+             UNION
+             SELECT jsonb_build_object('url', link_elem, 'label', null) as link
+             FROM drm.task_status_history tsh
+             JOIN drm.tasks t2 ON t2.id = tsh.task_id
+             CROSS JOIN LATERAL jsonb_array_elements_text(
+               CASE WHEN tsh.notes LIKE '{%' THEN COALESCE((tsh.notes::jsonb)->'links', '[]'::jsonb) ELSE '[]'::jsonb END
+             ) as link_elem
+             WHERE t2.project_id = p.id
+           ) all_links) as "links"
         FROM drm.projects p
         LEFT JOIN drm.product_posting_invoices i ON p.invoice_id = i.id
         LEFT JOIN drm.customers c ON p.customer_id = c.id
@@ -392,8 +450,9 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
         WHERE coalesce(p.is_deleted, false) = false
         ${roleFilter}
+        ${extraFilter}
         ORDER BY p.updated_at DESC
-      `);
+      `, params);
 
       res.json(rows.map(row => ({
         ...row,
@@ -472,9 +531,23 @@ function getPeriodRange(periodRaw: string) {
       }
 
       // Validate request body
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectSchema.parse({
-        ...req.body,
-        ownerUserId: req.body.ownerUserId || req.user.userId,
+        invoiceId: _p.invoiceId,
+        customerId: _p.customerId,
+        name: _p.name,
+        description: _p.description,
+        workSpace: _p.workSpace,
+        departmentType: _p.departmentType,
+        gmId: _p.gmId,
+        serviceType: _p.serviceType,
+        invoiceType: _p.invoiceType,
+        projectType: _p.projectType,
+        status: _p.status,
+        startDate: _p.startDate,
+        endDate: _p.endDate,
+        notes: _p.notes,
+        ownerUserId: _p.ownerUserId || req.user.userId
       });
 
       console.log(`[PMS] Creating project: ${validated.name} for user ${validated.ownerUserId}`);
@@ -813,15 +886,51 @@ function getPeriodRange(periodRaw: string) {
       }
 
       // Validate request body
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
+      // Phase 12 — a newly created task always starts at its schema default
+      // (`ToDo`, i.e. "assigned"); client-supplied `status` is intentionally
+      // dropped so a task can't be created pre-skipped straight to e.g.
+      // "Completed", bypassing the lifecycle entirely.
       const validated = insertTaskSchema.parse({
-        ...req.body,
-        ownerUserId: req.user.userId, // Always set from authenticated user
+        projectId: _p.projectId,
+        title: _p.title,
+        description: _p.description,
+        assignedToUserId: _p.assignedToUserId,
+        participants: _p.participants,
+        category: _p.category,
+        priority: _p.priority,
+        startDate: _p.startDate,
+        dueDate: _p.dueDate,
+        notes: _p.notes,
+        ownerUserId: req.user.userId
       });
 
       const task = await tasksRepository.create({
         ...validated,
         createdBy: req.user.userId,
       } as any);
+
+      // D&D Executive's own "Create New Task" is the only caller that opts into this —
+      // the generic PMS task board (pms-tasks.tsx) lets a user pick ANY project, and
+      // unconditionally ensuring a productPostingWorkflows row there would wrongly pull
+      // unrelated projects into the Product Posting/D&D manager queues and permanently
+      // mis-tag their department_type.
+      if (_p.ensureProductPostingWorkflow && task.projectId) {
+        try {
+          await getOrCreateProductPostingWorkflow(task.projectId);
+        } catch (err) {
+          console.error("Failed to ensure product posting workflow for task's project:", err);
+        }
+      }
+
+      if (task.assignedToUserId) {
+        await NotificationService.notify({
+          userId: task.assignedToUserId,
+          message: `You have been assigned a new task: '${task.title}'`,
+          type: "INFO",
+          targetUrl: `/pms/tasks/${task.id}`,
+        });
+      }
 
       res.status(201).json(task);
     } catch (error) {
@@ -886,7 +995,17 @@ function getPeriodRange(periodRaw: string) {
         ]
       );
 
-      res.status(201).json({ success: true, task: insertResult.rows[0] });
+      const createdTask = insertResult.rows[0];
+      if (assignedToUserId && createdTask) {
+        await NotificationService.notify({
+          userId: assignedToUserId,
+          message: `You have been assigned a new task: '${createdTask.title}'`,
+          type: "INFO",
+          targetUrl: `/pms/tasks/${createdTask.id}`,
+        });
+      }
+
+      res.status(201).json({ success: true, task: createdTask });
     } catch (error) {
       console.error("Error creating workspace task:", error);
       res.status(500).json({ error: "Failed to create workspace task", details: (error as any)?.message });
@@ -911,16 +1030,26 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only the task owner, assignee, or a manager can update this task." });
       }
 
-      // If updating status, enforce owner-only rule
+      // If updating status, route through the central PMS transition service
+      // (Phase 12 — this used to call tasksRepository.updateStatus directly,
+      // bypassing the transition map entirely; that let a status change via
+      // this endpoint skip stages the dedicated Kanban endpoint already
+      // blocked).
       if (req.body.status && req.body.status !== existing.status) {
-        const result = await tasksRepository.updateStatus(
-          req.params.id,
-          req.body.status,
-          req.user.userId
-        );
+        const result = await changeTaskStatus({
+          taskId: req.params.id,
+          toStatus: req.body.status,
+          actorUserId: req.user.userId,
+          actorRoles: collectActorRoles(req.user),
+          reason: req.body?.reason ?? null,
+          notes: req.body?.notes ?? null,
+          remarks: req.body?.remarks ?? null,
+          evidenceCount: Array.isArray(req.body?.evidence) ? req.body.evidence.length : undefined,
+          req,
+        });
 
         if (!result.success) {
-          return res.status(403).json({ error: result.error });
+          return res.status(result.status || 403).json({ error: result.error, code: (result as any).code });
         }
 
         // If there are other fields to update besides status, update them separately
@@ -936,6 +1065,16 @@ function getPeriodRange(periodRaw: string) {
 
       // Don't allow changing the owner
       const { ownerUserId, ...updateData } = req.body;
+
+      const newAssignee = req.body.assignedToUserId;
+      if (newAssignee && newAssignee !== existing.assignedToUserId) {
+        await NotificationService.notify({
+          userId: newAssignee,
+          message: `You have been assigned the task: '${existing.title}'`,
+          type: "INFO",
+          targetUrl: `/pms/tasks/${existing.id}`,
+        });
+      }
 
       const updated = await tasksRepository.update(req.params.id, updateData);
 
@@ -964,16 +1103,23 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only the task owner, assignee, or a manager can update this task." });
       }
 
-      // If updating status, enforce owner-only rule
+      // If updating status, route through the central PMS transition service
+      // (Phase 12 — see the identical fix on PUT above).
       if (req.body.status && req.body.status !== existing.status) {
-        const result = await tasksRepository.updateStatus(
-          req.params.id,
-          req.body.status,
-          req.user.userId
-        );
+        const result = await changeTaskStatus({
+          taskId: req.params.id,
+          toStatus: req.body.status,
+          actorUserId: req.user.userId,
+          actorRoles: collectActorRoles(req.user),
+          reason: req.body?.reason ?? null,
+          notes: req.body?.notes ?? null,
+          remarks: req.body?.remarks ?? null,
+          evidenceCount: Array.isArray(req.body?.evidence) ? req.body.evidence.length : undefined,
+          req,
+        });
 
         if (!result.success) {
-          return res.status(403).json({ error: result.error });
+          return res.status(result.status || 403).json({ error: result.error, code: (result as any).code });
         }
 
         // If there are other fields to update besides status, update them separately
@@ -989,6 +1135,16 @@ function getPeriodRange(periodRaw: string) {
 
       // Don't allow changing the owner
       const { ownerUserId, ...updateData } = req.body;
+
+      const newAssignee = req.body.assignedToUserId;
+      if (newAssignee && newAssignee !== existing.assignedToUserId) {
+        await NotificationService.notify({
+          userId: newAssignee,
+          message: `You have been assigned the task: '${existing.title}'`,
+          type: "INFO",
+          targetUrl: `/pms/tasks/${existing.id}`,
+        });
+      }
 
       const updated = await tasksRepository.update(req.params.id, updateData);
 
@@ -1091,10 +1247,11 @@ function getPeriodRange(periodRaw: string) {
       }
 
       // Validate request body
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertTaskCommentSchema.parse({
-        ...req.body,
+        comment: _p.comment,
         taskId: req.params.id,
-        userId: req.user.userId,
+        userId: req.user.userId
       });
 
       const comment = await taskCommentsRepository.create(validated);
@@ -1333,9 +1490,13 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectFinancialSchema.parse({
-        ...req.body,
-        projectId: req.params.id,
+        totalAmount: _p.totalAmount,
+        paidAmount: _p.paidAmount,
+        currency: _p.currency,
+        lastPaymentAt: _p.lastPaymentAt,
+        projectId: req.params.id
       });
 
       const financials = await projectFinancialsRepository.upsert(req.params.id, validated);
@@ -1374,10 +1535,15 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectPaymentSchema.parse({
-        ...req.body,
+        amount: _p.amount,
+        paymentMethod: _p.paymentMethod,
+        reference: _p.reference,
+        notes: _p.notes,
+        paidAt: _p.paidAt,
         projectId: req.params.id,
-        paidByUserId: req.user.userId,
+        paidByUserId: req.user.userId
       });
 
       const payment = await projectPaymentsRepository.create(validated);
@@ -1418,10 +1584,15 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectPaymentSchema.parse({
-        ...req.body,
+        amount: _p.amount,
+        paymentMethod: _p.paymentMethod,
+        reference: _p.reference,
+        notes: _p.notes,
+        paidAt: _p.paidAt,
         projectId: req.params.id,
-        paidByUserId: req.user.userId,
+        paidByUserId: req.user.userId
       });
 
       const payment = await projectPaymentsRepository.create(validated);
@@ -1588,7 +1759,12 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
       }
 
+      // Phase 12 — approve() now only updates a row that's still "Pending";
+      // a null result means it was already decided (race or repeat call).
       const updated = await projectApprovalsRepository.approve(req.params.id, req.user.userId);
+      if (!updated) {
+        return res.status(409).json({ error: "This approval has already been decided and is no longer pending." });
+      }
       res.json(updated);
     } catch (error) {
       console.error("Error approving request:", error);
@@ -1611,7 +1787,11 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
       }
 
+      // Phase 12 — reject() now only updates a row that's still "Pending".
       const updated = await projectApprovalsRepository.reject(req.params.id, req.user.userId, comment || null);
+      if (!updated) {
+        return res.status(409).json({ error: "This approval has already been decided and is no longer pending." });
+      }
       res.json(updated);
     } catch (error) {
       console.error("Error rejecting request:", error);
@@ -1641,9 +1821,17 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectApprovalSchema.parse({
-        ...req.body,
-        projectId: req.params.id,
+        stage: _p.stage,
+        status: _p.status,
+        requestedBy: _p.requestedBy,
+        approvedBy: _p.approvedBy,
+        approverUserId: _p.approverUserId,
+        approvedAt: _p.approvedAt,
+        rejectionReason: _p.rejectionReason,
+        notes: _p.notes,
+        projectId: req.params.id
       });
 
       const approval = await projectApprovalsRepository.create(validated);
@@ -1655,56 +1843,6 @@ function getPeriodRange(periodRaw: string) {
       }
       console.error("Error creating approval:", error);
       res.status(500).json({ error: "Failed to create approval" });
-    }
-  });
-
-  // POST /api/pms/approvals/:id/approve - Approve a request
-  app.post("/api/pms/approvals/:id/approve", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // PATCH 7 SEC-003: fail-closed approver/role guard (defense-in-depth; this
-      // duplicate route is shadowed by the earlier registration but guarded too).
-      const existingApproval = await projectApprovalsRepository.findById(req.params.id);
-      if (!existingApproval) return res.status(404).json({ error: "Approval not found" });
-      if (!canDecideApproval(existingApproval, req.user)) {
-        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
-      }
-
-      const approval = await projectApprovalsRepository.approve(req.params.id, req.user.userId);
-      res.json(approval);
-    } catch (error) {
-      console.error("Error approving request:", error);
-      res.status(500).json({ error: "Failed to approve request" });
-    }
-  });
-
-  // POST /api/pms/approvals/:id/reject - Reject a request
-  app.post("/api/pms/approvals/:id/reject", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const { reason } = req.body;
-      if (!reason) {
-        return res.status(400).json({ error: "Rejection reason is required" });
-      }
-
-      // PATCH 7 SEC-003: fail-closed approver/role guard (defense-in-depth).
-      const existingApproval = await projectApprovalsRepository.findById(req.params.id);
-      if (!existingApproval) return res.status(404).json({ error: "Approval not found" });
-      if (!canDecideApproval(existingApproval, req.user)) {
-        return res.status(403).json({ error: "Only a manager or the designated approver can decide this request." });
-      }
-
-      const approval = await projectApprovalsRepository.reject(req.params.id, req.user.userId, reason);
-      res.json(approval);
-    } catch (error) {
-      console.error("Error rejecting request:", error);
-      res.status(500).json({ error: "Failed to reject request" });
     }
   });
 
@@ -1961,9 +2099,12 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertProjectAssignmentSchema.parse({
-        ...req.body,
-        projectId: req.params.id,
+        userId: _p.userId,
+        role: _p.role,
+        assignedAt: _p.assignedAt,
+        projectId: req.params.id
       });
 
       // Check if already assigned
@@ -2027,10 +2168,13 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertTaskTimeLogSchema.parse({
-        ...req.body,
+        timeSpentMinutes: _p.timeSpentMinutes,
+        description: _p.description,
+        logDate: _p.logDate,
         taskId: req.params.id,
-        userId: req.user.userId,
+        userId: req.user.userId
       });
 
       const log = await taskTimeLogsRepository.create(validated);
@@ -2107,7 +2251,34 @@ function getPeriodRange(periodRaw: string) {
       if (dateTo) filters.dateTo = new Date(dateTo as string);
 
       const history = await taskStatusHistoryRepository.findRecent(filters);
-      res.json(history);
+
+      // Enrich with the company name behind each task's project (invoice's
+      // customer, falling back to the invoice/project name) — the history
+      // rows themselves carry no company info.
+      const taskIds = Array.from(new Set(history.map((h) => h.task?.id).filter(Boolean)));
+      let companyByTaskId: Record<string, string> = {};
+      if (taskIds.length > 0) {
+        const companyRows = await pool.query(
+          `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
+             FROM drm.tasks t
+             LEFT JOIN drm.projects p ON p.id = t.project_id
+             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+             LEFT JOIN drm.customers c ON c.id = COALESCE(p.customer_id, inv.customer_id)
+            WHERE t.id = ANY($1::uuid[])`,
+          [taskIds],
+        );
+        companyByTaskId = companyRows.rows.reduce((acc: Record<string, string>, row: any) => {
+          acc[row.task_id] = row.company;
+          return acc;
+        }, {});
+      }
+
+      const enriched = history.map((h) => ({
+        ...h,
+        company: h.task?.id ? companyByTaskId[h.task.id] ?? null : null,
+      }));
+
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching task history:", error);
       res.status(500).json({ error: "Failed to fetch task history" });
@@ -2227,10 +2398,14 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertTaskStatusHistorySchema.parse({
-        ...req.body,
+        fromStatus: _p.fromStatus,
+        toStatus: _p.toStatus,
+        changedAt: _p.changedAt,
+        notes: _p.notes,
         taskId: req.params.id,
-        userId: req.user.userId,
+        userId: req.user.userId
       });
 
       const record = await taskStatusHistoryRepository.create(validated);
@@ -2288,9 +2463,15 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      const _p = typeof req.body === 'object' && req.body !== null ? req.body : {};
       const validated = insertTaskTemplateSchema.parse({
-        ...req.body,
-        createdByUserId: req.user.userId,
+        name: _p.name,
+        time: _p.time,
+        detail: _p.detail,
+        repeatDaily: _p.repeatDaily,
+        department: _p.department,
+        isActive: _p.isActive,
+        createdByUserId: req.user.userId
       });
 
       const template = await taskTemplatesRepository.create(validated);
@@ -2353,8 +2534,14 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // For now, return default settings
-      // In production, you'd store these in a database table
+      // Most fields below are still stub defaults awaiting a real settings
+      // table. projectCreationMode is real: it reads the same
+      // drm.gm_sales_workflow_config "projectGenerationMode" key that already
+      // gates auto-project-creation on invoice approval (see
+      // server/routes/invoice-routes.ts and server/services/invoice-workflow.service.ts).
+      const mode = await getConfigValue("projectGenerationMode");
+      const projectCreationMode = mode === PROJECT_GENERATION_MODE.AUTOMATIC ? "Automatic" : "Manual";
+
       const settings = {
         projectPrefix: "PRJ",
         taskPrefix: "TSK",
@@ -2362,6 +2549,7 @@ function getPeriodRange(periodRaw: string) {
         autoAssignment: false,
         notificationsEnabled: true,
         maxTasksPerUser: 10,
+        projectCreationMode,
       };
 
       res.json(settings);
@@ -2378,11 +2566,28 @@ function getPeriodRange(periodRaw: string) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // For now, just return success
-      // In production, you'd save these to a database table
+      // Only projectCreationMode is actually persisted today; other fields
+      // are still stubs (see GET handler above) and are just echoed back.
+      let projectCreationMode: "Manual" | "Automatic" | undefined;
+      if (req.body?.projectCreationMode === "Automatic" || req.body?.projectCreationMode === "Manual") {
+        if (!isManagerialRole((req.user as any).activeRoleId || (req.user as any).roleId)) {
+          return res.status(403).json({ error: "Only managerial/admin roles may change the project creation trigger" });
+        }
+        const { config } = await patchConfig(
+          {
+            projectGenerationMode:
+              req.body.projectCreationMode === "Automatic"
+                ? PROJECT_GENERATION_MODE.AUTOMATIC
+                : PROJECT_GENERATION_MODE.MANUAL,
+          },
+          (req.user as any).userId,
+        );
+        projectCreationMode = config.projectGenerationMode === PROJECT_GENERATION_MODE.AUTOMATIC ? "Automatic" : "Manual";
+      }
+
       console.log("[PMS Settings] Updated:", req.body);
 
-      res.json({ success: true, settings: req.body });
+      res.json({ success: true, settings: { ...req.body, ...(projectCreationMode ? { projectCreationMode } : {}) } });
     } catch (error) {
       console.error("Error updating PMS settings:", error);
       res.status(500).json({ error: "Failed to update settings" });

@@ -36,9 +36,10 @@ const defaultTargetData = [
 
 export function ActivitiesTargetWidget() {
     const [targetFilter, setTargetFilter] = useState<"overall" | "t-ab" | "t-vas">("overall");
+    const [activitiesPeriod, setActivitiesPeriod] = useState("TD");
 
     const { data: activitiesRes } = useQuery<any[]>({
-        queryKey: ["/api/service/executive/activities"],
+        queryKey: [`/api/service/executive/activities?period=${activitiesPeriod}`],
     });
 
     const { data: targetRes } = useQuery<any>({
@@ -57,13 +58,13 @@ export function ActivitiesTargetWidget() {
                 <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 to-teal-400 opacity-80" />
                 <div className="flex justify-between items-center mb-5">
                     <h2 className="text-[16px] font-extrabold text-slate-800 tracking-tight dark:text-zinc-100">Activities</h2>
-                    <Select defaultValue="TD">
+                    <Select value={activitiesPeriod} onValueChange={setActivitiesPeriod}>
                         <SelectTrigger className="w-20 h-8 text-[13px] border-slate-200 dark:border-zinc-800">
                             <SelectValue placeholder="TD" />
                         </SelectTrigger>
                         <SelectContent>
                             <SelectItem value="TD">TD</SelectItem>
-                            <SelectItem value="WK">WK</SelectItem>
+                            <SelectItem value="WC">WC</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -83,10 +84,10 @@ export function ActivitiesTargetWidget() {
                                 <ArrowRightCircle className="w-3.5 h-3.5 text-[#10b981] dark:text-zinc-100" strokeWidth={2.5} />
                                 {act.method}
                             </div>
-                            <div className="col-span-4 text-center text-slate-600 bg-slate-100/80 rounded px-1 py-0.5 dark:text-zinc-300">
+                            <div className="col-span-4 text-center text-slate-600 bg-slate-100/80 rounded px-1 py-0.5 dark:bg-zinc-800 dark:text-zinc-300">
                                 {act.target}
                             </div>
-                            <div className="col-span-2 text-center text-slate-600 bg-slate-100/80 rounded px-1 py-0.5 dark:text-zinc-300">
+                            <div className="col-span-2 text-center text-slate-600 bg-slate-100/80 rounded px-1 py-0.5 dark:bg-zinc-800 dark:text-zinc-300">
                                 {act.time}
                             </div>
                         </div>
@@ -102,19 +103,19 @@ export function ActivitiesTargetWidget() {
                     <div className="flex gap-1.5 lg:gap-2 items-center bg-slate-100/60 p-1 rounded-xl shadow-inner border border-slate-200 dark:border-zinc-800">
                         <button
                             onClick={() => setTargetFilter("overall")}
-                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "overall" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-zinc-900"}`}
+                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "overall" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-white dark:bg-zinc-900 dark:hover:bg-zinc-800"}`}
                         >
                             OverAll
                         </button>
                         <button
                             onClick={() => setTargetFilter("t-ab")}
-                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "t-ab" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-zinc-900"}`}
+                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "t-ab" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-white dark:bg-zinc-900 dark:hover:bg-zinc-800"}`}
                         >
                             T-AB
                         </button>
                         <button
                             onClick={() => setTargetFilter("t-vas")}
-                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "t-vas" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:text-slate-200 hover:bg-white dark:bg-zinc-900"}`}
+                            className={`text-[13px] font-bold px-5 py-1.5 rounded-lg transition-all ${targetFilter === "t-vas" ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/25" : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-white dark:bg-zinc-900 dark:hover:bg-zinc-800"}`}
                         >
                             T-VAS
                         </button>
@@ -134,8 +135,14 @@ export function ActivitiesTargetWidget() {
                                     dy={10}
                                 />
                                 <Tooltip
-                                    cursor={{ fill: '#f8fafc' }}
-                                    contentStyle={{ borderRadius: '4px', border: '1px solid #e2e8f0', fontSize: '12px', boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.05)' }}
+                                    cursor={{ fill: 'hsl(var(--muted))' }}
+                                    contentStyle={{
+                                        borderRadius: '4px',
+                                        border: '1px solid hsl(var(--border))',
+                                        backgroundColor: 'hsl(var(--card))',
+                                        fontSize: '12px',
+                                        boxShadow: '0 1px 2px 0 rgb(0 0 0 / 0.05)'
+                                    }}
                                 />
                                 <Bar
                                     dataKey="value"

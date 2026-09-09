@@ -6,6 +6,7 @@ export type LeaveRequestWithUser = {
   fromDate: Date;
   toDate: Date;
   type: string | null;
+  duration: string | null;
   reason: string | null;
   status: string;
   approvedByUserId: string | null;
@@ -24,13 +25,25 @@ export type LeaveStats = {
 };
 
 export class LeaveRequestRepository {
+  private ensured = false;
+
+  private async ensureSchema() {
+    if (this.ensured) return;
+    await pool.query(
+      `alter table drm.leave_requests add column if not exists duration text;`,
+    );
+    this.ensured = true;
+  }
+
   async findByUserId(userId: string): Promise<LeaveRequestWithUser[]> {
+    await this.ensureSchema();
     const results = await pool.query(
       `select lr.id,
               lr.user_id as "userId",
               lr.from_date as "fromDate",
               lr.to_date as "toDate",
               lr.type as "type",
+              lr.duration as "duration",
               lr.reason as "reason",
               lr.status as "status",
               lr.approved_by as "approvedByUserId",
@@ -53,6 +66,7 @@ export class LeaveRequestRepository {
               lr.from_date as "fromDate",
               lr.to_date as "toDate",
               lr.type as "type",
+              lr.duration as "duration",
               lr.reason as "reason",
               lr.status as "status",
               lr.approved_by as "approvedByUserId",
@@ -77,6 +91,7 @@ export class LeaveRequestRepository {
               lr.from_date as "fromDate",
               lr.to_date as "toDate",
               lr.type as "type",
+              lr.duration as "duration",
               lr.reason as "reason",
               lr.status as "status",
               lr.approved_by as "approvedByUserId",
@@ -101,6 +116,7 @@ export class LeaveRequestRepository {
               lr.from_date as "fromDate",
               lr.to_date as "toDate",
               lr.type as "type",
+              lr.duration as "duration",
               lr.reason as "reason",
               lr.status as "status",
               lr.approved_by as "approvedByUserId",
@@ -117,12 +133,13 @@ export class LeaveRequestRepository {
     return (results.rows[0] as LeaveRequestWithUser) || null;
   }
 
-  async create(data: { userId: string; fromDate: Date; toDate: Date; type: string; reason?: string | null }): Promise<LeaveRequestWithUser> {
+  async create(data: { userId: string; fromDate: Date; toDate: Date; type: string; duration?: string | null; reason?: string | null }): Promise<LeaveRequestWithUser> {
+    await this.ensureSchema();
     const result = await pool.query(
-      `insert into drm.leave_requests (user_id, from_date, to_date, type, reason, status, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, 'Pending', now(), now())
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
-      [data.userId, data.fromDate, data.toDate, data.type, data.reason ?? null],
+      `insert into drm.leave_requests (user_id, from_date, to_date, type, duration, reason, status, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, 'Pending', now(), now())
+       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+      [data.userId, data.fromDate, data.toDate, data.type, data.duration ?? "Full Day", data.reason ?? null],
     );
     return result.rows[0] as LeaveRequestWithUser;
   }
@@ -137,7 +154,7 @@ export class LeaveRequestRepository {
     }
 
     const result = await pool.query(
-      `update drm.leave_requests set status = 'Cancelled', updated_at = now() where id = $1 returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+      `update drm.leave_requests set status = 'Cancelled', updated_at = now() where id = $1 returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
       [id],
     );
 
@@ -156,7 +173,7 @@ export class LeaveRequestRepository {
            approved_by = $2,
            updated_at = now()
        where id = $1
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
       [id, approverUserId],
     );
 
@@ -176,7 +193,7 @@ export class LeaveRequestRepository {
            updated_at = now(),
            reason = coalesce($3, reason)
        where id = $1
-       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
+       returning id, user_id as "userId", from_date as "fromDate", to_date as "toDate", type, duration, reason, status, approved_by as "approvedByUserId", created_at as "createdAt", updated_at as "updatedAt"`,
       [id, approverUserId, reason ?? null],
     );
 

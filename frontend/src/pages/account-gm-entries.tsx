@@ -138,6 +138,66 @@ export default function AccountGmEntries() {
     },
   });
 
+  const companyNameInput = form.watch("companyName");
+  const memberIdInput = form.watch("memberId");
+  const orderIdInput = form.watch("orderId");
+
+  const { data: acctGmDupCheck } = useQuery<{ memberIdExists?: boolean; orderIdExists?: boolean; companyExists?: boolean }>({
+    queryKey: ["acct-check-gm-duplicate", companyNameInput, memberIdInput, orderIdInput],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (companyNameInput?.trim()) params.set("companyName", companyNameInput.trim());
+      if (memberIdInput?.trim()) params.set("memberId", memberIdInput.trim());
+      if (orderIdInput?.trim()) params.set("orderId", orderIdInput.trim());
+      const res = await fetch(`/api/gm-pool/check-duplicate?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${sessionStorage.getItem("token") || ""}` },
+        credentials: "include",
+      });
+      if (!res.ok) return {};
+      return res.json();
+    },
+    enabled: (!!companyNameInput && companyNameInput.trim().length >= 2) ||
+             (!!memberIdInput && memberIdInput.trim().length >= 2) ||
+             (!!orderIdInput && orderIdInput.trim().length >= 2),
+    staleTime: 3000,
+  });
+
+  const { data: acctDupCheck } = useQuery<{ duplicates?: any[] }>({
+    queryKey: ["acct-check-duplicate", companyNameInput],
+    queryFn: async () => {
+      if (!companyNameInput || companyNameInput.trim().length < 2) return { duplicates: [] };
+      const res = await fetch(`/api/check-duplicate?company=${encodeURIComponent(companyNameInput.trim())}`, {
+        headers: { Authorization: `Bearer ${sessionStorage.getItem("token") || ""}` },
+        credentials: "include",
+      });
+      if (!res.ok) return { duplicates: [] };
+      return res.json();
+    },
+    enabled: !!companyNameInput && companyNameInput.trim().length >= 2,
+    staleTime: 5000,
+  });
+
+  const isAcctCompanyDuplicate = useMemo(() => {
+    if (acctGmDupCheck?.companyExists) return true;
+    if (!companyNameInput || companyNameInput.trim().length < 2) return false;
+    if (!acctDupCheck?.duplicates?.length) return false;
+    const target = companyNameInput.trim().toLowerCase();
+    return acctDupCheck.duplicates.some((d: any) =>
+      (d.companyName && d.companyName.trim().toLowerCase() === target) ||
+      (d.drmId && d.drmId.trim().toLowerCase() === target)
+    );
+  }, [companyNameInput, acctGmDupCheck, acctDupCheck]);
+
+  const isAcctMemberIdDuplicate = useMemo(() => {
+    if (!memberIdInput || memberIdInput.trim().length < 2) return false;
+    return !!acctGmDupCheck?.memberIdExists;
+  }, [memberIdInput, acctGmDupCheck?.memberIdExists]);
+
+  const isAcctOrderIdDuplicate = useMemo(() => {
+    if (!orderIdInput || orderIdInput.trim().length < 2) return false;
+    return !!acctGmDupCheck?.orderIdExists;
+  }, [orderIdInput, acctGmDupCheck?.orderIdExists]);
+
   // ── Queries ───────────────────────────────────────────────────────────────
   const { data: stats } = useQuery<GmStats>({ queryKey: ["/api/account/gm-entries/stats"] });
   const { data: entries, isLoading } = useQuery<GmEntry[]>({ queryKey: ["/api/account/gm-entries"] });
@@ -566,12 +626,13 @@ export default function AccountGmEntries() {
                           </button>
                         </>
                       )}
-                      {/* ── Patch 5 Stage 3: partial receipts / loan terms ── */}
-                      {entry.isPartialPayment && (
+                      {/* ── Patch 5 Stage 3: payment receipts (Partial GM's instalments,
+                          or a Full GM's single confirming receipt) / loan terms ── */}
+                      {!entry.isLoan && (
                         <button
                           onClick={() => { setStage3Entry(entry); setPartialDialogOpen(true); }}
                           className="text-purple-500 hover:text-purple-700 transition-colors"
-                          title="Partial payment receipts"
+                          title={entry.isPartialPayment ? "Partial payment receipts" : "Payment receipt"}
                         >
                           <Wallet className="h-3.5 w-3.5" />
                         </button>
@@ -649,7 +710,14 @@ export default function AccountGmEntries() {
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Add GM Entry</DialogTitle></DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(d => createMutation.mutate(d))} className="space-y-4">
+            <form onSubmit={form.handleSubmit(d => {
+              if (isAcctCompanyDuplicate || isAcctMemberIdDuplicate || isAcctOrderIdDuplicate) {
+                const msg = isAcctMemberIdDuplicate ? "Member ID already exists." : isAcctOrderIdDuplicate ? "Order ID already exists." : "Company already exists.";
+                toast({ title: "Validation Error", description: msg, variant: "destructive" });
+                return;
+              }
+              createMutation.mutate(d);
+            })} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <FormField control={form.control} name="gmType" render={({ field }) => (
                   <FormItem><FormLabel>GM Type *</FormLabel>
@@ -666,15 +734,30 @@ export default function AccountGmEntries() {
                   <FormItem><FormLabel>DRM ID *</FormLabel><FormControl><Input placeholder="DRM ID" {...field} /></FormControl><FormMessage /></FormItem>
                 )} />
                 <FormField control={form.control} name="memberId" render={({ field }) => (
-                  <FormItem><FormLabel>Member ID</FormLabel><FormControl><Input placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  <FormItem>
+                    <FormLabel>Member ID</FormLabel>
+                    <FormControl><Input placeholder="Optional" {...field} /></FormControl>
+                    {isAcctMemberIdDuplicate ? <p className="text-xs text-destructive font-semibold mt-1">Member ID already exists.</p> : null}
+                    <FormMessage />
+                  </FormItem>
                 )} />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <FormField control={form.control} name="orderId" render={({ field }) => (
-                  <FormItem><FormLabel>Order ID</FormLabel><FormControl><Input placeholder="Optional" {...field} /></FormControl><FormMessage /></FormItem>
+                  <FormItem>
+                    <FormLabel>Order ID</FormLabel>
+                    <FormControl><Input placeholder="Optional" {...field} /></FormControl>
+                    {isAcctOrderIdDuplicate ? <p className="text-xs text-destructive font-semibold mt-1">Order ID already exists.</p> : null}
+                    <FormMessage />
+                  </FormItem>
                 )} />
                 <FormField control={form.control} name="companyName" render={({ field }) => (
-                  <FormItem><FormLabel>Company Name *</FormLabel><FormControl><Input placeholder="Company" {...field} /></FormControl><FormMessage /></FormItem>
+                  <FormItem>
+                    <FormLabel>Company Name *</FormLabel>
+                    <FormControl><Input placeholder="Company" {...field} /></FormControl>
+                    {isAcctCompanyDuplicate ? <p className="text-xs text-destructive font-semibold mt-1">Company already exists.</p> : null}
+                    <FormMessage />
+                  </FormItem>
                 )} />
                 <FormField control={form.control} name="packageType" render={({ field }) => (
                   <FormItem><FormLabel>Package *</FormLabel>
@@ -935,6 +1018,7 @@ export default function AccountGmEntries() {
       <PartialReceiptsDialog
         gmId={stage3Entry?.id ?? null}
         companyName={stage3Entry?.companyName}
+        isPartialPayment={stage3Entry?.isPartialPayment ?? false}
         open={partialDialogOpen}
         onOpenChange={setPartialDialogOpen}
       />

@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, UserPlus, Pencil, Trash2, Shield, Settings, Users, Activity, Globe, MapPin, CheckCircle2, XCircle, Plus, Info, Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -24,6 +24,7 @@ interface User {
     country: string;
     isActive: boolean;
     createdAt: string;
+    password?: string;
 }
 
 interface Role {
@@ -315,7 +316,7 @@ export default function SuperAdminDashboard() {
                                     </div>
                                     <div className="grid gap-1.5">
                                         <Label className="font-bold text-muted-foreground mr-1">Roles</Label>
-                                        <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 max-h-[160px] overflow-y-auto">
+                                        <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900 max-h-[160px] overflow-y-auto">
                                             {rolesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> :
                                                 roles?.map(r => (
                                                     <div key={r.id} className="flex items-center space-x-2">
@@ -398,11 +399,11 @@ export default function SuperAdminDashboard() {
                                     <form onSubmit={handleAddUser} className="space-y-4">
                                         <div className="grid gap-2">
                                             <Label>Name</Label>
-                                            <Input name="fullName" required placeholder="Admin name" />
+                                            <Input name="fullName" required placeholder="Admin name" autoComplete="off" />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label>Email</Label>
-                                            <Input name="email" type="email" required placeholder="admin@example.com" />
+                                            <Input name="email" type="email" required placeholder="admin@example.com" autoComplete="off" />
                                         </div>
                                         <div className="grid gap-2">
                                             <Label>Password</Label>
@@ -414,6 +415,7 @@ export default function SuperAdminDashboard() {
                                                     placeholder="At least 6 characters"
                                                     minLength={6}
                                                     className="pr-10"
+                                                    autoComplete="new-password"
                                                 />
                                                 <Button
                                                     type="button"
@@ -430,7 +432,7 @@ export default function SuperAdminDashboard() {
                                         </div>
                                         <div className="grid gap-2">
                                             <Label className="uppercase text-xs font-semibold">Roles</Label>
-                                            <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50">
+                                            <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900">
                                                 {rolesLoading ? <Loader2 className="h-4 w-4 animate-spin" /> :
                                                     roles?.map(r => (
                                                         <div key={r.id} className="flex items-center space-x-2">
@@ -476,7 +478,7 @@ export default function SuperAdminDashboard() {
                             <div className="space-y-4">
                                 {usersLoading ? <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin text-indigo-600" /></div> : (
                                     filteredUsers?.length === 0 ? (
-                                        <div className="text-center p-12 border-2 border-dashed rounded-lg bg-slate-50/50">
+                                        <div className="text-center p-12 border-2 border-dashed rounded-lg bg-slate-50/50 dark:bg-zinc-900">
                                             <p className="text-muted-foreground">No users found matching "{searchQuery}"</p>
                                             <Button variant="ghost" onClick={() => setSearchQuery("")} className="mt-2 text-indigo-600 hover:text-indigo-700">Clear search</Button>
                                         </div>
@@ -658,7 +660,7 @@ export default function SuperAdminDashboard() {
                                 <div className="grid gap-1.5"><Label className="text-[12px] font-bold text-muted-foreground mr-1">Full Name</Label><Input name="fullName" defaultValue={editingUser.fullName} className="text-[12px] h-9" /></div>
                                 <div className="grid gap-1.5">
                                     <Label className="text-[12px] font-bold text-muted-foreground mr-1">Roles</Label>
-                                    <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 max-h-[160px] overflow-y-auto">
+                                    <div className="grid grid-cols-2 gap-2 border rounded-md p-3 bg-slate-50/50 dark:bg-zinc-900 max-h-[160px] overflow-y-auto">
                                         {roles?.map(r => (
                                             <div key={r.id} className="flex items-center space-x-2">
                                                 <Checkbox
@@ -706,7 +708,7 @@ export default function SuperAdminDashboard() {
     );
 }
 
-const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User & { password?: string }, roles: Role[], onUpdate: (id: string, data: any) => void, onDelete: (id: string) => void, isUpdating: boolean }) => {
+const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User, roles: Role[], onUpdate: (id: string, data: any) => void, onDelete: (id: string) => void, isUpdating: boolean }) => {
     const [formData, setFormData] = useState({
         fullName: user.fullName || "",
         email: user.email || "",
@@ -715,6 +717,16 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User 
         password: user.password || ""
     });
     const [showPassword, setShowPassword] = useState(false);
+
+    useEffect(() => {
+        setFormData({
+            fullName: user.fullName || "",
+            email: user.email || "",
+            role: user.role || "",
+            roles: (user.roles && user.roles.length > 0) ? user.roles : (user.role ? [user.role] : []),
+            password: user.password || ""
+        });
+    }, [user]);
 
     const handleChange = (field: string, value: string) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -755,7 +767,7 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User 
 
                 <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground uppercase">Roles</Label>
-                    <div className="grid grid-cols-2 gap-2 border rounded-md p-2 bg-slate-50/50">
+                    <div className="grid grid-cols-2 gap-2 border rounded-md p-2 bg-slate-50/50 dark:bg-zinc-900">
                         {roles.map(r => (
                             <div key={r.id} className="flex items-center space-x-2">
                                 <Checkbox
@@ -779,7 +791,7 @@ const UserCard = ({ user, roles, onUpdate, onDelete, isUpdating }: { user: User 
                     <div className="relative">
                         <Input
                             type={showPassword ? "text" : "password"}
-                            placeholder={user.password ? "Enter new password" : "Set password"}
+                            placeholder="Leave blank to keep current password"
                             value={formData.password}
                             onChange={e => handleChange("password", e.target.value)}
                             className="h-9 pr-10"

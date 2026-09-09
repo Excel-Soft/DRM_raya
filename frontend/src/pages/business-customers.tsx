@@ -45,7 +45,7 @@ export default function BusinessCustomers() {
 
   return (
     <ScrollArea className="flex-1 bg-[#f4f6f9] dark:bg-zinc-950">
-      <div className="p-5 space-y-5 font-sans text-[#333]">
+      <div className="p-5 space-y-5 font-sans text-[#333] dark:text-zinc-300">
         <h1 className="text-[16px] font-bold text-[#555] uppercase mb-4 tracking-wide">
           INVOICES LIST
         </h1>
@@ -53,7 +53,7 @@ export default function BusinessCustomers() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Left Column - Filters */}
           <div className="lg:col-span-4 xl:col-span-3">
-            <div className="bg-white p-5 rounded shadow-sm border border-gray-100 space-y-5">
+            <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100 space-y-5">
               <div className="space-y-1.5">
                 <Label className="text-[13px] font-semibold text-gray-700">Company Name:</Label>
                 <Input
@@ -96,16 +96,16 @@ export default function BusinessCustomers() {
 
           {/* Right Column - Table */}
           <div className="lg:col-span-8 xl:col-span-9">
-            <div className="bg-white p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
+            <div className="bg-white dark:bg-zinc-900 p-5 rounded shadow-sm border border-gray-100 min-h-[400px]">
               <h2 className="text-[14px] font-bold text-[#555] mb-4">Customer List</h2>
               
               <div className="w-full border border-gray-100 rounded-[4px] overflow-hidden">
                 <Table>
                   <TableHeader className="bg-[#def3e7]">
                     <TableRow className="hover:bg-transparent border-none">
-                      <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center border-r border-white">Name</TableHead>
-                      <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center border-r border-white">Amount Paid</TableHead>
-                      <TableHead className="text-[#333] font-bold text-[13px] h-12 text-center">Amount Due</TableHead>
+                      <TableHead className="text-[#333] dark:text-zinc-300 font-bold text-[13px] h-12 text-center border-r border-white">Name</TableHead>
+                      <TableHead className="text-[#333] dark:text-zinc-300 font-bold text-[13px] h-12 text-center border-r border-white">Amount Paid</TableHead>
+                      <TableHead className="text-[#333] dark:text-zinc-300 font-bold text-[13px] h-12 text-center">Amount Due</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -119,7 +119,7 @@ export default function BusinessCustomers() {
                       </TableRow>
                     ) : (
                       filteredCustomers.map((customer) => (
-                        <TableRow key={customer.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                        <TableRow key={customer.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
                           <TableCell className="text-center text-[13px] text-gray-700 py-4 font-medium">
                             {customer.companyName}
                           </TableCell>

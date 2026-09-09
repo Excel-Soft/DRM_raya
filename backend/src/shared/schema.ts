@@ -128,7 +128,7 @@ export const users = drmSchema.table("users", {
 
 // Password reset tokens table
 export const passwordResetTokens = drmSchema.table("password_reset_tokens", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull(),
   token: text("token").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
@@ -173,9 +173,12 @@ export const customers = drmSchema.table("customers", {
   isGoldMember: integer("is_gold_member").default(0),
   isBusinessVerified: integer("is_business_verified").default(0),
   isDeleted: boolean("is_deleted").default(false),
+  isFocus: boolean("is_focus").default(false),
   abType: text("ab_type"),
   drmId: text("drm_id").unique(),
   phoneNormalized: text("phone_normalized"),
+  emails: text("emails").array().default(sql`'{}'::text[]`),
+  mobiles: text("mobiles").array().default(sql`'{}'::text[]`),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -273,8 +276,8 @@ export const drmPolicies = drmSchema.table("drm_policies", {
 
 // Temporary Contacts table
 export const tempContacts = drmSchema.table("temp_contacts", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title"), // Mr, Mrs, Ms, Dr, etc.
   personName: text("person_name").notNull(),
   email: text("email").notNull(),
@@ -286,27 +289,27 @@ export const tempContacts = drmSchema.table("temp_contacts", {
   comment: text("comment"),
   serviceTypes: text("service_types").array().default(sql`'{}'::text[]`),
   status: tempContactStatusEnum("status").notNull().default("Pending"),
-  promotedToCustomerId: uuid("promoted_to_customer_id").references(() => customers.id),
+  promotedToCustomerId: varchar("promoted_to_customer_id").references(() => customers.id),
   promotedAt: timestamp("promoted_at"),
-  promotedByUserId: uuid("promoted_by_user_id").references(() => users.id),
+  promotedByUserId: varchar("promoted_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Lead activities (logging user actions on leads/customers)
 export const leadActivities = drmSchema.table("lead_activities", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
   action: text("action").notNull(),
-  performedBy: uuid("performed_by").notNull().references(() => users.id, { onDelete: "cascade" }),
+  performedBy: varchar("performed_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   note: text("note"),
   meta: jsonb("meta"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const leadServices = drmSchema.table("lead_services", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  leadId: uuid("lead_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  leadId: varchar("lead_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
   serviceType: text("service_type").notNull(),
   expiryDate: timestamp("expiry_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -314,9 +317,9 @@ export const leadServices = drmSchema.table("lead_services", {
 
 // Opportunities (Customer stages in pipeline) - aligns with existing DB columns
 export const opportunities = drmSchema.table("opportunities", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").notNull().references(() => customers.id),
-  ownerUserId: uuid("owner_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => customers.id),
+  ownerUserId: varchar("owner_id").notNull().references(() => users.id),
   title: text("title"),
   stage: pipelineStageEnum("stage").notNull().default("LD"),
   amount: decimal("value", { precision: 10, scale: 2 }).default("0"),
@@ -341,10 +344,10 @@ export const activities = drmSchema.table("activities", {
 
 // FollowUps
 export const followUps = drmSchema.table("follow_ups", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").notNull().references(() => customers.id),
-  assignedTo: uuid("assigned_to").references(() => users.id),
-  createdBy: uuid("created_by").references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => customers.id),
+  assignedTo: varchar("assigned_to").references(() => users.id),
+  createdBy: varchar("created_by").references(() => users.id),
   dueAt: timestamp("due_at").notNull(),
   status: text("status").notNull().default("Open"),
   notes: text("notes"),
@@ -355,10 +358,14 @@ export const followUps = drmSchema.table("follow_ups", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   isDeleted: boolean("is_deleted").notNull().default(false),
+  // Sales Manager dashboard's Follow-Up Details grid: a manager-authored note on
+  // this follow-up, distinct from the salesperson's own `notes`/subservice note.
+  managerComment: text("manager_comment"),
+  smComment: text("sm_comment"),
 });
 
 export const services = drmSchema.table("services", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   isActive: boolean("is_active").notNull().default(true),
@@ -366,16 +373,16 @@ export const services = drmSchema.table("services", {
 });
 
 export const followupServices = drmSchema.table("followup_services", {
-  followupId: uuid("followup_id").notNull().references(() => followUps.id, { onDelete: "cascade" }),
-  serviceId: uuid("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
+  followupId: varchar("followup_id").notNull().references(() => followUps.id, { onDelete: "cascade" }),
+  serviceId: varchar("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.followupId, t.serviceId] }),
 }));
 
 export const serviceSubservices = drmSchema.table("service_subservices", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  serviceId: uuid("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serviceId: varchar("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   isActive: boolean("is_active").notNull().default(true),
@@ -383,19 +390,19 @@ export const serviceSubservices = drmSchema.table("service_subservices", {
 });
 
 export const followupSubservices = drmSchema.table("followup_subservices", {
-  followupId: uuid("followup_id").notNull().references(() => followUps.id, { onDelete: "cascade" }),
-  subserviceId: uuid("subservice_id").notNull().references(() => serviceSubservices.id, { onDelete: "cascade" }),
+  followupId: varchar("followup_id").notNull().references(() => followUps.id, { onDelete: "cascade" }),
+  subserviceId: varchar("subservice_id").notNull().references(() => serviceSubservices.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.followupId, t.subserviceId] }),
 }));
 
 export const callSessions = drmSchema.table("call_sessions", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
-  assignedTo: uuid("assigned_to").references(() => users.id, { onDelete: "set null" }),
-  followupId: uuid("followup_id").references(() => followUps.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  assignedTo: varchar("assigned_to").references(() => users.id, { onDelete: "set null" }),
+  followupId: varchar("followup_id").references(() => followUps.id),
   reservationType: text("reservation_type").notNull(),
   direction: text("direction").notNull().default("outbound"),
   status: text("status").notNull(),
@@ -420,8 +427,8 @@ export const appointments = drmSchema.table("appointments", {
 
 // Targets
 export const targets = drmSchema.table("targets", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
   type: targetTypeEnum("type").notNull(),
   name: text("name").notNull(),
   bonusType: text("bonus_type").notNull(), // "percentage" or "fixed"
@@ -435,8 +442,8 @@ export const targets = drmSchema.table("targets", {
 
 // VAS Progress Snapshots
 export const vasProgressSnapshots = drmSchema.table("vas_progress_snapshots", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   periodMonth: integer("period_month").notNull(),
   periodYear: integer("period_year").notNull(),
   amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
@@ -450,6 +457,12 @@ export const vasProgressSnapshots = drmSchema.table("vas_progress_snapshots", {
 
 export const productPostingInvoices = drmSchema.table("product_posting_invoices", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // Human-facing invoice number: DB-generated (sequence-backed DEFAULT set in
+  // server/db/ensure.ts, since db:push is broken repo-wide), unique and stable
+  // across every screen/role — replaces the old per-screen practice of slicing
+  // the internal `id` UUID differently in each place (never consistent).
+  invoiceNumber: text("invoice_number").notNull().unique()
+    .default(sql`nextval('drm.product_posting_invoice_number_seq')`),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
   salesExecId: uuid("sales_exec_id").notNull().references(() => users.id),
   customerId: uuid("customer_id").references(() => customers.id),
@@ -494,6 +507,11 @@ export const productPostingInvoices = drmSchema.table("product_posting_invoices"
 // Projects
 export const projects = drmSchema.table("projects", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  // Professional, unique, sequential display ID — mirrors productPostingInvoices'
+  // invoiceNumber (same sequence-backed pattern), replacing the old per-screen
+  // practice of slicing the internal `id` UUID for display.
+  projectNumber: text("project_number").notNull().unique()
+    .default(sql`nextval('drm.project_number_seq')`),
   invoiceId: uuid("invoice_id").references(() => productPostingInvoices.id),
   customerId: uuid("customer_id").references(() => customers.id),
   name: text("name").notNull(),
@@ -573,9 +591,9 @@ export const tasks = drmSchema.table("tasks", {
 
 // Task Comments
 export const taskComments = drmSchema.table("task_comments", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
   comment: text("comment").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -584,8 +602,8 @@ export const taskComments = drmSchema.table("task_comments", {
 
 // Project Financials (one-to-one with projects)
 export const projectFinancials = drmSchema.table("project_financials", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }).unique(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }).unique(),
   totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   paidAmount: decimal("paid_amount", { precision: 12, scale: 2 }).notNull().default("0"),
   currency: text("currency").notNull().default("USD"),
@@ -596,26 +614,26 @@ export const projectFinancials = drmSchema.table("project_financials", {
 
 // Project Payments (transaction history)
 export const projectPayments = drmSchema.table("project_payments", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   paymentMethod: paymentMethodEnum("payment_method").notNull().default("BankTransfer"),
   reference: text("reference"),
   notes: text("notes"),
-  paidByUserId: uuid("paid_by_user_id").references(() => users.id),
+  paidByUserId: varchar("paid_by_user_id").references(() => users.id),
   paidAt: timestamp("paid_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Project Approvals (HOD, Department approval workflow)
 export const projectApprovals = drmSchema.table("project_approvals", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   stage: text("stage").notNull(),
   status: projectApprovalStatusEnum("status").notNull().default("Pending"),
   requestedBy: uuid("requested_by").notNull().references(() => users.id), // Physical column: requested_by
   approvedBy: uuid("approved_by").references(() => users.id), // Physical column: approved_by
-  approverUserId: uuid("approver_user_id").references(() => users.id),
+  approverUserId: varchar("approver_user_id").references(() => users.id),
   approvedAt: timestamp("approved_at"),
   rejectionReason: text("rejection_reason"),
   notes: text("notes"),
@@ -625,9 +643,9 @@ export const projectApprovals = drmSchema.table("project_approvals", {
 
 // Project Assignments (team members assigned to projects)
 export const projectAssignments = drmSchema.table("project_assignments", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
   role: text("role").notNull().default("Member"), // "Lead", "Member", "Reviewer"
   assignedAt: timestamp("assigned_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -646,9 +664,9 @@ export const taskTimeLogs = drmSchema.table("task_time_logs", {
 
 // Task Status History (for tracking task status changes)
 export const taskStatusHistory = drmSchema.table("task_status_history", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  taskId: varchar("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
   fromStatus: taskStatusEnum("from_status"),
   toStatus: taskStatusEnum("to_status").notNull(),
   changedAt: timestamp("changed_at").notNull().defaultNow(),
@@ -659,7 +677,7 @@ export const taskStatusHistory = drmSchema.table("task_status_history", {
 
 // Permissions (granular permissions)
 export const permissions = drmSchema.table("permissions", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
   description: text("description"),
   module: text("module").notNull(), // "customers", "pms", "hr", "support", "reports"
@@ -670,17 +688,17 @@ export const permissions = drmSchema.table("permissions", {
 
 // Role Permissions (junction table)
 export const rolePermissions = drmSchema.table("role_permissions", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
-  permissionId: uuid("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: varchar("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+  permissionId: varchar("permission_id").notNull().references(() => permissions.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Impersonation Audit Logs
 export const impersonationAuditLogs = drmSchema.table("impersonation_audit_logs", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  adminUserId: uuid("admin_user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminUserId: varchar("admin_user_id").notNull().references(() => users.id),
   targetRole: varchar("target_role").notNull(),
   action: text("action").notNull(), // "start" or "stop"
   ipAddress: text("ip_address"),
@@ -690,13 +708,16 @@ export const impersonationAuditLogs = drmSchema.table("impersonation_audit_logs"
 
 // Support Tickets
 export const supportTickets = drmSchema.table("support_tickets", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").references(() => customers.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").references(() => customers.id),
+  // Phase 11 — live DB has this as `uuid NOT NULL` (schema drift: was missing
+  // from this Drizzle definition entirely, which broke ticket creation).
+  createdBy: varchar("created_by").notNull(),
   channel: supportChannelEnum("channel").notNull().default("web"),
   subject: text("subject").notNull(),
   status: supportTicketStatusEnum("status").notNull().default("Open"),
   priority: supportPriorityEnum("priority").notNull().default("Medium"),
-  assignedToUserId: uuid("assigned_to_user_id").references(() => users.id),
+  assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
   dataSend: integer("data_send").notNull().default(0), // 0 = not sent, 1 = sent
   externalReference: text("external_reference"),
   isDeleted: boolean("is_deleted").default(false),
@@ -706,8 +727,8 @@ export const supportTickets = drmSchema.table("support_tickets", {
 
 // Support Messages
 export const supportMessages = drmSchema.table("support_messages", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  ticketId: uuid("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: varchar("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
   from: supportMessageFromEnum("from").notNull(),
   body: text("body").notNull(),
   sentAt: timestamp("sent_at").notNull().defaultNow(),
@@ -715,7 +736,7 @@ export const supportMessages = drmSchema.table("support_messages", {
 
 // Support Channel Config
 export const supportChannelConfig = drmSchema.table("support_channel_config", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   channel: supportChannelEnum("channel").notNull().unique(),
   isActive: integer("is_active").notNull().default(1), // 0 = inactive, 1 = active
   displayName: text("display_name").notNull(),
@@ -727,7 +748,7 @@ export const policyTypeEnum = drmSchema.enum("policy_type", ["text", "numericRan
 
 // Roles table
 export const roles = drmSchema.table("roles", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
   description: text("description"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -736,7 +757,7 @@ export const roles = drmSchema.table("roles", {
 
 // URL Permissions table
 export const urlPermissions = drmSchema.table("url_permissions", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   path: text("path").notNull().unique(), // Acts as the 'menu' name key effectively if unique, or use another key
   name: text("name").notNull(), // Display Name e.g., "Users"
   menuIcon: text("menu_icon"), // Icon name from lucide-react
@@ -750,7 +771,7 @@ export const urlPermissions = drmSchema.table("url_permissions", {
 
 // Policies table
 export const policies = drmSchema.table("policies", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   key: text("key").notNull().unique(),
   value_json: jsonb("value_json").notNull(),
   description: text("description"),
@@ -760,7 +781,7 @@ export const policies = drmSchema.table("policies", {
 
 // Allowed IPs table
 export const allowedIps = drmSchema.table("allowed_ips", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   ip_cidr: text("ip_cidr").notNull().unique(),
   description: text("description"),
   is_active: boolean("is_active").notNull().default(true),
@@ -772,8 +793,8 @@ export const allowedIps = drmSchema.table("allowed_ips", {
 
 // Attendance Records
 export const attendance = drmSchema.table("attendance", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   date: timestamp("date").notNull(),
   timeIn: timestamp("check_in"),
   timeOut: timestamp("check_out"),
@@ -789,8 +810,8 @@ export const attendance = drmSchema.table("attendance", {
 
 // Leave Requests
 export const leaveRequests = drmSchema.table("leave_requests", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   purpose: text("purpose").notNull(),
   leaveType: leaveTypeEnum("leave_type").notNull(),
   alternative: text("alternative").notNull(),
@@ -799,7 +820,7 @@ export const leaveRequests = drmSchema.table("leave_requests", {
   time: text("time"),
   description: text("description"),
   status: leaveStatusEnum("status").notNull().default("Pending"),
-  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedByUserId: varchar("approved_by_user_id").references(() => users.id),
   approvedAt: timestamp("approved_at"),
   rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -808,14 +829,14 @@ export const leaveRequests = drmSchema.table("leave_requests", {
 
 // Overtime Records
 export const overtimeRecords = drmSchema.table("overtime_records", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   taskTitle: text("task_title").notNull(),
   timeSpent: integer("time_spent").notNull(), // in minutes
   taskDetails: text("task_details").notNull(),
   date: timestamp("date").notNull().defaultNow(),
   status: overtimeStatusEnum("status").notNull().default("Pending"),
-  reviewedByUserId: uuid("reviewed_by_user_id").references(() => users.id),
+  reviewedByUserId: varchar("reviewed_by_user_id").references(() => users.id),
   reviewedAt: timestamp("reviewed_at"),
   rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -824,16 +845,16 @@ export const overtimeRecords = drmSchema.table("overtime_records", {
 
 // Loan/Advance Salary Requests
 export const loanRequests = drmSchema.table("loan_requests", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   installmentAmount: decimal("installment_amount", { precision: 12, scale: 2 }).notNull(),
   remainingAmount: decimal("remaining_amount", { precision: 12, scale: 2 }).notNull(),
   detail: text("detail").notNull(),
   status: loanStatusEnum("status").notNull().default("Pending"),
-  managerApprovedByUserId: uuid("manager_approved_by_user_id").references(() => users.id),
+  managerApprovedByUserId: varchar("manager_approved_by_user_id").references(() => users.id),
   managerApprovedAt: timestamp("manager_approved_at"),
-  hodApprovedByUserId: uuid("hod_approved_by_user_id").references(() => users.id),
+  hodApprovedByUserId: varchar("hod_approved_by_user_id").references(() => users.id),
   hodApprovedAt: timestamp("hod_approved_at"),
   rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -942,7 +963,7 @@ export const salaryRunItems = drmSchema.table("salary_run_items", {
 // Attendance Edit Requests — audited before/after edits to attendance records.
 export const attendanceEditRequests = drmSchema.table("attendance_edit_requests", {
   id: uuid("id").primaryKey().defaultRandom(),
-  attendanceId: uuid("attendance_id").references(() => attendance.id),
+  attendanceId: varchar("attendance_id").references(() => attendance.id),
   userId: uuid("user_id").notNull().references(() => users.id), // employee whose attendance
   attendanceDate: timestamp("attendance_date").notNull(),
   field: text("field").notNull(), // e.g. "status" | "check_in" | "check_out"
@@ -975,7 +996,7 @@ export type InsertAttendanceEditRequest = typeof attendanceEditRequests.$inferIn
 
 // Training Modules
 export const trainingModules = drmSchema.table("training_modules", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
   description: text("description"),
   category: trainingCategoryEnum("category").notNull(),
@@ -993,9 +1014,9 @@ export const trainingModules = drmSchema.table("training_modules", {
 
 // User Training Progress
 export const trainingProgress = drmSchema.table("training_progress", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
-  moduleId: uuid("module_id").notNull().references(() => trainingModules.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  moduleId: varchar("module_id").notNull().references(() => trainingModules.id),
   isCompleted: integer("is_completed").default(0), // 0 = incomplete, 1 = completed
   quizScore: integer("quiz_score"),
   progressPercent: integer("progress_percent").default(0),
@@ -1012,11 +1033,11 @@ export const gmPoolStatusEnum = drmSchema.enum("gm_pool_status", ["Active", "Pen
 
 // GM Pool Entries
 export const gmPoolEntries = drmSchema.table("gm_pool_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  memberId: uuid("member_id").notNull(),
-  orderId: uuid("order_id").notNull(),
-  customerId: uuid("customer_id").references(() => customers.id),
-  salesPersonId: uuid("sales_person_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  memberId: varchar("member_id").notNull(),
+  orderId: varchar("order_id").notNull(),
+  customerId: varchar("customer_id").references(() => customers.id),
+  salesPersonId: varchar("sales_person_id").notNull().references(() => users.id),
   package: text("package").notNull(),
   dollarRate: decimal("dollar_rate", { precision: 10, scale: 2 }).notNull(),
   discount: decimal("discount", { precision: 5, scale: 2 }).default("0"),
@@ -1032,9 +1053,9 @@ export const queueSalesStatusEnum = drmSchema.enum("queue_sales_status", ["Waiti
 
 // Queue Sales Entries
 export const queueSalesEntries = drmSchema.table("queue_sales_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: uuid("customer_id").notNull().references(() => customers.id),
-  salesPersonId: uuid("sales_person_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => customers.id),
+  salesPersonId: varchar("sales_person_id").notNull().references(() => users.id),
   priority: integer("priority").notNull().default(0),
   status: queueSalesStatusEnum("status").notNull().default("Waiting"),
   queueNumber: integer("queue_number"),
@@ -1048,8 +1069,8 @@ export const queueSalesEntries = drmSchema.table("queue_sales_entries", {
 
 // Team Performance Snapshots
 export const teamPerformanceSnapshots = drmSchema.table("team_performance_snapshots", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
   periodMonth: integer("period_month").notNull(),
   periodYear: integer("period_year").notNull(),
   totalSales: decimal("total_sales", { precision: 12, scale: 2 }).default("0"),
@@ -1067,13 +1088,13 @@ export const teamPerformanceSnapshots = drmSchema.table("team_performance_snapsh
 
 // Task Templates - reusable tasks that can repeat daily
 export const taskTemplates = drmSchema.table("task_templates", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   time: integer("time").notNull(), // time in minutes
   detail: text("detail"),
   repeatDaily: integer("repeat_daily").notNull().default(0), // 0 = no, 1 = yes
   department: text("department"), // optional: department-specific templates
-  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
   isActive: integer("is_active").notNull().default(1), // 0 = inactive, 1 = active
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1095,13 +1116,13 @@ export const ledgerEntryTypeEnum = drmSchema.enum("ledger_entry_type", ["Credit"
 
 // GM Entries (GM, Temp GM, Refund GM)
 export const gmEntries = drmSchema.table("gm_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   gmType: gmEntryTypeEnum("gm_type").notNull().default("GM"),
   drmId: text("drm_id").notNull(),
   memberId: text("member_id"),
   orderId: text("order_id"),
   companyName: text("company_name").notNull(),
-  salesPersonId: uuid("sales_person_id").references(() => users.id),
+  salesPersonId: varchar("sales_person_id").references(() => users.id),
   salesPersonName: text("sales_person_name"),
   addedByName: text("added_by_name"),
   packageType: text("package_type").notNull(),
@@ -1122,9 +1143,14 @@ export const gmEntries = drmSchema.table("gm_entries", {
   status: gmEntryStatusEnum("status").notNull().default("Pending"),
   isLoan: integer("is_loan").notNull().default(0),
   isPartialPayment: integer("is_partial_payment").notNull().default(0),
+  // Explicit, first-class FULL/PARTIAL/LOAN classification (mirrors resolveCanonicalGmType's
+  // resolved value at create time). Nullable/additive — legacy rows fall back to deriving
+  // this from isLoan/isPartialPayment via mapDbFlagsToGmType. NOT the same concept as gmType
+  // above (GM/TempGM/RefundGM, a record-kind distinction from an unrelated feature).
+  canonicalGmType: text("canonical_gm_type"),
   isDeleted: boolean("is_deleted").default(false),
   notes: text("notes"),
-  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedByUserId: varchar("approved_by_user_id").references(() => users.id),
   approvedAt: timestamp("approved_at"),
 
   // Update request fields
@@ -1143,7 +1169,7 @@ export const gmEntries = drmSchema.table("gm_entries", {
   withdrawalActionedBy: uuid("withdrawal_actioned_by").references(() => users.id),
   withdrawalActionedAt: timestamp("withdrawal_actioned_at"),
 
-  createdBy: uuid("created_by").notNull().references(() => users.id),
+  createdBy: varchar("created_by").notNull().references(() => users.id),
   // Patch 5 Stage 2 — active role of the creator at GM creation (nullable, additive).
   createdByRole: text("created_by_role"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1157,8 +1183,8 @@ export const gmEntries = drmSchema.table("gm_entries", {
 // in the app layer). The live table is created at runtime in server/db/ensure.ts because
 // db:push is broken repo-wide; this def supplies the TS/Drizzle types only.
 export const gmPartialReceipts = drmSchema.table("gm_partial_receipts", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  gmId: uuid("gm_id").notNull(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  gmId: varchar("gm_id").notNull(),
   amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull(),
   amountPkr: decimal("amount_pkr", { precision: 15, scale: 2 }),
   dollarRate: decimal("dollar_rate", { precision: 12, scale: 4 }),
@@ -1180,8 +1206,8 @@ export const gmPartialReceipts = drmSchema.table("gm_partial_receipts", {
 // is a plain varchar link, actor columns reference drm.users(id) (uuid). Live table is
 // created at runtime in server/db/ensure.ts; this def supplies the TS/Drizzle types only.
 export const gmLoanTerms = drmSchema.table("gm_loan_terms", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  gmId: uuid("gm_id").notNull().unique(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  gmId: varchar("gm_id").notNull().unique(),
   loanAmountUsd: decimal("loan_amount_usd", { precision: 12, scale: 2 }).notNull().default("0"),
   companyCopayUsd: decimal("company_copay_usd", { precision: 12, scale: 2 }).notNull().default("0"),
   agreedReturnDate: date("agreed_return_date"),
@@ -1202,7 +1228,7 @@ export const gmLoanTerms = drmSchema.table("gm_loan_terms", {
 
 // Temporary GM Entries (for Add Temporary GM screen)
 export const tempGmEntries = drmSchema.table("temp_gm_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   personName: text("person_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -1210,26 +1236,26 @@ export const tempGmEntries = drmSchema.table("temp_gm_entries", {
   reason: text("reason").notNull(),
   comment: text("comment"),
   status: text("status").notNull().default("pending"), // pending, approved, rejected
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Refund GM Entries (for Add Refund GM screen)
 export const refundGmEntries = drmSchema.table("refund_gm_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   personName: text("person_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   amountType: text("amount_type").notNull().default("PKR"), // PKR, Dollar
   comment: text("comment"),
   status: text("status").notNull().default("pending"), // pending, approved, rejected
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Donations
 export const donations = drmSchema.table("donations", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   title: text("title").notNull().default("Mr."), // Mr., Ms., Dr., etc.
   personName: text("person_name").notNull(),
@@ -1243,7 +1269,7 @@ export const donations = drmSchema.table("donations", {
 
 // BV Entries (Business Verification)
 export const bvEntries = drmSchema.table("bv_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   packageType: text("package_type").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -1266,9 +1292,9 @@ export const bvEntries = drmSchema.table("bv_entries", {
 
 // Invoices
 export const invoices = drmSchema.table("invoices", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   invoiceNumber: text("invoice_number").notNull().unique(),
-  customerId: uuid("customer_id").references(() => customers.id),
+  customerId: varchar("customer_id").references(() => customers.id),
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email"),
   customerAddress: text("customer_address"),
@@ -1282,7 +1308,7 @@ export const invoices = drmSchema.table("invoices", {
   paidAt: timestamp("paid_at"),
   notes: text("notes"),
   items: text("items").notNull(), // JSON string of invoice line items
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   paymentMethod: varchar("payment_method"),
@@ -1290,30 +1316,30 @@ export const invoices = drmSchema.table("invoices", {
 
 // Company Ledger entries
 export const ledgerEntries = drmSchema.table("ledger_entries", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   entryType: ledgerEntryTypeEnum("entry_type").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("USD"),
   description: text("description").notNull(),
   category: text("category").notNull(), // Revenue, Expense, Invoice, GM, Donation, Refund, etc.
   date: timestamp("date").notNull().defaultNow(),
-  referenceId: uuid("reference_id"), // Links to invoice, gm_entry, donation, etc.
+  referenceId: varchar("reference_id"), // Links to invoice, gm_entry, donation, etc.
   referenceType: text("reference_type"), // "invoice", "gm_entry", "donation", etc.
   balanceAfter: decimal("balance_after", { precision: 12, scale: 2 }),
   entryDate: timestamp("entry_date").notNull().defaultNow(),
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   // Patch 4 Stage 2 — account-head linkage + posting lifecycle + voucher refs
   // (additive). No FK on the linkage columns (mixed varchar/uuid id types);
   // existence is validated in the application layer.
-  accountHeadId: uuid("account_head_id"),
+  accountHeadId: varchar("account_head_id"),
   status: text("status").notNull().default("Posted"), // Posted | Reversed | Reversal
-  voucherId: uuid("voucher_id"),
-  voucherLineId: uuid("voucher_line_id"),
-  reversalOfId: uuid("reversal_of_id"),
+  voucherId: varchar("voucher_id"),
+  voucherLineId: varchar("voucher_line_id"),
+  reversalOfId: varchar("reversal_of_id"),
   branch: text("branch"),
   remarks: text("remarks"),
   postedAt: timestamp("posted_at"),
-  postedByUserId: uuid("posted_by_user_id"),
+  postedByUserId: varchar("posted_by_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -1765,7 +1791,7 @@ export type InsertDrmPolicy = z.infer<typeof insertDrmPolicySchema>;
 export const accountHeadCategoryEnum = drmSchema.enum("account_head_category", ["Assets", "Liabilities", "OwnerEquity", "Revenue", "Expenses"]);
 
 export const accountHeads = drmSchema.table("account_heads", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
   category: accountHeadCategoryEnum("category").notNull(),
@@ -1773,19 +1799,19 @@ export const accountHeads = drmSchema.table("account_heads", {
   description: text("description"),
   // Patch 4 Stage 2 — chart-of-accounts master fields (additive). No FK on
   // parentAccountId (self-ref varchar); existence/!=self validated in the app.
-  parentAccountId: uuid("parent_account_id"),
+  parentAccountId: varchar("parent_account_id"),
   openingBalance: decimal("opening_balance", { precision: 12, scale: 2 }).notNull().default("0"),
   normalBalance: text("normal_balance"), // "Debit" | "Credit"
   branch: text("branch"),
   isActive: integer("is_active").notNull().default(1),
-  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Patch 4 Stage 2 — Journal Voucher header + lines (double-entry source docs).
 export const journalVouchers = drmSchema.table("journal_vouchers", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   voucherNo: text("voucher_no").notNull().unique(),
   voucherDate: timestamp("voucher_date").notNull().defaultNow(),
   status: text("status").notNull().default("DRAFT"), // DRAFT | POSTED | CANCELLED
@@ -1793,20 +1819,20 @@ export const journalVouchers = drmSchema.table("journal_vouchers", {
   branch: text("branch"),
   totalDebit: decimal("total_debit", { precision: 12, scale: 2 }).notNull().default("0"),
   totalCredit: decimal("total_credit", { precision: 12, scale: 2 }).notNull().default("0"),
-  createdByUserId: uuid("created_by_user_id"),
+  createdByUserId: varchar("created_by_user_id"),
   postedAt: timestamp("posted_at"),
-  postedByUserId: uuid("posted_by_user_id"),
+  postedByUserId: varchar("posted_by_user_id"),
   cancelledAt: timestamp("cancelled_at"),
-  cancelledByUserId: uuid("cancelled_by_user_id"),
+  cancelledByUserId: varchar("cancelled_by_user_id"),
   cancelReason: text("cancel_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const journalVoucherLines = drmSchema.table("journal_voucher_lines", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  voucherId: uuid("voucher_id").notNull(),
-  accountHeadId: uuid("account_head_id").notNull(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  voucherId: varchar("voucher_id").notNull(),
+  accountHeadId: varchar("account_head_id").notNull(),
   debit: decimal("debit", { precision: 12, scale: 2 }).notNull().default("0"),
   credit: decimal("credit", { precision: 12, scale: 2 }).notNull().default("0"),
   narration: text("narration"),
@@ -1815,7 +1841,7 @@ export const journalVoucherLines = drmSchema.table("journal_voucher_lines", {
 });
 
 export const officeExpenses = drmSchema.table("office_expenses", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   expenseHead: text("expense_head").notNull(),
   office: text("office").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -1825,26 +1851,26 @@ export const officeExpenses = drmSchema.table("office_expenses", {
   fileUrl: text("file_url"),
   detail: text("detail"),
   expenseDate: timestamp("expense_date").notNull().defaultNow(),
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const officeVas = drmSchema.table("office_vas", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   currency: text("currency").notNull().default("PKR"),
   method: text("method").notNull(), // Cash, Bank, Online
   vasDate: timestamp("vas_date").notNull().defaultNow(),
   notes: text("notes"),
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const chequeStatusEnum = drmSchema.enum("cheque_status", ["Pending", "Cleared", "Bounced", "Cancelled"]);
 
 export const cheques = drmSchema.table("cheques", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   chequeNumber: text("cheque_number").notNull(),
   bankName: text("bank_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
@@ -1853,13 +1879,13 @@ export const cheques = drmSchema.table("cheques", {
   chequeDate: timestamp("cheque_date").notNull(),
   status: chequeStatusEnum("status").notNull().default("Pending"),
   notes: text("notes"),
-  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const businessCustomers = drmSchema.table("business_customers", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
   contactPerson: text("contact_person"),
   phone: text("phone"),
@@ -1870,14 +1896,14 @@ export const businessCustomers = drmSchema.table("business_customers", {
   totalPaid: decimal("total_paid", { precision: 15, scale: 2 }).notNull().default("0"),
   totalDue: decimal("total_due", { precision: 15, scale: 2 }).notNull().default("0"),
   isActive: integer("is_active").notNull().default(1),
-  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdByUserId: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 // Dollar Buying module
 export const dollarBuyers = drmSchema.table("dollar_buyers", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   reference: text("reference"),
   paypalEmail: text("paypal_email"),
@@ -1888,8 +1914,8 @@ export const dollarBuyers = drmSchema.table("dollar_buyers", {
 });
 
 export const dollarBuying = drmSchema.table("dollar_buying", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  buyerId: uuid("buyer_id").references(() => dollarBuyers.id),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  buyerId: varchar("buyer_id").references(() => dollarBuyers.id),
   buyerName: text("buyer_name"), 
   buyerReference: text("buyer_reference"),
   paypalEmail: text("paypal_email"),
@@ -1904,7 +1930,7 @@ export const dollarBuying = drmSchema.table("dollar_buying", {
   screenshotUrl: text("screenshot_url"),
   detail: text("detail"),
   martini: text("martini").default("Show"),
-  createdById: uuid("created_by_user_id").references(() => users.id),
+  createdById: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -2168,13 +2194,13 @@ export type InsertCallSession = typeof callSessions.$inferInsert;
 export const userActivityTypeEnum = drmSchema.enum("user_activity_type", ["GM", "Invoice", "Refund", "Donation", "Expense", "VAS", "Cheque", "Customer", "Project", "Task"]);
 
 export const userActivities = drmSchema.table("user_activities", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   userName: text("user_name").notNull(),
   department: text("department").notNull().default("Sales"),
   actionType: userActivityTypeEnum("action_type").notNull(),
   actionDescription: text("action_description"),
-  referenceId: uuid("reference_id"), // ID of the related record
+  referenceId: varchar("reference_id"), // ID of the related record
   referenceType: text("reference_type"), // Table name
   amount: decimal("amount", { precision: 12, scale: 2 }),
   currency: text("currency").default("PKR"),
@@ -2196,10 +2222,10 @@ export type UserActivity = typeof userActivities.$inferSelect;
 
 // BV Reports
 export const bvReports = drmSchema.table("bv_reports", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
-  assignedTo: uuid("assigned_to").references(() => users.id, { onDelete: "set null" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  assignedTo: varchar("assigned_to").references(() => users.id, { onDelete: "set null" }),
   companyName: text("company_name"),
   reportDate: timestamp("report_date").notNull().defaultNow(),
   status: text("status").notNull().default("Draft"),
@@ -2214,9 +2240,9 @@ export const bvReports = drmSchema.table("bv_reports", {
   meta: jsonb("meta"),
   // Patch 2 Stage 7 — approval workflow metadata. Populated by the
   // approve/reject routes (rejection always carries a reason).
-  approvedBy: uuid("approved_by").references(() => users.id, { onDelete: "set null" }),
+  approvedBy: varchar("approved_by").references(() => users.id, { onDelete: "set null" }),
   approvedAt: timestamp("approved_at"),
-  rejectedBy: uuid("rejected_by").references(() => users.id, { onDelete: "set null" }),
+  rejectedBy: varchar("rejected_by").references(() => users.id, { onDelete: "set null" }),
   rejectedAt: timestamp("rejected_at"),
   rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -2274,9 +2300,9 @@ export type BvReport = typeof bvReports.$inferSelect;
 
 // Loan/VAS/GM Reports (simple metrics aligned with BV style)
 export const loanReports = drmSchema.table("loan_reports", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: "set null" }),
   reportDate: timestamp("report_date").notNull().defaultNow(),
   status: text("status").notNull().default("Draft"),
   title: text("title"),
@@ -2299,9 +2325,9 @@ export const loanReports = drmSchema.table("loan_reports", {
 });
 
 export const vasReports = drmSchema.table("vas_reports", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: "set null" }),
   reportDate: timestamp("report_date").notNull().defaultNow(),
   status: text("status").notNull().default("Draft"),
   title: text("title"),
@@ -2318,9 +2344,9 @@ export const vasReports = drmSchema.table("vas_reports", {
 });
 
 export const gmReports = drmSchema.table("gm_reports", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  customerId: varchar("customer_id").references(() => customers.id, { onDelete: "set null" }),
   reportDate: timestamp("report_date").notNull().defaultNow(),
   status: text("status").notNull().default("Draft"),
   title: text("title"),
@@ -2491,10 +2517,21 @@ export const productPostingWorkflows = drmSchema.table("product_posting_workflow
   assignedAt: timestamp("assigned_at"),
   assignedDurationMinutes: integer("assigned_duration_minutes").notNull().default(0),
   executionStartedAt: timestamp("execution_started_at"),
+  // Required self-review confirmation, captured at the same moment as
+  // executiveSubmittedAt (enforced in submit-to-manager) — the developer's own
+  // sign-off before manager/QA see the work, distinct from the manager's own
+  // review at managerCompletedAt.
+  selfReviewedAt: timestamp("self_reviewed_at"),
   executiveSubmittedAt: timestamp("executive_submitted_at"),
   managerCompletedAt: timestamp("manager_completed_at"),
   qaReviewedAt: timestamp("qa_reviewed_at"),
   verificationReviewedAt: timestamp("verification_reviewed_at"),
+  // Miniwebsite-specific "Delivered" signal — set the moment a Miniwebsite
+  // project's workflow reaches VERIFICATION_COMPLETE (verification-review
+  // route). Display-only: the underlying phase/state-machine is untouched, so
+  // commission/reporting logic keyed on VERIFICATION_COMPLETE is unaffected;
+  // this only changes what label a Miniwebsite project shows to the user.
+  deliveredAt: timestamp("delivered_at"),
   managerUserId: uuid("manager_user_id").references(() => users.id),
   executiveUserId: uuid("executive_user_id").references(() => users.id),
   qaUserId: uuid("qa_user_id").references(() => users.id),
@@ -2505,6 +2542,7 @@ export const productPostingWorkflows = drmSchema.table("product_posting_workflow
   outputNotes: text("output_notes"),
   qaRemarks: text("qa_remarks"),
   verificationRemarks: text("verification_remarks"),
+  projectLevel: text("project_level"), // QA-assigned project quality level (Excellent/Very Good/Good/Normal/Very Poor)
   returnCount: integer("return_count").notNull().default(0),
   lastReturnReason: text("last_return_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -2591,16 +2629,51 @@ export const softwareReworkHistory = drmSchema.table("software_rework_history", 
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// MD-16 (Posting Executive): a slab set is never edited in place — a new
+// commission decision creates a new versioned batch of rows (same
+// effectiveFrom), and the previous batch's effectiveTo is closed out, so a
+// past period's commission is always computed against the rule that was
+// actually in force at the time, never today's rule applied retroactively.
 export const productPostingCommissionSlabs = drmSchema.table("product_posting_commission_slabs", {
   id: uuid("id").primaryKey().defaultRandom(),
+  area: text("area").notNull().default("posting_executive"),
   name: text("name").notNull(),
   minValue: integer("min_value").notNull().default(0),
   maxValue: integer("max_value"),
   commissionRate: decimal("commission_rate", { precision: 10, scale: 2 }).notNull().default("0"),
   rateType: text("rate_type").notNull().default("percentage"),
   isActive: boolean("is_active").notNull().default(true),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  effectiveTo: timestamp("effective_to", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// MD-23, Project Owner decision (2026-07-27): a manually authorized override
+// of the fixed department-routing rule (resolveWorkflowRouting's deterministic
+// DND/PRODUCT_POSTING pick). At most one row is enabled+in-range at a time —
+// creating a new override auto-disables whatever was previously enabled, the
+// same "close old, insert new" versioning used for productPostingCommissionSlabs.
+// "Currently in force" is computed live at read time from effectiveFrom/
+// effectiveTo vs now() (see server/services/assignment-override.service.ts),
+// never by a background job flipping isEnabled.
+export const assignmentRatioOverrides = drmSchema.table("assignment_ratio_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  scope: text("scope").notNull().default("product_posting_workflow_routing"),
+  previousRatio: text("previous_ratio").notNull(),
+  newRatio: text("new_ratio").notNull(),
+  reason: text("reason").notNull(),
+  approvedByUserId: uuid("approved_by_user_id").notNull().references(() => users.id),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+  effectiveTo: timestamp("effective_to", { withTimezone: true }).notNull(),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  disabledAt: timestamp("disabled_at", { withTimezone: true }),
+  disabledByUserId: uuid("disabled_by_user_id").references(() => users.id),
+  disabledReason: text("disabled_reason"),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const notifications = drmSchema.table("notifications", {
@@ -2627,11 +2700,54 @@ export const activityLogs = drmSchema.table("activity_logs", {
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   action: text("action").notNull(),
   resourceType: text("resource_type").notNull(),
-  resourceId: uuid("resource_id").notNull(),
+  resourceId: varchar("resource_id").notNull(),
   details: text("details"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const abPayments = drmSchema.table("ab_payments", {
+  id: serial("id").primaryKey(),
+  abId: text("ab_id"),
+  orderId: text("order_id"),
+  gmDrmId: text("gm_drm_id"),
+  gmEntryId: uuid("gm_entry_id").references(() => gmEntries.id),
+  companyName: text("company_name"),
+  amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull().default("0"),
+  amountPkr: decimal("amount_pkr", { precision: 15, scale: 2 }).notNull().default("0"),
+  rate: decimal("rate", { precision: 12, scale: 4 }),
+  proofUrl: text("proof_url"),
+  status: text("status").notNull().default("pending"),
+  paidDate: date("paid_date"),
+  notes: text("notes"),
+  createdBy: uuid("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  isDeleted: boolean("is_deleted").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedBy: uuid("deleted_by").references(() => users.id),
+  deletionReason: text("deletion_reason"),
+});
+
+export const notificationOutbox = drmSchema.table("notification_outbox", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventType: text("event_type").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  payload: jsonb("payload").notNull(),
+  userId: uuid("user_id").references(() => users.id),
+  status: text("status").notNull().default("PENDING"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  nextRetryTime: timestamp("next_retry_time").notNull().defaultNow(),
+  lockedTimestamp: timestamp("locked_timestamp"),
+  lockedWorker: text("locked_worker"),
+  processedTimestamp: timestamp("processed_timestamp"),
+  lastError: text("last_error"),
+  idempotencyKey: text("idempotency_key").unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 
 // ===== Patch 3 Stage 5 — Cross-department status synchronization ledger =====
 // Append-only ledger of cross-department workflow hand-offs (HOD→Account,
@@ -2745,6 +2861,119 @@ export const insertPortfolioSchema = createInsertSchema(portfolios).omit({
 export type InsertPortfolio = z.infer<typeof insertPortfolioSchema>;
 export type Portfolio = typeof portfolios.$inferSelect;
 
+// MD-21, Project Owner decision (2026-07-27): Portfolio Reserve — a time-boxed
+// lock on a portfolio design while it's being presented to a customer/company
+// for booking. `status` only ever stores a human decision ('active' while
+// awaiting Verification Manager action, 'confirmed', or 'rejected'); whether an
+// 'active' row has auto-released after 48h is computed live at read time by
+// comparing `expiresAt` to now(), the same lazy-expiry approach already used
+// for service due-dates (see server/utils/service-expiry.ts) — no background
+// job flips a stored flag.
+export const portfolioReservations = drmSchema.table("portfolio_reservations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  portfolioId: uuid("portfolio_id").notNull().references(() => portfolios.id, { onDelete: "cascade" }),
+  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  companyName: text("company_name"),
+  status: text("status").notNull().default("active"), // 'active' | 'confirmed' | 'rejected'
+  reservedByUserId: uuid("reserved_by_user_id").notNull().references(() => users.id),
+  reservedAt: timestamp("reserved_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  resolvedByUserId: uuid("resolved_by_user_id").references(() => users.id),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  resolutionReason: text("resolution_reason"),
+  extensionCount: integer("extension_count").notNull().default(0),
+  lastExtendedAt: timestamp("last_extended_at", { withTimezone: true }),
+  lastExtendedByUserId: uuid("last_extended_by_user_id").references(() => users.id),
+  lastExtensionReason: text("last_extension_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertPortfolioReservationSchema = createInsertSchema(portfolioReservations).omit({
+  id: true,
+  status: true,
+  reservedByUserId: true,
+  reservedAt: true,
+  expiresAt: true,
+  resolvedByUserId: true,
+  resolvedAt: true,
+  resolutionReason: true,
+  extensionCount: true,
+  lastExtendedAt: true,
+  lastExtendedByUserId: true,
+  lastExtensionReason: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPortfolioReservation = z.infer<typeof insertPortfolioReservationSchema>;
+export type PortfolioReservation = typeof portfolioReservations.$inferSelect;
+
+// MD-16(c), Project Owner decision (2026-07-27): GM commission engine —
+// role-based, versioned slabs (same effectiveFrom/effectiveTo "close old,
+// insert new" pattern as productPostingCommissionSlabs/assignmentRatioOverrides,
+// keyed by role instead of area), a persisted per-GM commission ledger (unlike
+// MD-16(b)/MD-20's live-computed approach, this feature explicitly requires an
+// auditable, stored reversal/adjustment trail), and adjustments recording every
+// cancellation/void/withdrawal/amount-reduction as a negative row rather than
+// mutating the original record. See server/services/gm-commission.service.ts.
+export const gmCommissionSlabs = drmSchema.table("gm_commission_slabs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  role: text("role").notNull(),
+  name: text("name").notNull(),
+  minValue: decimal("min_value", { precision: 15, scale: 2 }).notNull().default("0"),
+  maxValue: decimal("max_value", { precision: 15, scale: 2 }),
+  commissionRate: decimal("commission_rate", { precision: 10, scale: 2 }).notNull().default("0"),
+  rateType: text("rate_type").notNull().default("percentage"),
+  effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull().defaultNow(),
+  effectiveTo: timestamp("effective_to", { withTimezone: true }),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GmCommissionSlab = typeof gmCommissionSlabs.$inferSelect;
+
+// One row per eligible GM per beneficiary per commission-rule version (the
+// unique constraint below is the "Duplicate Prevention" rule) — a persisted
+// ledger entry, not a live-recomputed value, so reversals have something real
+// to point at and adjust.
+export const gmCommissionRecords = drmSchema.table("gm_commission_records", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sourceType: text("source_type").notNull().default("GM_ENTRY"),
+  sourceRecordId: varchar("source_record_id").notNull().references(() => gmEntries.id, { onDelete: "cascade" }),
+  beneficiaryUserId: uuid("beneficiary_user_id").notNull().references(() => users.id),
+  beneficiaryRole: text("beneficiary_role"),
+  commissionSlabId: uuid("commission_slab_id").references(() => gmCommissionSlabs.id),
+  commissionBasisField: text("commission_basis_field").notNull(),
+  commissionBasisAmount: decimal("commission_basis_amount", { precision: 15, scale: 2 }).notNull(),
+  commissionRate: decimal("commission_rate", { precision: 10, scale: 2 }).notNull(),
+  baseCommission: decimal("base_commission", { precision: 15, scale: 2 }).notNull(),
+  accrualDate: timestamp("accrual_date", { withTimezone: true }).notNull(),
+  payableDate: timestamp("payable_date", { withTimezone: true }).notNull(),
+  quarterKey: text("quarter_key").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GmCommissionRecord = typeof gmCommissionRecords.$inferSelect;
+
+// Every cancellation, refund, void, withdrawal, or amount-reduction that
+// affects an already-recorded GM commission creates a new, auditable negative
+// row here instead of mutating gmCommissionRecords.baseCommission in place.
+export const gmCommissionAdjustments = drmSchema.table("gm_commission_adjustments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  commissionRecordId: uuid("commission_record_id").notNull().references(() => gmCommissionRecords.id, { onDelete: "cascade" }),
+  adjustmentType: text("adjustment_type").notNull(), // 'REVERSAL' | 'MANUAL_ADJUSTMENT'
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(), // negative for reversals/reductions
+  reason: text("reason").notNull(),
+  sourceEvent: text("source_event"), // e.g. 'GM_VOIDED', 'GM_WITHDRAWN', 'GM_AMOUNT_REDUCED'
+  actorUserId: uuid("actor_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type GmCommissionAdjustment = typeof gmCommissionAdjustments.$inferSelect;
+
 export const productPostingData = drmSchema.table("product_posting_data", {
   id: uuid("id").primaryKey().defaultRandom(),
   category: text("category").notNull(),
@@ -2799,6 +3028,10 @@ export const socialMediaPosts = drmSchema.table("social_media_posts", {
   createdBy: uuid("created_by"),
   approvedBy: uuid("approved_by"),
   publishedBy: uuid("published_by"),
+  // Manually recorded after publish — no live platform-API integration exists yet.
+  likes: integer("likes").notNull().default(0),
+  comments: integer("comments").notNull().default(0),
+  shares: integer("shares").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -2811,6 +3044,35 @@ export const insertSocialMediaPostSchema = createInsertSchema(socialMediaPosts).
 });
 export type SocialMediaPost = typeof socialMediaPosts.$inferSelect;
 export type InsertSocialMediaPost = z.infer<typeof insertSocialMediaPostSchema>;
+
+// Phase 11 — was previously runtime-DDL-only (ensureSocialAccountsTable() in
+// server/social-accounts-routes.ts); added here for typing/schema-drift
+// parity with socialMediaPosts. Columns mirror that DDL exactly.
+export const socialAccounts = drmSchema.table("social_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerName: text("owner_name"),
+  platform: text("platform").notNull(),
+  accountName: text("account_name"),
+  url: text("url"),
+  customerId: uuid("customer_id"),
+  projectId: text("project_id"),
+  status: text("status").notNull().default("active"),
+  isVerified: boolean("is_verified").notNull().default(false),
+  verifiedBy: uuid("verified_by"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+export const insertSocialAccountSchema = createInsertSchema(socialAccounts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type SocialAccount = typeof socialAccounts.$inferSelect;
+export type InsertSocialAccount = z.infer<typeof insertSocialAccountSchema>;
 
 export const restrictedKeywords = drmSchema.table("restricted_keywords", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -2856,7 +3118,7 @@ export const serviceCustomers = drmSchema.table("service_customers", {
   userId: uuid("user_id").references(() => users.id),
   customerId: uuid("customer_id").notNull().references(() => customers.id),
   companyId: uuid("company_id").references(() => customers.id),
-  packageId: uuid("package_id").references(() => services.id),
+  packageId: varchar("package_id").references(() => services.id),
   serviceStartDate: timestamp("service_start_date"),
   expiryDate: timestamp("expiry_date"),
   status: serviceCustomerStatusEnum("status").notNull().default("active"),
@@ -2894,6 +3156,28 @@ export type InsertServiceCustomer = z.infer<typeof insertServiceCustomerSchema>;
 
 export type ServiceTarget = typeof serviceTargets.$inferSelect;
 export type InsertServiceTarget = z.infer<typeof insertServiceTargetSchema>;
+
+// Service Department "Team Work Performance" real tracking for fields that
+// previously had no source anywhere in the app: a rep-recorded customer
+// satisfaction rating (also backs the Alibaba/WebExcels "happy" split via
+// customers.source) and a sample-request log.
+export const serviceCustomerFeedback = drmSchema.table("service_customer_feedback", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  rating: integer("rating").notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const serviceSampleRequests = drmSchema.table("service_sample_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  productName: text("product_name"),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // Phase 2: Action Workflow & History Tables
 
@@ -2986,8 +3270,8 @@ export const serviceDropouts = drmSchema.table("service_dropouts", {
 export const serviceRenewals = drmSchema.table("service_renewals", {
   id: uuid("id").primaryKey().defaultRandom(),
   serviceCustomerId: uuid("service_customer_id").notNull().references(() => serviceCustomers.id, { onDelete: "cascade" }),
-  oldPackageId: uuid("old_package_id").references(() => services.id),
-  newPackageId: uuid("new_package_id").references(() => services.id),
+  oldPackageId: varchar("old_package_id").references(() => services.id),
+  newPackageId: varchar("new_package_id").references(() => services.id),
   oldGmRecordId: uuid("old_gm_record_id").references(() => gmEntries.id),
   newGmRecordId: uuid("new_gm_record_id").references(() => gmEntries.id),
   renewalType: serviceRenewalTypeEnum("renewal_type").notNull().default("renewal"),
@@ -3024,7 +3308,7 @@ export type ServiceRenewal = typeof serviceRenewals.$inferSelect;
 export type InsertServiceRenewal = z.infer<typeof insertServiceRenewalSchema>;
 
 export const targetSystemTargets = drmSchema.table("target_system_targets", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   targetName: text("target_name").notNull(),
   package: text("package"),
   reward: integer("reward").notNull().default(0),

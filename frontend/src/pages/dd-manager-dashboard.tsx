@@ -49,7 +49,9 @@ import {
     ShieldCheck,
     CalendarX,
     FolderCheck,
-    Loader2
+    Loader2,
+    Calendar,
+    Download,
 } from "lucide-react";
 import {
     Table,
@@ -66,7 +68,6 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, Download } from "lucide-react";
 import {
     Select,
     SelectContent,
@@ -94,7 +95,13 @@ export default function DDManagerDashboard() {
     const { toast } = useToast();
     const queryClientObj = useQueryClient();
     const [activeTab, setActiveTab] = useState("waiting");
+    const [projectQueueSearch, setProjectQueueSearch] = useState("");
     const [storageSync, setStorageSync] = useState(0);
+    const [hubPeriod, setHubPeriod] = useState("TD");
+    const [queuePage, setQueuePage] = useState(1);
+    const [queuePageSize, setQueuePageSize] = useState(10);
+    const [perfPage, setPerfPage] = useState(1);
+    const PERF_PAGE_SIZE = 10;
 
     useEffect(() => {
         const handleStorageChange = () => setStorageSync(prev => prev + 1);
@@ -139,9 +146,9 @@ export default function DDManagerDashboard() {
 
     // Fetch summary stats
     const { data: summaryStats, isLoading: isSummaryLoading } = useQuery({
-        queryKey: ["/api/dd-manager/summary"],
+        queryKey: ["/api/dd-manager/summary", hubPeriod],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/dd-manager/summary");
+            const res = await apiRequest("GET", `/api/dd-manager/summary?period=${hubPeriod}`);
             return res.json();
         },
         staleTime: 30000,
@@ -263,11 +270,11 @@ export default function DDManagerDashboard() {
         },
         {
             label: "Free",
-            value: "0",
+            value: (summaryStats as any)?.free?.toString() || "0",
             trend: "-0%",
             trendType: "down",
             subIcon: Clock,
-            subValue: "0",
+            subValue: (summaryStats as any)?.free?.toString() || "0",
             color: "rose" as const,
             sparkPath: "M0 10 Q10 0, 20 15 T40 5 T60 12 T80 0"
         },
@@ -349,18 +356,37 @@ export default function DDManagerDashboard() {
     ];
 
     // Mock data for tabs if real task detail API not ready, or adjust later
-    const approvedData = activeTab === "approved" ? ((tabTasks as any) || []) : [];
-    const waitingData = activeTab === "waiting" ? ((tabTasks as any) || []) : [];
-    const delayData = activeTab === "delay" ? ((tabTasks as any) || []) : [];
+    const applyQueueSearch = (rows: any[]) => {
+        const q = projectQueueSearch.trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter((row: any) =>
+            String(row.company || "").toLowerCase().includes(q) ||
+            String(row.project || "").toLowerCase().includes(q)
+        );
+    };
+    const approvedData = activeTab === "approved" ? applyQueueSearch((tabTasks as any) || []) : [];
+    const waitingData = activeTab === "waiting" ? applyQueueSearch((tabTasks as any) || []) : [];
+    const delayData = activeTab === "delay" ? applyQueueSearch((tabTasks as any) || []) : [];
+    const activeQueueData = activeTab === "waiting" ? waitingData : activeTab === "delay" ? delayData : approvedData;
+    const queueTotalPages = Math.max(1, Math.ceil(activeQueueData.length / queuePageSize));
+    const currentQueuePage = Math.min(queuePage, queueTotalPages);
+    const pagedQueueData = activeQueueData.slice(
+        (currentQueuePage - 1) * queuePageSize,
+        currentQueuePage * queuePageSize,
+    );
 
     const dailyReportRows = (projectsList as any)?.map?.((p: any) => {
         const assignedTime = p.assigned_duration_minutes || 0;
+        // Real remaining allotted time: assigned duration minus minutes actually
+        // logged against this project's tasks (was previously hardcoded "0 hrs").
+        const spentMinutes = p.spent_minutes || 0;
+        const freeMinutes = Math.max(0, assignedTime - spentMinutes);
         return {
             company: p.name,
             project: p.description || "N/A",
             status: p.current_phase || p.status,
             statusColor: p.status === "OnHold" ? "rose" : p.status === "Active" ? "amber" : "emerald",
-            freeTime: "0 hrs",
+            freeTime: `${freeMinutes} mins`,
             freeTimeSub: null,
             totalSpent: `${assignedTime} mins`,
             totalSpentColor: assignedTime > 0 ? "emerald" : "slate"
@@ -386,6 +412,16 @@ export default function DDManagerDashboard() {
                     </div>
                     
                     <div className="flex items-center gap-3">
+                        <Select value={hubPeriod} onValueChange={setHubPeriod}>
+                            <SelectTrigger className="h-9 w-[100px] rounded-xl text-[12px] font-bold">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="TD">Today</SelectItem>
+                                <SelectItem value="WC">This Week</SelectItem>
+                                <SelectItem value="MN">This Month</SelectItem>
+                            </SelectContent>
+                        </Select>
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 shadow-sm">
                             <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                             <span className="text-[10px] font-bold tracking-wider uppercase">System Live</span>
@@ -449,7 +485,7 @@ export default function DDManagerDashboard() {
                                     ].map((tab) => (
                                         <button
                                             key={tab.id}
-                                            onClick={() => setActiveTab(tab.id)}
+                                            onClick={() => { setActiveTab(tab.id); setQueuePage(1); }}
                                             className={cn(
                                                 "px-6 py-2 rounded-lg text-[12px] font-bold transition-all duration-300",
                                                 activeTab === tab.id 
@@ -468,16 +504,22 @@ export default function DDManagerDashboard() {
                                 <div className="flex items-center gap-6">
                                     <div className="flex items-center gap-2">
                                         <span className="text-[12px] font-bold text-muted-foreground uppercase tracking-widest">Rows</span>
-                                        <select className="bg-transparent border-none text-primary font-bold focus:ring-0 cursor-pointer text-[12px]">
-                                            <option>10</option>
-                                            <option>25</option>
+                                        <select
+                                            value={queuePageSize}
+                                            onChange={(e) => { setQueuePageSize(Number(e.target.value)); setQueuePage(1); }}
+                                            className="bg-transparent border-none text-primary font-bold focus:ring-0 cursor-pointer text-[12px]"
+                                        >
+                                            <option value={10}>10</option>
+                                            <option value={25}>25</option>
                                         </select>
                                     </div>
                                 </div>
                                 <div className="relative group">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                                    <input 
+                                    <input
                                         placeholder="Instant Search..."
+                                        value={projectQueueSearch}
+                                        onChange={(e) => { setProjectQueueSearch(e.target.value); setQueuePage(1); }}
                                         className="bg-card border border-border rounded-full py-1.5 pl-9 pr-4 text-[12px] focus:outline-none focus:ring-2 focus:ring-primary/20 w-64 transition-all"
                                     />
                                 </div>
@@ -501,9 +543,9 @@ export default function DDManagerDashboard() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {(activeTab === "waiting" ? waitingData : activeTab === "delay" ? delayData : approvedData).length > 0 ? (activeTab === "waiting" ? waitingData : activeTab === "delay" ? delayData : approvedData).map((row: any, i: number) => (
+                                    {pagedQueueData.length > 0 ? pagedQueueData.map((row: any, i: number) => (
                                         <TableRow key={i} className="group border-b border-border/50 hover:bg-muted/30 transition-colors">
-                                            <TableCell className="text-[12px] font-bold text-muted-foreground py-6 pl-8">{i + 1}</TableCell>
+                                            <TableCell className="text-[12px] font-bold text-muted-foreground py-6 pl-8">{row.projectNumber ? `#${row.projectNumber}` : i + 1}</TableCell>
                                             <TableCell className="py-6">
                                                 <div className="flex flex-col">
                                                     <span className="text-[12px] font-bold text-foreground group-hover:text-primary transition-colors">{row.company}</span>
@@ -590,6 +632,33 @@ export default function DDManagerDashboard() {
                                 </TableBody>
                             </Table>
                         </div>
+                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t border-border/50">
+                            <span className="text-[12px] font-bold text-muted-foreground">
+                                {activeQueueData.length === 0
+                                    ? "Showing 0 entries"
+                                    : `Showing ${(currentQueuePage - 1) * queuePageSize + 1} to ${Math.min(currentQueuePage * queuePageSize, activeQueueData.length)} of ${activeQueueData.length}`}
+                            </span>
+                            <div className="flex gap-2">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-[12px] px-3"
+                                    disabled={currentQueuePage <= 1}
+                                    onClick={() => setQueuePage((p) => Math.max(1, p - 1))}
+                                >
+                                    Previous
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-[12px] px-3"
+                                    disabled={currentQueuePage >= queueTotalPages}
+                                    onClick={() => setQueuePage((p) => Math.min(queueTotalPages, p + 1))}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -602,22 +671,62 @@ export default function DDManagerDashboard() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="p-6">
-                            <div className="space-y-6">
-                                {usersPerformance && Array.isArray(usersPerformance) ? usersPerformance.map((user: any, i: number) => (
-                                    <div key={user.id || i} className="group">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 dark:border-zinc-800 dark:bg-zinc-900">
-                                                    <User className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+                            {(() => {
+                                const perfList = Array.isArray(usersPerformance) ? usersPerformance : [];
+                                const perfTotalPages = Math.max(1, Math.ceil(perfList.length / PERF_PAGE_SIZE));
+                                const currentPerfPage = Math.min(perfPage, perfTotalPages);
+                                const pagedPerf = perfList.slice(
+                                    (currentPerfPage - 1) * PERF_PAGE_SIZE,
+                                    currentPerfPage * PERF_PAGE_SIZE,
+                                );
+                                return (
+                                    <>
+                                        <div className="space-y-6">
+                                            {pagedPerf.map((user: any, i: number) => (
+                                                <div key={user.id || i} className="group">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200 dark:border-zinc-800 dark:bg-zinc-900">
+                                                                <User className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+                                                            </div>
+                                                            <span className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">{user.name}</span>
+                                                            <span className="text-[10px] text-slate-400 ml-2">({user.time} hrs assigned)</span>
+                                                        </div>
+                                                        <span className="text-[12px] font-black text-primary tabular-nums">{user.percentage}%</span>
+                                                    </div>
                                                 </div>
-                                                <span className="text-[12px] font-bold text-slate-700 dark:text-zinc-400">{user.name}</span>
-                                                <span className="text-[10px] text-slate-400 ml-2">({user.time} hrs assigned)</span>
-                                            </div>
-                                            <span className="text-[12px] font-black text-primary tabular-nums">{user.percentage}%</span>
+                                            ))}
                                         </div>
-                                    </div>
-                                )) : null}
-                            </div>
+                                        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-6 mt-2 border-t border-border/50">
+                                            <span className="text-[12px] font-bold text-muted-foreground">
+                                                {perfList.length === 0
+                                                    ? "Showing 0 entries"
+                                                    : `Showing ${(currentPerfPage - 1) * PERF_PAGE_SIZE + 1} to ${Math.min(currentPerfPage * PERF_PAGE_SIZE, perfList.length)} of ${perfList.length}`}
+                                            </span>
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 text-[12px] px-3"
+                                                    disabled={currentPerfPage <= 1}
+                                                    onClick={() => setPerfPage((p) => Math.max(1, p - 1))}
+                                                >
+                                                    Previous
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8 text-[12px] px-3"
+                                                    disabled={currentPerfPage >= perfTotalPages}
+                                                    onClick={() => setPerfPage((p) => Math.min(perfTotalPages, p + 1))}
+                                                >
+                                                    Next
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </>
+                                );
+                            })()}
                         </CardContent>
                     </Card>
 
@@ -629,6 +738,24 @@ export default function DDManagerDashboard() {
                                 Daily Report
                             </CardTitle>
                         </CardHeader>
+                        {/* Daily Report Summary: real recorded login time (Attendance check-in)
+                            and real free minutes today, not the browser clock / a hardcoded 0. */}
+                        <div className="px-6 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1 bg-muted/5 border-b border-border/50 text-[12px]">
+                            <div className="flex items-center gap-1.5">
+                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="font-bold text-muted-foreground">Login Time:</span>
+                                <span className="font-bold text-foreground">
+                                    {isMyReportLoading ? "…" : ((myReport as any)?.loginTime || "Not Marked")}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="font-bold text-muted-foreground">Free Today:</span>
+                                <span className="font-bold text-foreground">
+                                    {isMyReportLoading ? "…" : `${(myReport as any)?.totalFreeMinutes ?? 0} mins`}
+                                </span>
+                            </div>
+                        </div>
                         <CardContent className="p-0">
                             <div className="border border-slate-50 rounded-[8px] overflow-hidden dark:border-zinc-800">
                                 <Table>
@@ -803,7 +930,7 @@ export default function DDManagerDashboard() {
                                             <ProjectOverviewItem icon={FileBarChart2} label="Overall Report" onClick={() => setLocation("/reports")} />
                                             <ProjectOverviewItem icon={ShieldCheck} label="Lead" onClick={() => setLocation("/sales/lead-pools")} />
                                             <ProjectOverviewItem icon={Settings} label="Training" onClick={() => setLocation("/training")} />
-                                            <ProjectOverviewItem icon={Briefcase} label="Complete Project D&D P&P" footer onClick={() => setLocation("/pms/task-history")} />
+                                            <ProjectOverviewItem icon={Briefcase} label="Complete Project D&D P&P" footer pulse onClick={() => setLocation("/pms/task-history")} />
                                         </div>
                                     </div>
                                 </div>
@@ -842,25 +969,25 @@ export default function DDManagerDashboard() {
                             <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <button onClick={() => setLocation("/drm/delay-project")} className="flex flex-1 justify-between text-[12px] text-left">
                                     <span className="text-gray-600 font-medium dark:text-zinc-300">Delay Projects</span>
-                                    <span className="text-gray-900 font-bold dark:text-zinc-100">0</span>
+                                    <span className="text-gray-900 font-bold dark:text-zinc-100">{(summaryStats as any)?.delayProjects?.toString() || "0"}</span>
                                 </button>
                             </div>
                             <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <button onClick={() => setLocation("/pms/approvals")} className="flex flex-1 justify-between text-[12px] text-left">
                                     <span className="text-gray-600 font-medium dark:text-zinc-300">Qa Verification</span>
-                                    <span className="text-gray-900 font-bold dark:text-zinc-100">0</span>
+                                    <span className="text-gray-900 font-bold dark:text-zinc-100">{(summaryStats as any)?.qaVerification?.toString() || "0"}</span>
                                 </button>
                             </div>
                             <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <button onClick={() => setLocation("/pms/approvals")} className="flex flex-1 justify-between text-[12px] text-left">
                                     <span className="text-gray-600 font-medium dark:text-zinc-300">Dep Verification</span>
-                                    <span className="text-gray-900 font-bold dark:text-zinc-100">0</span>
+                                    <span className="text-gray-900 font-bold dark:text-zinc-100">{(summaryStats as any)?.depVerification?.toString() || "0"}</span>
                                 </button>
                             </div>
                             <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <button onClick={() => setLocation("/hr/leave-request")} className="flex flex-1 justify-between text-[12px] text-left">
                                     <span className="text-gray-600 font-medium dark:text-zinc-300">Leave App</span>
-                                    <span className="text-gray-900 font-bold dark:text-zinc-100">0</span>
+                                    <span className="text-gray-900 font-bold dark:text-zinc-100">{(summaryStats as any)?.leaveApplication?.toString() || "0"}</span>
                                 </button>
                             </div>
                         </div>
@@ -914,7 +1041,7 @@ export default function DDManagerDashboard() {
                         </CardHeader>
                         <CardContent className="p-0">
                             <Table>
-                                <TableHeader className="bg-slate-50/50">
+                                <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
                                     <TableRow className="hover:bg-transparent">
                                         <TableHead className="text-[11px] font-black text-slate-500 uppercase tracking-widest pl-6 dark:text-zinc-400">Name</TableHead>
                                         <TableHead className="text-[11px] font-black text-slate-500 uppercase tracking-widest dark:text-zinc-400">Task</TableHead>
@@ -965,12 +1092,12 @@ export default function DDManagerDashboard() {
 
             {/* Verification & Approval Modal */}
             <Dialog open={verifyDocModalOpen} onOpenChange={setVerifyDocModalOpen}>
-                <DialogContent className="max-w-[1100px] p-0 overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
-                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30">
+                <DialogContent className="max-w-[1100px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30 flex-shrink-0">
                         <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">PROJECTS OVERVIEW</DialogTitle>
                     </div>
-                    
-                    <div className="p-8 pb-10">
+
+                    <div className="p-8 pb-10 overflow-y-auto">
                         {selectedDoc && (
                             <div className="grid grid-cols-1 lg:grid-cols-[1.8fr,1fr] gap-16">
                                 {/* Left Side: Details */}
@@ -1415,26 +1542,27 @@ function CategoryHeader({ label }: { label: string }) {
     );
 }
 
-function ProjectOverviewItem({ icon: Icon, label, active, footer, iconColor, onClick }: { icon: any, label: string, active?: boolean, footer?: boolean, iconColor?: string, onClick?: () => void }) {
+function ProjectOverviewItem({ icon: Icon, label, active, footer, iconColor, onClick, pulse }: { icon: any, label: string, active?: boolean, footer?: boolean, iconColor?: string, onClick?: () => void, pulse?: boolean }) {
     return (
         <div
             onClick={onClick}
             className={cn(
                 "flex items-center justify-between p-2 rounded-lg border transition-all cursor-pointer group",
-                active ? "bg-emerald-50 border-emerald-100/50" :
-                    footer ? "bg-emerald-50 border-emerald-100/50 mt-4" :
-                        "bg-card border-border/50 hover:bg-muted/50 hover:border-border"
+                active ? "bg-emerald-50 border-emerald-100/50 dark:bg-emerald-950/40 dark:border-emerald-900/50" :
+                    footer ? "bg-emerald-50 border-emerald-100/50 mt-4 dark:bg-emerald-950/40 dark:border-emerald-900/50" :
+                        "bg-card border-border/50 hover:bg-muted/50 hover:border-border",
+                pulse && "animate-pulse ring-2 ring-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
             )}>
             <div className="flex items-center gap-3">
                 <div className={cn(
                     "p-1.5 rounded-md",
-                    active ? "text-emerald-600 bg-emerald-100/50" : (iconColor || "text-muted-foreground/60 bg-muted/30")
+                    active ? "text-emerald-600 bg-emerald-100/50 dark:text-emerald-400 dark:bg-emerald-900/40" : (iconColor || "text-muted-foreground/60 bg-muted/30")
                 )}>
                     <Icon className="h-3.5 w-3.5" />
                 </div>
                 <span className={cn(
                     "text-xs font-bold tracking-tight",
-                    active ? "text-emerald-700" : "text-foreground"
+                    active ? "text-emerald-700 dark:text-emerald-400" : "text-foreground"
                 )}>
                     {label}
                 </span>

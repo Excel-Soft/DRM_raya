@@ -154,11 +154,16 @@ export function VerificationManagerWidget() {
     // (/api/product-posting/verification/queue), which the QA review transition
     // populates server-side.
 
+    // pms-routes.ts's period convention spells "this week" as "WC", not the
+    // "WK" this widget's own dropdown uses — remap so the real endpoint gets
+    // a value it understands.
+    const statsPeriod = sellingPeriod === "WK" ? "WC" : sellingPeriod;
+
     // Queries (Reusing existing endpoints where possible for dynamic feel)
     const { data: pmsStats } = useQuery({
-        queryKey: ["/api/pms/stats"],
+        queryKey: ["/api/pms/stats", statsPeriod],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/pms/stats");
+            const res = await apiRequest("GET", `/api/pms/stats?period=${statsPeriod}`);
             return res.json();
         }
     });
@@ -167,6 +172,63 @@ export function VerificationManagerWidget() {
         queryKey: ["/api/product-posting/verification/queue"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/product-posting/verification/queue");
+            return res.json();
+        }
+    });
+
+    // Distinct projects that have ever reached Verification — not /api/pms/stats'
+    // system-wide count, which includes every department regardless of this.
+    const { data: verificationStatsData } = useQuery({
+        queryKey: ["/api/product-posting/verification/stats", statsPeriod],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/product-posting/verification/stats?period=${statsPeriod}`);
+            return res.json();
+        }
+    });
+
+    // Real Project Details (packageName, phone, address, etc.) for the "Projects Overview" dialog
+    const detailProjectId = detailProject?.raw?.projectId;
+    const { data: detailsResponse } = useQuery({
+        queryKey: ["project-details", detailProjectId],
+        enabled: !!detailProjectId && isDetailDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/projects/${detailProjectId}/details`);
+            return res.json();
+        }
+    });
+    const projectDetails = detailsResponse?.data;
+
+    // Real attached documents for the same dialog (replaces the dummy blob download)
+    const { data: projectDocsResponse } = useQuery({
+        queryKey: ["project-docs", detailProjectId],
+        enabled: !!detailProjectId && isDetailDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/projects/${detailProjectId}/documents`);
+            return res.json();
+        }
+    });
+    const attachedDocuments = projectDocsResponse?.data || [];
+
+    // Real "Important" sidebar counts
+    const { data: hodImportantStats } = useQuery({
+        queryKey: ["/api/hod/dashboard/important-stats"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/hod/dashboard/important-stats");
+            return res.json();
+        }
+    });
+    const { data: noticesData } = useQuery({
+        queryKey: ["/api/notice-board"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/notice-board");
+            return res.json();
+        }
+    });
+    const { data: supportTicketsData } = useQuery({
+        queryKey: ["/api/support/tickets"],
+        enabled: isSupportModuleEnabled(),
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/support/tickets");
             return res.json();
         }
     });
@@ -255,7 +317,7 @@ export function VerificationManagerWidget() {
                         </div>
                         <div className="flex gap-4 flex-wrap">
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("today")}>
-                                <StatCard label="Total Project" icon={Users} value={pmsStats?.projects?.total ?? 0} />
+                                <StatCard label="Total Project" icon={Users} value={verificationStatsData?.total ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("pending")}>
                                 <StatCard label="Pending Verification" icon={RefreshCw} value={verificationRows.length || "0"} />
@@ -440,18 +502,25 @@ export function VerificationManagerWidget() {
                         <div className="space-y-2">
                             <button onClick={() => setLocation("/drm/delay-projects-new")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Delay Projects</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">416</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">{hodImportantStats?.data?.delayProjects ?? 0}</span>
                             </button>
                             <button onClick={() => setLocation("/drm/online-form")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Notice</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">0</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">
+                                    {Array.isArray(noticesData) ? noticesData.filter((n: any) => n.status === "Active").length : 0}
+                                </span>
                             </button>
                             {isSupportModuleEnabled() && (
                             <button onClick={() => setLocation("/support/complaints")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Complaints</span>
-                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">51(10200)</span>
+                                <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">
+                                    {Array.isArray(supportTicketsData) ? supportTicketsData.filter((t: any) => t.status === "Open" || t.status === "InProgress").length : 0}
+                                </span>
                             </button>
                             )}
+                            {/* NOTE: "Event" has no backing entity anywhere in the schema (no events table/endpoint exists in this codebase),
+                                unlike Delay Projects/Notice/Complaints above which now read real data. Left as the pre-existing
+                                placeholder pending a decision on what "Event" should actually count. */}
                             <button onClick={() => setLocation("/training")} className="w-full flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0 hover:opacity-80 transition-opacity dark:border-zinc-800">
                                 <span className="text-gray-600 font-medium text-[13px] dark:text-zinc-300">Event</span>
                                 <span className="text-gray-900 font-bold text-[13px] dark:text-zinc-100">99</span>
@@ -568,7 +637,7 @@ export function VerificationManagerWidget() {
                                     <Input
                                         readOnly
                                         value={selectedProject?.company || ""}
-                                        className="bg-gray-50/50 border-gray-200 text-gray-700 h-10 dark:border-zinc-800 dark:text-zinc-400"
+                                        className="bg-gray-50/50 dark:bg-zinc-900 border-gray-200 text-gray-700 h-10 dark:border-zinc-800 dark:text-zinc-400"
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -576,7 +645,7 @@ export function VerificationManagerWidget() {
                                     <Input
                                         readOnly
                                         value={selectedProject?.project || ""}
-                                        className="bg-gray-50/50 border-gray-200 text-gray-700 h-10 dark:border-zinc-800 dark:text-zinc-400"
+                                        className="bg-gray-50/50 dark:bg-zinc-900 border-gray-200 text-gray-700 h-10 dark:border-zinc-800 dark:text-zinc-400"
                                     />
                                 </div>
                             </div>
@@ -739,12 +808,12 @@ export function VerificationManagerWidget() {
 
                 {/* Projects Overview Dialog */}
                 <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
-                    <DialogContent className="max-w-[1000px] p-0 overflow-hidden border-none shadow-2xl bg-white rounded-xl dark:bg-zinc-900">
-                        <DialogHeader className="bg-white px-8 py-5 flex flex-row items-center justify-between border-b dark:bg-zinc-900">
+                    <DialogContent className="max-w-[1000px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none shadow-2xl bg-white rounded-xl dark:bg-zinc-900">
+                        <DialogHeader className="bg-white px-8 py-5 flex flex-row items-center justify-between border-b dark:bg-zinc-900 flex-shrink-0">
                             <DialogTitle className="text-[20px] font-bold text-gray-800 uppercase tracking-wide dark:text-zinc-100">Projects Verification Detail</DialogTitle>
                         </DialogHeader>
 
-                        <div className="p-8 grid grid-cols-1 lg:grid-cols-[2fr,1fr] gap-10">
+                        <div className="p-8 grid grid-cols-1 lg:grid-cols-[2fr,1fr] gap-10 overflow-y-auto">
                             {/* Left Side: Summary & Details */}
                             <div className="space-y-8">
                                 <div className="flex items-start justify-between">
@@ -753,15 +822,22 @@ export function VerificationManagerWidget() {
                                             <Briefcase className="h-9 w-9 text-white" />
                                         </div>
                                         <div>
-                                            <h3 className="text-[22px] font-bold text-gray-900 uppercase leading-tight dark:text-zinc-100">{detailProject?.company || "SAMPLE COMPANY"}</h3>
-                                            <p className="text-[15px] text-gray-500 font-medium dark:text-zinc-400">{detailProject?.tasker || "Sample Tasker"}</p>
+                                            <h3 className="text-[22px] font-bold text-gray-900 uppercase leading-tight dark:text-zinc-100">{projectDetails?.project?.companyName || detailProject?.company || "N/A"}</h3>
+                                            <p className="text-[15px] text-gray-500 font-medium dark:text-zinc-400">{detailProject?.tasker || "N/A"}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-start gap-2 pt-1">
                                         <Calendar className="h-5 w-5 text-[#00a65a] dark:text-zinc-400" />
                                         <div className="text-right">
                                             <p className="text-[14px] font-bold text-gray-700 dark:text-zinc-400">Upload Date</p>
-                                            <p className="text-[13px] text-gray-500 whitespace-nowrap dark:text-zinc-400">{detailProject?.time ? `26 Jan 2026 ${detailProject.time}` : "26 Jan 2026 05:57 PM"}</p>
+                                            <p className="text-[13px] text-gray-500 whitespace-nowrap dark:text-zinc-400">
+                                                {(() => {
+                                                    const rawDate = projectDetails?.createdAt || projectDetails?.project?.createdAt || detailProject?.raw?.createdAt;
+                                                    if (!rawDate) return "N/A";
+                                                    const d = new Date(rawDate);
+                                                    return isNaN(d.getTime()) ? "N/A" : d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true });
+                                                })()}
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
@@ -769,16 +845,16 @@ export function VerificationManagerWidget() {
                                 <div className="space-y-5 pt-4">
                                     <h4 className="text-[18px] font-bold text-gray-800 border-b pb-2 dark:text-zinc-100">Project Details :</h4>
                                     <div className="grid gap-3">
-                                        <DetailRow label="Product_detail_add" value="9544" />
-                                        <DetailRow label="Company" value={detailProject?.company || "Sample Company"} />
-                                        <DetailRow label="Package" value="Basic Plus" />
-                                        <DetailRow label="Web_url" value="" />
-                                        <DetailRow label="Phone" value="03216129190" />
-                                        <DetailRow label="Mobile" value="03216129190" />
-                                        <DetailRow label="Address" value="" />
-                                        <DetailRow label="Referance_web" value="" />
-                                        <DetailRow label="Categories" value="" />
-                                        <DetailRow label="Detail" value="" />
+                                        <DetailRow label="Product_detail_add" value={projectDetails?.project?.id ? projectDetails.project.id.slice(0, 8) : "N/A"} />
+                                        <DetailRow label="Company" value={projectDetails?.project?.companyName || detailProject?.company || "N/A"} />
+                                        <DetailRow label="Package" value={projectDetails?.packageName || "N/A"} />
+                                        <DetailRow label="Web_url" value={projectDetails?.minisiteUrl || "N/A"} />
+                                        <DetailRow label="Phone" value={projectDetails?.phone || "N/A"} />
+                                        <DetailRow label="Mobile" value={projectDetails?.mobile || "N/A"} />
+                                        <DetailRow label="Address" value={projectDetails?.address || "N/A"} />
+                                        <DetailRow label="Referance_web" value={projectDetails?.reference || "N/A"} />
+                                        <DetailRow label="Categories" value={projectDetails?.categories || "N/A"} />
+                                        <DetailRow label="Detail" value={projectDetails?.detailNotes || "N/A"} />
                                     </div>
                                 </div>
                             </div>
@@ -789,35 +865,55 @@ export function VerificationManagerWidget() {
                                     Attached Files
                                 </h4>
                                 <div className="space-y-4">
-                                    <div
-                                        onClick={() => {
-                                            // Simulate a real file download
-                                            const content = "Project Data for " + (detailProject?.company || "Sample Company");
-                                            const blob = new Blob([content], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-                                            const url = URL.createObjectURL(blob);
-                                            const link = document.createElement('a');
-                                            link.href = url;
-                                            link.setAttribute('download', 'Data.xlsx');
-                                            document.body.appendChild(link);
-                                            link.click();
-                                            document.body.removeChild(link);
-                                            URL.revokeObjectURL(url);
-                                        }}
-                                        className="flex items-center justify-between p-4 bg-white rounded-lg border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer dark:bg-zinc-900"
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
-                                                <FileText className="h-6 w-6" />
+                                    {attachedDocuments.length > 0 ? (
+                                        attachedDocuments.map((doc: any) => (
+                                            <a
+                                                key={doc.id}
+                                                href={doc.documentUrl || projectDetails?.evidenceUrl || "#"}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                download
+                                                className="flex items-center justify-between p-4 bg-white rounded-lg border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900"
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
+                                                        <FileText className="h-6 w-6" />
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-[14px] font-bold text-gray-800 dark:text-zinc-100">
+                                                            {doc.documentUrl ? doc.documentUrl.split('/').pop() : "Document"}
+                                                        </p>
+                                                        <p className="text-[12px] text-gray-500 dark:text-zinc-400">Status: {doc.status || "N/A"}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="p-2 text-gray-400 group-hover:text-[#00a65a] transition-colors">
+                                                    <Download className="h-5 w-5" />
+                                                </div>
+                                            </a>
+                                        ))
+                                    ) : projectDetails?.evidenceUrl ? (
+                                        <a
+                                            href={projectDetails.evidenceUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            download
+                                            className="flex items-center justify-between p-4 bg-white rounded-lg border shadow-sm group hover:border-[#00a65a] transition-all cursor-pointer no-underline dark:bg-zinc-900"
+                                        >
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center">
+                                                    <FileText className="h-6 w-6" />
+                                                </div>
+                                                <p className="text-[14px] font-bold text-gray-800 dark:text-zinc-100">Evidence File</p>
                                             </div>
-                                            <div>
-                                                <p className="text-[14px] font-bold text-gray-800 dark:text-zinc-100">Data.xlsx</p>
-                                                <p className="text-[12px] text-gray-500 dark:text-zinc-400">Size : 133 KB</p>
+                                            <div className="p-2 text-gray-400 group-hover:text-[#00a65a] transition-colors">
+                                                <Download className="h-5 w-5" />
                                             </div>
+                                        </a>
+                                    ) : (
+                                        <div className="py-6 text-center text-gray-400 italic text-[13px]">
+                                            No attached files uploaded yet.
                                         </div>
-                                        <div className="p-2 text-gray-400 group-hover:text-[#00a65a] transition-colors">
-                                            <Download className="h-5 w-5" />
-                                        </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

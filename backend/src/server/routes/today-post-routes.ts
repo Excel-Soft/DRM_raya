@@ -13,12 +13,68 @@
  * Cross-scope mutation returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
+import { z } from "zod";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
+import { safePage, safePageSize } from "./utils/sql-safety";
+import { ensureSocialAccountsTable } from "./social-accounts-routes";
+
+const TODAY_POST_STATUSES = ["pending", "completed"] as const;
+
+// Phase 3 — z.string().url() only checks the value parses as SOME URL; it does
+// NOT reject non-http(s) schemes (the JS URL constructor happily parses
+// "javascript:alert(1)"). Enforce http(s) explicitly.
+const httpUrl = z
+  .string()
+  .trim()
+  .url("post_url must be a valid http(s) URL")
+  .refine((v) => /^https?:\/\//i.test(v), "post_url must be a valid http(s) URL");
+
+const createTodayPostSchema = z.object({
+  platform: z.string().trim().min(1, "platform is required"),
+  postUrl: httpUrl,
+  entity: z.string().trim().nullable().optional(),
+  title: z.string().trim().nullable().optional(),
+  customerId: z.string().trim().nullable().optional(),
+  projectId: z.string().trim().nullable().optional(),
+  socialAccountId: z.string().trim().nullable().optional(),
+  notes: z.string().trim().nullable().optional(),
+  status: z.enum(TODAY_POST_STATUSES).optional().default("pending"),
+}).strict();
+
+const patchTodayPostSchema = z.object({
+  platform: z.string().trim().min(1, "platform cannot be empty").optional(),
+  postUrl: z.union([httpUrl, z.literal("")]).optional(),
+  entity: z.string().trim().nullable().optional(),
+  title: z.string().trim().nullable().optional(),
+  customerId: z.string().trim().nullable().optional(),
+  projectId: z.string().trim().nullable().optional(),
+  socialAccountId: z.string().trim().nullable().optional(),
+  notes: z.string().trim().nullable().optional(),
+  status: z.enum(TODAY_POST_STATUSES).optional(),
+}).strict();
+
+function parseBody<T extends z.ZodTypeAny>(
+  res: Response,
+  schema: T,
+  body: unknown,
+): z.infer<T> | null {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    res.status(400).json({
+      error: "BadRequest",
+      message: result.error.errors[0]?.message ?? "Invalid request body",
+      details: result.error.errors,
+    });
+    return null;
+  }
+  return result.data;
+}
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
+
 
 function getUserId(req: Request): string | undefined {
   return (req.user as any)?.userId || (req.user as any)?.id;
@@ -141,6 +197,28 @@ export async function ensureTodayPostsTable(): Promise<void> {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS today_posts_created_at_idx ON drm.today_posts (created_at)`,
   );
+
+  // Phase 11 — social_account_id had no FK, unlike its social_media_posts
+  // counterpart. drm.social_accounts must exist first (this module registers
+  // before social-accounts-routes in server/routes.ts).
+  await ensureSocialAccountsTable();
+  await pool.query(`
+    UPDATE drm.today_posts SET social_account_id = NULL
+     WHERE social_account_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM drm.social_accounts sa WHERE sa.id = today_posts.social_account_id)
+  `);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'today_posts_social_account_id_fkey'
+      ) THEN
+        ALTER TABLE drm.today_posts
+          ADD CONSTRAINT today_posts_social_account_id_fkey
+          FOREIGN KEY (social_account_id) REFERENCES drm.social_accounts(id) ON DELETE SET NULL;
+      END IF;
+    END $$;
+  `);
 }
 
 const SELECT_COLUMNS = `
@@ -180,8 +258,8 @@ export async function registerTodayPostRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-      const page = Number(req.query.page ?? 1) || 1;
-      const pageSize = Number(req.query.pageSize ?? 25) || 25;
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 25, 100);
       const offset = (page - 1) * pageSize;
 
       const where: string[] = ["tp.deleted_at IS NULL"];
@@ -255,22 +333,12 @@ export async function registerTodayPostRoutes(app: Express) {
   app.post("/api/drm/today-posts", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-      const b = req.body ?? {};
 
-      const platform = String(b.platform ?? "").trim();
-      const postUrl = String(b.postUrl ?? b.post_url ?? "").trim();
-
-      if (!platform) return badRequest(res, "platform is required");
-      if (!postUrl) return badRequest(res, "post_url is required");
-      if (!isHttpUrl(postUrl)) return badRequest(res, "post_url must be a valid http(s) URL");
-
-      const status = String(b.status ?? "pending").toLowerCase();
-      if (!["pending", "completed"].includes(status)) {
-        return badRequest(res, "status must be pending or completed");
-      }
+      const b = parseBody(res, createTodayPostSchema, req.body);
+      if (!b) return;
 
       const postedBy = String(getUserId(req));
-      const completedAt = status === "completed" ? "now()" : null;
+      const completedAt = b.status === "completed" ? "now()" : null;
 
       const { rows } = await pool.query(
         `insert into drm.today_posts
@@ -280,15 +348,15 @@ export async function registerTodayPostRoutes(app: Express) {
            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), ${completedAt ? "now()" : "NULL"})
          returning id`,
         [
-          platform,
-          b.entity ? String(b.entity) : null,
-          postUrl,
-          b.title ? String(b.title) : null,
-          b.customerId ?? b.customer_id ?? null,
-          b.projectId ? String(b.projectId) : (b.project_id ? String(b.project_id) : null),
-          b.socialAccountId ?? b.social_account_id ?? null,
-          status,
-          b.notes ? String(b.notes) : null,
+          b.platform,
+          b.entity ?? null,
+          b.postUrl,
+          b.title ?? null,
+          b.customerId ?? null,
+          b.projectId ?? null,
+          b.socialAccountId ?? null,
+          b.status,
+          b.notes ?? null,
           postedBy,
         ],
       );
@@ -301,7 +369,7 @@ export async function registerTodayPostRoutes(app: Express) {
            where tp.id = $1`,
         [rows[0].id],
       );
-      await audit(req, "drm.today_post.create", rows[0]?.id, { platform, status });
+      await audit(req, "drm.today_post.create", rows[0]?.id, { platform: b.platform, status: b.status });
       res.status(201).json({ success: true, post: created.rows[0] });
     } catch (err) {
       console.error("[today-post] create error", err);
@@ -320,7 +388,9 @@ export async function registerTodayPostRoutes(app: Express) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this post" });
       }
 
-      const b = req.body ?? {};
+      const b = parseBody(res, patchTodayPostSchema, req.body);
+      if (!b) return;
+
       const sets: string[] = [];
       const params: any[] = [];
 
@@ -329,36 +399,20 @@ export async function registerTodayPostRoutes(app: Express) {
         sets.push(`${col} = $${params.length}`);
       };
 
-      if (b.platform !== undefined) {
-        if (!String(b.platform).trim()) return badRequest(res, "platform cannot be empty");
-        addSet("platform", String(b.platform).trim());
+      if (b.platform !== undefined) addSet("platform", b.platform);
+      if (b.entity !== undefined) addSet("entity", b.entity ?? null);
+      if (b.postUrl !== undefined) {
+        if (!b.postUrl) return badRequest(res, "post_url cannot be empty");
+        addSet("post_url", b.postUrl);
       }
-      if (b.entity !== undefined) addSet("entity", b.entity ? String(b.entity) : null);
-      if (b.postUrl !== undefined || b.post_url !== undefined) {
-        const newUrl = String(b.postUrl ?? b.post_url ?? "").trim();
-        if (!newUrl) return badRequest(res, "post_url cannot be empty");
-        if (!isHttpUrl(newUrl)) return badRequest(res, "post_url must be a valid http(s) URL");
-        addSet("post_url", newUrl);
-      }
-      if (b.title !== undefined) addSet("title", b.title ? String(b.title) : null);
-      if (b.customerId !== undefined || b.customer_id !== undefined) {
-        addSet("customer_id", b.customerId ?? b.customer_id ?? null);
-      }
-      if (b.projectId !== undefined || b.project_id !== undefined) {
-        const pid = b.projectId ?? b.project_id;
-        addSet("project_id", pid ? String(pid) : null);
-      }
-      if (b.socialAccountId !== undefined || b.social_account_id !== undefined) {
-        addSet("social_account_id", b.socialAccountId ?? b.social_account_id ?? null);
-      }
-      if (b.notes !== undefined) addSet("notes", b.notes ? String(b.notes) : null);
+      if (b.title !== undefined) addSet("title", b.title ?? null);
+      if (b.customerId !== undefined) addSet("customer_id", b.customerId ?? null);
+      if (b.projectId !== undefined) addSet("project_id", b.projectId ?? null);
+      if (b.socialAccountId !== undefined) addSet("social_account_id", b.socialAccountId ?? null);
+      if (b.notes !== undefined) addSet("notes", b.notes ?? null);
       if (b.status !== undefined) {
-        const status = String(b.status).toLowerCase();
-        if (!["pending", "completed"].includes(status)) {
-          return badRequest(res, "status must be pending or completed");
-        }
-        addSet("status", status);
-        sets.push(status === "completed" ? `completed_at = COALESCE(completed_at, now())` : `completed_at = NULL`);
+        addSet("status", b.status);
+        sets.push(b.status === "completed" ? `completed_at = COALESCE(completed_at, now())` : `completed_at = NULL`);
       }
 
       if (sets.length === 0) return badRequest(res, "No fields to update");

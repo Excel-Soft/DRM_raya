@@ -297,16 +297,16 @@ export default function CreateTarget() {
             <Table>
               <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                 <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black w-12 text-center">#</TableHead>
-                  <TableHead className="font-bold text-black text-center">Target Name</TableHead>
-                  <TableHead className="font-bold text-black text-center">Number</TableHead>
-                  <TableHead className="font-bold text-black text-center">Price</TableHead>
-                  <TableHead className="font-bold text-black text-center">Bonus</TableHead>
-                  <TableHead className="font-bold text-black text-center">Package</TableHead>
-                  <TableHead className="font-bold text-black text-center">Reward</TableHead>
-                  <TableHead className="font-bold text-black text-center">KWA</TableHead>
-                  <TableHead className="font-bold text-black text-center">VAS</TableHead>
-                  <TableHead className="font-bold text-black text-center">Create</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 w-12 text-center">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target Name</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Number</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Package</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">VAS</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Create</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

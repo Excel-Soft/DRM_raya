@@ -27,7 +27,7 @@ function parseDateRange(query: { from?: string; to?: string }): DateRange {
   return { from, to };
 }
 
-function getPeriodRange(periodRaw: string): DateRange {
+export function getPeriodRange(periodRaw: string): DateRange {
   const period = periodRaw?.toUpperCase() || "WC";
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -44,6 +44,12 @@ function getPeriodRange(periodRaw: string): DateRange {
     case "MC":
     case "MONTH":
       return { from: new Date(now.getFullYear(), now.getMonth(), 1), to: new Date() };
+    case "QC": {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      return { from: new Date(now.getFullYear(), quarterStartMonth, 1), to: new Date() };
+    }
+    case "YC":
+      return { from: new Date(now.getFullYear(), 0, 1), to: new Date() };
     case "LM":
       return { 
         from: new Date(now.getFullYear(), now.getMonth() - 1, 1), 

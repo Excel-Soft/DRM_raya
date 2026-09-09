@@ -12,9 +12,10 @@
  * Cross-scope mutation returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
+import { safePage, safePageSize } from "./utils/sql-safety";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -174,20 +175,37 @@ export async function registerPromotionRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-      const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-      const pageSize = Math.max(1, Number(req.query.pageSize ?? 25) || 25);
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 25, 100);
       const offset = (page - 1) * pageSize;
 
       const where: string[] = ["p.deleted_at IS NULL"];
       const params: any[] = [];
 
+      // scope=banner is an explicit opt-in used only by company-wide banner
+      // displays (e.g. the PromotionalBanner widget) — it also surfaces
+      // approved + active promotions from ANY creator, since that's the whole
+      // point of approving one. Every other caller (the HOD/manager promotion
+      // review queues, the admin promotion-management page) keeps the original
+      // strict creator/department scoping so unrelated departments' already-
+      // approved rows don't pollute what's meant to be a scoped review list.
+      const isBannerScope = req.query.scope === "banner";
       const allowed = await getAllowedCreatorIds(req);
       if (allowed !== null) {
         if (allowed.length === 0) {
-          return res.json({ data: [], total: 0, page, pageSize });
+          if (isBannerScope) {
+            where.push(`(p.status = 'approved' AND p.is_active = true)`);
+          } else {
+            return res.json({ data: [], total: 0, page, pageSize });
+          }
+        } else {
+          params.push(allowed);
+          if (isBannerScope) {
+            where.push(`(p.created_by::text = ANY($${params.length}::text[]) OR (p.status = 'approved' AND p.is_active = true))`);
+          } else {
+            where.push(`p.created_by::text = ANY($${params.length}::text[])`);
+          }
         }
-        params.push(allowed);
-        where.push(`p.created_by::text = ANY($${params.length}::text[])`);
       }
 
       if (req.query.search) {

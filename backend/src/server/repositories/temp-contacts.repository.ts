@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { tempContacts, customers, users, InsertTempContact, TempContact } from "@shared/schema";
-import { eq, desc, and, gte, sql, ilike, or } from "drizzle-orm";
+import { eq, desc, and, gte, sql, ilike, or, inArray } from "drizzle-orm";
 
 export const tempContactsRepository = {
   async create(data: InsertTempContact): Promise<TempContact> {
@@ -27,15 +27,15 @@ export const tempContactsRepository = {
   },
 
   async findAllWithFilters(filters: {
-    userId?: string;
+    userIds?: string[];
     status?: string;
     grade?: string;
     search?: string;
   }): Promise<TempContact[]> {
     const conditions = [];
-    
-    if (filters.userId) {
-      conditions.push(eq(tempContacts.userId, filters.userId));
+
+    if (filters.userIds) {
+      conditions.push(inArray(tempContacts.userId, filters.userIds));
     }
     if (filters.status) {
       conditions.push(eq(tempContacts.status, filters.status as "Pending" | "Promoted" | "Rejected"));
@@ -116,6 +116,37 @@ export const tempContactsRepository = {
       .where(and(eq(tempContacts.id, id), eq(tempContacts.userId, userId)))
       .returning();
     return result || null;
+  },
+
+  // Marks a temp contact as converted once its own Add Customer form has
+  // already created the real drm.customers record (lands in the converting
+  // user's Private Pool — that creation goes through the normal
+  // POST /api/sales/customers path, not this repository). Deliberately not
+  // scoped to the contact's original creator: a manager who can see another
+  // user's pending contact (findAllWithFilters already surfaces all of them
+  // to managers) must also be able to convert it.
+  async markConverted(
+    id: string,
+    customerId: string,
+    convertedByUserId: string,
+  ): Promise<TempContact | null | "already_processed"> {
+    const [contact] = await db.select().from(tempContacts).where(eq(tempContacts.id, id));
+    if (!contact) return null;
+    if (contact.status !== "Pending") return "already_processed";
+
+    const [updated] = await db
+      .update(tempContacts)
+      .set({
+        status: "Promoted",
+        promotedToCustomerId: customerId,
+        promotedAt: new Date(),
+        promotedByUserId: convertedByUserId,
+        updatedAt: new Date(),
+      })
+      .where(eq(tempContacts.id, id))
+      .returning();
+
+    return updated;
   },
 
   async reject(id: string, userId: string): Promise<TempContact | null> {

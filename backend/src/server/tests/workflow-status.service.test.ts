@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { transitionWorkflowStatus } from "../services/workflow-status.service";
-import { ApiError } from "../utils/api-error";
-import { pool } from "../db";
-import { ensureDbOnce } from "../db/ensure";
+import { transitionWorkflowStatus } from "./services/workflow-status.service";
+import { ApiError } from "./utils/api-error";
+import { pool } from "./db";
+import { ensureDbOnce } from "./db/ensure";
 import {
   WORKFLOW_ENTITY_TYPES,
   GM_WORKFLOW_STAGES,

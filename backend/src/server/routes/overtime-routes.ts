@@ -1,9 +1,14 @@
 import type { Express } from "express";
-import { overtimeRepository } from "../repositories/overtime.repository";
+import { overtimeRepository } from "./repositories/overtime.repository.js";
 import { insertOvertimeRecordSchema } from "@shared/schema";
-import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
-import { requireActionPermission } from "../middleware/action-permission";
-import { ActivityLogService } from "../services/activity-service";
+import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils.js";
+import { requireActionPermission } from "./middleware/action-permission.js";
+import { ActivityLogService } from "./services/activity-service.js";
+import { z } from "zod";
+
+const overtimeRejectSchema = z.object({
+  reason: z.string().trim().max(2000).optional()
+}).strict();
 
 // Resolve the caller's effective (active) role from the auth payload.
 function callerRole(req: any): string {
@@ -19,12 +24,12 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { normalizeRole } = await import("../utils/role-utils.js");
+      const { normalizeRole } = await import("./utils/role-utils.js");
       const { getDepartmentFilterUserIds } = await import("./dashboard-routes.js");
-      const { pool } = await import("../db.js");
+      const { pool } = await import("./db.js");
       const userRes = await pool.query("SELECT role FROM drm.users WHERE id = $1", [userId]);
       const dbRole = userRes.rows[0]?.role || req.user.roleId;
-      
+
       const role = normalizeRole(dbRole);
       const isManager = role.endsWith("_manager") || role.endsWith("_assistant_manager");
       const isGlobalAdmin = role === "super_admin" || role === "admin";
@@ -44,7 +49,7 @@ export function registerOvertimeRoutes(app: Express) {
           order by o.created_at desc`,
         [targetUserIds]
       );
-      
+
       res.json(result.rows);
     } catch (error) {
       console.error("Error fetching overtime records:", error);
@@ -79,7 +84,7 @@ export function registerOvertimeRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to view all overtime records." });
       }
-      const { pool } = await import("../db.js");
+      const { pool } = await import("./db.js");
       const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ORDER BY o.created_at DESC`);
       res.json(rows);
     } catch (error) { res.status(500).json({ error: "Failed" }); }
@@ -134,7 +139,7 @@ export function registerOvertimeRoutes(app: Express) {
 
       const userId = req.user.userId;
       const record = await overtimeRepository.findById(req.params.id);
-      
+
       if (!record) {
         return res.status(404).json({ error: "Overtime record not found" });
       }
@@ -163,19 +168,31 @@ export function registerOvertimeRoutes(app: Express) {
       if (targetUserId !== req.user.userId && !isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You can only submit overtime for yourself." });
       }
+      const { date, hours, reason, taskTitle, taskDetails } = req.body ?? {};
       const parseResult = insertOvertimeRecordSchema.safeParse({
-        ...req.body,
+        date,
+        hours,
+        reason,
+        taskTitle,
+        taskDetails,
         userId: targetUserId,
       });
 
       if (!parseResult.success) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: "Invalid request data",
           details: parseResult.error.errors,
         });
       }
 
       const record = await overtimeRepository.create(parseResult.data);
+      await ActivityLogService.log({
+        userId: req.user.userId,
+        action: "OVERTIME_CREATED",
+        resourceType: "overtime_record",
+        resourceId: record.id,
+        details: `Created for user ${targetUserId}. Hours: ${record.timeSpent}`,
+      });
       res.status(201).json(record);
     } catch (error) {
       console.error("Error creating overtime record:", error);
@@ -191,8 +208,8 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { normalizeRole } = await import("../utils/role-utils.js");
-      const { pool } = await import("../db.js");
+      const { normalizeRole } = await import("./utils/role-utils.js");
+      const { pool } = await import("./db.js");
       const userRes = await pool.query("SELECT role FROM drm.users WHERE id = $1", [userId]);
       const dbRole = userRes.rows[0]?.role || req.user.roleId;
 
@@ -202,21 +219,29 @@ export function registerOvertimeRoutes(app: Express) {
 
       let allowedUserIds = [userId];
       if (isGlobalAdmin || isManager) {
-         allowedUserIds = []; // empty means all
+        allowedUserIds = []; // empty means all
       }
 
       const existing = await overtimeRepository.findById(req.params.id);
       if (!existing || existing.status !== "Pending") {
-        return res.status(400).json({ 
-          error: "Cannot delete this record. It may not exist or is no longer pending." 
+        return res.status(400).json({
+          error: "Cannot delete this record. It may not exist or is no longer pending."
         });
       }
 
       if (!isGlobalAdmin && !allowedUserIds.includes(existing.userId)) {
-         return res.status(403).json({ error: "Not authorized to delete this record" });
+        return res.status(403).json({ error: "Not authorized to delete this record" });
       }
 
       await pool.query(`delete from drm.overtime_records where id = $1`, [req.params.id]);
+
+      await ActivityLogService.log({
+        userId,
+        action: "OVERTIME_DELETED",
+        resourceType: "overtime_record",
+        resourceId: req.params.id,
+        details: `Deleted by user`,
+      });
 
       res.json({ message: "Overtime record deleted successfully" });
     } catch (error) {
@@ -247,10 +272,10 @@ export function registerOvertimeRoutes(app: Express) {
         return res.status(403).json({ error: "You cannot approve your own overtime record." });
       }
       const record = await overtimeRepository.approve(req.params.id, userId);
-      
+
       if (!record) {
-        return res.status(400).json({ 
-          error: "Cannot approve this record. It may not exist or is no longer pending." 
+        return res.status(400).json({
+          error: "Cannot approve this record. It may not exist or is no longer pending."
         });
       }
 
@@ -277,7 +302,8 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { reason } = req.body;
+      const _rejParsed = overtimeRejectSchema.safeParse(req.body);
+      const reason = _rejParsed.success ? _rejParsed.data.reason : undefined;
 
       // Only managerial roles may reject overtime.
       if (!isManagerialRole(callerRole(req))) {
@@ -293,10 +319,10 @@ export function registerOvertimeRoutes(app: Express) {
         return res.status(403).json({ error: "You cannot reject your own overtime record." });
       }
       const record = await overtimeRepository.reject(req.params.id, userId, reason);
-      
+
       if (!record) {
-        return res.status(400).json({ 
-          error: "Cannot reject this record. It may not exist or is no longer pending." 
+        return res.status(400).json({
+          error: "Cannot reject this record. It may not exist or is no longer pending."
         });
       }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateSecrets, MIN_SECRET_LENGTH } from "../config/validate-secrets";
+import { validateSecrets, MIN_SECRET_LENGTH } from "./config/validate-secrets";
 
 // A high-entropy-looking value that is long enough and not in the weak/placeholder
 // blacklist. Used wherever a "good" secret is required.

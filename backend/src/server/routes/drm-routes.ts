@@ -1,12 +1,36 @@
 import { Router } from "express";
-import { pool } from "../db";
-import { projectsRepository } from "../repositories/projects.repository";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { normalizeRole } from "../utils/role-utils";
-import { requireActionPermission } from "../middleware/action-permission";
+import { z } from "zod";
+import { pool } from "./db";
+import { projectsRepository } from "./repositories/projects.repository";
+import { authMiddleware } from "./auth.middleware";
+import { normalizeRole } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission";
 
 const router = Router();
 const TABLE = "drm.menu_permissions";
+
+// Phase 3 — menu-permission create/update previously read req.body straight
+// through with only `!name` checked. Already admin-gated (requirePermsAdmin),
+// but add a strict schema so malformed subUrls/permissions/allowedRoleIds
+// JSON shapes are rejected before they're persisted.
+const subUrlsSchema = z
+    .object({
+        isRoot: z.boolean().optional(),
+        items: z.array(z.string().trim().max(300)).max(200).optional(),
+    })
+    .strict();
+
+export const permissionCreateSchema = z
+    .object({
+        name: z.string().trim().min(1, "Name is required").max(200),
+        menuIcon: z.string().trim().max(100).optional(),
+        permissions: z.array(z.unknown()).max(500).optional(),
+        subUrls: subUrlsSchema.optional(),
+        allowedRoleIds: z.array(z.string().trim().max(100)).max(200).optional(),
+    })
+    .strict();
+
+const permissionUpdateSchema = permissionCreateSchema.partial();
 
 // drmRoutes is mounted BEFORE the global auth middleware, so auth must be applied
 // locally. Reading the menu-permission config requires an authenticated session;
@@ -81,8 +105,11 @@ router.get("/permissions/debug", authMiddleware, async (req, res) => {
 // POST /api/drm/permissions
 router.post("/permissions", ...requirePermsAdmin, async (req, res) => {
     try {
-        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = req.body;
-        if (!name) return res.status(400).json({ message: "Name is required" });
+        const parsed = permissionCreateSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid request payload", details: parsed.error.errors });
+        }
+        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = parsed.data;
 
         const client = await pool.connect();
         try {
@@ -188,7 +215,11 @@ router.put("/permissions/:id/toggle", ...requirePermsAdmin, async (req, res) => 
 router.put("/permissions/:id", ...requirePermsAdmin, async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = req.body;
+        const parsed = permissionUpdateSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ message: "Invalid request payload", details: parsed.error.errors });
+        }
+        const { name, menuIcon, permissions: perms, subUrls, allowedRoleIds } = parsed.data;
 
         const client = await pool.connect();
         try {

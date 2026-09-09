@@ -1,6 +1,6 @@
 import { FormEvent, useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ArrowLeft } from "lucide-react";
+import { Loader2, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 const api = {
@@ -91,6 +91,8 @@ export default function AuthPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // Surface an expired/invalid-session message set during a forced logout.
   useEffect(() => {
@@ -153,7 +155,7 @@ export default function AuthPage() {
           service_manager: "/dashboard/service-manager",
           service_assistant_manager: "/dashboard/service-manager",
           service_executive: "/dashboard/service-executive",
-          developer: "/dashboard/software-executive",
+          developer: "/dashboard/developer",
           dd_manager: "/dashboard/dd-manager",
           dd_executive: "/dashboard/dd-executive",
           product_posting_manager: "/product-posting",
@@ -289,30 +291,52 @@ export default function AuthPage() {
               <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">
                 {mode === "forgot-reset" ? "New Password" : "Password"}
               </label>
-              <input
-                type="password"
-                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={6}
-              />
+              <div className="relative mt-1">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2 pr-10 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
           )}
 
           {mode === "forgot-reset" && (
             <div>
               <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">Confirm Password</label>
-              <input
-                type="password"
-                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={6}
-              />
+              <div className="relative mt-1">
+                <input
+                  type={showConfirmPassword ? "text" : "password"}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-2 pr-10 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  tabIndex={-1}
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
           )}
 

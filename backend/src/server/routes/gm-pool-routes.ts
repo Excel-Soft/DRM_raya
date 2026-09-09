@@ -1,19 +1,23 @@
-import { Router, type Express } from "express";
-import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "../db";
+import { Router, type Express, type Request } from "express";
+import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "./db.js";
 import { z } from "zod";
-import { customersRepository } from "../repositories/customers.repository";
-import { tempContactsRepository } from "../repositories/temp-contacts.repository";
-import { generateDrmId } from "../utils/drm-id-utils";
-import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
+import { customersRepository } from "./repositories/customers.repository.js";
+import { tempContactsRepository } from "./repositories/temp-contacts.repository.js";
+import { resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "./utils/drm-id-utils.js";
+import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils.js";
 import crypto from "crypto";
-import { createProductPostingInvoices } from "../utils/invoice-utils";
-import { generateDefaultInvoicesForGm, generateInvoicesAfterFinalGmApproval } from "../services/gm-invoice-generation.service";
-import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
-import { NotificationService } from "../services/notification-service";
-import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "../utils/gm-sales-permissions";
-import { getConfig } from "../services/gm-sales-config.service";
-import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "../services/gm-sales-audit";
-import { sendError, sendSuccess, zodIssues } from "../utils/api-response";
+import {
+  generateDefaultInvoicesForGm,
+  generateInvoicesAfterFinalGmApproval,
+  revertGmInvoicesToHodOnReject,
+  syncGmInvoicesAfterHodApproval,
+} from "./services/gm-invoice-generation.service.js";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service.js";
+import { NotificationService } from "./services/notification-service.js";
+import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions.js";
+import { getConfig } from "./services/gm-sales-config.service.js";
+import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit.js";
+import { sendError, sendSuccess, zodIssues } from "./utils/api-response.js";
 import {
   resolveCanonicalGmType,
   checkLoanGmEnabled,
@@ -21,16 +25,16 @@ import {
   thresholdsConfigured,
   getInitialGmDbState,
   recheckGmThresholdAtApproval,
-} from "../services/gm-create-policy.service";
-import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../../shared/gm-sales-constants";
-import { transitionWorkflowStatus } from "../services/workflow-status.service";
-import { ApiError } from "../utils/api-error";
+} from "./services/gm-create-policy.service.js";
+import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../shared/gm-sales-constants.js";
+import { transitionWorkflowStatus } from "./services/workflow-status.service.js";
+import { ApiError } from "./utils/api-error.js";
 import {
   WORKFLOW_ENTITY_TYPES,
   GM_WORKFLOW_STAGES,
   GM_LOAN_ADMIN_GATE_STATES,
   GM_LOAN_ADMIN_GATE_TRANSITIONS,
-} from "../../shared/gm-sales-constants";
+} from "../shared/gm-sales-constants.js";
 
 /** Build the central-service actor from the authenticated request user. */
 function gmWorkflowActor(req: any) {
@@ -91,6 +95,111 @@ function parsePagination(page?: string, pageSize?: string) {
   return { page: pageNum, pageSize: sizeNum };
 }
 
+/**
+ * MD-15 ("Own department only") — corrected 2026-07-20 (D-012), then
+ * corrected again 2026-07-21 (D-013). See
+ * docs/completion/MANAGEMENT_DECISIONS_REQUIRED.md / DECISION_LOG.md.
+ *
+ * The FIRST implementation of this function (D-011, since removed) delegated
+ * to `getDepartmentFilterUserIds()` (dashboard-routes.ts), which hardcodes
+ * admin/super_admin/super_hod/hod/account_manager as "global admin, no
+ * filter" (returns `null`). Reusing that result meant HOD, Super HOD, and
+ * Account Manager silently got organization-wide approval scope — the exact
+ * opposite of the approved MD-15 policy. D-012 fixed that by resolving each
+ * caller's own reporting line via a recursive `under_works` walk instead.
+ *
+ * D-012's version then caused a live incident (D-013): every
+ * hod/super_hod/account_manager/sales_manager account in production had
+ * `under_works` and `department` completely unpopulated (confirmed directly
+ * against the database: 0 of 108 users' `under_works` pointed at any of
+ * those 4 role tiers), so the recursive walk always resolved to "self only"
+ * for every one of them — no HOD could approve a GM entry any sales
+ * executive created, silently breaking the entire approval workflow past
+ * creation for every user, not just an edge case.
+ *
+ * Policy implemented by `resolveGmApprovalScopeUserIds()` below:
+ *   - admin, super_admin (both normalize to `ROLES.ADMIN`) -> organization
+ *     -wide (returns `null`).
+ *   - every other role reaching a GM-approval action -> that caller's own
+ *     reporting line: themselves plus every user transitively under them via
+ *     the `under_works` column, resolved with a recursive CTE (not a
+ *     single-level lookup) so HOD/Super HOD — who typically supervise
+ *     managers rather than the executives who actually create GM entries —
+ *     still resolve to their real team, not an empty intersection.
+ *   - **If that walk finds no one besides the caller** (D-013), the
+ *     hierarchy does not establish a team for this account — either
+ *     genuinely unpopulated (the current reality for every manager-tier
+ *     account) or this account sits outside the chain entirely — so this
+ *     falls back to organization-wide (`null`) rather than a de facto
+ *     self-only lockout with no real basis. This is a data-quality
+ *     fallback, not a policy reversal: as soon as `under_works` is populated
+ *     for an account, that account is scoped to its real team automatically,
+ *     exactly as D-012 intended.
+ *   - A genuine lookup ERROR (the query throws) still fails closed to
+ *     self-only (`[callerId]`) — that case is unchanged from D-012 and is
+ *     unrelated to the "no team found" fallback above.
+ */
+export async function resolveGmApprovalScopeUserIds(req: Request): Promise<string[] | null> {
+  const activeRoleId = normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+  const callerId = String((req.user as any)?.userId ?? "");
+
+  if (activeRoleId === ROLES.ADMIN) {
+    // normalizeRole() already collapses "super_admin" into ROLES.ADMIN.
+    return null;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `WITH RECURSIVE scope_ids AS (
+         SELECT $1::text AS id
+         UNION
+         SELECT u.id::text FROM drm.users u
+         INNER JOIN scope_ids s ON u.under_works::text = s.id
+       )
+       SELECT id FROM scope_ids`,
+      [callerId],
+    );
+    const ids = rows.map((r: any) => String(r.id));
+    if (!ids.includes(callerId)) ids.push(callerId);
+
+    // Corrected 2026-07-21 (DECISION_LOG.md D-013): if the recursive walk
+    // finds no one besides the caller, the under_works hierarchy does not
+    // establish a team for this account — confirmed by a live production
+    // incident where EVERY hod/super_hod/account_manager/sales_manager
+    // account had under_works/department completely unpopulated (0 of 108
+    // users' under_works pointed at any of those 4 role tiers), so every
+    // approval action was silently scoped to self-only and no HOD could
+    // approve anything a sales executive created. Treating "no team found"
+    // as "your team is just you" blocks the exact workflow this role exists
+    // to perform. Falling back to organization-wide here is a data-quality
+    // fallback, not a policy reversal: once under_works is populated for an
+    // account, that account is scoped to its real team automatically, same
+    // as before.
+    if (ids.length <= 1) {
+      return null;
+    }
+    return ids;
+  } catch (err) {
+    console.error("[gm-approval-scope] reporting-line lookup failed, failing closed to self-only", err);
+    return [callerId];
+  }
+}
+
+/**
+ * Builds the SQL fragment + pushes the scope parameter for a GM-approval
+ * WHERE clause. Exported (module scope) so `gm-approval-scope.test.ts` can
+ * exercise it directly across every approve/reject/withdraw/pending-list
+ * call site listed in `PHASE2_RBAC_MATRIX.md` §2, rather than only
+ * asserting indirectly.
+ */
+export async function gmApprovalScopeClause(req: Request, params: any[]): Promise<string> {
+  const allowed = await resolveGmApprovalScopeUserIds(req);
+  if (allowed === null) return "";
+  const ids = allowed.length > 0 ? allowed : [(req.user as any).userId];
+  params.push(ids);
+  return ` AND created_by::uuid = ANY($${params.length}::uuid[])`;
+}
+
 // Ensure required columns exist on gm_entries to safely store GM pool fields
 async function ensureGmEntriesColumns() {
   if (!isDbAvailable()) {
@@ -105,8 +214,8 @@ async function ensureGmEntriesColumns() {
     `);
 
     if (tableCheck.rowCount === 0) {
-       console.warn("[gm-pool] table drm.gm_entries does not exist yet. Skipping column assurance.");
-       return;
+      console.warn("[gm-pool] table drm.gm_entries does not exist yet. Skipping column assurance.");
+      return;
     }
 
     await pool.query(`
@@ -184,11 +293,12 @@ const gmPackages = [
 ];
 
 /**
- * Patch 5 Stage 3 — final-approval gate for PARTIAL (P4) and LOAN (P5) GMs.
- * Runs immediately before any transition that finalises a GM (sets
- * `final_status = 'approved'`). FULL GMs are a pure no-op (zero behaviour change).
- * A PARTIAL GM is blocked until its recorded receipts cover the full customer
- * dollar (remaining <= 0); a LOAN GM is blocked until an Admin (Super HOD) has
+ * Patch 5 Stage 3 — final-approval gate for FULL, PARTIAL (P4) and LOAN (P5)
+ * GMs. Runs immediately before any transition that finalises a GM (sets
+ * `final_status = 'approved'`). A PARTIAL *or* FULL GM is blocked until its
+ * recorded receipts cover the full customer dollar (remaining <= 0) — FULL GM
+ * reuses the exact same receipts ledger, just with a single expected receipt
+ * instead of several; a LOAN GM is blocked until an Admin (Super HOD) has
  * approved its loan terms. Returns the LEGACY `{ error, code, details }` body used
  * by the surrounding approval routes so existing frontends keep working unchanged.
  */
@@ -203,9 +313,9 @@ async function enforceLoanPartialFinalApprovalGate(
   if (!e) return { ok: true }; // missing GM → let the route's own 404 handle it
   const isLoan = Number(e.is_loan) === 1;
   const isPartial = Number(e.is_partial_payment) === 1;
-  if (!isLoan && !isPartial) return { ok: true }; // FULL GM — no-op
+  const isFull = !isLoan && !isPartial;
 
-  if (isPartial) {
+  if (isPartial || isFull) {
     const paidRes = await pool.query(
       "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
       [id],
@@ -218,8 +328,10 @@ async function enforceLoanPartialFinalApprovalGate(
         ok: false,
         status: 409,
         body: {
-          error: `Cannot grant final approval: this partial-payment GM still has an outstanding balance of $${remaining.toFixed(2)}. Record receipts until it is fully paid first.`,
-          code: "PARTIAL_PAYMENT_INCOMPLETE",
+          error: isFull
+            ? `Cannot grant final approval: this GM's payment has not been recorded yet ($${remaining.toFixed(2)} unconfirmed). Log a receipt for the full amount first.`
+            : `Cannot grant final approval: this partial-payment GM still has an outstanding balance of $${remaining.toFixed(2)}. Record receipts until it is fully paid first.`,
+          code: isFull ? "FULL_PAYMENT_UNCONFIRMED" : "PARTIAL_PAYMENT_INCOMPLETE",
           details: { target, paid, remaining },
         },
       };
@@ -248,6 +360,57 @@ async function enforceLoanPartialFinalApprovalGate(
   return { ok: true };
 }
 
+/**
+ * Record a loan GM's outstanding balance into the accounts-side receivables
+ * ledger (`drm.gm_loan_receivables`) the moment its final approval actually
+ * goes through. Best-effort and idempotent (unique index on gm_id) — never
+ * throws, since a ledger-write failure must not block the approval itself.
+ * No-ops for non-loan GMs or when loan terms aren't Admin-approved yet
+ * (callers only reach this after `enforceLoanPartialFinalApprovalGate`
+ * already confirmed both, so this is a defensive re-check).
+ */
+export async function ensureLoanReceivableOnFinalApproval(
+  gmId: string,
+  actorUserId?: string | null,
+): Promise<void> {
+  try {
+    const gm = await pool.query(
+      "SELECT is_loan, customer_id FROM drm.gm_entries WHERE id = $1",
+      [gmId],
+    );
+    if (Number(gm.rows[0]?.is_loan) !== 1) return;
+
+    const terms = await pool.query(
+      "SELECT loan_amount_usd, company_copay_usd, agreed_return_date, admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
+      [gmId],
+    );
+    const t = terms.rows[0];
+    if (!t || t.admin_approval_status !== "APPROVED" || !t.agreed_return_date) return;
+
+    const loanAmount = Number(t.loan_amount_usd || 0);
+    const webexcelsContribution = Number(t.company_copay_usd || 0);
+    const customerContribution = Math.max(0, loanAmount - webexcelsContribution);
+    await pool.query(
+      `INSERT INTO drm.gm_loan_receivables
+         (gm_id, customer_id, customer_contribution, webexcels_contribution,
+          loan_amount, amount_returned, outstanding_amount, return_date, status, created_by)
+       VALUES ($1, $2, $3, $4, $5, 0, $5, $6, 'OUTSTANDING', $7)
+       ON CONFLICT (gm_id) DO NOTHING`,
+      [
+        gmId,
+        gm.rows[0]?.customer_id ?? null,
+        customerContribution,
+        webexcelsContribution,
+        loanAmount,
+        t.agreed_return_date,
+        actorUserId ?? null,
+      ],
+    );
+  } catch (err) {
+    console.error(`[gm-pool] ensureLoanReceivableOnFinalApproval failed for GM ${gmId} (non-fatal):`, err);
+  }
+}
+
 export function registerGmPoolRoutes(app: Express) {
   const router = Router();
   void ensureGmEntriesColumns();
@@ -271,7 +434,25 @@ export function registerGmPoolRoutes(app: Express) {
     loanMode: z.enum(["loan", "installment", "none"]).default("none"),
     paymentProofUrl: z.string().trim().optional().nullable(),
     installments: z.array(z.any()).optional().default([]),
-  });
+  }).strict();
+
+  const commentSchema = z.object({ comment: z.string().trim().max(2000).optional() }).strict();
+  const hodApproveSchema = z.object({
+    comment: z.string().trim().max(2000).optional(),
+    extraDiscountHod: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+  }).strict();
+  const reasonSchema = z.object({ reason: z.string().trim().min(1, "Reason required").max(2000) }).strict();
+  const fixStatusSchema = z.object({ approval_status: z.string().trim().min(1, "Approval status required") }).strict();
+
+  const superHodUpdateSchema = z.object({
+    orderDollar: z.coerce.number().optional(),
+    customerDollar: z.coerce.number().optional(),
+    dollarRate: z.coerce.number().optional(),
+    pkr: z.coerce.number().optional(),
+    package: z.string().optional(),
+    notes: z.string().optional(),
+    paymentStatus: z.string().optional(),
+  }).strict();
 
   const updateSchema = z.object({
     package: z.string().optional(),
@@ -283,11 +464,106 @@ export function registerGmPoolRoutes(app: Express) {
     status: z.string().optional(),
     hodStatus: z.string().optional(),
     accountantStatus: z.string().optional(),
-  });
+    // Added so the full Add-GM form can be reused for Edit/Resubmit (previously
+    // a separate, smaller dialog only touched the 6 fields above).
+    memberId: z.string().trim().optional(),
+    orderId: z.string().trim().optional(),
+    alibabaDiscount: z.coerce.number().min(0).optional(),
+    finalOrderDollar: z.coerce.number().optional(),
+    extraDollarDiscount: z.coerce.number().optional(),
+    extraDiscountPkr: z.coerce.number().optional(),
+    paymentStatus: z.string().trim().optional(),
+    dropout: z.string().trim().optional().nullable(),
+    extension: z.string().trim().optional().nullable(),
+    detail: z.string().trim().optional().nullable(),
+    installments: z.array(z.any()).optional(),
+  }).strict();
 
   router.get("/gm-packages", async (_req, res) => {
     res.json({ packages: gmPackages });
   });
+
+  const handleGmDuplicateCheck = async (req: any, res: any) => {
+    try {
+      const memberId = typeof req.query.memberId === "string" ? req.query.memberId.trim() : "";
+      const orderId = typeof req.query.orderId === "string" ? req.query.orderId.trim() : "";
+      const companyName = typeof req.query.companyName === "string" ? req.query.companyName.trim() : "";
+      // Editing/resubmitting an existing entry (gm-pool-add-gm.tsx's Edit form)
+      // re-sends that same entry's own Member Id/Order Id/Company — exclude it
+      // from these checks or an entry would permanently "collide with itself".
+      const excludeId = typeof req.query.excludeId === "string" && req.query.excludeId.trim() ? req.query.excludeId.trim() : "";
+
+      let memberIdExists = false;
+      let orderIdExists = false;
+      let companyExists = false;
+
+      // Status values are stored capitalized ("Approved", "Rejected", ...), so the
+      // exclusion list must be compared case-insensitively — otherwise it silently
+      // excludes nothing at all and every rejected/withdrawn GM blocks re-adding.
+      const activeStatusClause = `lower(coalesce(status::text, '')) NOT IN ('rejected', 'cancelled', 'withdrawn')`;
+      const excludeIdClause = excludeId ? ` AND id <> $2` : "";
+
+      if (memberId) {
+        const params = excludeId ? [memberId, excludeId] : [memberId];
+        const check = await pool.query(
+          `SELECT id FROM drm.gm_entries
+            WHERE lower(trim(member_id)) = lower(trim($1))
+              AND ${activeStatusClause}${excludeIdClause}
+            LIMIT 1`,
+          params
+        );
+        memberIdExists = check.rows.length > 0;
+      }
+
+      if (orderId) {
+        const params = excludeId ? [orderId, excludeId] : [orderId];
+        const check = await pool.query(
+          `SELECT id FROM drm.gm_entries
+            WHERE lower(trim(order_id)) = lower(trim($1))
+              AND ${activeStatusClause}${excludeIdClause}
+            LIMIT 1`,
+          params
+        );
+        orderIdExists = check.rows.length > 0;
+      }
+
+      if (companyName) {
+        let cleanCompany = companyName;
+        if (cleanCompany.includes("•")) cleanCompany = cleanCompany.split("•")[0].trim();
+        if (cleanCompany.includes("·")) cleanCompany = cleanCompany.split("·")[0].trim();
+        cleanCompany = cleanCompany.trim();
+
+        // companyExists must mean "this company already has an active GM entry" —
+        // NOT "a customer with this name exists". A customer existing is the normal,
+        // expected case when the user searches for and selects an existing company
+        // to add a GM for; falling back to a customer-existence check here made it
+        // impossible to ever add a GM to any pre-existing company.
+        //
+        // gm_entries.company_name is stored as "Company • AccountHolder" (matching
+        // the search dropdown's display label), but the input here has already been
+        // cleaned down to just the company part — so it must be compared against the
+        // same cleaned form of the stored value, not the raw stored value, or a
+        // company with any account-holder suffix can never match.
+        const params = excludeId ? [cleanCompany, excludeId] : [cleanCompany];
+        const check = await pool.query(
+          `SELECT id FROM drm.gm_entries
+            WHERE lower(trim(split_part(split_part(company_name, '•', 1), '·', 1))) = lower(trim($1))
+              AND ${activeStatusClause}${excludeIdClause}
+            LIMIT 1`,
+          params
+        );
+        companyExists = check.rows.length > 0;
+      }
+
+      return res.json({ memberIdExists, orderIdExists, companyExists });
+    } catch (err) {
+      console.error("Error in check-gm-duplicates:", err);
+      return res.status(500).json({ error: "Failed to check GM duplicates" });
+    }
+  };
+
+  router.get("/gm-pool/check-duplicate", handleGmDuplicateCheck);
+  router.get("/api/gm-pool/check-duplicate", handleGmDuplicateCheck);
 
   router.get("/gm-pool", async (req, res) => {
     try {
@@ -386,6 +662,9 @@ export function registerGmPoolRoutes(app: Express) {
           approval_status as "approvalStatus",
           account_manager_status as "accountManagerStatus",
           final_status as "finalStatus",
+          hod_comment as "hodComment",
+          hod_approved_at as "hodApprovedAt",
+          account_manager_approved_at as "accountManagerApprovedAt",
           is_loan as "isLoan",
           is_partial_payment as "isPartialPayment",
           notes,
@@ -442,7 +721,7 @@ export function registerGmPoolRoutes(app: Express) {
       const finalOrderDollar = Number(Math.max(0, orderDollar - parsed.alibabaDiscount).toFixed(2));
       const customerDollar = Number((parsed.pkrAmount / parsed.dollarRate).toFixed(2));
       const extraDollarDiscount = Number((finalOrderDollar - customerDollar).toFixed(2));
-      const extraDiscountPkr = Number((extraDollarDiscount * parsed.dollarRate).toFixed(2));
+      const extraDiscountPkr = Math.round(extraDollarDiscount * parsed.dollarRate);
       // Patch 5 Stage 2 — resolve canonical GM type (FULL/PARTIAL/LOAN) and enforce
       // the config-driven loan gate + minimum-payment threshold. Behaviour-preserving
       // with safe defaults (loan enabled, no thresholds). The derived flags below stay
@@ -532,16 +811,56 @@ export function registerGmPoolRoutes(app: Express) {
       const createdByRole = (req.user as any)?.activeRoleId ?? (req.user as any)?.roleId ?? null;
       const initialGmState = getInitialGmDbState(canonicalGmType);
       let countryVal = "Other";
-      if (parsed.companyId) {
-        const cRes = await pool.query("SELECT country FROM drm.customers WHERE id = $1", [parsed.companyId]);
-        if (cRes.rows[0]?.country) countryVal = cRes.rows[0].country;
+      // A company's DRM ID is generated exactly once and must never change again —
+      // this tracks whatever ID already exists for the company (customer or lead)
+      // so we reuse it instead of minting a new one for every GM entry.
+      let existingDrmId: string | null = null;
+      if (parsed.companyName && !req.body.allowDuplicate) {
+        const existingGmCheck = await pool.query(
+          `SELECT id FROM drm.gm_entries 
+            WHERE lower(trim(company_name)) = lower(trim($1)) 
+              AND lower(coalesce(status::text, '')) NOT IN ('rejected', 'cancelled', 'withdrawn')
+            LIMIT 1`,
+          [parsed.companyName]
+        );
+        const userRoleStr = ((req.user as any)?.role || "").toLowerCase();
+        const isPrivileged = ["admin", "super_admin", "sales_manager"].includes(userRoleStr);
+        if (existingGmCheck.rows.length > 0 && !isPrivileged) {
+          throw new ApiError(400, "DUPLICATE_COMPANY", "Company already exists. Duplicate GM entries are not allowed.");
+        }
       }
-      const drmId = generateDrmId(
-        parsed.companyName,
-        countryVal,
-        parsed.memberId || parsed.companyName,
-        parsed.orderId || parsed.memberId || crypto.randomUUID()
-      );
+
+      if (parsed.memberId && !req.body.allowDuplicate) {
+        const existingMemberCheck = await pool.query(
+          `SELECT id FROM drm.gm_entries 
+            WHERE lower(trim(member_id)) = lower(trim($1)) 
+              AND lower(coalesce(status::text, '')) NOT IN ('rejected', 'cancelled', 'withdrawn')
+            LIMIT 1`,
+          [parsed.memberId]
+        );
+        if (existingMemberCheck.rows.length > 0) {
+          throw new ApiError(400, "DUPLICATE_MEMBER_ID", "Member ID already exists.");
+        }
+      }
+
+      if (parsed.orderId && !req.body.allowDuplicate) {
+        const existingOrderCheck = await pool.query(
+          `SELECT id FROM drm.gm_entries 
+            WHERE lower(trim(order_id)) = lower(trim($1)) 
+              AND lower(coalesce(status::text, '')) NOT IN ('rejected', 'cancelled', 'withdrawn')
+            LIMIT 1`,
+          [parsed.orderId]
+        );
+        if (existingOrderCheck.rows.length > 0) {
+          throw new ApiError(400, "DUPLICATE_ORDER_ID", "Order ID already exists.");
+        }
+      }
+
+      if (parsed.companyId) {
+        const cRes = await pool.query("SELECT country, drm_id FROM drm.customers WHERE id = $1", [parsed.companyId]);
+        if (cRes.rows[0]?.country) countryVal = cRes.rows[0].country;
+        existingDrmId = cRes.rows[0]?.drm_id ?? null;
+      }
       const notesParts = [
         parsed.detail?.trim() || "",
         parsed.dropout ? `Dropout: ${parsed.dropout}` : "",
@@ -565,13 +884,17 @@ export function registerGmPoolRoutes(app: Express) {
           if (lead) {
             console.log(`[gm-pool] promoting lead ${lead.id} to customer for GM entry`);
 
-            // Generate Custom DRM ID
-            const drmIdCustom = generateDrmId(
+            // Reuse the lead's own DRM ID (assigned once when the lead was created)
+            // instead of minting a new one when promoting it to a customer. Only
+            // falls through to generation if the lead somehow has none yet, in
+            // which case the generator itself guarantees the result is unique.
+            const drmIdCustom = lead.drmId || existingDrmId || await generateUniqueDrmId(
+              pool,
               lead.personName || "Unknown",
               "Other",
-              lead.personName,
-              crypto.randomUUID()
+              lead.personName || crypto.randomUUID()
             );
+            existingDrmId = drmIdCustom;
 
             // Promote lead to customer
             const newCustomer = await customersRepository.create({
@@ -584,7 +907,7 @@ export function registerGmPoolRoutes(app: Express) {
               source: lead.source || "GM Form Promotion",
               personName: lead.personName,
               mobile: lead.mobile,
-              drmId: drmIdCustom, // Use the new custom ID
+              drmId: drmIdCustom, // Same DRM ID carried over from the lead — never regenerated
             }, req.user.userId);
 
             finalCustomerId = newCustomer.id;
@@ -592,6 +915,46 @@ export function registerGmPoolRoutes(app: Express) {
             await tempContactsRepository.promoteToCustomer(lead.id, newCustomer.id, req.user.userId, req.user.userId);
           }
         }
+      }
+
+      // Resolve canonical DRM ID ONCE across customers, temp_contacts, and gm_entries
+      const drmId = existingDrmId || await resolveOrCreateCanonicalDrmId(pool, {
+        customerId: finalCustomerId,
+        companyName: parsed.companyName,
+        country: countryVal,
+      });
+
+      // Ensure customer record exists and is synced with the exact same DRM ID
+      if (!finalCustomerId && parsed.companyName) {
+        const existingCust = await pool.query(
+          "SELECT id, drm_id FROM drm.customers WHERE lower(trim(company_name)) = lower(trim($1)) LIMIT 1",
+          [parsed.companyName]
+        );
+        if (existingCust.rows[0]) {
+          finalCustomerId = existingCust.rows[0].id;
+          await pool.query(
+            "UPDATE drm.customers SET drm_id = $1 WHERE id = $2 AND (drm_id IS NULL OR drm_id = '')",
+            [drmId, finalCustomerId]
+          );
+        } else {
+          const newCust = await customersRepository.create({
+            companyName: parsed.companyName,
+            accountName: parsed.companyName,
+            email: `${parsed.companyName.toLowerCase().replace(/[^a-z0-9]/g, "")}@customer.local`,
+            phone: "0000000000",
+            region: "Other",
+            grade: "C",
+            source: "GM Creation Auto-Link",
+            country: countryVal,
+            drmId: drmId,
+          }, req.user.userId);
+          finalCustomerId = newCust.id;
+        }
+      } else if (finalCustomerId) {
+        await pool.query(
+          "UPDATE drm.customers SET drm_id = $1 WHERE id = $2 AND (drm_id IS NULL OR drm_id = '')",
+          [drmId, finalCustomerId]
+        );
       }
 
       // Resolve sales person ID
@@ -639,19 +1002,26 @@ export function registerGmPoolRoutes(app: Express) {
           updated_at,
           is_deleted,
           approval_status,
-          created_by_role
+          created_by_role,
+          canonical_gm_type
         )
         VALUES (
           gen_random_uuid(),
           'GM',
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now(), false, 'pending_hod', $29
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now(), false, 'pending_hod', $29, $30
         )
         returning *
       `;
 
-      // D-05: Prevent duplicate GM entries for the same company/customer
+      // D-05: Prevent duplicate GM entries for the same company/customer — but
+      // only against a still-active one. A Rejected or fully Withdrawn GM must
+      // not permanently block that company from ever getting a new GM entry.
       const duplicateCheck = await pool.query(
-        "SELECT id FROM drm.gm_entries WHERE (customer_id = $1 OR lower(trim(company_name)) = lower(trim($2))) AND coalesce(is_deleted, false) = false LIMIT 1",
+        `SELECT id FROM drm.gm_entries
+          WHERE (customer_id = $1 OR lower(trim(company_name)) = lower(trim($2)))
+            AND coalesce(is_deleted, false) = false
+            AND lower(coalesce(status::text, '')) NOT IN ('rejected', 'cancelled', 'withdrawn')
+          LIMIT 1`,
         [finalCustomerId, parsed.companyName]
       );
       if ((duplicateCheck.rowCount ?? 0) > 0) {
@@ -676,8 +1046,8 @@ export function registerGmPoolRoutes(app: Express) {
         extraDiscountPkr,
         "Pending",
         parsed.paymentStatus,
-        isLoan,
-        isPartial,
+        isLoan ? 1 : 0,
+        isPartial ? 1 : 0,
         notesParts.join(" | "),
         parsed.dropout ?? null,
         parsed.extension ?? null,
@@ -688,6 +1058,7 @@ export function registerGmPoolRoutes(app: Express) {
         salesPersonName,
         resolvedSalesPersonId,
         createdByRole,
+        canonicalGmType,
       ];
 
       const result = await pool.query(insertSql, values);
@@ -770,8 +1141,8 @@ export function registerGmPoolRoutes(app: Express) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: "VALIDATION_ERROR", details: error.errors });
       }
-      console.error("Error creating GM entry:", error);
-      return res.status(500).json({ error: "Failed to create GM entry" });
+      console.error("Error creating GM entry:", error?.stack || error);
+      return res.status(500).json({ error: "Failed to create GM entry", details: String(error?.message || error) });
     }
   });
 
@@ -781,16 +1152,33 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       const parsed = updateSchema.parse(req.body);
 
-      // Server-side enforcement: Sales Exec can only edit before HOD approval
+      // Editing an entry HOD rejected is a resubmission: it must go back to the
+      // HOD queue (approval_status = 'pending_hod'), not stay stuck as rejected.
+      // Same for an entry whose withdrawal HOD approved — withdraw-approve already
+      // reset approval_status to pending_hod (so it re-enters the HOD queue), but
+      // the main `status` column is left as 'Withdrawn' until Sales fixes whatever
+      // the withdrawal reason called out and resubmits, same as the rejection case.
+      let isResubmission = false;
+      let resubmitCompanyName: string | null = null;
+      let resubmitSalesPersonId: string | null = null;
+
       if (req.user) {
+        const entryCheck = await pool.query(
+          `SELECT approval_status, status, withdrawal_status, company_name, created_by, sales_person_id FROM drm.gm_entries WHERE id = $1`,
+          [req.params.id]
+        );
+        const entry = entryCheck.rows[0];
+        const currentStatus = entry?.approval_status ?? null;
+        const isWithdrawnResubmission = entry?.withdrawal_status === "approved" && entry?.status === "Withdrawn";
+        isResubmission = currentStatus === "rejected_by_hod" || isWithdrawnResubmission;
+        resubmitCompanyName = entry?.company_name ?? null;
+        resubmitSalesPersonId = entry?.sales_person_id ?? entry?.created_by ?? null;
+
+        // Server-side enforcement: Sales Exec can only edit before HOD approval,
+        // or resubmit an entry the HOD rejected.
         const userRole = (req.user as any).roleId?.toLowerCase() || "";
         if (userRole === "sales_executive") {
-          const entryCheck = await pool.query(
-            `SELECT approval_status FROM drm.gm_entries WHERE id = $1`,
-            [req.params.id]
-          );
-          const entry = entryCheck.rows[0];
-          if (entry && entry.approval_status && entry.approval_status !== 'pending_hod') {
+          if (entry && currentStatus && currentStatus !== "pending_hod" && !isResubmission) {
             return res.status(403).json({ error: "You cannot edit this entry after HOD approval. Use 'Request Update' instead." });
           }
         }
@@ -823,7 +1211,11 @@ export function registerGmPoolRoutes(app: Express) {
         fields.push(`amount_pkr = $${fields.length + 1}`);
         values.push(parsed.pkr);
       }
-      if (parsed.status !== undefined) {
+      // Skip the plain status write when resubmitting — the resubmission block
+      // below forces status/approval_status together so the row can't end up
+      // with a mismatched pair (e.g. status='Pending' but approval_status still
+      // 'rejected_by_hod').
+      if (parsed.status !== undefined && !isResubmission) {
         fields.push(`status = $${fields.length + 1}`);
         values.push(parsed.status);
       }
@@ -841,6 +1233,61 @@ export function registerGmPoolRoutes(app: Express) {
         fields.push(`accountant_status = $${fields.length + 1}`);
         values.push(parsed.accountantStatus);
       }
+      if (parsed.memberId !== undefined) {
+        fields.push(`member_id = $${fields.length + 1}`);
+        values.push(parsed.memberId);
+      }
+      if (parsed.orderId !== undefined) {
+        fields.push(`order_id = $${fields.length + 1}`);
+        values.push(parsed.orderId);
+      }
+      if (parsed.alibabaDiscount !== undefined) {
+        fields.push(`alibaba_discount_usd = $${fields.length + 1}`);
+        values.push(parsed.alibabaDiscount);
+      }
+      if (parsed.finalOrderDollar !== undefined) {
+        fields.push(`final_order_usd = $${fields.length + 1}`);
+        values.push(parsed.finalOrderDollar);
+      }
+      if (parsed.extraDollarDiscount !== undefined) {
+        fields.push(`extra_discount_usd = $${fields.length + 1}`);
+        values.push(parsed.extraDollarDiscount);
+      }
+      if (parsed.extraDiscountPkr !== undefined) {
+        fields.push(`extra_discount_pkr = $${fields.length + 1}`);
+        values.push(parsed.extraDiscountPkr);
+      }
+      if (parsed.paymentStatus !== undefined) {
+        fields.push(`payment_status = $${fields.length + 1}`);
+        values.push(parsed.paymentStatus);
+      }
+      if (parsed.dropout !== undefined) {
+        fields.push(`dropout = $${fields.length + 1}`);
+        values.push(parsed.dropout);
+      }
+      if (parsed.extension !== undefined) {
+        fields.push(`extension = $${fields.length + 1}`);
+        values.push(parsed.extension);
+      }
+      if (parsed.detail !== undefined) {
+        fields.push(`notes = $${fields.length + 1}`);
+        values.push(parsed.detail);
+      }
+      if (parsed.installments !== undefined) {
+        fields.push(`installments = $${fields.length + 1}`);
+        values.push(JSON.stringify(parsed.installments));
+      }
+
+      if (isResubmission) {
+        fields.push(`status = $${fields.length + 1}`);
+        values.push("Pending");
+        fields.push(`approval_status = $${fields.length + 1}`);
+        values.push("pending_hod");
+        fields.push(`final_status = NULL`);
+        fields.push(`hod_comment = NULL`);
+        fields.push(`hod_approved_at = NULL`);
+        fields.push(`hod_approved_by = NULL`);
+      }
 
       if (fields.length === 0) {
         return res.json({ success: true, message: "No changes applied" });
@@ -850,7 +1297,7 @@ export function registerGmPoolRoutes(app: Express) {
         UPDATE drm.gm_entries
            SET ${fields.join(", ")},
                updated_at = NOW()
-         WHERE id = $${fields.length + 1}
+         WHERE id = $${values.length + 1}
          RETURNING id
       `;
       values.push(req.params.id);
@@ -858,7 +1305,29 @@ export function registerGmPoolRoutes(app: Express) {
       if (!result.rowCount) {
         return res.status(404).json({ error: "GM entry not found" });
       }
-      res.json({ success: true });
+
+      if (isResubmission) {
+        await NotificationService.notifyRole(
+          ROLES.HOD,
+          `GM entry for '${resubmitCompanyName || "Unknown"}' was updated and resubmitted for HOD approval.`,
+          "INFO",
+          { targetUrl: "/hod/verification" }
+        ).catch(() => { });
+        if (resubmitSalesPersonId) {
+          await NotificationService.notify({
+            userId: String(resubmitSalesPersonId),
+            message: `Your GM entry for '${resubmitCompanyName || "Unknown"}' has been resubmitted to the HOD for approval.`,
+            type: "SUCCESS",
+            targetUrl: "/sales/gm-pool",
+          }).catch(() => { });
+        }
+      }
+
+      res.json({
+        success: true,
+        resubmitted: isResubmission,
+        message: isResubmission ? "Entry updated and resubmitted to HOD for approval." : undefined,
+      });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Validation failed", details: err.errors });
@@ -877,8 +1346,9 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { approval_status } = req.body;
-      if (!approval_status) return res.status(400).json({ error: "approval_status required" });
+      const parsed = fixStatusSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid payload", issues: parsed.error.issues });
+      const { approval_status } = parsed.data;
       const beforeRes = await pool.query(`SELECT approval_status FROM drm.gm_entries WHERE id = $1`, [id]);
       const result = await pool.query(
         `UPDATE drm.gm_entries SET approval_status = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
@@ -904,15 +1374,64 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment, extraDiscountHod } = hodApproveSchema.parse(req.body ?? {});
       const thr = await enforceApprovalThreshold(id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
+      const checkEntryRes = await pool.query(`SELECT * FROM drm.gm_entries WHERE id = $1`, [id]);
+      const e = checkEntryRes.rows[0];
+      if (e) {
+        const missing: string[] = [];
+        if (!e.member_id || !String(e.member_id).trim()) missing.push("Member ID");
+        if (!e.order_id || !String(e.order_id).trim()) missing.push("Order ID");
+        if (!e.package_type || !String(e.package_type).trim()) missing.push("Package");
+        if (!e.amount_pkr && !e.customer_pkr && !e.pkr) missing.push("Customer PKR");
+        if (!e.amount_usd && !e.order_dollar && !e.customer_dollar) missing.push("Order Dollar");
+        if (!e.dollar_rate) missing.push("Dollar Rate");
+
+        if (missing.length > 0) {
+          return res.status(400).json({ error: `All fields are required to fill then approved. Missing: ${missing.join(", ")}` });
+        }
+
+        // Extra Discount HOD is a confirmation field: HOD must re-enter the
+        // exact Sales-requested Extra Discount before this entry can move
+        // forward, so it can't be silently rubber-stamped at 0.
+        const requestedDiscount = Number(e.extra_discount_usd ?? 0);
+        if (extraDiscountHod === undefined) {
+          return res.status(400).json({ error: "Extra Discount HOD is required before this GM entry can be approved." });
+        }
+        if (Math.abs(extraDiscountHod - requestedDiscount) > 0.01) {
+          return res.status(400).json({ error: `Extra Discount HOD (${extraDiscountHod}) must exactly match the requested Extra Discount (${requestedDiscount}) before this GM entry can be approved.` });
+        }
+      }
+
+      const hodApproveParams: any[] = [id, req.user.userId, comment || null, extraDiscountHod ?? 0];
+      const hodApproveScope = await gmApprovalScopeClause(req, hodApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, account_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod' RETURNING *`,
-        [id, req.user.userId, comment || null]
+        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, extra_discount_hod = $4, account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodApproveScope} RETURNING *`,
+        hodApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const hodEntry = result.rows[0];
+
+      // Always generate the 3 default invoices on HOD approval of a GM entry (best-effort, idempotent)
+      try {
+        const invResult = await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+        console.log(`[GM POOL] Invoice generation for GM ${id}:`, invResult);
+      } catch (invErr) {
+        console.error(`[GM POOL] Invoice generation failed for GM ${id} (non-fatal):`, invErr);
+      }
+
+      // If this GM already had invoices (edited/resubmitted after a prior HOD
+      // approval, not a first-time approval), refresh their company/notes to
+      // match the corrected GM — best-effort, never blocks the approval.
+      try {
+        const syncResult = await syncGmInvoicesAfterHodApproval(String(id), req.user.userId, req);
+        if (syncResult.synced > 0) {
+          console.log(`[GM POOL] Synced ${syncResult.synced} invoice(s) from GM ${id} after re-approval`);
+        }
+      } catch (syncErr) {
+        console.error(`[GM POOL] Invoice sync failed for GM ${id} (non-fatal):`, syncErr);
+      }
 
       // Notify Sales Executive that HOD approved and it's now with Account
       let hodSalesPersonId = hodEntry.sales_person_id || hodEntry.created_by;
@@ -943,17 +1462,48 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
       // Stage 8: rejecting a GM entry requires a reason.
       if (!String(comment ?? "").trim()) {
         return res.status(400).json({ error: "A reason (comment) is required to reject a GM entry" });
       }
+      const hodRejectParams: any[] = [id, req.user.userId, comment];
+      const hodRejectScope = await gmApprovalScopeClause(req, hodRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_hod', final_status = 'rejected', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod' RETURNING *`,
-        [id, req.user.userId, comment]
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_hod', final_status = 'rejected', status = 'Rejected', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodRejectScope} RETURNING *`,
+        hodRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
-      res.json({ success: true, message: "Rejected by HOD", data: result.rows[0] });
+      const entry = result.rows[0];
+
+      const rejectReason = comment || "No reason provided";
+      const company = entry.company_name || "Company";
+      const creatorId = entry.created_by || entry.sales_person_id || entry.created_by_user_id;
+
+      if (creatorId) {
+        await NotificationService.notify({
+          userId: String(creatorId),
+          message: `Your GM entry for '${company}' was rejected by HOD. Reason: ${rejectReason}`,
+          type: "ERROR",
+          targetUrl: "/sales/gm-pool",
+        }).catch(() => { });
+      }
+
+      await NotificationService.notifyRole(
+        "admin",
+        `GM entry for '${company}' was rejected by HOD. Reason: ${rejectReason}`,
+        "ERROR",
+        { targetUrl: "/hod/verification" }
+      ).catch(() => { });
+
+      await NotificationService.notifyRole(
+        "super_hod",
+        `GM entry for '${company}' was rejected by HOD. Reason: ${rejectReason}`,
+        "ERROR",
+        { targetUrl: "/hod/verification" }
+      ).catch(() => { });
+
+      res.json({ success: true, message: "Rejected by HOD", data: entry });
     } catch (error) {
       res.status(500).json({ error: "Failed to reject GM entry" });
     }
@@ -963,15 +1513,17 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
       const thr = await enforceApprovalThreshold(id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
       // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
       const gate = await enforceLoanPartialFinalApprovalGate(id);
       if (!gate.ok) return res.status(gate.status).json(gate.body);
+      const amApproveParams: any[] = [id, req.user.userId, comment || null];
+      const amApproveScope = await gmApprovalScopeClause(req, amApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' RETURNING *`,
-        [id, req.user.userId, comment || null]
+        `UPDATE drm.gm_entries SET account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amApproveScope} RETURNING *`,
+        amApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const entry = result.rows[0];
@@ -979,6 +1531,7 @@ export function registerGmPoolRoutes(app: Express) {
       // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
       // No-op under the default ON_GM_CREATION policy; never throws.
       await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+      await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 
       // Always notify Sales Executive immediately after Account Manager approves
       let salesPersonId = entry.sales_person_id || entry.created_by;
@@ -1029,16 +1582,19 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
       // Stage 8: rejecting a GM entry requires a reason.
       if (!String(comment ?? "").trim()) {
         return res.status(400).json({ error: "A reason (comment) is required to reject a GM entry" });
       }
+      const amRejectParams: any[] = [id, req.user.userId, comment];
+      const amRejectScope = await gmApprovalScopeClause(req, amRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_account_manager', final_status = 'rejected', account_manager_status = 'rejected', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' RETURNING *`,
-        [id, req.user.userId, comment]
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_account_manager', final_status = 'rejected', account_manager_status = 'rejected', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amRejectScope} RETURNING *`,
+        amRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
+      await revertGmInvoicesToHodOnReject(id, req.user.userId, req);
       res.json({ success: true, message: "Rejected by Account Manager", data: result.rows[0] });
     } catch (error) {
       res.status(500).json({ error: "Failed to reject GM entry" });
@@ -1049,10 +1605,12 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
+      const smApproveParams: any[] = [id, req.user.userId, comment || null];
+      const smApproveScope = await gmApprovalScopeClause(req, smApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET sales_manager_status = 'approved', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending' RETURNING *`,
-        [id, req.user.userId, comment || null]
+        `UPDATE drm.gm_entries SET sales_manager_status = 'approved', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending'${smApproveScope} RETURNING *`,
+        smApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const entry = result.rows[0];
@@ -1075,6 +1633,7 @@ export function registerGmPoolRoutes(app: Express) {
         // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
         // No-op under the default ON_GM_CREATION policy; never throws.
         await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+        await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 
         // Notify Sales Executive
         let salesPersonId = entry.sales_person_id;
@@ -1131,10 +1690,12 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
+      const smRejectParams: any[] = [id, req.user.userId, comment || 'Rejected by Sales Manager'];
+      const smRejectScope = await gmApprovalScopeClause(req, smRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_sales_manager', final_status = 'rejected', sales_manager_status = 'rejected', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending' RETURNING *`,
-        [id, req.user.userId, comment || 'Rejected by Sales Manager']
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_sales_manager', final_status = 'rejected', sales_manager_status = 'rejected', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending'${smRejectScope} RETURNING *`,
+        smRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       res.json({ success: true, message: "Rejected by Sales Manager", data: result.rows[0] });
@@ -1143,17 +1704,24 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.get("/gm-pool/pending-account-manager", async (req, res) => {
+  router.get("/gm-pool/pending-account-manager", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ACCOUNTS), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
       const offset = (page - 1) * pageSize;
+      // MD-15: pending-list reads use the identical scope as the approve/reject
+      // actions on the same stage.
+      const listParams: any[] = [pageSize, offset];
+      const listScope = await gmApprovalScopeClause(req, listParams);
       const result = await pool.query(
-        `SELECT * FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND account_manager_status = 'pending' AND is_deleted = false ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-        [pageSize, offset]
+        `SELECT * FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND account_manager_status = 'pending' AND is_deleted = false${listScope} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+        listParams
       );
+      const countParams: any[] = [];
+      const countScope = await gmApprovalScopeClause(req, countParams);
       const countResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND account_manager_status = 'pending' AND is_deleted = false`
+        `SELECT COUNT(*) AS total FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND account_manager_status = 'pending' AND is_deleted = false${countScope}`,
+        countParams
       );
       res.json({ entries: result.rows, meta: { total: parseInt(countResult.rows[0]?.total || '0'), page, pageSize } });
     } catch (error) {
@@ -1161,33 +1729,66 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  router.get("/gm-pool/pending-sales-manager", async (req, res) => {
+  router.get("/gm-pool/pending-sales-manager", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_SALES_MANAGER), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
       const offset = (page - 1) * pageSize;
+      // P00-019 fix: this previously had no WHERE filter at all and returned every
+      // non-deleted GM entry despite the "pending" route name.
+      //
+      // sales_manager_status is never initialized to 'pending' anywhere in the
+      // approval state machine (only account_manager_status is, when HOD
+      // approves) — confirmed 2026-08-27, left unfixed by product decision, since
+      // this route is only ever consumed in view-only mode (sales-manager-dashboard.tsx
+      // renders GmApprovalCard with viewOnly=true — no approve/reject UI exists for
+      // this role today). Filtering on sales_manager_status here would therefore
+      // always return zero rows, hiding real entries this "view only" card exists
+      // to surface. List on approval_status alone; the sales-manager-approve/reject
+      // mutations below still correctly gate on sales_manager_status='pending' and
+      // are intentionally left as-is.
+      // MD-15: same scope as the sales-manager-approve/reject actions above.
+      const listParams: any[] = [pageSize, offset];
+      const listScope = await gmApprovalScopeClause(req, listParams);
       const result = await pool.query(
-        `SELECT * FROM drm.gm_entries WHERE is_deleted = false ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-        [pageSize, offset]
+        `SELECT * FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND is_deleted = false${listScope} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+        listParams
       );
-      const countResult = await pool.query(`SELECT COUNT(*) AS total FROM drm.gm_entries WHERE is_deleted = false`);
+      const countParams: any[] = [];
+      const countScope = await gmApprovalScopeClause(req, countParams);
+      const countResult = await pool.query(
+        `SELECT COUNT(*) AS total FROM drm.gm_entries WHERE approval_status = 'pending_managers' AND is_deleted = false${countScope}`,
+        countParams
+      );
       res.json({ entries: result.rows, meta: { total: parseInt(countResult.rows[0]?.total || '0'), page, pageSize } });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch entries" });
     }
   });
 
-  router.get("/gm-pool/pending-super-hod", async (req, res) => {
+  router.get("/gm-pool/pending-super-hod", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
       const offset = (page - 1) * pageSize;
+      // MD-15: same scope pattern applied as every other approval stage. This
+      // stage is NOT dead in practice — `PATCH /api/account/gm-entries/:id/approve`
+      // (account-routes.ts) unconditionally sets approval_status='pending_super_hod'
+      // — so it must be scoped like every other pending-list route (corrected
+      // 2026-07-20, DECISION_LOG.md D-012, after adversarial review found the
+      // super-hod-approve/reject actions below were shipped with zero scope on
+      // the strength of this same, false "dead stage" assumption).
+      const listParams: any[] = [pageSize, offset];
+      const listScope = await gmApprovalScopeClause(req, listParams);
       const result = await pool.query(
-        `SELECT * FROM drm.gm_entries WHERE approval_status = 'pending_super_hod' AND is_deleted = false ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-        [pageSize, offset]
+        `SELECT * FROM drm.gm_entries WHERE approval_status = 'pending_super_hod' AND is_deleted = false${listScope} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+        listParams
       );
+      const countParams: any[] = [];
+      const countScope = await gmApprovalScopeClause(req, countParams);
       const countResult = await pool.query(
-        `SELECT COUNT(*) AS total FROM drm.gm_entries WHERE approval_status = 'pending_super_hod' AND is_deleted = false`
+        `SELECT COUNT(*) AS total FROM drm.gm_entries WHERE approval_status = 'pending_super_hod' AND is_deleted = false${countScope}`,
+        countParams
       );
       res.json({ entries: result.rows, meta: { total: parseInt(countResult.rows[0]?.total || '0'), page, pageSize } });
     } catch (error) {
@@ -1199,19 +1800,26 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
       // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
       const gate = await enforceLoanPartialFinalApprovalGate(id);
       if (!gate.ok) return res.status(gate.status).json(gate.body);
+      // MD-15 (corrected 2026-07-20, DECISION_LOG.md D-012): this route was
+      // shipped with no scope clause on the false assumption that
+      // pending_super_hod is a dead stage — it isn't (see the pending-list
+      // route above). Scoped identically to hod-approve/account-manager-approve.
+      const superHodApproveParams: any[] = [id, req.user.userId, comment || null];
+      const superHodApproveScope = await gmApprovalScopeClause(req, superHodApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod' RETURNING *`,
-        [id, req.user.userId, comment || null]
+        `UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod'${superHodApproveScope} RETURNING *`,
+        superHodApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
 
       // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
       // No-op under the default ON_GM_CREATION policy; never throws.
       await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
+      await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 
       // Patch 7 Stage 3 — record the GM → Accounts/Invoicing cross-department
       // hand-off on Super-HOD final approval. Ledger + audit only.
@@ -1234,13 +1842,38 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment } = commentSchema.parse(req.body ?? {});
+      // MD-15 (corrected 2026-07-20, DECISION_LOG.md D-012) — see super-hod-approve above.
+      const superHodRejectParams: any[] = [id, req.user.userId, comment || 'Rejected by Super HOD'];
+      const superHodRejectScope = await gmApprovalScopeClause(req, superHodRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_super_hod', final_status = 'rejected', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod' RETURNING *`,
-        [id, req.user.userId, comment || 'Rejected by Super HOD']
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_super_hod', final_status = 'rejected', status = 'Rejected', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod'${superHodRejectScope} RETURNING *`,
+        superHodRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
-      res.json({ success: true, message: "Rejected by Super HOD", data: result.rows[0] });
+      const entry = result.rows[0];
+
+      const rejectReason = comment || "No reason provided";
+      const company = entry.company_name || "Company";
+      const creatorId = entry.created_by || entry.sales_person_id || entry.created_by_user_id;
+
+      if (creatorId) {
+        await NotificationService.notify({
+          userId: String(creatorId),
+          message: `Your GM entry for '${company}' was rejected by Admin / Super HOD. Reason: ${rejectReason}`,
+          type: "ERROR",
+          targetUrl: "/sales/gm-pool",
+        }).catch(() => { });
+      }
+
+      await NotificationService.notifyRole(
+        "admin",
+        `GM entry for '${company}' was rejected by Super HOD. Reason: ${rejectReason}`,
+        "ERROR",
+        { targetUrl: "/hod/verification" }
+      ).catch(() => { });
+
+      res.json({ success: true, message: "Rejected by Super HOD", data: entry });
     } catch (error) {
       res.status(500).json({ error: "Failed to reject GM entry" });
     }
@@ -1250,7 +1883,9 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const updates = req.body;
+      const parsed = superHodUpdateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid payload", issues: parsed.error.issues });
+      const updates = parsed.data;
       const fields: string[] = [];
       const values: any[] = [];
       let paramIdx = 1;
@@ -1282,6 +1917,12 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
+      // Data-scope fix (P00-017): request-update previously had no creator check
+      // at all — any sales-role holder could request an update on ANY other
+      // user's GM entry. admin/super_hod keep full (org-wide) access; every
+      // other role is restricted to entries they created.
+      const role = normalizeRole((req.user as any).activeRoleId || req.user.roleId || "");
+      const isOrgWide = role === ROLES.ADMIN || role === ROLES.SUPER_HOD;
       const result = await pool.query(
         `UPDATE drm.gm_entries
          SET update_request_status = 'pending_super_hod',
@@ -1295,10 +1936,11 @@ export function registerGmPoolRoutes(app: Express) {
            AND COALESCE(is_deleted, false) = false
            AND approval_status = 'approved'
            AND (update_request_status IS NULL OR update_request_status = 'rejected' OR update_request_status = 'super_hod_rejected')
+           ${isOrgWide ? "" : "AND created_by = $3"}
          RETURNING id`,
-        [id, req.user.userId]
+        isOrgWide ? [id, req.user.userId] : [id, req.user.userId, req.user.userId]
       );
-      if (!result.rowCount) return res.status(404).json({ error: "Entry not found or update request not allowed in current state" });
+      if (!result.rowCount) return res.status(404).json({ error: "Entry not found, update request not allowed in current state, or not owned by you" });
       return res.json({ success: true, message: "Update request sent to Super HOD for approval" });
     } catch (err) {
       console.error("[gm-pool] request-update error:", err);
@@ -1368,12 +2010,16 @@ export function registerGmPoolRoutes(app: Express) {
   router.post("/gm-pool/:id/request-withdraw", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_SUBMIT, { auditUnauthorizedAttempt: true }), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { reason } = req.body;
-      // Stage 8: a withdrawal request requires a reason.
-      if (!String(reason ?? "").trim()) {
-        return res.status(400).json({ error: "A reason is required to request a withdrawal" });
-      }
+      const withdrawParsed = reasonSchema.safeParse(req.body);
+      if (!withdrawParsed.success) return res.status(400).json({ error: "A reason is required to request a withdrawal", issues: withdrawParsed.error.issues });
+      const { reason } = withdrawParsed.data;
+      // Data-scope fix (P00-017): same creator-check pattern as request-update
+      // above — previously any sales-role holder could request withdrawal of
+      // ANY other user's GM entry.
+      const role = normalizeRole((req.user as any).activeRoleId || req.user.roleId || "");
+      const isOrgWide = role === ROLES.ADMIN || role === ROLES.SUPER_HOD;
       const result = await pool.query(
         `UPDATE drm.gm_entries
          SET withdrawal_status = 'pending_hod',
@@ -1383,19 +2029,23 @@ export function registerGmPoolRoutes(app: Express) {
              updated_at = NOW()
          WHERE id = $1 AND COALESCE(is_deleted, false) = false
          AND (withdrawal_status IS NULL OR withdrawal_status = 'rejected')
+         ${isOrgWide ? "" : "AND created_by = $4"}
          RETURNING id`,
-        [id, reason || null, req.user.userId]
+        isOrgWide ? [id, reason || null, req.user.userId] : [id, reason || null, req.user.userId, req.user.userId]
       );
       if (!result.rowCount) {
-        // Check if it's already pending (idempotent — treat as success)
+        // Check if it's already pending (idempotent — treat as success), still
+        // scoped to the caller's own entry unless org-wide.
         const existing = await pool.query(
-          `SELECT withdrawal_status FROM drm.gm_entries WHERE id = $1 AND COALESCE(is_deleted, false) = false`,
-          [id]
+          isOrgWide
+            ? `SELECT withdrawal_status FROM drm.gm_entries WHERE id = $1 AND COALESCE(is_deleted, false) = false`
+            : `SELECT withdrawal_status FROM drm.gm_entries WHERE id = $1 AND COALESCE(is_deleted, false) = false AND created_by = $2`,
+          isOrgWide ? [id] : [id, req.user.userId]
         );
         if (existing.rows[0]?.withdrawal_status === 'pending_hod') {
           return res.json({ success: true, message: "Withdrawal request already pending HOD approval" });
         }
-        return res.status(404).json({ error: "Entry not found or cannot be withdrawn in its current state" });
+        return res.status(404).json({ error: "Entry not found, not owned by you, or cannot be withdrawn in its current state" });
       }
       return res.json({ success: true, message: "Withdrawal request sent to HOD for approval" });
     } catch (err) {
@@ -1409,16 +2059,26 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
+      const withdrawApproveParams: any[] = [id, req.user.userId];
+      const withdrawApproveScope = await gmApprovalScopeClause(req, withdrawApproveParams);
       const result = await pool.query(
         `UPDATE drm.gm_entries
          SET withdrawal_status = 'approved',
              status = 'Withdrawn',
+             approval_status = 'pending_hod',
+             hod_status = 'Pending',
+             account_manager_status = 'pending',
+             super_hod_status = NULL,
+             hod_approved_at = NULL,
+             hod_approved_by = NULL,
+             account_manager_approved_at = NULL,
+             account_manager_approved_by = NULL,
              withdrawal_actioned_by = $2,
              withdrawal_actioned_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1 AND withdrawal_status = 'pending_hod'
+         WHERE id = $1 AND withdrawal_status = 'pending_hod'${withdrawApproveScope}
          RETURNING id`,
-        [id, req.user.userId]
+        withdrawApproveParams
       );
       if (!result.rowCount) return res.status(404).json({ error: "No pending withdrawal request found" });
       return res.json({ success: true, message: "Withdrawal approved. Entry marked as Withdrawn." });
@@ -1433,15 +2093,17 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
+      const withdrawRejectParams: any[] = [id, req.user.userId];
+      const withdrawRejectScope = await gmApprovalScopeClause(req, withdrawRejectParams);
       const result = await pool.query(
         `UPDATE drm.gm_entries
          SET withdrawal_status = 'rejected',
              withdrawal_actioned_by = $2,
              withdrawal_actioned_at = NOW(),
              updated_at = NOW()
-         WHERE id = $1 AND withdrawal_status = 'pending_hod'
+         WHERE id = $1 AND withdrawal_status = 'pending_hod'${withdrawRejectScope}
          RETURNING id`,
-        [id, req.user.userId]
+        withdrawRejectParams
       );
       if (!result.rowCount) return res.status(404).json({ error: "No pending withdrawal request found" });
       return res.json({ success: true, message: "Withdrawal request rejected." });
@@ -1452,16 +2114,19 @@ export function registerGmPoolRoutes(app: Express) {
   });
 
   // HOD: Get all pending withdrawal requests
-  router.get("/gm-pool/pending-withdrawals", async (req, res) => {
+  router.get("/gm-pool/pending-withdrawals", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const pendingWithdrawalsParams: any[] = [];
+      const pendingWithdrawalsScope = await gmApprovalScopeClause(req, pendingWithdrawalsParams);
       const result = await pool.query(
         `SELECT id, drm_id, company_name, member_id, order_id, status,
                 withdrawal_reason, withdrawal_requested_at, withdrawal_requested_by,
                 created_at
          FROM drm.gm_entries
-         WHERE withdrawal_status = 'pending_hod' AND is_deleted = false
-         ORDER BY withdrawal_requested_at ASC`
+         WHERE withdrawal_status = 'pending_hod' AND is_deleted = false${pendingWithdrawalsScope}
+         ORDER BY withdrawal_requested_at ASC`,
+        pendingWithdrawalsParams
       );
       return res.json({ entries: result.rows });
     } catch (err) {
@@ -1474,7 +2139,18 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET status = 'Withdrawn', updated_at = NOW() WHERE id = $1 AND is_deleted = false RETURNING id`,
+        `UPDATE drm.gm_entries
+         SET status = 'Withdrawn',
+             approval_status = 'pending_hod',
+             hod_status = 'Pending',
+             account_manager_status = 'pending',
+             super_hod_status = NULL,
+             hod_approved_at = NULL,
+             hod_approved_by = NULL,
+             account_manager_approved_at = NULL,
+             account_manager_approved_by = NULL,
+             updated_at = NOW()
+         WHERE id = $1 AND is_deleted = false RETURNING id`,
         [id]
       );
       if (!result.rowCount) return res.status(404).json({ error: "GM entry not found" });
@@ -1488,11 +2164,36 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const result = await pool.query(
-        `UPDATE drm.gm_entries SET is_deleted = true, updated_at = NOW() WHERE id = $1 RETURNING id`,
+
+      const checkRes = await pool.query(
+        `SELECT approval_status, hod_status, hod_approved_at FROM drm.gm_entries WHERE id = $1 AND coalesce(is_deleted, false) = false`,
         [id]
       );
-      if (!result.rowCount) return res.status(404).json({ error: "GM entry not found" });
+      if (!checkRes.rowCount) return res.status(404).json({ error: "GM entry not found" });
+
+      const gmRow = checkRes.rows[0];
+      const appStatus = (gmRow.approval_status || "").toLowerCase().trim();
+      const hodStat = (gmRow.hod_status || "").toLowerCase().trim();
+      const isHodApproved =
+        appStatus === "approved" ||
+        appStatus === "pending_managers" ||
+        appStatus === "pending_super_hod" ||
+        hodStat.includes("approved") ||
+        gmRow.hod_approved_at !== null;
+
+      if (isHodApproved) {
+        return res.status(403).json({ error: "HOD approved GM entries cannot be deleted." });
+      }
+
+      const role = normalizeRole((req.user as any).activeRoleId || req.user.roleId || "");
+      const isOrgWide = role === ROLES.ADMIN || role === ROLES.SUPER_HOD;
+      const result = await pool.query(
+        isOrgWide
+          ? `UPDATE drm.gm_entries SET is_deleted = true, updated_at = NOW() WHERE id = $1 RETURNING id`
+          : `UPDATE drm.gm_entries SET is_deleted = true, updated_at = NOW() WHERE id = $1 AND created_by = $2 RETURNING id`,
+        isOrgWide ? [id] : [id, req.user.userId]
+      );
+      if (!result.rowCount) return res.status(404).json({ error: "GM entry not found or not owned by you" });
       return res.json({ success: true, message: "Entry deleted" });
     } catch (err) {
       return res.status(500).json({ error: "Failed to delete entry" });
@@ -1527,7 +2228,7 @@ export function registerGmPoolRoutes(app: Express) {
   });
 
   // --- P4: list partial receipts + payment summary --------------------------
-  router.get("/gm-pool/:id/partial-receipts", async (req, res) => {
+  router.get("/gm-pool/:id/partial-receipts", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT), async (req, res) => {
     try {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const { id } = req.params;
@@ -1567,12 +2268,15 @@ export function registerGmPoolRoutes(app: Express) {
         const { id } = req.params;
         const input = partialReceiptSchema.parse(req.body ?? {});
         const gm = await pool.query(
-          "SELECT id, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          "SELECT id, is_partial_payment, is_loan, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
           [id],
         );
         if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
-        if (Number(gm.rows[0].is_partial_payment) !== 1) {
-          return sendError(res, 409, "NOT_PARTIAL_GM", "Receipts can only be recorded against a partial-payment GM");
+        // Receipts are also how a FULL GM's payment gets verified (see
+        // enforceLoanPartialFinalApprovalGate) — only a LOAN GM (tracked via
+        // gm_loan_terms/gm_loan_receivables instead) is excluded here.
+        if (Number(gm.rows[0].is_loan) === 1) {
+          return sendError(res, 409, "NOT_ELIGIBLE_FOR_RECEIPTS", "Loan GMs are tracked via loan terms, not receipts");
         }
         const target = Number(gm.rows[0].target || 0);
         const before = await loadPartialSummary(id, target);
@@ -1688,7 +2392,7 @@ export function registerGmPoolRoutes(app: Express) {
   );
 
   // --- P5: loan terms (read) ------------------------------------------------
-  router.get("/gm-pool/:id/loan-terms", async (req, res) => {
+  router.get("/gm-pool/:id/loan-terms", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN), async (req, res) => {
     try {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const { id } = req.params;
@@ -1790,12 +2494,12 @@ export function registerGmPoolRoutes(app: Express) {
   );
 
   // --- P5: loan admin approval queue (pending) ------------------------------
-  router.get("/gm-pool/loan-admin-queue", async (req, res) => {
+  router.get("/gm-pool/loan-admin-queue", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_ADMIN), async (req, res) => {
     try {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const { page, pageSize } = parsePagination(req.query.page as string, req.query.pageSize as string);
       const offset = (page - 1) * pageSize;
-      const where = `g.is_loan = 1 AND g.is_deleted = false AND COALESCE(lt.admin_approval_status, 'PENDING') = 'PENDING'`;
+      const where = `g.is_loan IS TRUE AND coalesce(g.is_deleted, false) = false AND COALESCE(lt.admin_approval_status, 'PENDING') = 'PENDING'`;
       const rows = await pool.query(
         `SELECT g.id, g.company_name AS "companyName", g.drm_id AS "drmId",
                 COALESCE(g.customer_dollar, g.amount_usd, 0)::numeric AS "amountUsd",
@@ -1805,14 +2509,14 @@ export function registerGmPoolRoutes(app: Express) {
                 COALESCE(lt.admin_approval_status, 'PENDING') AS "adminApprovalStatus",
                 COALESCE(lt.return_status, 'PENDING') AS "returnStatus"
            FROM drm.gm_entries g
-           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id
+           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id::text
           WHERE ${where}
           ORDER BY g.created_at DESC LIMIT $1 OFFSET $2`,
         [pageSize, offset],
       );
       const count = await pool.query(
         `SELECT COUNT(*) AS total FROM drm.gm_entries g
-           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id WHERE ${where}`,
+           LEFT JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id::text WHERE ${where}`,
       );
       return sendSuccess(res, {
         entries: rows.rows,
@@ -1857,7 +2561,6 @@ export function registerGmPoolRoutes(app: Express) {
           toStatus: GM_LOAN_ADMIN_GATE_STATES.APPROVED,
           transitionMap: GM_LOAN_ADMIN_GATE_TRANSITIONS,
           actor: gmWorkflowActor(req),
-          module: "gm-pool",
           metadata: { gate: "loan_terms_admin_approval", comment: input.comment ?? null },
           req,
           execute: async (client) => {
@@ -2045,7 +2748,7 @@ export function registerGmPoolRoutes(app: Express) {
   );
 
   // --- P5: loan return / overdue tracking report ----------------------------
-  router.get("/gm-pool/loan-return-report", async (req, res) => {
+  router.get("/gm-pool/loan-return-report", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_UPDATE_LOAN_RETURN), async (req, res) => {
     try {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const rows = await pool.query(
@@ -2067,8 +2770,8 @@ export function registerGmPoolRoutes(app: Express) {
                   ELSE NULL
                 END AS "daysOverdue"
            FROM drm.gm_entries g
-           JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id
-          WHERE g.is_loan = 1 AND g.is_deleted = false
+           JOIN drm.gm_loan_terms lt ON lt.gm_id = g.id::text
+          WHERE g.is_loan::text IN ('1', 'true') AND coalesce(g.is_deleted, false) = false
           ORDER BY lt.agreed_return_date ASC NULLS LAST, g.created_at DESC`,
       );
       const summary = {

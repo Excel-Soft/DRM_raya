@@ -166,7 +166,12 @@ export const projectApprovalsRepository = {
     return result[0];
   },
 
-  async approve(id: string, approverUserId: string): Promise<ProjectApproval> {
+  // Phase 12 — only a still-"Pending" approval may be decided. Previously the
+  // WHERE clause matched on id alone, so an already-Approved/Rejected row
+  // could be silently re-decided (e.g. approved, then rejected afterward).
+  // Returning null (no matching row) lets the caller distinguish "already
+  // decided" from a hard failure.
+  async approve(id: string, approverUserId: string): Promise<ProjectApproval | null> {
     await ensureApprovalsSchema();
     const result = await db
       .update(projectApprovals)
@@ -176,12 +181,12 @@ export const projectApprovalsRepository = {
         approvedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(projectApprovals.id, id))
+      .where(and(eq(projectApprovals.id, id), eq(projectApprovals.status, "Pending")))
       .returning();
-    return result[0];
+    return result[0] ?? null;
   },
 
-  async reject(id: string, approverUserId: string, rejectionReason: string): Promise<ProjectApproval> {
+  async reject(id: string, approverUserId: string, rejectionReason: string): Promise<ProjectApproval | null> {
     await ensureApprovalsSchema();
     const result = await db
       .update(projectApprovals)
@@ -191,9 +196,9 @@ export const projectApprovalsRepository = {
         rejectionReason,
         updatedAt: new Date(),
       })
-      .where(eq(projectApprovals.id, id))
+      .where(and(eq(projectApprovals.id, id), eq(projectApprovals.status, "Pending")))
       .returning();
-    return result[0];
+    return result[0] ?? null;
   },
 
   async getApprovalStats(): Promise<{ pending: number; approved: number; rejected: number; pendingInvoices: number }> {

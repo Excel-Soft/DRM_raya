@@ -1,7 +1,7 @@
 import { Router, type Express } from "express";
-import { servicePoolRepository } from "../repositories/service-pool.repository";
+import { servicePoolRepository } from "./repositories/service-pool.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "../utils/role-utils";
+import { isManagerialRole } from "./utils/role-utils";
 
 export function registerServicePoolRoutes(app: Express) {
     const router = Router();

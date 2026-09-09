@@ -424,7 +424,7 @@ export default function NoticeBoard() {
                   </TableRow>
                 ) : (
                   filteredNotices.map((notice, index) => (
-                    <TableRow key={notice.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors dark:border-zinc-800">
+                    <TableRow key={notice.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors dark:border-zinc-800">
                       <TableCell className="py-4 px-4 text-[13px] font-bold text-slate-700 dark:text-zinc-400">{index + 1}</TableCell>
                       <TableCell className="py-4 px-4">
                         <div className="flex flex-col">

@@ -10,13 +10,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Breadcrumb } from "@/components/breadcrumb";
-import { Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2, X, Calendar as CalendarIcon, Tag, Flag, Users, RotateCcw, Inbox, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
 
-type Participant = { id: string; name: string };
+type Participant = { id: string; name: string; role: string | null };
+
+function formatRoleLabel(role: string | null | undefined): string {
+  if (!role) return "No Role";
+  return role
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 type TodoItem = {
   task: string;
   category: string;
@@ -51,6 +59,27 @@ type TodoTask = {
   participants?: string[] | null;
   status: string;
 };
+
+const STATUS_STYLES: Record<string, string> = {
+  ASSIGNED: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900",
+  RECEIVED: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900",
+  PENDING: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900",
+  REOPENED: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/40 dark:text-orange-300 dark:border-orange-900",
+  FINISHED: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900",
+};
+
+const PRIORITY_BAR: Record<string, string> = {
+  HIGH: "bg-red-500",
+  MEDIUM: "bg-amber-500",
+  LOW: "bg-slate-300 dark:bg-zinc-700",
+};
+
+const PRIORITY_TEXT: Record<string, string> = {
+  HIGH: "text-red-600 dark:text-red-400",
+  MEDIUM: "text-amber-600 dark:text-amber-400",
+  LOW: "text-slate-500 dark:text-zinc-400",
+};
+
 function ErrorFallback({ error }: FallbackProps) {
   return (
     <div className="p-6 text-center space-y-4">
@@ -279,7 +308,12 @@ function AttendanceTodoContent() {
                     <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
                     <SelectContent>
                       {participants.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                        <SelectItem key={p.id} value={p.id}>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-semibold text-muted-foreground">{formatRoleLabel(p.role)}</span>
+                            <span>{p.name}</span>
+                          </div>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -430,7 +464,9 @@ function AttendanceTodoContent() {
                 <SelectContent>
                   <SelectItem value="ALL">All participants</SelectItem>
                   {participants.map((pp) => (
-                    <SelectItem key={pp.id} value={pp.id}>{pp.name}</SelectItem>
+                    <SelectItem key={pp.id} value={pp.id}>
+                      {pp.name} <span className="text-muted-foreground">· {formatRoleLabel(pp.role)}</span>
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -447,60 +483,100 @@ function AttendanceTodoContent() {
         </CardHeader>
         <CardContent>
           {listQuery.isLoading ? (
-            <div className="text-sm text-muted-foreground py-4">Loading...</div>
+            <div className="text-sm text-muted-foreground py-8 text-center">Loading tasks...</div>
           ) : listQuery.isError ? (
-            <div className="text-sm text-destructive py-4">Couldn't load tasks. Please try again.</div>
+            <div className="text-sm text-destructive py-8 text-center">Couldn't load tasks. Please try again.</div>
           ) : !Array.isArray(listQuery.data) || listQuery.data.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-4">
-              {!Array.isArray(listQuery.data) && listQuery.data ? "Couldn't load tasks. Please try again." : "No tasks yet."}
+            <div className="flex flex-col items-center gap-2 py-10 text-center text-muted-foreground">
+              <Inbox className="h-8 w-8 opacity-40" />
+              <p className="text-sm">
+                {!Array.isArray(listQuery.data) && listQuery.data ? "Couldn't load tasks. Please try again." : "No tasks yet — create one above to get started."}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
               {listQuery.data.map((t: any) => {
                 if (!t) return null;
+                const priority = String(t.priority || "MEDIUM").toUpperCase();
+                const status = String(t.status || "PENDING").toUpperCase();
+                const isFinished = status === "FINISHED" || status === "DONE" || status === "COMPLETED";
+                const participantCount = Array.isArray(t.participants) ? t.participants.length : 0;
+                const dateLabel = (() => {
+                  try {
+                    if (!t.due_date) return "No date";
+                    const d = format(new Date(t.due_date), "MMM d, yyyy");
+                    return t.due_time ? `${d} · ${t.due_time}` : d;
+                  } catch {
+                    return String(t.due_date || "Invalid date");
+                  }
+                })();
+
                 return (
-                  <div key={t.id} className="border rounded-lg p-3 flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="font-semibold">{t.title || "Untitled Task"}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {t.category ? `${t.category} · ` : ""}{t.priority || "MEDIUM"} · {(() => {
-                          try {
-                            return t.due_date ? format(new Date(t.due_date), "PPP") : "No date";
-                          } catch {
-                            return String(t.due_date || "Invalid date");
-                          }
-                        })()}
+                  <div
+                    key={t.id}
+                    className="flex rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm transition-shadow hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900"
+                    data-testid={`card-task-${t.id}`}
+                  >
+                    <div className={`w-1.5 shrink-0 ${PRIORITY_BAR[priority] || PRIORITY_BAR.MEDIUM}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="p-4 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="font-semibold text-[15px] text-slate-800 dark:text-zinc-100 truncate">
+                            {t.title || "Untitled Task"}
+                          </h3>
+                          <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_STYLES[status] || STATUS_STYLES.PENDING}`}>
+                            {status}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-zinc-400">
+                          {t.category && (
+                            <span className="inline-flex items-center gap-1">
+                              <Tag className="h-3 w-3" />
+                              {t.category}
+                            </span>
+                          )}
+                          <span className={`inline-flex items-center gap-1 font-medium ${PRIORITY_TEXT[priority] || PRIORITY_TEXT.MEDIUM}`}>
+                            <Flag className="h-3 w-3" />
+                            {priority}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <CalendarIcon className="h-3 w-3" />
+                            {dateLabel}
+                          </span>
+                          {participantCount > 0 && (
+                            <span className="inline-flex items-center gap-1">
+                              <Users className="h-3 w-3" />
+                              {participantCount} {participantCount === 1 ? "participant" : "participants"}
+                            </span>
+                          )}
+                        </div>
+
+                        {t.description && (
+                          <p className="text-sm text-slate-600 dark:text-zinc-300 line-clamp-2">{t.description}</p>
+                        )}
                       </div>
-                      {t.description && (
-                        <div className="text-sm text-muted-foreground line-clamp-2">{t.description}</div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-end gap-2 shrink-0">
-                      <Badge variant="outline">{t.status || "PENDING"}</Badge>
-                      {(() => {
-                        const s = String(t.status || "").toUpperCase();
-                        const isFinished = s === "FINISHED" || s === "DONE" || s === "COMPLETED";
-                        if (isFinished) {
-                          return (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-xs"
-                              disabled={statusMutation.isPending}
-                              onClick={() => statusMutation.mutate({ taskId: t.id, status: "REOPENED" })}
-                              data-testid={`button-reopen-${t.id}`}
-                            >
-                              Reopen
-                            </Button>
-                          );
-                        }
-                        return (
-                          <div className="flex flex-wrap items-center justify-end gap-2">
-                            {s !== "RECEIVED" && (
+
+                      <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-950/40">
+                        {isFinished ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-3 text-xs gap-1.5"
+                            disabled={statusMutation.isPending}
+                            onClick={() => statusMutation.mutate({ taskId: t.id, status: "REOPENED" })}
+                            data-testid={`button-reopen-${t.id}`}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Reopen
+                          </Button>
+                        ) : (
+                          <>
+                            {status !== "RECEIVED" && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 px-3 text-xs"
                                 disabled={statusMutation.isPending}
                                 onClick={() => statusMutation.mutate({ taskId: t.id, status: "RECEIVED" })}
                                 data-testid={`button-received-${t.id}`}
@@ -508,11 +584,11 @@ function AttendanceTodoContent() {
                                 Mark Received
                               </Button>
                             )}
-                            {s !== "PENDING" && s !== "REOPENED" && (
+                            {status !== "PENDING" && status !== "REOPENED" && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 px-2 text-xs"
+                                className="h-7 px-3 text-xs"
                                 disabled={statusMutation.isPending}
                                 onClick={() => statusMutation.mutate({ taskId: t.id, status: "PENDING" })}
                                 data-testid={`button-pending-${t.id}`}
@@ -522,16 +598,17 @@ function AttendanceTodoContent() {
                             )}
                             <Button
                               size="sm"
-                              className="h-7 px-2 text-xs"
+                              className="h-7 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
                               disabled={statusMutation.isPending}
                               onClick={() => statusMutation.mutate({ taskId: t.id, status: "FINISHED" })}
                               data-testid={`button-done-${t.id}`}
                             >
+                              <CheckCircle2 className="h-3 w-3" />
                               Mark Done
                             </Button>
-                          </div>
-                        );
-                      })()}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

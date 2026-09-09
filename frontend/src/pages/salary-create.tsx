@@ -254,51 +254,51 @@ export default function SalaryCreate() {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
       <div className="p-4 max-w-[1700px] mx-auto space-y-6">
-        <h1 className="text-[17px] font-bold uppercase text-[#555]">SALARY CREATE</h1>
+        <h1 className="text-[17px] font-bold uppercase text-[#555] dark:text-zinc-300">SALARY CREATE</h1>
 
         {!flags.canGenerate ? (
-          <Card className="border-none shadow-sm bg-white rounded-sm">
-            <CardContent className="p-8 text-center text-[#d9534f] text-sm">
+          <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
+            <CardContent className="p-8 text-center text-[#d9534f] dark:text-red-400 text-sm">
               You are not authorized to create or preview salary runs.
             </CardContent>
           </Card>
         ) : (
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
             {/* Filters */}
             <div className="flex flex-wrap items-end gap-4">
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Month</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Month</Label>
                 <Select value={month} onValueChange={setMonth}>
-                  <SelectTrigger className="h-9 w-[150px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Year</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Year</Label>
                 <Select value={year} onValueChange={setYear}>
-                  <SelectTrigger className="h-9 w-[110px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[110px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>{years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Branch</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Branch</Label>
                 <Input value={branch === "all" ? "" : branch} placeholder="All branches"
                   onChange={(e) => setBranch(e.target.value || "all")}
-                  className="h-9 w-[150px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Department</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Department</Label>
                 <Input value={department === "all" ? "" : department} placeholder="All departments"
                   onChange={(e) => setDepartment(e.target.value || "all")}
-                  className="h-9 w-[170px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[170px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-xs font-bold text-[#555]">Employee</Label>
+                <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Employee</Label>
                 <Select value={employeeId} onValueChange={setEmployeeId}>
-                  <SelectTrigger className="h-9 w-[200px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="All employees" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[200px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="All employees" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All employees</SelectItem>
                     {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
@@ -324,7 +324,7 @@ export default function SalaryCreate() {
             </p>
 
             {conflicts.length > 0 && (
-              <div className="flex items-start gap-2 bg-[#fcf8e3] border border-[#faebcc] text-[#8a6d3b] rounded-sm px-3 py-2 text-xs">
+              <div className="flex items-start gap-2 bg-[#fcf8e3] border border-[#faebcc] text-[#8a6d3b] dark:bg-amber-950 dark:border-amber-900 dark:text-amber-400 rounded-sm px-3 py-2 text-xs">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <span>These employees already have a <b>finalized</b> salary for this period and will block finalize:&nbsp;
                   {conflicts.join(", ")}.</span>
@@ -333,27 +333,27 @@ export default function SalaryCreate() {
 
             <div className="flex justify-end">
               <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name..."
-                className="w-[220px] h-8 bg-white border-slate-300 rounded-sm text-xs focus-visible:ring-0" />
+                className="w-[220px] h-8 bg-white dark:bg-zinc-900 border-slate-300 rounded-sm text-xs focus-visible:ring-0" />
             </div>
 
             {/* Preview table */}
-            <div className="overflow-x-auto border border-slate-100 mt-2">
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 mt-2">
               <Table className="w-full text-[12.5px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#fdf3db]">
+                  <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#fdf3db] dark:bg-zinc-900">
                     {["Name", "Dept", "Basic", "Present", "Absent", "Unpaid Lv", "OT Min",
                       "Allowance", "Bonus", "OT Amt", "Loan", "Other", "Penalty",
                       "Gross", "Deductions", "Net", "Payable"].map((h) => (
-                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#555] text-left text-[11px]">{h}</TableHead>
+                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#555] dark:text-zinc-300 text-left text-[11px]">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {preview.isLoading ? (
                     <TableRow><TableCell colSpan={17} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : preview.isError ? (
                     <TableRow><TableCell colSpan={17} className="text-center py-8">
-                      <div className="text-[#d9534f] mb-2">Could not load the salary preview.</div>
+                      <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the salary preview.</div>
                       <Button size="sm" variant="outline" onClick={() => preview.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                     </TableCell></TableRow>
                   ) : filtered.length === 0 ? (
@@ -362,24 +362,24 @@ export default function SalaryCreate() {
                     filtered.map((item) => {
                       const l = liveRow(item);
                       return (
-                        <TableRow key={item.userId} className="border-b border-slate-100 hover:bg-[#f1f3f5]">
-                          <TableCell className="py-2 px-2 text-[#555] font-semibold">{item.employeeName || "-"}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{item.department || "-"}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{fmt(item.basicSalary)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{item.daysPresent}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{item.daysAbsent}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{item.unpaidLeaveDays}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{item.overtimeMinutes}</TableCell>
+                        <TableRow key={item.userId} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800">
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{item.employeeName || "-"}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.department || "-"}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(item.basicSalary)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.daysPresent}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.daysAbsent}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.unpaidLeaveDays}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{item.overtimeMinutes}</TableCell>
                           <TableCell className="py-2 px-2">{manualInput(item, "allowanceAmount")}</TableCell>
                           <TableCell className="py-2 px-2">{manualInput(item, "bonusAmount")}</TableCell>
                           <TableCell className="py-2 px-2">{manualInput(item, "overtimeAmount")}</TableCell>
                           <TableCell className="py-2 px-2">{manualInput(item, "loanDeduction")}</TableCell>
                           <TableCell className="py-2 px-2">{manualInput(item, "otherDeductions")}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{fmt(item.penaltyAmount)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555]">{fmt(l.gross)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#c0392b]">{fmt(l.totalDed)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#555] font-semibold">{fmt(l.net)}</TableCell>
-                          <TableCell className="py-2 px-2 text-[#00733e] font-bold">{fmt(l.payable)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(item.penaltyAmount)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(l.gross)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#c0392b] dark:text-red-400">{fmt(l.totalDed)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{fmt(l.net)}</TableCell>
+                          <TableCell className="py-2 px-2 text-[#00733e] dark:text-green-400 font-bold">{fmt(l.payable)}</TableCell>
                         </TableRow>
                       );
                     })
@@ -387,12 +387,12 @@ export default function SalaryCreate() {
                 </TableBody>
                 {filtered.length > 0 && (
                   <tfoot>
-                    <TableRow className="bg-[#f7f7f7] border-t border-slate-300 font-bold">
-                      <TableCell colSpan={13} className="py-2 px-2 text-right text-[#555]">Totals ({filtered.length})</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555]">{fmt(liveTotals.gross)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#c0392b]">{fmt(liveTotals.ded)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555]">{fmt(liveTotals.net)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#00733e]">{fmt(liveTotals.payable)}</TableCell>
+                    <TableRow className="bg-[#f7f7f7] dark:bg-zinc-900 border-t border-slate-300 dark:border-zinc-700 font-bold">
+                      <TableCell colSpan={13} className="py-2 px-2 text-right text-[#555] dark:text-zinc-300">Totals ({filtered.length})</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(liveTotals.gross)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#c0392b] dark:text-red-400">{fmt(liveTotals.ded)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(liveTotals.net)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#00733e] dark:text-green-400">{fmt(liveTotals.payable)}</TableCell>
                     </TableRow>
                   </tfoot>
                 )}
@@ -403,24 +403,24 @@ export default function SalaryCreate() {
         )}
 
         {/* Recent runs + lifecycle actions */}
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-3">
-            <h2 className="text-[14px] font-bold uppercase text-[#555]">Recent Salary Runs</h2>
-            <div className="overflow-x-auto border border-slate-100">
+            <h2 className="text-[14px] font-bold uppercase text-[#555] dark:text-zinc-300">Recent Salary Runs</h2>
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#e0f3e8]">
+                  <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#e0f3e8] dark:bg-zinc-900">
                     {["Period", "Branch", "Dept", "Employees", "Gross", "Deductions", "Net", "Status", "Actions"].map((h) => (
-                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#333] text-left text-xs">{h}</TableHead>
+                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {runsQuery.isLoading ? (
                     <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : runsQuery.isError ? (
                     <TableRow><TableCell colSpan={9} className="text-center py-8">
-                      <div className="text-[#d9534f] mb-2">Could not load salary runs.</div>
+                      <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load salary runs.</div>
                       <Button size="sm" variant="outline" onClick={() => runsQuery.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                     </TableCell></TableRow>
                   ) : runs.length === 0 ? (
@@ -430,14 +430,14 @@ export default function SalaryCreate() {
                       const status = (r.status || "DRAFT").toUpperCase();
                       const locked = status === "FINALIZED" || status === "LOCKED" || status === "CANCELLED";
                       return (
-                        <TableRow key={r.id} className="border-b border-slate-100 hover:bg-[#f1f3f5]">
-                          <TableCell className="py-2.5 px-2 text-[#555] font-semibold">{MONTHS[r.period_month - 1]} {r.period_year}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#555]">{r.branch || "-"}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#555]">{r.department || "-"}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#555]">{r.employee_count}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#555]">{fmt(Number(r.total_gross || 0))}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#c0392b]">{fmt(Number(r.total_deductions || 0))}</TableCell>
-                          <TableCell className="py-2.5 px-2 text-[#555]">{fmt(Number(r.total_net || 0))}</TableCell>
+                        <TableRow key={r.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800">
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300 font-semibold">{MONTHS[r.period_month - 1]} {r.period_year}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300">{r.branch || "-"}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300">{r.department || "-"}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300">{r.employee_count}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300">{fmt(Number(r.total_gross || 0))}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#c0392b] dark:text-red-400">{fmt(Number(r.total_deductions || 0))}</TableCell>
+                          <TableCell className="py-2.5 px-2 text-[#555] dark:text-zinc-300">{fmt(Number(r.total_net || 0))}</TableCell>
                           <TableCell className="py-2.5 px-2"><StatusBadge status={status} /></TableCell>
                           <TableCell className="py-2.5 px-2">
                             <div className="flex gap-1.5">
@@ -482,7 +482,7 @@ export default function SalaryCreate() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1.5">
-            <Label className="text-xs font-bold text-[#555]">Reason (optional)</Label>
+            <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">Reason (optional)</Label>
             <textarea
               value={actionReason}
               onChange={(e) => setActionReason(e.target.value)}

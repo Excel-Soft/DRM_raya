@@ -1,10 +1,16 @@
 import { db, pool } from "../db";
 import { customers, opportunities, tempContacts, type Customer, type Opportunity, type InsertCustomer } from "@shared/schema";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql, desc, inArray } from "drizzle-orm";
 import { isManagerialRole } from "../utils/role-utils";
+import { safePage, safePageSize } from "../utils/sql-safety";
+
+// Matches exactly what ensureSalesTables() (server/utils/sales-tables.ts) can
+// ever return: "drm.customers", or "drm.sales_<userId with '-' -> '_'>".
+const SALES_TABLE_ALLOWLIST = /^drm\.(customers|sales_[0-9a-f_]+)$/i;
 
 export type CustomerWithOpportunity = Customer & {
   opportunity?: Opportunity;
+  salesPersonName?: string | null;
 };
 
 export type CustomerFollowUpDetail = {
@@ -157,11 +163,25 @@ export class CustomersRepository {
       stage?: string;
       sortBy?: string;
       sortOrder?: "asc" | "desc";
+      /** Opt-in: when "Private", scope the drm.customers side of the union to
+       *  pool_type IN ('Private','GMBV') — the same definition poolsRepository
+       *  uses for the Private Pool. Temp contacts are left untouched since
+       *  they're already treated as Private-Pool-only. Left undefined for
+       *  every other caller of this shared method (appointment/invoice
+       *  customer pickers, etc.) so their behavior is unchanged. */
+      poolType?: string;
     },
-    roleId?: string
+    roleId?: string,
+    salesTable?: string
   ): Promise<{ customers: CustomerWithOpportunity[]; total: number }> {
     await ensureTempContactsDrmIdColumn();
-    const { status, search, page = 1, pageSize = 10, grade, stage, sortBy = "createdAt", sortOrder = "desc" } = filters || {};
+    const { status, search, grade, stage, sortBy = "createdAt", sortOrder = "desc", poolType } = filters || {};
+    // Phase 3 — pageSize previously reached the raw `limit ${pageSize}` SQL
+    // below unclamped from some callers (manager-routes.ts, sales-routes.ts),
+    // allowing an arbitrarily large result set. Clamp here so every caller of
+    // this method is protected regardless of what it passes in.
+    const page = safePage(filters?.page, 1);
+    const pageSize = safePageSize(filters?.pageSize, 10, 100);
     const offset = (page - 1) * pageSize;
 
     const whereParts = ["1=1"];
@@ -171,10 +191,19 @@ export class CustomersRepository {
     const normalizedRole = roleId?.toLowerCase?.() ?? "";
     const isManagerOrAdmin = isManagerialRole(roleId) || normalizedRole.includes("reception");
     if (!isManagerOrAdmin) {
-      whereParts.push(`coalesce(op.owner_id::text, c.owner_user_id::text, c.created_by::text) = $${p++}::text`);
+      // Matches poolsRepository's Private Pool ownership rule exactly: the
+      // customer record's own owner_user_id/created_by, not the linked
+      // opportunity's owner. Previously this fell back through op.owner_id
+      // first, which surfaced customers merely assigned an opportunity here
+      // — owned by someone else — that never showed up in the Private Pool.
+      whereParts.push(`(c.owner_user_id::text = $${p} OR (c.owner_user_id IS NULL AND c.created_by::text = $${p}))`);
       params.push(userId);
+      p++;
     }
 
+    if (poolType === "Private") {
+      whereParts.push(`(c.pool_type = 'Private' OR c.pool_type = 'GMBV')`);
+    }
     if (status) {
       whereParts.push(`c.status = $${p++}`);
       params.push(status);
@@ -207,22 +236,18 @@ export class CustomersRepository {
     const orderDir = sortOrder === "asc" ? "asc" : "desc";
 
     const whereSql = whereParts.length ? `where ${whereParts.join(" and ")}` : "";
+    // Phase 3 — `salesTable` is derived server-side from the JWT (never directly
+    // user-controlled today), but `.startsWith("drm.")` was a weak identifier
+    // guard before this value is interpolated into raw SQL below. Tighten to an
+    // exact allowlist match against the only two shapes ensureSalesTables()
+    // ever produces, as defense-in-depth.
+    const targetTable = salesTable && SALES_TABLE_ALLOWLIST.test(salesTable) ? salesTable : "drm.customers";
 
     const countSql = `
-      select count(*)::int as count from (
-        select c.id::text as id
-        from drm.customers c
-        left join drm.opportunities op on op.customer_id::text = c.id::text and coalesce(op.is_deleted,false) = false
-        ${whereSql}
-        union all
-        select t.id::text as id
-        from drm.temp_contacts t
-        where t.status = 'Pending' -- Only show pending leads in the main list
-        ${(stage && stage !== 'LD') ? 'and 1=0' : ""}
-        ${search ? `and (t.person_name ILIKE $${params.indexOf(`%${search}%`) + 1} or t.email ILIKE $${params.indexOf(`%${search}%`) + 1})` : ""}
-        ${grade ? `and t.grade = $${params.indexOf(grade) + 1}` : ""}
-        ${!isManagerOrAdmin ? `and t.user_id::text = $${params.indexOf(userId) + 1}::text` : ""}
-      ) as combined
+      select count(*)::int as count
+      from ${targetTable} c
+      left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
+      ${whereSql}
     `;
 
     const listSql = `
@@ -258,10 +283,12 @@ export class CustomersRepository {
           c.business_line as "businessLine",
           'Private'::text as "poolType",
           coalesce(c.owner_user_id, c.created_by) as "ownerUserId",
+          coalesce(su.full_name, su.username) as "salesPersonName",
           null::timestamp as "lastFollowUpDate",
           null::timestamp as "expiresAt",
           0 as "isGoldMember",
           0 as "isBusinessVerified",
+          coalesce(c.is_focus, false) as "isFocus",
           c.created_at as "createdAt",
           c.updated_at as "updatedAt",
           op.id::text as "opportunityId",
@@ -274,65 +301,10 @@ export class CustomersRepository {
           op.created_at as "opportunityCreatedAt",
           op.updated_at as "opportunityUpdatedAt",
           false as "isTemp"
-        from drm.customers c
-        left join drm.opportunities op on op.customer_id::text = c.id::text and coalesce(op.is_deleted,false) = false
+        from ${targetTable} c
+        left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
+        left join drm.users su on su.id::text = coalesce(c.owner_user_id::text, c.created_by::text)
         ${whereSql}
-        
-        union all
-        
-        select
-          t.id::text as id,
-          t.drm_id as "drmId",
-          t.person_name as "companyName",
-          t.person_name as "accountName",
-          t.email as email,
-          t.mobile as phone,
-          'N/A' as region,
-          t.grade,
-          'New' as status,
-          null::text as ntn,
-          t.comment as "lastNote",
-          null::text as country,
-          null::text as city,
-          null::text as address,
-          null::text as "crmId",
-          null::timestamptz as "crmDate",
-          null::text as "companyType",
-          t.title as title,
-          t.person_name as "personName",
-          null::text as cnic,
-          null::text as website,
-          t.mobile as mobile,
-          null::text as designation,
-          t.comment as comment,
-          null::text as "rcLink",
-          t.source,
-          t.service_types as "serviceTypes",
-          null::text as "businessLine",
-          'Private'::text as "poolType",
-          t.user_id::uuid as "ownerUserId",
-          null::timestamptz as "lastFollowUpDate",
-          null::timestamptz as "expiresAt",
-          0 as "isGoldMember",
-          0 as "isBusinessVerified",
-          t.created_at as "createdAt",
-          t.updated_at as "updatedAt",
-          null::text as "opportunityId",
-          'LD'::text as "opportunityStage",
-          t.user_id::text as "opportunityOwnerId",
-          0::numeric as "opportunityAmount",
-          'Quick Lead' as "opportunityTitle",
-          null::date as "expectedCloseDate",
-          false as "opportunityIsDeleted",
-          t.created_at as "opportunityCreatedAt",
-          t.updated_at as "opportunityUpdatedAt",
-          true as "isTemp"
-        from drm.temp_contacts t
-        where t.status = 'Pending'
-        ${(stage && stage !== 'LD') ? 'and 1=0' : ""}
-        ${search ? `and (t.person_name ILIKE $${params.indexOf(`%${search}%`) + 1} or t.email ILIKE $${params.indexOf(`%${search}%`) + 1})` : ""}
-        ${grade ? `and t.grade = $${params.indexOf(grade) + 1}` : ""}
-        ${!isManagerOrAdmin ? `and t.user_id::text = $${params.indexOf(userId) + 1}::text` : ""}
       ) as combined
       order by ${orderColumn === "c.company_name" ? '"companyName"' : orderColumn === "c.grade" ? "grade" : orderColumn === "op.stage" ? '"opportunityStage"' : '"createdAt"'} ${orderDir}
       limit ${pageSize} offset ${offset}
@@ -378,10 +350,12 @@ export class CustomersRepository {
         businessLine: row.businessLine ?? null,
         poolType: row.poolType ?? "Private",
         ownerUserId: row.ownerUserId ?? null,
+        salesPersonName: row.salesPersonName ?? null,
         lastFollowUpDate: row.lastFollowUpDate ?? null,
         expiresAt: row.expiresAt ?? null,
         isGoldMember: Number(row.isGoldMember ?? 0),
         isBusinessVerified: Number(row.isBusinessVerified ?? 0),
+        isFocus: Boolean(row.isFocus),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         opportunity: row.opportunityId
@@ -421,7 +395,7 @@ export class CustomersRepository {
 
       if (userId && !isManager) {
         params.push(userId);
-        whereClause += ` and (c.pool_type = 'Public' or coalesce(c.owner_user_id::text, c.created_by::text) = $3::text)`;
+        whereClause += ` and (c.pool_type = 'Public' or c.owner_user_id::text = $3::text or (c.owner_user_id is null and c.created_by::text = $3::text))`;
       }
 
       const res = await client.query(
@@ -589,6 +563,15 @@ export class CustomersRepository {
     return undefined;
   }
 
+  async setFocus(customerIds: string[], focus: boolean): Promise<Customer[]> {
+    if (customerIds.length === 0) return [];
+    return db
+      .update(customers)
+      .set({ isFocus: focus, updatedAt: new Date() })
+      .where(inArray(customers.id, customerIds))
+      .returning();
+  }
+
   async updateNote(customerId: string, note: string): Promise<Customer | undefined> {
     const result = await db
       .update(customers)
@@ -646,22 +629,8 @@ export class CustomersRepository {
       .where(custWhere)
       .groupBy(customers.grade);
 
-    let tempWhere = eq(tempContacts.status, 'Pending') as any;
-    if (!isManagerOrAdmin) {
-      tempWhere = and(tempWhere, eq(tempContacts.userId, userId))!;
-    }
-
-    const tempGrades = await db
-      .select({
-        grade: tempContacts.grade,
-        count: sql<number>`count(*)`,
-      })
-      .from(tempContacts)
-      .where(tempWhere)
-      .groupBy(tempContacts.grade);
-
     const stats: Record<string, number> = {};
-    [...custGrades, ...tempGrades].forEach(row => {
+    custGrades.forEach(row => {
       stats[row.grade] = (stats[row.grade] || 0) + Number(row.count);
     });
 
@@ -684,27 +653,10 @@ export class CustomersRepository {
       .where(custWhere)
       .groupBy(opportunities.stage);
 
-    let tempWhere = eq(tempContacts.status, 'Pending') as any;
-    if (!isManagerOrAdmin) {
-      tempWhere = and(tempWhere, eq(tempContacts.userId, userId))!;
-    }
-
-    const tempCount = await db
-      .select({
-        count: sql<number>`count(*)`
-      })
-      .from(tempContacts)
-      .where(tempWhere);
-
     const stats: Record<string, number> = {};
     custStages.forEach(row => {
       stats[row.stage] = Number(row.count);
     });
-
-    // All temporary contacts are virtual 'LD' stage
-    if (tempCount.length > 0) {
-      stats['LD'] = (stats['LD'] || 0) + Number(tempCount[0].count);
-    }
 
     return stats;
   }
@@ -767,7 +719,7 @@ export class CustomersRepositoryExtended extends CustomersRepository {
         c.created_at,
         op.stage
       from drm.customers c
-      left join drm.opportunities op on op.customer_id::text = c.id::text and coalesce(op.is_deleted,false) = false
+      left join drm.opportunities op on op.customer_id = c.id and coalesce(op.is_deleted,false) = false
       left join drm.users u on u.id = c.owner_user_id
       where (${conditions.join(" or ")}) ${whereOwner}
       order by c.created_at desc
@@ -816,12 +768,18 @@ export class CustomersRepositoryExtended extends CustomersRepository {
       throw new Error("Missing required customer fields");
     }
 
+    // Derived here (not trusted from callers) so the phone_normalized unique
+    // index actually catches duplicates for every creation path, not just the
+    // ones that happen to pass it explicitly.
+    const phoneNormalized = (data as any).phoneNormalized || String(requiredPhone).replace(/\D/g, "") || null;
+
     return db.transaction(async (tx) => {
       const [customer] = await tx.insert(customers).values({
         companyName: requiredCompany,
         accountName: requiredAccount,
         email: requiredEmail,
         phone: requiredPhone,
+        phoneNormalized,
         region: requiredRegion,
         grade: data.grade ?? "C",
         status: (data as any).status ?? "New",
@@ -849,6 +807,8 @@ export class CustomersRepositoryExtended extends CustomersRepository {
         createdBy: userId,
         lastFollowUpDate: (data as any).lastFollowUpDate ?? null,
         expiresAt: (data as any).expiresAt ?? null,
+        emails: (data as any).emails ?? (requiredEmail ? [requiredEmail] : []),
+        mobiles: (data as any).mobiles ?? ((data as any).mobile ? [(data as any).mobile] : []),
         isGoldMember: (data as any).isGoldMember ?? 0,
         isBusinessVerified: (data as any).isBusinessVerified ?? 0,
         drmId: data.drmId || null,

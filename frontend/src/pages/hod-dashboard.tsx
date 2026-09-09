@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProductPostingApprovalsWidget } from "@/components/product-posting-approvals-widget";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -132,11 +133,12 @@ export default function HodDashboard() {
   const [dailyReportPage, setDailyReportPage] = useState(1);
   const [managerDepartment, setManagerDepartment] = useState<string>("all");
   const [limit, setLimit] = useState(10);
+  const [topSellingPeriod, setTopSellingPeriod] = useState("LD");
 
   const summaryQuery = useQuery<SummaryResponse>({
-    queryKey: ["hod-summary"],
+    queryKey: ["hod-summary", topSellingPeriod],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/hod/dashboard/summary");
+      const res = await apiRequest("GET", `/api/hod/dashboard/summary?period=${topSellingPeriod}`);
       return res.json();
     },
   });
@@ -160,18 +162,52 @@ export default function HodDashboard() {
     },
   });
 
+  const [activitiesFilter, setActivitiesFilter] = useState("TD");
+  const activitiesStatsQuery = useQuery<{ success: boolean; data: any }>({
+    queryKey: ["hod-important-stats", "activities", activitiesFilter],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/hod/dashboard/important-stats?period=${activitiesFilter}`);
+      return res.json();
+    },
+  });
+
   // Verification tabs state
   const [verificationTab, setVerificationTab] = useState<"waiting" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("waiting");
 
+  // Same queryKey as ProductPostingApprovalsWidget's own /api/invoices fetch
+  // (the widget that actually renders this tab) — shares its cache, so this
+  // count stays in sync with what's on screen and with the widget's own
+  // invalidation after approve/reject/create, instead of the mismatched
+  // paginated /api/hod/approvals list this badge used to read from.
+  const invoicesQuery = useQuery<{ data?: any[] }>({
+    queryKey: ["/api/invoices"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/invoices");
+      return res.json();
+    },
+  });
+
   const invoicesCount = useMemo(() => {
-    return (approvalsQuery.data?.data ?? []).filter(a => a.type === 'Invoice').length;
-  }, [approvalsQuery.data?.data]);
+    return (invoicesQuery.data?.data ?? []).filter((inv: any) => inv.status === "PENDING_HOD").length;
+  }, [invoicesQuery.data?.data]);
 
   // Invoice preview state
   const [selectedInvoiceView, setSelectedInvoiceView] = useState<any>(null);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
 
   const openInvoicePreview = (item: any) => {
+    let rawCompany = item.companyName || item.company_name || "Client";
+    
+    // Extract any package in parentheses from companyName if present, e.g. "zafer trading • talha (Alibaba Minisite)"
+    let extractedPackage = "";
+    const match = rawCompany.match(/\(([^)]+)\)/);
+    if (match) {
+      extractedPackage = match[1].trim();
+    }
+
+    // Clean company name by removing (anything in parentheses)
+    const cleanCompany = rawCompany.replace(/\s*\([^)]*\)/gi, "").trim();
+
     let parsedItems = [];
     let calculatedSubTotal = 0;
 
@@ -196,12 +232,33 @@ export default function HodDashboard() {
     }
 
     if (parsedItems.length === 0) {
+      const pkgName = item.packageName || item.packageType || item.package_type || item.entryType || item.entry_type || extractedPackage || "Product Posting Service";
+      
+      const lowerPkg = pkgName.toLowerCase();
+      let finalItemName = pkgName;
+      let finalQty = 1;
+      let finalDetail = `${cleanCompany} Details`;
+
+      if (lowerPkg.includes("minisite")) {
+        finalItemName = "Alibaba Minisite Service";
+        finalQty = 1;
+        finalDetail = "1";
+      } else if (lowerPkg.includes("listing")) {
+        finalItemName = "Listing Page Service";
+        finalQty = 1;
+        finalDetail = "1";
+      } else if (lowerPkg.includes("product posting")) {
+        finalItemName = "Product Posting Service";
+        finalQty = 100;
+        finalDetail = "100";
+      }
+
       parsedItems = [
         {
-          name: item.packageName || "Product Posting Service",
-          detail: `${item.companyName || 'Client'} ${item.packageName || 'Details'}`,
+          name: finalItemName,
+          detail: finalDetail,
           price: Number(item.orderDollar) || 0,
-          quantity: 1,
+          quantity: finalQty,
           total: Number(item.orderDollar) || 0
         }
       ];
@@ -209,7 +266,7 @@ export default function HodDashboard() {
     }
 
     const invoiceData = {
-      invoiceNumber: item.referenceId || item.id?.slice(0, 8),
+      invoiceNumber: item.referenceId || (item.id ? item.id.replace(/\D/g, "") : "9876"),
       date: new Date(item.createdAt),
       from: {
         name: "Web Excels",
@@ -219,7 +276,7 @@ export default function HodDashboard() {
         address: "Al-Amin Center, Paris Rd, Opposite The Sialkot Chamber Of Commerce, Sialkot 51310 Pakistan."
       },
       to: {
-        name: item.companyName || "Client",
+        name: cleanCompany,
         phone: "-",
         email: "-",
         address: "Address:"
@@ -269,8 +326,79 @@ export default function HodDashboard() {
   const [meetingUser, setMeetingUser] = useState("");
   const [meetingDetail, setMeetingDetail] = useState("");
 
+  // Today's Meeting panel — reuses the real reception meetings system
+  // (server/reception-routes.ts, drm.meetings table) instead of a hardcoded
+  // "No meetings scheduled" row. Meetings the HOD schedules with a colleague
+  // are recorded as personType "user" (vs reception's client "contact"/
+  // "external" visits), so the two lists don't mix.
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todaysMeetingsQuery = useQuery<{ data: any[] }>({
+    queryKey: ["hod-todays-meetings", todayIso],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/reception/meetings?personType=user&date=${todayIso}`);
+      return res.json();
+    },
+  });
+
+  const usersListQuery = useQuery<{ users: any[] }>({
+    queryKey: ["hod-users-list-for-meeting"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users");
+      return res.json();
+    },
+    enabled: isMeetingDialogOpen,
+  });
+
+  const createMeetingMutation = useMutation({
+    mutationFn: async (payload: { userId: string; personName: string; meetingType: string }) => {
+      const res = await apiRequest("POST", "/api/reception/meetings", {
+        personType: "user",
+        userId: payload.userId,
+        personName: payload.personName,
+        meetingType: payload.meetingType,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Meeting Added", description: "The meeting has been scheduled successfully." });
+      queryClient.invalidateQueries({ queryKey: ["hod-todays-meetings"] });
+      setIsMeetingDialogOpen(false);
+      setMeetingUser("");
+      setMeetingDetail("");
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to schedule meeting", description: err?.message ?? "Error", variant: "destructive" });
+    },
+  });
+
+  const handleSaveMeeting = () => {
+    if (!meetingUser) {
+      toast({ title: "Choose a user", description: "Select who the meeting is with.", variant: "destructive" });
+      return;
+    }
+    if (!meetingDetail.trim()) {
+      toast({ title: "Add a detail", description: "Enter what the meeting is about.", variant: "destructive" });
+      return;
+    }
+    const selectedUser = usersListQuery.data?.users?.find((u: any) => u.id === meetingUser);
+    createMeetingMutation.mutate({
+      userId: meetingUser,
+      personName: selectedUser?.fullName || selectedUser?.email || "Unknown",
+      meetingType: meetingDetail.trim(),
+    });
+  };
+
   // Project Deadline filter state
   const [projectDeadlineFilter, setProjectDeadlineFilter] = useState("WK");
+
+  // Anchor for the "Verification Of Project" card so the "Dep Verification"
+  // Important-panel entry can jump straight to the GM Approval tab instead of
+  // going nowhere (it previously pointed at a dead "#" link).
+  const verificationCardRef = useRef<HTMLDivElement>(null);
+  const goToGmApprovalVerification = () => {
+    setVerificationTab("gm-approval");
+    verificationCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   // Project Deadlines query
   const projectDeadlinesQuery = useQuery<{ success: boolean; data: any[] }>({
@@ -281,6 +409,47 @@ export default function HodDashboard() {
     },
   });
 
+  // Promotions — real CRUD backend already exists at server/promotion-routes.ts
+  // (mounted at /api/drm/promotions) but was never rendered on any dashboard.
+  // HOD is one of the roles allowed to approve/reject (see canDecide() there).
+  const promotionsQuery = useQuery<{ data: any[]; total: number }>({
+    queryKey: ["hod-promotions"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/drm/promotions?pageSize=10");
+      return res.json();
+    },
+  });
+
+  const promotionApproveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/drm/promotions/${id}/approve`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Promotion approved" });
+      queryClient.invalidateQueries({ queryKey: ["hod-promotions"] });
+    },
+    onError: (err: any) => toast({ title: "Approve failed", description: err?.message ?? "Error", variant: "destructive" }),
+  });
+
+  const promotionRejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const res = await apiRequest("PATCH", `/api/drm/promotions/${id}/reject`, { reason });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Promotion rejected" });
+      queryClient.invalidateQueries({ queryKey: ["hod-promotions"] });
+    },
+    onError: (err: any) => toast({ title: "Reject failed", description: err?.message ?? "Error", variant: "destructive" }),
+  });
+
+  const handleRejectPromotion = (id: string) => {
+    const reason = window.prompt("Enter rejection reason (optional)", "");
+    if (reason === null) return;
+    promotionRejectMutation.mutate({ id, reason });
+  };
+
   // Verification tab queries
   const gmsQuery = useQuery<{ success: boolean; data: any[] }>({
     queryKey: ["hod-verification-gms", verificationTab],
@@ -288,6 +457,9 @@ export default function HodDashboard() {
       const res = await apiRequest("GET", "/api/hod/verification/gms");
       return res.json();
     },
+    // Keeps the Gm Approval badge count accurate at all times, not just on
+    // page load — matches the polling already used for GM Withdrawal below.
+    refetchInterval: 15000,
   });
 
   const leaveRequestsQuery = useQuery<{ success: boolean; data: any[] }>({
@@ -309,21 +481,19 @@ export default function HodDashboard() {
   });
 
   const updateRequestsQuery = useQuery<{ success: boolean; data: any[] }>({
-    queryKey: ["hod-verification-updates", verificationTab],
+    queryKey: ["hod-verification-updates"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/hod/verification/update-requests");
       return res.json();
     },
-    enabled: verificationTab === "update-request",
   });
 
   const withdrawalsQuery = useQuery<{ success: boolean; data: any[] }>({
-    queryKey: ["hod-verification-withdrawals", verificationTab],
+    queryKey: ["hod-verification-withdrawals"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/hod/verification/withdrawals");
       return res.json();
     },
-    enabled: verificationTab === "gm-withdrawal",
     refetchInterval: verificationTab === "gm-withdrawal" ? 15000 : false,
   });
 
@@ -457,15 +627,68 @@ export default function HodDashboard() {
   const [formData, setFormData] = useState<any>({});
   const [gmDialogOpen, setGmDialogOpen] = useState(false);
   const [gmApprovalStatus, setGmApprovalStatus] = useState("");
+  // Dedicated to the reject/approve Comment box, deliberately kept OUT of the
+  // sprawling `formData` blob (20+ fields updated via various handlers) so it
+  // can never be silently reset by an unrelated field update on that object.
+  const [gmComment, setGmComment] = useState("");
+  // Whether the HOD is giving an Extra Discount at all, or explicitly declining
+  // to give one. Kept separate from formData.extraDiscountHod so "No Discount"
+  // is a deliberate choice, not just an empty/zero field left untouched.
+  const [hodDiscountChoice, setHodDiscountChoice] = useState<"none" | "custom">("none");
+  // Once HOD starts entering their own discount decision, the original
+  // Sales-submitted "$ Extra Discount" locks — Extra Discount Hod must match
+  // it exactly to approve, so the value being confirmed against can't be
+  // edited mid-decision.
+  const [hodDiscountTouched, setHodDiscountTouched] = useState(false);
   const [gmPage, setGmPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
+  // Whether the HOD has tried to approve this entry at least once — inline
+  // "Please fill this" errors only appear after a real attempt, not while
+  // the form is still being read/filled in for the first time.
+  const [gmSubmitAttempted, setGmSubmitAttempted] = useState(false);
+
+  const GM_APPROVAL_REQUIRED_FIELDS: { key: string; label: string }[] = [
+    { key: "drmId", label: "Company ID" },
+    { key: "company", label: "Company Name" },
+    { key: "memberId", label: "Member ID" },
+    { key: "orderId", label: "Order ID" },
+    { key: "package", label: "Package" },
+    { key: "type", label: "Type" },
+    { key: "pkr", label: "Customer PKR" },
+    { key: "orderDollar", label: "Order Dollar" },
+    { key: "dollarRate", label: "Dollar Rate" },
+    { key: "alibabaDiscount", label: "Alibaba Discount" },
+    { key: "extraDiscount", label: "Extra Discount" },
+    { key: "extraDiscountPkr", label: "Extra Pkr Discount" },
+    { key: "extraDiscountHod", label: "Extra Discount Hod" },
+  ];
+
+  const computeGmFieldErrors = (data: any): Record<string, boolean> => {
+    const errors: Record<string, boolean> = {};
+    for (const { key } of GM_APPROVAL_REQUIRED_FIELDS) {
+      const value = data?.[key];
+      errors[key] = value === undefined || value === null || String(value).trim() === "";
+    }
+    return errors;
+  };
+
+  const gmFieldErrors = gmSubmitAttempted && gmApprovalStatus === "Approved"
+    ? computeGmFieldErrors(formData)
+    : {};
+
+  // Extra Discount Hod must exactly match the requested $ Extra Discount to
+  // approve (see handleSaveGmStatus) — flagged separately from the generic
+  // "Please fill this" check since the field is usually non-empty (defaults
+  // to "0"), just not yet equal to the requested amount.
+  const hodDiscountMismatch =
+    gmSubmitAttempted &&
+    gmApprovalStatus === "Approved" &&
+    !gmFieldErrors.extraDiscountHod &&
+    Math.abs((Number(formData.extraDiscountHod) || 0) - (Number(formData.extraDiscount) || 0)) > 0.01;
 
   const updateGmForm = (field: string, value: string) => {
     const newData = { ...formData, [field]: value };
 
-    // logic: when dollar rate changes, we want to KEEP PKR the same, 
-    // and recalculate customer dollar. This will likely cause a mismatch 
-    // with order dollar (package price), triggering the validation error.
     if (field === "dollarRate") {
       const rate = parseFloat(value) || 0;
       const pkr = parseFloat(newData.pkr) || 0;
@@ -475,10 +698,16 @@ export default function HodDashboard() {
       }
     }
 
-    // For other fields, we just update the field itself (already done above)
-    // and let the validation logic in the render handle the error display.
-
     setFormData(newData);
+  };
+
+  // Extra Discount Hod is a pure confirmation field: it must exactly match
+  // the requested "$ Extra Discount" for Approve to be allowed (enforced in
+  // handleSaveGmStatus below), and it never touches the Partial Payment
+  // Installment rows — no add, no subtract. Installments stay exactly as
+  // Sales submitted them, always.
+  const applyHodDiscountChange = (val: string) => {
+    setFormData((prev: any) => ({ ...prev, extraDiscountHod: val }));
   };
 
   const loadPendingLeaves = async () => {
@@ -599,23 +828,77 @@ export default function HodDashboard() {
       }
     } catch { parsedInstallments = []; }
 
+    // Default the field to "0" (not blank) so it starts valid instead of
+    // showing a "required" error — 0 means "no decision made yet" and, since
+    // Approve requires this to exactly match extraDiscount, correctly blocks
+    // approval until HOD actually confirms the amount. If a real prior
+    // decision was saved (any number, including 0), show that instead.
+    const initialHodDiscount = entry.extraDiscountHod !== null
+      && entry.extraDiscountHod !== undefined
+      && entry.extraDiscountHod !== ""
+      ? String(entry.extraDiscountHod)
+      : "0";
+    const activeInsts = parsedInstallments.length > 0 ? parsedInstallments : [];
+
     setFormData({
       ...entry,
-      extraDiscountHod: entry.extraDiscountHod || "",
-      installments: parsedInstallments.length > 0
-        ? parsedInstallments
-        : [],
+      extraDiscountHod: initialHodDiscount,
+      installments: activeInsts,
     });
     setGmApprovalStatus(entry.status || "Pending");
+    setGmComment(entry.hodComment || entry.reason || entry.comment || "");
+    setGmSubmitAttempted(false);
+    setHodDiscountTouched(false);
     setGmDialogOpen(true);
+    // Installments are shown exactly as loaded, untouched by extraDiscountHod
+    // in any way — no need to call applyHodDiscountChange here.
   };
 
   const handleSaveGmStatus = () => {
     if (!selectedGmEntry) return;
 
+    const hodDiscountStr = formData.extraDiscountHod !== undefined && formData.extraDiscountHod !== null
+      ? String(formData.extraDiscountHod).trim()
+      : "";
+
+    if (hodDiscountStr === "") {
+      toast({
+        title: "Extra Discount HOD Required",
+        description: "Please enter the Extra Discount HOD amount (minimum 0). GM cannot be approved or rejected without this value.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const hodDiscountNum = Number(hodDiscountStr);
+    if (isNaN(hodDiscountNum) || hodDiscountNum < 0) {
+      toast({
+        title: "Invalid Extra Discount HOD",
+        description: "Extra Discount HOD amount cannot be negative. Minimum amount is 0.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Approve is gated on an exact match: HOD must confirm the same amount
+    // Sales requested, not a different one. This is a pure confirmation
+    // check — it never adjusts the installments below either way.
+    if (gmApprovalStatus === "Approved") {
+      const requestedDiscount = Number(formData.extraDiscount) || 0;
+      if (Math.abs(hodDiscountNum - requestedDiscount) > 0.01) {
+        toast({
+          title: "Extra Discount HOD Must Match",
+          description: `Extra Discount HOD (${hodDiscountNum}) must exactly match the requested $ Extra Discount (${requestedDiscount}) to approve.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     // updates
     const updates = {
       ...formData,
+      extraDiscountHod: hodDiscountNum,
       status: gmApprovalStatus !== "Pending" ? gmApprovalStatus : undefined,
     };
 
@@ -623,32 +906,46 @@ export default function HodDashboard() {
   };
 
   const getTypeBadge = (type: string) => {
+    // Keys match the exact `type` strings the /api/hod/approvals union query
+    // emits ("GM Entry", "Loan", "Overtime", "Quotation" were previously
+    // missing here and fell through to the unstyled default Badge — the
+    // same plain-black look the status badges had).
     const colors: Record<string, string> = {
+      "GM Entry": "bg-blue-100 text-blue-800 border-blue-200",
       GM: "bg-blue-100 text-blue-800 border-blue-200",
       Refund: "bg-orange-100 text-orange-800 border-orange-200",
       Project: "bg-purple-100 text-purple-800 border-purple-200",
-      Invoice: "bg-green-100 text-green-800 border-green-200",
-      Leave: "bg-yellow-100 text-yellow-800 border-yellow-200",
+      Invoice: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      Leave: "bg-amber-100 text-amber-800 border-amber-200",
+      Loan: "bg-indigo-100 text-indigo-800 border-indigo-200",
+      Overtime: "bg-cyan-100 text-cyan-800 border-cyan-200",
+      Quotation: "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200",
     };
-    return <Badge className={colors[type] || ""}>{type}</Badge>;
+    return <Badge className={colors[type] || "bg-slate-100 text-slate-700 border-slate-200"}>{type}</Badge>;
   };
 
   const getStatusBadge = (status: string) => {
     const normalized = status.toLowerCase();
-    switch (normalized) {
-      case "pending":
-        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Pending</Badge>;
-      case "approved":
-        return <Badge className="bg-green-100 text-green-800 border-green-200">Approved</Badge>;
-      case "rejected":
-        return <Badge className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>;
-      default:
-        return <Badge>{status}</Badge>;
+    // Every row returned by /api/hod/approvals is, by construction, still
+    // waiting on HOD action — the underlying tables just spell "pending" a
+    // few different ways (pending_hod for GM/product-posting, waiting for
+    // invoices) instead of the exact string "pending". All of them should
+    // read as the same Pending badge rather than falling through to the
+    // unstyled default Badge (which rendered the raw enum value in black).
+    if (["approved"].includes(normalized)) {
+      return <Badge className="bg-green-100 text-green-800 border-green-200">Approved</Badge>;
     }
+    if (["rejected"].includes(normalized)) {
+      return <Badge className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>;
+    }
+    return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Pending</Badge>;
   };
 
   const approvals = approvalsQuery.data?.data ?? [];
-  const pendingCount = approvals.filter((a) => a.status?.toLowerCase() === "pending").length;
+  // approvals is just the current page (capped at `limit`) — the query is
+  // already server-filtered to status=Pending, so the real pending count is
+  // meta.total, not the length of this one page's rows.
+  const pendingCount = approvalsQuery.data?.meta?.total ?? 0;
   const summary = summaryQuery.data?.data;
   const totalPages = useMemo(() => {
     const total = approvalsQuery.data?.meta?.total ?? 0;
@@ -675,12 +972,16 @@ export default function HodDashboard() {
           <div className="mb-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">Top Selling</h2>
-              <select className="border rounded px-3 py-1 text-sm">
-                <option>LD</option>
-                <option>WC</option>
-                <option>MC</option>
-                <option>QC</option>
-                <option>YC</option>
+              <select
+                className="border rounded px-3 py-1 text-sm"
+                value={topSellingPeriod}
+                onChange={(e) => setTopSellingPeriod(e.target.value)}
+              >
+                <option value="LD">LD</option>
+                <option value="WC">WC</option>
+                <option value="MC">MC</option>
+                <option value="QC">QC</option>
+                <option value="YC">YC</option>
               </select>
             </div>
             <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
@@ -729,13 +1030,16 @@ export default function HodDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Free */}
+              {/* Free: projects that are neither in-progress nor completed yet
+                  (same real, distinct value the Activities panel below computes
+                  as activities.free = total - inProgress - completed). Previously
+                  this card just re-displayed the Total Project count. */}
               <Card className="rounded-xl shadow-sm hover:shadow-md transition-shadow">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm text-muted-foreground mb-1">Free</p>
-                      <p className="text-2xl font-bold">{summary?.totalProjects ?? 0}</p>
+                      <p className="text-2xl font-bold">{importantStatsQuery.data?.data?.activities?.free ?? 0}</p>
                     </div>
                     <div className="h-12 w-12 rounded-full bg-green-600 flex items-center justify-center">
                       <Activity className="h-6 w-6 text-white" />
@@ -754,7 +1058,7 @@ export default function HodDashboard() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
             >
-              <Card className="rounded-xl shadow-md" data-testid="card-verification-table">
+              <Card className="rounded-xl shadow-md" data-testid="card-verification-table" ref={verificationCardRef}>
                 <CardHeader>
                   <CardTitle className="text-sm font-medium mb-4">Verification Of Project</CardTitle>
                   <div className="flex flex-wrap gap-2">
@@ -833,6 +1137,15 @@ export default function HodDashboard() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  {verificationTab === "invoice" ? (
+                    // The old ad-hoc rows here bypassed InvoiceWorkflowService's
+                    // completeness gate, audit ledger, and dropped rejection
+                    // reasons entirely (see hod.repository.ts's raw-SQL
+                    // "product_posting_invoices" case). This is the real,
+                    // fully-audited approval surface instead.
+                    <ProductPostingApprovalsWidget role="HOD" variant="table" />
+                  ) : (
+                  <>
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader className="bg-[#f8fafc] dark:bg-zinc-900">
@@ -875,8 +1188,10 @@ export default function HodDashboard() {
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Total Discount</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Create Date</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">HOD Date</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Last Updation Date</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Accountant</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Webxl Behalf</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Payment Type</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Approved By HOD</TableHead>
                               <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Action</TableHead>
                             </>
@@ -905,17 +1220,6 @@ export default function HodDashboard() {
                               <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Action</TableHead>
                             </>
                           )}
-                          {verificationTab === "invoice" && (
-                            <>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">No</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Company</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Person</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Detail</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Invoice</TableHead>
-                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
-                              <TableHead className="font-bold text-slate-700 text-right pr-4 dark:text-zinc-400">Action</TableHead>
-                            </>
-                          )}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -931,93 +1235,43 @@ export default function HodDashboard() {
                             {approvals.map((item) => (
                               <TableRow key={item.id} data-testid={`row-approval-${item.id}`}>
                                 <TableCell>{getTypeBadge(item.type)}</TableCell>
-                                <TableCell className="font-medium">{item.referenceId ? `REF-${item.referenceId.slice(0, 8).toUpperCase()}` : "-"}</TableCell>
+                                <TableCell>
+                                  {item.referenceId ? (
+                                    <span className="inline-block whitespace-nowrap rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-600 dark:bg-zinc-900 dark:text-zinc-300">
+                                      REF-{item.referenceId.slice(0, 8).toUpperCase()}
+                                    </span>
+                                  ) : "-"}
+                                </TableCell>
                                 <TableCell>{item.submittedByName ?? "-"}</TableCell>
                                 <TableCell>{item.createdAt ? format(new Date(item.createdAt), "dd MMM yyyy") : "-"}</TableCell>
                                 <TableCell>{getStatusBadge(item.status)}</TableCell>
                                 <TableCell className="text-right">
-                                  {item.status?.toLowerCase() === "pending" ? (
-                                    <div className="flex justify-end gap-2">
-                                      <Button
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700"
-                                        onClick={() => handleApprove(item.id)}
-                                        data-testid={`button-approve-${item.id}`}
-                                        disabled={approveMutation.isPending || rejectMutation.isPending}
-                                      >
-                                        <Check className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        size="sm"
-                                        variant="destructive"
-                                        onClick={() => handleReject(item.id)}
-                                        data-testid={`button-reject-${item.id}`}
-                                        disabled={approveMutation.isPending || rejectMutation.isPending}
-                                      >
-                                        <X className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted-foreground text-sm">Completed</span>
-                                  )}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </>
-                        )}
-
-                        {verificationTab === "invoice" && (
-                          <>
-                            {approvals.filter(a => a.type === 'Invoice').length === 0 && (
-                              <TableRow>
-                                <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                  {approvalsQuery.isLoading ? "Loading..." : "No pending invoices"}
-                                </TableCell>
-                              </TableRow>
-                            )}
-                            {approvals.filter(a => a.type === 'Invoice').map((item, idx) => (
-                              <TableRow key={item.id} className="hover:bg-gray-50/50">
-                                <TableCell className="font-bold text-gray-700 dark:text-zinc-400">{idx + 1}</TableCell>
-                                <TableCell className="font-medium">
-                                  <div className="flex flex-col">
-                                    <span className="font-bold text-gray-800 tracking-tight dark:text-zinc-100">{item.companyName || "-"}</span>
-                                  </div>
-                                </TableCell>
-                                <TableCell className="text-gray-600 dark:text-zinc-300">{item.submittedByName ?? "-"}</TableCell>
-                                <TableCell className="text-sm text-gray-500 max-w-[400px] dark:text-zinc-400">
-                                  {item.packageName || item.memberId || (item.referenceId ? `Inv #${item.referenceId.slice(0, 8).toUpperCase()}` : "-")}
-                                </TableCell>
-                                <TableCell>
-                                  <Button 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full h-9 w-9"
-                                    onClick={() => openInvoicePreview(item)}
-                                  >
-                                    <Eye className="h-6 w-6" />
-                                  </Button>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="flex flex-col gap-1 items-center">
-                                    <Badge className="bg-gray-200/50 text-gray-500 font-normal px-4 py-1.5 rounded-full border-0 shadow-none hover:bg-gray-200/70 dark:text-zinc-400">
-                                      Waiting
-                                    </Badge>
-                                    {!item.paymentProofUrl && (
-                                      <Badge variant="outline" className="bg-red-50 text-red-600 border-red-200 text-[10px] py-0 h-4">Doc Pending</Badge>
-                                    )}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <div className="flex justify-end pr-2">
+                                  {/* Every row in this list is, by construction, still
+                                      pending — the union query only pulls rows whose
+                                      underlying status means "waiting on HOD" (the exact
+                                      spelling varies: pending, pending_hod, waiting). A
+                                      strict === "pending" check here previously hid the
+                                      Approve/Reject buttons for GM/Invoice/Quotation rows
+                                      and showed a misleading "Completed" instead. */}
+                                  <div className="flex justify-end gap-2">
                                     <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full h-9 w-9"
-                                      onClick={() => openActionModal(item)}
+                                      size="sm"
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs px-3"
+                                      onClick={() => handleApprove(item.id)}
+                                      data-testid={`button-approve-${item.id}`}
                                       disabled={approveMutation.isPending || rejectMutation.isPending}
-                                      title="Approve"
                                     >
-                                      <ShieldCheck className="h-6 w-6" />
+                                      <Check className="h-3 w-3 mr-1" /> Approve
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="text-red-600 border-red-200 hover:bg-red-50 h-7 text-xs px-3"
+                                      onClick={() => handleReject(item.id)}
+                                      data-testid={`button-reject-${item.id}`}
+                                      disabled={approveMutation.isPending || rejectMutation.isPending}
+                                    >
+                                      <X className="h-3 w-3 mr-1" /> Reject
                                     </Button>
                                   </div>
                                 </TableCell>
@@ -1141,18 +1395,21 @@ export default function HodDashboard() {
                                         paymentStatus === "Cash" ? "Cash Received" : paymentStatus}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell>{entry.createdAt ? format(new Date(entry.createdAt), "dd/MM/yyyy HH:mm:ss a") : "-"}</TableCell>
+                                  <TableCell className="whitespace-nowrap">{entry.createdAt || entry.created_at ? format(new Date(entry.createdAt || entry.created_at), "dd/MM/yyyy HH:mm:ss a") : "-"}</TableCell>
+                                  <TableCell className="whitespace-nowrap">{entry.hodApprovedAt || entry.approvedAt || entry.hod_approved_at || entry.approved_at ? format(new Date(entry.hodApprovedAt || entry.approvedAt || entry.hod_approved_at || entry.approved_at), "dd/MM/yyyy HH:mm:ss a") : "N/A"}</TableCell>
+                                  <TableCell className="whitespace-nowrap">{entry.updatedAt || entry.updated_at ? format(new Date(entry.updatedAt || entry.updated_at), "dd/MM/yyyy HH:mm:ss a") : "-"}</TableCell>
                                   <TableCell>
                                     <div className="flex flex-col gap-1">
-                                      <span>{entry.status || "Pending"}</span>
-                                      {!entry.paymentProofUrl && (
-                                        <Badge variant="outline" className="bg-red-50 text-red-600 border-red-200 text-[10px] truncate w-fit">Doc Pending</Badge>
-                                      )}
+                                      <span>{entry.accountantStatus || "Pending"}</span>
                                     </div>
                                   </TableCell>
                                   <TableCell>
-                                    <Badge className={entry.isPartial ? "bg-orange-500 hover:bg-orange-600" : "bg-green-500 hover:bg-green-600"}>
-                                      {entry.isPartial ? "Partial GM" : "Full GM"}
+                                    <Badge className={
+                                      entry.isLoan ? "bg-violet-500 hover:bg-violet-600"
+                                        : entry.isPartial ? "bg-orange-500 hover:bg-orange-600"
+                                        : "bg-green-500 hover:bg-green-600"
+                                    }>
+                                      {entry.isLoan ? "Loan GM" : entry.isPartial ? "Partial GM" : "Full GM"}
                                     </Badge>
                                   </TableCell>
                                   <TableCell>
@@ -1188,8 +1445,8 @@ export default function HodDashboard() {
                                 <TableRow key={idx}>
                                   <TableCell>{getTypeBadge(entry.type || "GM")}</TableCell>
                                   <TableCell className="font-medium text-blue-600">{entry.companyName || "-"}</TableCell>
-                                  <TableCell>{entry.requestedBy || "-"}</TableCell>
-                                  <TableCell>{entry.amount ? `$${entry.amount}` : "-"}</TableCell>
+                                  <TableCell>{entry.salePerson || entry.requestedBy || "-"}</TableCell>
+                                  <TableCell>{entry.orderDollar ? `$${entry.orderDollar}` : entry.amount ? `$${entry.amount}` : "-"}</TableCell>
                                   <TableCell>{entry.package || "-"}</TableCell>
                                   <TableCell>{entry.createdAt ? format(new Date(entry.createdAt), "dd/MM/yyyy HH:mm") : "-"}</TableCell>
                                   <TableCell className="text-right">
@@ -1284,8 +1541,8 @@ export default function HodDashboard() {
                                       </Button>
                                       <Button
                                         size="sm"
-                                        variant="destructive"
-                                        className="h-7 text-xs px-2"
+                                        variant="outline"
+                                        className="text-red-600 border-red-200 hover:bg-red-50 h-7 text-xs px-2"
                                         onClick={() => withdrawRejectMutation.mutate(entry.id)}
                                         disabled={withdrawApproveMutation.isPending || withdrawRejectMutation.isPending}
                                       >
@@ -1336,29 +1593,33 @@ export default function HodDashboard() {
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
-                    <div>
-                      Page {page} of {totalPages}
+                  {verificationTab === "waiting" && (
+                    <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
+                      <div>
+                        Page {page} of {totalPages}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
+                          disabled={page <= 1}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={page >= totalPages}
+                        >
+                          Next
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPage((p) => Math.max(1, p - 1))}
-                        disabled={page <= 1}
-                      >
-                        Prev
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                        disabled={page >= totalPages}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </div>
+                  )}
+                  </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1469,7 +1730,6 @@ export default function HodDashboard() {
                     <Table>
                       <TableHeader className="bg-gray-50 dark:bg-zinc-900">
                         <TableRow>
-                          <TableHead className="text-xs font-medium">Name</TableHead>
                           <TableHead className="text-xs font-medium">Company</TableHead>
                           <TableHead className="text-xs font-medium">Project</TableHead>
                           <TableHead className="text-xs font-medium">Dep</TableHead>
@@ -1479,41 +1739,116 @@ export default function HodDashboard() {
                       <TableBody>
                         {projectDeadlinesQuery.isLoading ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center py-4">
+                            <TableCell colSpan={4} className="text-center py-4">
                               <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-400" />
                             </TableCell>
                           </TableRow>
                         ) : projectDeadlinesQuery.data?.data && projectDeadlinesQuery.data.data.length > 0 ? (
                           projectDeadlinesQuery.data.data.map((item: any, idx: number) => (
                             <TableRow key={idx}>
-                              <TableCell className="font-medium">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden">
-                                    {item.avatar ? (
-                                      <img src={item.avatar} alt={item.name} className="w-full h-full object-cover" />
-                                    ) : (
-                                      <span className="text-xs font-medium text-gray-600 dark:text-zinc-300">
-                                        {item.name?.charAt(0)?.toUpperCase() || "?"}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span className="text-sm">{item.name || "-"}</span>
-                                </div>
-                              </TableCell>
-                              <TableCell className="text-sm text-blue-600">{item.company || "-"}</TableCell>
+                              <TableCell className="text-sm font-medium text-blue-600">{item.companyName || "-"}</TableCell>
                               <TableCell className="text-sm">{item.project || "-"}</TableCell>
-                              <TableCell className="text-sm">{item.department || "-"}</TableCell>
+                              <TableCell className="text-sm">{item.dep || "-"}</TableCell>
                               <TableCell className="text-right">
                                 <Badge variant="secondary" className="bg-gray-100 text-gray-700 dark:bg-zinc-900 dark:text-zinc-400">
-                                  {item.deadline ? format(new Date(item.deadline), "yyyy-MM-dd") : "-"}
+                                  {item.deadlines ? format(new Date(item.deadlines), "yyyy-MM-dd") : "-"}
                                 </Badge>
                               </TableCell>
                             </TableRow>
                           ))
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground py-4">
+                            <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
                               No project deadlines found
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Promotions Section — real CRUD backend (server/promotion-routes.ts,
+                  mounted at /api/drm/promotions) that previously had no dashboard
+                  surface anywhere. HOD can view and approve/reject promotions. */}
+              <Card className="rounded-xl shadow-md mt-6" data-testid="card-promotions">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold">Promotions</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader className="bg-gray-50 dark:bg-zinc-900">
+                        <TableRow>
+                          <TableHead className="text-xs font-medium">Title</TableHead>
+                          <TableHead className="text-xs font-medium">Package</TableHead>
+                          <TableHead className="text-xs font-medium">Discount</TableHead>
+                          <TableHead className="text-xs font-medium">Dates</TableHead>
+                          <TableHead className="text-xs font-medium">Status</TableHead>
+                          <TableHead className="text-xs font-medium text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {promotionsQuery.isLoading ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center py-4">
+                              <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-400" />
+                            </TableCell>
+                          </TableRow>
+                        ) : promotionsQuery.data?.data && promotionsQuery.data.data.length > 0 ? (
+                          promotionsQuery.data.data.map((promo: any) => (
+                            <TableRow key={promo.id}>
+                              <TableCell className="font-medium">{promo.title}</TableCell>
+                              <TableCell className="text-sm">{promo.packageName || "-"}</TableCell>
+                              <TableCell className="text-sm">{promo.discount || "-"}</TableCell>
+                              <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                                {promo.startDate ? format(new Date(promo.startDate), "dd MMM yyyy") : "-"}
+                                {" "}-{" "}
+                                {promo.endDate ? format(new Date(promo.endDate), "dd MMM yyyy") : "-"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge className={
+                                  promo.status === "approved" ? "bg-green-100 text-green-800 border-green-200" :
+                                  promo.status === "rejected" ? "bg-red-100 text-red-800 border-red-200" :
+                                  "bg-yellow-100 text-yellow-800 border-yellow-200"
+                                }>
+                                  {promo.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {promo.status === "pending" ? (
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="bg-green-600 hover:bg-green-700 h-7 text-xs px-2"
+                                      onClick={() => promotionApproveMutation.mutate(promo.id)}
+                                      disabled={promotionApproveMutation.isPending || promotionRejectMutation.isPending}
+                                    >
+                                      <Check className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      className="h-7 text-xs px-2"
+                                      onClick={() => handleRejectPromotion(promo.id)}
+                                      disabled={promotionApproveMutation.isPending || promotionRejectMutation.isPending}
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">
+                                    {promo.approvedByName ? `By ${promo.approvedByName}` : "-"}
+                                  </span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                              No promotions found
                             </TableCell>
                           </TableRow>
                         )}
@@ -1556,11 +1891,31 @@ export default function HodDashboard() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        <TableRow>
-                          <TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-4">
-                            No meetings scheduled
-                          </TableCell>
-                        </TableRow>
+                        {todaysMeetingsQuery.isLoading ? (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center py-4">
+                              <Loader2 className="h-5 w-5 animate-spin mx-auto text-gray-400" />
+                            </TableCell>
+                          </TableRow>
+                        ) : todaysMeetingsQuery.data?.data && todaysMeetingsQuery.data.data.length > 0 ? (
+                          todaysMeetingsQuery.data.data.map((m: any) => (
+                            <TableRow key={m.id}>
+                              <TableCell className="text-sm font-medium">{m.personName || "-"}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground max-w-[160px] truncate" title={m.meetingType || ""}>
+                                {m.meetingType || "-"}
+                              </TableCell>
+                              <TableCell className="text-right text-sm">
+                                {m.scheduledTime || (m.meetingDate ? format(new Date(m.meetingDate), "hh:mm a") : "-")}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        ) : (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center text-sm text-muted-foreground py-4">
+                              No meetings scheduled
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>
@@ -1584,15 +1939,18 @@ export default function HodDashboard() {
                       { label: "Completed", value: importantStatsQuery.data?.data?.completed || 0, nav: "/projects?status=completed" },
                       { label: "Pending", value: importantStatsQuery.data?.data?.pending || 0, nav: "/projects?status=pending" },
                       { label: "Qa Verification", value: importantStatsQuery.data?.data?.qaVerification || 0, nav: "/projects?status=qa-verification" },
-                      { label: "Dep Verification", value: `${importantStatsQuery.data?.data?.depVerification || 0}(1600)`, nav: "#" },
-                      { label: "Leave Application", value: importantStatsQuery.data?.data?.leaveApplication || 0, nav: "/leave-management" },
+                      // Real GM-pending-HOD count; jumps to the GM Approval tab
+                      // in the card above instead of a dead "#" link, and no
+                      // longer has a hardcoded "(1600)" fake suffix appended.
+                      { label: "Dep Verification", value: importantStatsQuery.data?.data?.depVerification || 0, nav: "#", action: goToGmApprovalVerification },
+                      { label: "Leave Application", value: importantStatsQuery.data?.data?.leaveApplication || 0, nav: "/hr/leave-request" },
                       { label: "Activet Team", value: importantStatsQuery.data?.data?.activeTeam || 0, nav: "/users" },
                       { label: "Loan Application", value: ">", nav: "/hr/loan" },
-                      { label: "Late Coming", value: ">", nav: "#" },
-                      { label: "Add Penalty", value: ">", nav: "#" },
-                      { label: "Commission Verification", value: ">", nav: "#" },
+                      { label: "Late Coming", value: ">", nav: "/drm/late-coming" },
+                      { label: "Add Penalty", value: ">", nav: "/drm/add-penalty" },
+                      { label: "Commission Verification", value: ">", nav: "/drm/commission-verification" },
                       { label: "Sale & Service Report", value: ">", nav: "/reports" },
-                      { label: "Increment", value: ">", nav: "#" },
+                      { label: "Increment", value: ">", nav: "/drm/increment" },
                       { label: "Update Sale And Service Report", value: ">", nav: "/reports" },
                       { label: "Roles Details", value: ">", nav: "/users" },
                       { label: "Annual Leaves Reports", value: ">", nav: "/reports" },
@@ -1600,10 +1958,12 @@ export default function HodDashboard() {
                       { label: "Follow Up Report", value: ">", nav: "/reports" },
                       { label: "Follow-Up Meeting Report", value: ">", nav: "/reports" }
                     ].map((item, idx) => (
-                      <div 
-                        key={idx} 
+                      <div
+                        key={idx}
                         onClick={() => {
-                          if (item.nav !== "#") {
+                          if ((item as any).action) {
+                            (item as any).action();
+                          } else if (item.nav !== "#") {
                             setLocation(item.nav);
                           }
                         }}
@@ -1626,7 +1986,7 @@ export default function HodDashboard() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base font-semibold">Activities</CardTitle>
-                    <Select defaultValue="TD">
+                    <Select value={activitiesFilter} onValueChange={setActivitiesFilter}>
                       <SelectTrigger className="w-20 h-8">
                         <SelectValue />
                       </SelectTrigger>
@@ -1639,7 +1999,7 @@ export default function HodDashboard() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {importantStatsQuery.isLoading ? (
+                  {activitiesStatsQuery.isLoading ? (
                     <div className="text-center py-4">
                       <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-400" />
                     </div>
@@ -1649,14 +2009,14 @@ export default function HodDashboard() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-gray-700 dark:text-zinc-400">Total Project</span>
                           <span className="text-sm font-semibold text-blue-600">
-                            {importantStatsQuery.data?.data?.activities?.totalProjects || 0}
+                            {activitiesStatsQuery.data?.data?.activities?.totalProjects || 0}
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-green-500 h-2 rounded-full"
                             style={{
-                              width: `${Math.min(100, ((importantStatsQuery.data?.data?.activities?.totalProjects || 0) / 100) * 100)}%`
+                              width: `${Math.min(100, ((activitiesStatsQuery.data?.data?.activities?.totalProjects || 0) / 100) * 100)}%`
                             }}
                           ></div>
                         </div>
@@ -1666,14 +2026,14 @@ export default function HodDashboard() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-gray-700 dark:text-zinc-400">Complete</span>
                           <span className="text-sm font-semibold text-blue-600">
-                            {importantStatsQuery.data?.data?.activities?.complete || 0}
+                            {activitiesStatsQuery.data?.data?.activities?.complete || 0}
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-green-500 h-2 rounded-full"
                             style={{
-                              width: `${Math.min(100, ((importantStatsQuery.data?.data?.activities?.complete || 0) / (importantStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
+                              width: `${Math.min(100, ((activitiesStatsQuery.data?.data?.activities?.complete || 0) / (activitiesStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
                             }}
                           ></div>
                         </div>
@@ -1683,14 +2043,14 @@ export default function HodDashboard() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-gray-700 dark:text-zinc-400">Pending</span>
                           <span className="text-sm font-semibold text-blue-600">
-                            {importantStatsQuery.data?.data?.activities?.pending || 0}
+                            {activitiesStatsQuery.data?.data?.activities?.pending || 0}
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-green-500 h-2 rounded-full"
                             style={{
-                              width: `${Math.min(100, ((importantStatsQuery.data?.data?.activities?.pending || 0) / (importantStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
+                              width: `${Math.min(100, ((activitiesStatsQuery.data?.data?.activities?.pending || 0) / (activitiesStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
                             }}
                           ></div>
                         </div>
@@ -1700,14 +2060,14 @@ export default function HodDashboard() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-gray-700 dark:text-zinc-400">Delay</span>
                           <span className="text-sm font-semibold text-blue-600">
-                            {importantStatsQuery.data?.data?.activities?.delay || 0}
+                            {activitiesStatsQuery.data?.data?.activities?.delay || 0}
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-gray-500 h-2 rounded-full"
                             style={{
-                              width: `${Math.min(100, ((importantStatsQuery.data?.data?.activities?.delay || 0) / (importantStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
+                              width: `${Math.min(100, ((activitiesStatsQuery.data?.data?.activities?.delay || 0) / (activitiesStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
                             }}
                           ></div>
                         </div>
@@ -1717,14 +2077,14 @@ export default function HodDashboard() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-sm text-gray-700 dark:text-zinc-400">Free</span>
                           <span className="text-sm font-semibold text-blue-600">
-                            {importantStatsQuery.data?.data?.activities?.free || 0}
+                            {activitiesStatsQuery.data?.data?.activities?.free || 0}
                           </span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
                             className="bg-gray-800 h-2 rounded-full"
                             style={{
-                              width: `${Math.min(100, ((importantStatsQuery.data?.data?.activities?.free || 0) / (importantStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
+                              width: `${Math.min(100, ((activitiesStatsQuery.data?.data?.activities?.free || 0) / (activitiesStatsQuery.data?.data?.activities?.totalProjects || 1)) * 100)}%`
                             }}
                           ></div>
                         </div>
@@ -1904,12 +2264,14 @@ export default function HodDashboard() {
               </label>
               <Select value={meetingUser} onValueChange={setMeetingUser}>
                 <SelectTrigger id="user">
-                  <SelectValue placeholder="Choose ..." />
+                  <SelectValue placeholder={usersListQuery.isLoading ? "Loading users..." : "Choose ..."} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="user1">User 1</SelectItem>
-                  <SelectItem value="user2">User 2</SelectItem>
-                  <SelectItem value="user3">User 3</SelectItem>
+                  {(usersListQuery.data?.users ?? []).map((u: any) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.fullName || u.email}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1941,18 +2303,10 @@ export default function HodDashboard() {
             </Button>
             <Button
               className="bg-green-600 hover:bg-green-700"
-              onClick={() => {
-                // Save meeting logic here
-                toast({
-                  title: "Meeting Added",
-                  description: "The meeting has been scheduled successfully.",
-                });
-                setIsMeetingDialogOpen(false);
-                setMeetingUser("");
-                setMeetingDetail("");
-              }}
+              onClick={handleSaveMeeting}
+              disabled={createMeetingMutation.isPending}
             >
-              Save
+              {createMeetingMutation.isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1970,11 +2324,13 @@ export default function HodDashboard() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Company ID</label>
-                  <Input value={formData.drmId || ""} readOnly className="bg-muted" />
+                  <Input value={formData.drmId || ""} readOnly className={`bg-muted ${gmFieldErrors.drmId ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.drmId && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Company Name</label>
-                  <Input value={formData.company || ""} readOnly className="bg-muted" />
+                  <Input value={formData.company || ""} readOnly className={`bg-muted ${gmFieldErrors.company ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.company && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
               </div>
 
@@ -1982,14 +2338,17 @@ export default function HodDashboard() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Member ID</label>
-                  <Input value={formData.memberId || ""} readOnly className="bg-muted" />
+                  <Input value={formData.memberId || ""} readOnly className={`bg-muted ${gmFieldErrors.memberId ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.memberId && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Order ID</label>
                   <Input
                     value={formData.orderId || ""}
                     onChange={(e) => setFormData({ ...formData, orderId: e.target.value })}
+                    className={gmFieldErrors.orderId ? "border-red-500" : ""}
                   />
+                  {gmFieldErrors.orderId && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
               </div>
 
@@ -1997,11 +2356,13 @@ export default function HodDashboard() {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Package</label>
-                  <Input value={formData.package || ""} readOnly className="bg-muted" />
+                  <Input value={formData.package || ""} readOnly className={`bg-muted ${gmFieldErrors.package ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.package && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Package Price</label>
-                  <Input value={formData.orderDollar || ""} readOnly className="bg-muted" />
+                  <Input value={formData.orderDollar || ""} readOnly className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Type</label>
@@ -2009,7 +2370,7 @@ export default function HodDashboard() {
                     value={formData.type || ""}
                     onValueChange={(value) => setFormData({ ...formData, type: value })}
                   >
-                    <SelectTrigger className="bg-white dark:bg-zinc-900">
+                    <SelectTrigger className={`bg-white dark:bg-zinc-900 ${gmFieldErrors.type ? "border-red-500" : ""}`}>
                       <SelectValue placeholder="Choose..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -2020,6 +2381,7 @@ export default function HodDashboard() {
                       <SelectItem value="Kwa">Kwa</SelectItem>
                     </SelectContent>
                   </Select>
+                  {gmFieldErrors.type && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
               </div>
 
@@ -2027,35 +2389,45 @@ export default function HodDashboard() {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Customer PKR</label>
-                  <Input value={formData.pkr || ""} readOnly className="bg-muted" />
+                  <Input value={formData.pkr || ""} readOnly className={`bg-muted ${gmFieldErrors.pkr ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.pkr && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Order Dollar</label>
                   <Input
-                    value={formData.orderDollar || ""}
-                    onChange={(e) => updateGmForm("orderDollar", e.target.value)}
+                    value={(Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0)}
+                    readOnly
+                    className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`}
                   />
+                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Dollar Rate $</label>
                   <Input
                     value={formData.dollarRate || ""}
                     onChange={(e) => updateGmForm("dollarRate", e.target.value)}
+                    className={gmFieldErrors.dollarRate ? "border-red-500" : ""}
                   />
+                  {gmFieldErrors.dollarRate && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Alibaba Discount</label>
                   <Input
                     value={formData.alibabaDiscount || ""}
                     onChange={(e) => updateGmForm("alibabaDiscount", e.target.value)}
+                    className={gmFieldErrors.alibabaDiscount ? "border-red-500" : ""}
                   />
+                  {gmFieldErrors.alibabaDiscount && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">$ Extra Discount</label>
                   <Input
                     value={formData.extraDiscount || ""}
                     onChange={(e) => updateGmForm("extraDiscount", e.target.value)}
+                    disabled={hodDiscountTouched}
+                    className={gmFieldErrors.extraDiscount ? "border-red-500" : ""}
                   />
+                  {gmFieldErrors.extraDiscount && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
               </div>
 
@@ -2066,7 +2438,9 @@ export default function HodDashboard() {
                   <Input
                     value={formData.extraDiscountPkr || ""}
                     onChange={(e) => updateGmForm("extraDiscountPkr", e.target.value)}
+                    className={gmFieldErrors.extraDiscountPkr ? "border-red-500" : ""}
                   />
+                  {gmFieldErrors.extraDiscountPkr && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Request Status</label>
@@ -2084,12 +2458,27 @@ export default function HodDashboard() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-1 block text-red-500">Extra Discount Hod</label>
+                  <label className="text-sm font-medium mb-1 block text-red-500 font-semibold">
+                    Extra Discount Hod <span className="text-red-500">*</span>
+                  </label>
                   <Input
-                    value={formData.extraDiscountHod || ""}
-                    onChange={(e) => setFormData({ ...formData, extraDiscountHod: e.target.value })}
-                    className="border-red-200 focus:border-red-500"
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={formData.extraDiscountHod !== undefined && formData.extraDiscountHod !== null ? formData.extraDiscountHod : ""}
+                    onChange={(e) => {
+                      setHodDiscountTouched(true);
+                      applyHodDiscountChange(e.target.value);
+                    }}
+                    placeholder="Enter HOD discount (min 0)"
+                    className={`border-red-300 focus:border-red-500 ${formData.extraDiscountHod === "" || hodDiscountMismatch ? "border-red-500 bg-red-50/20" : ""}`}
                   />
+                  {gmFieldErrors.extraDiscountHod && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
+                  {hodDiscountMismatch && (
+                    <p className="text-xs text-red-500 mt-1">
+                      Must exactly match $ Extra Discount ({formData.extraDiscount}) to approve
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2109,17 +2498,24 @@ export default function HodDashboard() {
                 </div>
               </div>
 
-              {/* Comment */}
+              {/* Comment — required when rejecting */}
               <div>
-                <label className="text-sm font-medium mb-1 block">Comment</label>
+                <label className="text-sm font-medium mb-1 block">
+                  Comment {gmApprovalStatus === "Rejected" && <span className="text-red-500">*</span>}
+                </label>
                 <Textarea
-                  value={formData.reason || formData.comment || ""}
-                  onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+                  value={gmComment}
+                  onChange={(e) => setGmComment(e.target.value)}
+                  placeholder={gmApprovalStatus === "Rejected" ? "Reason for rejection (required)" : "Optional comment..."}
                   rows={2}
                 />
               </div>
 
-              {/* Installments Section */}
+              {/* Installments Section — only meaningful for Partial/Loan GMs; a Full
+                  GM still carries a single internal installment row (its Extra
+                  Discount tracking), which must not be shown here as if it were
+                  a real partial-payment schedule. */}
+              {(formData.isPartial || formData.isLoan) && (
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-semibold text-sm text-gray-700 dark:text-zinc-400">Partial Payment Installment</h3>
@@ -2209,6 +2605,7 @@ export default function HodDashboard() {
                   )}
                 </div>
               </div>
+              )}
 
             </div>
           )}
@@ -2217,9 +2614,69 @@ export default function HodDashboard() {
               Cancel
             </Button>
             <Button
+              disabled={!gmComment || !gmComment.trim() || approveMutation.isPending || rejectMutation.isPending}
               className={gmApprovalStatus === "Rejected" ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}
               onClick={() => {
                 if (!selectedGmEntry) return;
+
+                if (!gmApprovalStatus || gmApprovalStatus === "Select Status" || gmApprovalStatus === "Pending") {
+                  toast({
+                    title: "Validation Error",
+                    description: "All fields are required to fill then approved.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+
+                if (gmApprovalStatus === "Approved") {
+                  setGmSubmitAttempted(true);
+                  const errors = computeGmFieldErrors(formData);
+                  const missing = GM_APPROVAL_REQUIRED_FIELDS.filter((f) => errors[f.key]).map((f) => f.label);
+
+                  if (missing.length > 0) {
+                    toast({
+                      title: "Validation Error",
+                      description: `All fields are required to fill then approved. Missing: ${missing.join(", ")}`,
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+
+                  // Extra Discount Hod is a pure confirmation field: it must exactly
+                  // match the requested "$ Extra Discount" before HOD can approve —
+                  // re-checked here since this is the button that actually submits
+                  // (handleSaveGmStatus's copy of this check is not wired to it).
+                  const hodDiscountNum = Number(formData.extraDiscountHod);
+                  const requestedDiscount = Number(formData.extraDiscount) || 0;
+                  if (isNaN(hodDiscountNum) || hodDiscountNum < 0) {
+                    toast({
+                      title: "Invalid Extra Discount HOD",
+                      description: "Extra Discount HOD amount cannot be negative. Minimum amount is 0.",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  if (Math.abs(hodDiscountNum - requestedDiscount) > 0.01) {
+                    toast({
+                      title: "Extra Discount HOD Must Match",
+                      description: `Extra Discount HOD (${hodDiscountNum}) must exactly match the requested $ Extra Discount (${requestedDiscount}) to approve.`,
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                }
+
+                if (gmApprovalStatus === "Rejected") {
+                  const reasonText = gmComment.trim();
+                  if (!reasonText) {
+                    toast({
+                      title: "Validation Error",
+                      description: "Please enter a comment/reason when rejecting a GM entry.",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                }
 
                 const isUpdateRequest = selectedGmEntry.type === 'Temp GM' || selectedGmEntry.type === 'Refund GM';
 
@@ -2234,9 +2691,12 @@ export default function HodDashboard() {
                 const payload = isUpdateRequest ? {
                   status: gmApprovalStatus,
                   type: selectedGmEntry.type,
-                  data: formData
+                  data: { ...formData, reason: gmComment, comment: gmComment }
+                } : gmApprovalStatus === "Approved" ? {
+                  comment: gmComment,
+                  extraDiscountHod: Number(formData.extraDiscountHod) || 0,
                 } : {
-                  comment: formData.notes || ""
+                  comment: gmComment
                 };
 
                 // We need to use a custom mutation or just fetch directly here since the existing mutation is rigid

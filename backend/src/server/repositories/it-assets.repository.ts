@@ -1,5 +1,5 @@
 import { db, pool } from "../db";
-import { itServers, itDomains, itBackups, itRegistries, itHostingPackages } from "@shared/schema";
+import { itServers, itDomains, itBackups, itRegistries, itHostingPackages, customers } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 // Patch 4 Stage 4 — canonical "Server Names" status set. The DB column stays
@@ -186,9 +186,58 @@ export const itAssetsRepository = {
   },
   async listDomains() {
     await ensureItSchema();
-    // In a real app we'd join with customers, servers, etc.
-    // For now simple list
-    return db.select().from(itDomains).orderBy(desc(itDomains.createdAt));
+    const rows = await db
+      .select({
+        id: itDomains.id,
+        customerId: itDomains.customerId,
+        domainName: itDomains.domainName,
+        registryId: itDomains.registryId,
+        serverId: itDomains.serverId,
+        hostingPackageId: itDomains.hostingPackageId,
+        cpanelUsername: itDomains.cpanelUsername,
+        cpanelPassword: itDomains.cpanelPassword,
+        activationDate: itDomains.activationDate,
+        expiryDate: itDomains.expiryDate,
+        sslExpiryDate: itDomains.sslExpiryDate,
+        hostingExpiryDate: itDomains.hostingExpiryDate,
+        status: itDomains.status,
+        createdAt: itDomains.createdAt,
+        updatedAt: itDomains.updatedAt,
+        company: customers.companyName,
+        email: customers.email,
+        contactNo: customers.phone,
+        hostingPackageName: itHostingPackages.name,
+        hostingPackagePrice: itHostingPackages.price,
+        serverName: itServers.name,
+        serverIp: itServers.ip,
+        registryName: itRegistries.name,
+      })
+      .from(itDomains)
+      .leftJoin(customers, eq(itDomains.customerId, customers.id))
+      .leftJoin(itHostingPackages, eq(itDomains.hostingPackageId, itHostingPackages.id))
+      .leftJoin(itServers, eq(itDomains.serverId, itServers.id))
+      .leftJoin(itRegistries, eq(itDomains.registryId, itRegistries.id))
+      .orderBy(desc(itDomains.createdAt));
+    return rows;
+  },
+  async updateDomain(id: string, data: any) {
+    await ensureItSchema();
+    const [row] = await db
+      .update(itDomains)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(itDomains.id, id))
+      .returning();
+    return row;
+  },
+  async deleteDomain(id: string) {
+    await ensureItSchema();
+    await db.delete(itDomains).where(eq(itDomains.id, id));
+    return { success: true };
+  },
+  async deleteBackup(id: string) {
+    await ensureItSchema();
+    await db.delete(itBackups).where(eq(itBackups.id, id));
+    return { success: true };
   },
   async listBackups() {
     await ensureItSchema();
@@ -228,6 +277,7 @@ export const itAssetsRepository = {
     await ensureItSchema();
     const servers = await this.listServers();
     const domains = await this.listDomains();
+    const backups = await this.listBackups();
     
     const report: any[] = [];
     
@@ -242,16 +292,23 @@ export const itAssetsRepository = {
       serverUrl: s.ip
     }));
     
-    domains.forEach(d => report.push({
-      id: d.id,
-      name: d.domainName,
-      type: 'Domain',
-      ip: '-',
-      status: d.status,
-      lastBackup: null,
-      expiryDate: d.expiryDate,
-      serverUrl: d.domainName
-    }));
+    domains.forEach(d => {
+      const domainBackups = backups.filter(b => b.domainId === d.id);
+      const lastBackup = domainBackups.length > 0
+        ? domainBackups.sort((a, b) => new Date(b.backupDate).getTime() - new Date(a.backupDate).getTime())[0].backupDate
+        : null;
+
+      report.push({
+        id: d.id,
+        name: d.domainName,
+        type: 'Domain',
+        ip: '-',
+        status: d.status,
+        lastBackup,
+        expiryDate: d.expiryDate,
+        serverUrl: d.domainName
+      });
+    });
     
     return report;
   }

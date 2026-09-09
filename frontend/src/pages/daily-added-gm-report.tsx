@@ -16,6 +16,7 @@ import { Search } from "lucide-react";
 
 type GmRow = {
   id: string;
+  drm_id: string | null;
   company_name: string | null;
   sales_person_name: string | null;
   added_by_name: string | null;
@@ -74,20 +75,20 @@ export default function DailyAddedGmReport() {
   const rows = query.data?.rows ?? [];
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen p-4">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen p-4">
       <div className="max-w-[1600px] mx-auto space-y-4">
 
         {/* Main Card */}
-        <div className="bg-white rounded-[4px] shadow-sm border border-slate-200">
+        <div className="bg-white dark:bg-zinc-900 rounded-[4px] shadow-sm border border-slate-200">
           <div className="p-4 border-b border-slate-100">
-            <h1 className="text-[17px] font-medium text-[#333]">Daily GM Record</h1>
+            <h1 className="text-[17px] font-medium text-[#333] dark:text-zinc-300">Daily GM Record</h1>
           </div>
 
           <div className="p-4">
             {/* Filters */}
             <div className="flex flex-col md:flex-row items-end gap-4 mb-2">
               <div className="flex flex-col gap-1 w-full md:w-64">
-                <Label className="text-[13px] text-[#555] font-normal">Start Date:</Label>
+                <Label className="text-[13px] text-[#555] dark:text-zinc-300 font-normal">Start Date:</Label>
                 <Input
                   type="date"
                   value={startDate}
@@ -96,7 +97,7 @@ export default function DailyAddedGmReport() {
                 />
               </div>
               <div className="flex flex-col gap-1 w-full md:w-64">
-                <Label className="text-[13px] text-[#555] font-normal">End Date:</Label>
+                <Label className="text-[13px] text-[#555] dark:text-zinc-300 font-normal">End Date:</Label>
                 <Input
                   type="date"
                   value={endDate}
@@ -113,11 +114,11 @@ export default function DailyAddedGmReport() {
               </Button>
             </div>
             {dateError && (
-              <p className="text-[12px] text-[#d9534f] mb-4">{dateError}</p>
+              <p className="text-[12px] text-[#d9534f] dark:text-red-400 mb-4">{dateError}</p>
             )}
 
             {/* Table */}
-            <div className="overflow-x-auto border border-slate-200 rounded-[4px] mt-4">
+            <div className="overflow-x-auto border border-slate-200 dark:border-zinc-800 rounded-[4px] mt-4">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
                   <TableRow className="bg-[#2c3b41] hover:bg-[#2c3b41] border-b-0">
@@ -133,7 +134,7 @@ export default function DailyAddedGmReport() {
                     <TableHead className="py-3 px-4 font-semibold text-white h-auto">Status</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {query.isLoading ? (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center py-8 text-slate-500">
@@ -142,7 +143,7 @@ export default function DailyAddedGmReport() {
                     </TableRow>
                   ) : query.isError ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="text-center py-8 text-[#d9534f]">
+                      <TableCell colSpan={10} className="text-center py-8 text-[#d9534f] dark:text-red-400">
                         Could not load the GM record. Please try again.
                       </TableCell>
                     </TableRow>
@@ -154,15 +155,15 @@ export default function DailyAddedGmReport() {
                     </TableRow>
                   ) : (
                     rows.map((item) => (
-                      <TableRow key={item.id} className="border-b border-slate-100 hover:bg-[#f8f9fa] transition-colors">
-                        <TableCell className="py-3 px-4 text-[#555] font-mono text-[11px]">{item.id.slice(0, 8)}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.sales_person_name || item.added_by_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.company_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.package_type || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.gm_type || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.amount_usd ?? "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555]">{item.amount_pkr ?? "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] whitespace-pre-wrap leading-tight">{fmtDateTime(item.created_at)}</TableCell>
+                      <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300 font-mono text-[11px]">{item.drm_id || item.id.slice(0, 8)}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.sales_person_name || item.added_by_name || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.company_name || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.package_type || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.gm_type || "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.amount_usd ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.amount_pkr ?? "-"}</TableCell>
+                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300 whitespace-pre-wrap leading-tight">{fmtDateTime(item.created_at)}</TableCell>
                         <TableCell className="py-3 px-4">
                           <span className={`px-2 py-0.5 rounded-[3px] text-[11px] font-bold text-white ${isRenewal(item.entry_type) ? 'bg-[#00a65a]' : 'bg-[#0073b7]'}`}>
                             {item.entry_type || "-"}

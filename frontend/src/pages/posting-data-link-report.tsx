@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from "date-fns";
-import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar as CalendarIcon, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -115,6 +116,26 @@ export default function PostingDataLinkReport() {
 
   const fmtDate = (d: string | null) => (d ? format(new Date(d), "dd-MM-yyyy") : "-");
 
+  // Duplicate-link detection: flag any row whose link value repeats elsewhere
+  // in the currently loaded report data. Pure client-side detection over the
+  // existing data set — does not alter how links are stored or fetched.
+  const duplicateLinkCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of rows) {
+      const key = (item.links || "").trim().toLowerCase();
+      if (!key) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  }, [rows]);
+
+  const isDuplicateLink = (link: string | undefined | null) => {
+    const key = (link || "").trim().toLowerCase();
+    return !!key && (duplicateLinkCounts.get(key) || 0) > 1;
+  };
+
+  const duplicateCount = rows.filter((item: any) => isDuplicateLink(item.links)).length;
+
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
       <h1 className="text-xl font-bold text-slate-700 dark:text-zinc-200 uppercase tracking-widest mb-6">
@@ -184,6 +205,12 @@ export default function PostingDataLinkReport() {
       <Card className="border-none shadow-sm dark:bg-zinc-900 mt-6">
         <div className="p-4 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between">
           <h2 className="font-semibold text-slate-700 dark:text-zinc-300">List</h2>
+          {duplicateCount > 0 && (
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-900/40">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {duplicateCount} duplicate link{duplicateCount > 1 ? "s" : ""} detected
+            </div>
+          )}
         </div>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -195,18 +222,19 @@ export default function PostingDataLinkReport() {
                   <th className="py-4 px-4 font-bold border-b">Company</th>
                   <th className="py-4 px-4 font-bold border-b">Links</th>
                   <th className="py-4 px-4 font-bold border-b">Date</th>
+                  <th className="py-4 px-4 font-bold border-b">Duplicate</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-500">
+                    <td colSpan={6} className="py-8 text-center text-slate-500">
                       Loading data...
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-slate-500">
+                    <td colSpan={6} className="py-8 text-center text-slate-500">
                       No entries found
                     </td>
                   </tr>
@@ -235,6 +263,15 @@ export default function PostingDataLinkReport() {
                         )}
                       </td>
                       <td className="py-4 px-4 text-slate-600 dark:text-zinc-400">{fmtDate(item.date)}</td>
+                      <td className="py-4 px-4">
+                        {isDuplicateLink(item.links) ? (
+                          <Badge variant="destructive" className="gap-1">
+                            <AlertTriangle className="h-3 w-3" /> Duplicate
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">Unique</Badge>
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}

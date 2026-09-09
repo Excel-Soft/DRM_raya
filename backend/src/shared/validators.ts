@@ -32,6 +32,17 @@ export const phone = z
 /** Non-negative monetary amount (accepts numeric strings). */
 export const amount = z.coerce.number().min(0);
 
+/**
+ * ISO-8601 date or datetime string that parses to a real Date. Single source
+ * of truth — `server/validators/common.validators.ts` re-exports this instead
+ * of defining its own copy, so shared/ modules (e.g.
+ * shared/business-rules-config.ts) can use it without importing server/.
+ */
+export const isoDate = z
+  .string()
+  .trim()
+  .refine((v) => !Number.isNaN(Date.parse(v)), "Must be a valid ISO date");
+
 /** HTTP/HTTPS URL only (rejects javascript:, data:, file:, etc.). */
 export const url = z
   .string()

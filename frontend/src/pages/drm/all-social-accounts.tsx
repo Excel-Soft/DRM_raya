@@ -2,6 +2,16 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -207,6 +217,8 @@ export default function AllSocialAccountsPage() {
         },
     });
 
+    const [deleteConfirmAccount, setDeleteConfirmAccount] = useState<any | null>(null);
+
     const handleAddAccount = async () => {
         if (!accPlatform.trim()) {
             toast({ title: "Platform is required", variant: "destructive" });
@@ -391,7 +403,7 @@ export default function AllSocialAccountsPage() {
             <div className="w-full bg-white shadow-sm border border-gray-100 rounded-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
                 <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr className="border-b border-gray-100 dark:border-zinc-800" style={{ backgroundColor: "#e2f2e7" }}>
+                        <tr className="border-b border-gray-100 dark:border-zinc-800 bg-[#e2f2e7] dark:bg-zinc-900">
                             <th className="px-4 py-3 text-[13px] font-bold text-[#212529] dark:text-zinc-100">S.No</th>
                             <th className="px-4 py-3 text-[13px] font-bold text-[#212529] dark:text-zinc-100">Owner</th>
                             <th className="px-4 py-3 text-[13px] font-bold text-[#212529] dark:text-zinc-100">Platform</th>
@@ -487,9 +499,7 @@ export default function AllSocialAccountsPage() {
                                             <Trash2
                                                 size={17}
                                                 className="text-[#e74c3c] cursor-pointer hover:scale-110 transition-transform"
-                                                onClick={() => {
-                                                    if (window.confirm("Delete this social account?")) deleteMutation.mutate(row.id);
-                                                }}
+                                                onClick={() => setDeleteConfirmAccount(row)}
                                                 data-testid={`button-delete-${row.id}`}
                                             />
                                         </div>
@@ -603,7 +613,7 @@ export default function AllSocialAccountsPage() {
                     <div className="flex items-center justify-end p-4 border-t border-gray-100 bg-white gap-3 dark:bg-zinc-900 dark:border-zinc-800">
                         <Button
                             variant="secondary"
-                            className="bg-[#f0f2f5] hover:bg-gray-200 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
+                            className="bg-[#f0f2f5] hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
                             onClick={() => setAddAccountModalOpen(false)}
                         >
                             Close
@@ -691,7 +701,7 @@ export default function AllSocialAccountsPage() {
                     <div className="flex items-center justify-end p-4 border-t border-gray-100 bg-white gap-3 dark:bg-zinc-900 dark:border-zinc-800">
                         <Button
                             variant="secondary"
-                            className="bg-[#f0f2f5] hover:bg-gray-200 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
+                            className="bg-[#f0f2f5] hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
                             onClick={() => setAddChannelModalOpen(false)}
                         >
                             Close
@@ -783,7 +793,7 @@ export default function AllSocialAccountsPage() {
                     <div className="flex items-center justify-end p-4 border-t border-gray-100 bg-white gap-3 dark:bg-zinc-900 dark:border-zinc-800">
                         <Button
                             variant="secondary"
-                            className="bg-[#f0f2f5] hover:bg-gray-200 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
+                            className="bg-[#f0f2f5] hover:bg-gray-200 dark:hover:bg-zinc-800 text-gray-800 px-5 font-medium shadow-none h-9 text-[13px] dark:text-zinc-100 dark:bg-zinc-900"
                             onClick={() => setEditTarget(null)}
                         >
                             Close
@@ -798,7 +808,32 @@ export default function AllSocialAccountsPage() {
                         </Button>
                     </div>
                 </DialogContent>
-            </Dialog>
-        </div>
-    );
-}
+             </Dialog>
+
+             <AlertDialog open={!!deleteConfirmAccount} onOpenChange={(open) => !open && setDeleteConfirmAccount(null)}>
+                 <AlertDialogContent>
+                     <AlertDialogHeader>
+                         <AlertDialogTitle>Are you sure you want to delete this social account?</AlertDialogTitle>
+                         <AlertDialogDescription>
+                             This will permanently delete the social account <strong>{deleteConfirmAccount?.accountName || deleteConfirmAccount?.platform}</strong> and cannot be undone.
+                         </AlertDialogDescription>
+                     </AlertDialogHeader>
+                     <AlertDialogFooter>
+                         <AlertDialogCancel>Cancel</AlertDialogCancel>
+                         <AlertDialogAction
+                             className="bg-red-600 hover:bg-red-700 text-white"
+                             onClick={() => {
+                                 if (deleteConfirmAccount) {
+                                     deleteMutation.mutate(deleteConfirmAccount.id);
+                                     setDeleteConfirmAccount(null);
+                                 }
+                             }}
+                         >
+                             Delete
+                         </AlertDialogAction>
+                     </AlertDialogFooter>
+                 </AlertDialogContent>
+             </AlertDialog>
+         </div>
+     );
+ }

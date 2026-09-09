@@ -14,9 +14,10 @@
  * Cross-scope mutation returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
-import { ActivityLogService } from "../services/activity-service";
+import { pool } from "./db";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { ActivityLogService } from "./services/activity-service";
+import { safePage, safePageSize } from "./utils/sql-safety";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];
@@ -129,8 +130,8 @@ export async function registerLateComingRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
 
-      const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-      const pageSize = Math.max(1, Number(req.query.pageSize ?? 25) || 25);
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 25, 100);
       const offset = (page - 1) * pageSize;
 
       const dateFrom = req.query.dateFrom ? String(req.query.dateFrom) : undefined;

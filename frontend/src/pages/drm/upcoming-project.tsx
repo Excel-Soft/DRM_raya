@@ -51,7 +51,7 @@ export default function UpcomingProjectPage() {
             text: "text-[#9ba3af]",
             border: "border border-[#eaedf1]",
             tooltipBg: "bg-white dark:bg-zinc-900",
-            tooltipText: "text-[#333] shadow-lg",
+            tooltipText: "text-[#333] dark:text-zinc-300 shadow-lg",
             tooltipBorder: "border border-gray-200 dark:border-slate-700"
         };
         
@@ -164,7 +164,7 @@ export default function UpcomingProjectPage() {
                                 </tr>
                             ) : (
                                 filteredData.map((row: any, idx: number) => (
-                                    <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                                    <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                                         <td className="px-3 py-4">
                                             <div className="flex items-center gap-2">
                                                 <input type="checkbox" className="rounded border-gray-300 text-[#41a877] focus:ring-[#41a877] dark:border-zinc-800 dark:text-zinc-400" />
@@ -195,7 +195,7 @@ export default function UpcomingProjectPage() {
                 </div>
 
                 <div className="mt-4 flex items-center justify-between">
-                    <span className="text-[13px] text-[#828a96]">
+                    <span className="text-[13px] text-[#828a96] dark:text-zinc-400">
                         Showing 1 to {filteredData.length} of {upcomingProjects.length} entries
                     </span>
                     

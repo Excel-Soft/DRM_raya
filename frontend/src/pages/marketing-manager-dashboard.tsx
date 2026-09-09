@@ -50,6 +50,67 @@ export default function MarketingManagerDashboard() {
   // leads — empty results render the dedicated "No leads found" state below.
   const leads = Array.isArray(fetchedLeads) ? fetchedLeads : [];
 
+  const [topSellingPeriod, setTopSellingPeriod] = useState("ld");
+  const { data: eventsRes } = useQuery<{ data: any[]; total: number }>({
+    queryKey: ["/api/events?pageSize=200"],
+  });
+  const allEvents = Array.isArray(eventsRes?.data) ? eventsRes!.data : [];
+
+  const periodStart = (() => {
+    const d = new Date();
+    if (topSellingPeriod === "ld") d.setHours(0, 0, 0, 0);
+    else if (topSellingPeriod === "wc") d.setDate(d.getDate() - 6);
+    else if (topSellingPeriod === "mc") d.setDate(d.getDate() - 29);
+    else if (topSellingPeriod === "qc") d.setDate(d.getDate() - 89);
+    else if (topSellingPeriod === "yc") d.setDate(d.getDate() - 364);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  })();
+
+  const eventsInPeriod = allEvents.filter((e) => e.eventDate && new Date(e.eventDate) >= periodStart);
+  const totalEventsCount = eventsInPeriod.length;
+  const seminarCount = eventsInPeriod.filter((e) => e.eventType === "Seminar").length;
+  const webinarCount = eventsInPeriod.filter((e) => e.eventType === "Webinar").length;
+  const attendingCount = eventsInPeriod.reduce((sum, e) => sum + (Number(e.attendeeCount) || 0), 0);
+  const eventCostTotal = eventsInPeriod.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const now = new Date();
+  const nextEvent = allEvents
+    .filter((e) => e.eventDate && new Date(e.eventDate) >= now)
+    .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime())[0];
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setHours(23, 59, 59, 999);
+  const endOfThisWeek = new Date(startOfToday);
+  endOfThisWeek.setDate(endOfThisWeek.getDate() + 6);
+  endOfThisWeek.setHours(23, 59, 59, 999);
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999);
+
+  const inDateRange = (event: any, from: Date, to: Date) => {
+    if (!event.eventDate) return false;
+    const d = new Date(event.eventDate);
+    return d >= from && d <= to;
+  };
+  const todayEvents = allEvents.filter((e) => inDateRange(e, startOfToday, endOfToday));
+  const thisWeekEvents = allEvents.filter((e) => inDateRange(e, startOfToday, endOfThisWeek));
+  const monthlyEvents = allEvents
+    .filter((e) => inDateRange(e, monthStart, monthEnd))
+    .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
+
+  const [allEventsTypeFilter, setAllEventsTypeFilter] = useState("all");
+  const filteredAllEvents = allEvents
+    .filter((e) => allEventsTypeFilter === "all" || e.eventType === (allEventsTypeFilter === "seminar" ? "Seminar" : "Webinar"))
+    .sort((a, b) => new Date(b.eventDate || 0).getTime() - new Date(a.eventDate || 0).getTime());
+
+  const speakerSummary = (event: any) => {
+    const names = Array.isArray(event.speakers) ? event.speakers.map((s: any) => s.speakerName).filter(Boolean) : [];
+    return names.length ? names.join(", ") : "-";
+  };
+
   return (
     <div className="min-h-screen bg-[#f4f6f9] p-4 font-sans dark:bg-zinc-950">
       <div className="mb-6 flex items-center text-sm font-bold text-gray-500 uppercase tracking-wide dark:text-zinc-400">
@@ -67,7 +128,7 @@ export default function MarketingManagerDashboard() {
             <CardHeader className="border-b bg-white py-3 flex flex-row items-center justify-between dark:bg-zinc-900">
               <CardTitle className="text-[16px] font-bold text-gray-700 dark:text-zinc-400">Top Selling</CardTitle>
               <div className="w-24">
-                <Select defaultValue="ld">
+                <Select value={topSellingPeriod} onValueChange={setTopSellingPeriod}>
                   <SelectTrigger className="h-8 text-xs font-bold bg-white border-gray-300 dark:bg-zinc-900 dark:border-zinc-800">
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
@@ -82,15 +143,13 @@ export default function MarketingManagerDashboard() {
               </div>
             </CardHeader>
             <CardContent className="p-5 bg-slate-50 dark:bg-zinc-900">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard title="Total Events" value="0" icon={Users} />
-                <StatCard title="Seminar" value="0" icon={ArrowLeftRight} />
-                <StatCard title="Webinar" value="0" icon={Tag} />
-                <StatCard title="Next Event" value="0" icon={Target} />
-                <StatCard title="Attending" value="0" icon={Target} />
-                <StatCard title="Not Attending" value="0" icon={Tag} />
-                <StatCard title="Total Sales" value="0" icon={Users} />
-                <StatCard title="Event Cost" value="0 Rs" icon={Target} />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <StatCard title="Total Events" value={String(totalEventsCount)} icon={Users} />
+                <StatCard title="Seminar" value={String(seminarCount)} icon={ArrowLeftRight} />
+                <StatCard title="Webinar" value={String(webinarCount)} icon={Tag} />
+                <StatCard title="Next Event" value={nextEvent ? format(new Date(nextEvent.eventDate), "dd MMM") : "None"} icon={Target} />
+                <StatCard title="Attending" value={String(attendingCount)} icon={Target} />
+                <StatCard title="Event Cost" value={`${eventCostTotal.toLocaleString()} Rs`} icon={Tag} />
               </div>
             </CardContent>
           </Card>
@@ -127,46 +186,33 @@ export default function MarketingManagerDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activeEventTab === "today" ? (
-                    [
-                      { id: 1, name: "Tech Innovators Summit", type: "Seminar", start: "09:00 AM", end: "01:00 PM", speaker: "Ali Khan / 45m", date: "28/04/2026" },
-                      { id: 2, name: "Marketing Strategy 2026", type: "Webinar", start: "02:00 PM", end: "04:00 PM", speaker: "Sarah Ahmed / 30m", date: "28/04/2026" }
-                    ].map((event) => (
+                  {(() => {
+                    const rows = activeEventTab === "today" ? todayEvents : thisWeekEvents;
+                    if (!rows.length) {
+                      return (
+                        <tr>
+                          <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-zinc-400">
+                            No events {activeEventTab === "today" ? "today" : "this week"}.
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return rows.map((event) => (
                       <tr key={event.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.id}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.id.slice(0, 6)}</td>
                         <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{event.name}</td>
                         <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${event.type === 'Webinar' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                            {event.type}
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${event.eventType === 'Webinar' ? 'bg-blue-100 text-blue-700' : event.eventType === 'Seminar' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
+                            {event.eventType || "-"}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.start}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.end}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.speaker}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.date}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.startTime || "-"}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.endTime || "-"}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{speakerSummary(event)}</td>
+                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{format(new Date(event.eventDate), "dd/MM/yyyy")}</td>
                       </tr>
-                    ))
-                  ) : (
-                    [
-                      { id: 1, name: "B2B Sales Workshop", type: "Training", start: "11:00 AM", end: "03:00 PM", speaker: "Zainab Ali / 4h", date: "30/04/2026" },
-                      { id: 2, name: "Digital Marketing Trends", type: "Webinar", start: "10:00 AM", end: "11:30 AM", speaker: "Faizan / 1.5h", date: "01/05/2026" },
-                      { id: 3, name: "Leadership Seminar", type: "Seminar", start: "04:00 PM", end: "06:00 PM", speaker: "Dr. Tariq / 2h", date: "02/05/2026" }
-                    ].map((event) => (
-                      <tr key={event.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.id}</td>
-                        <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{event.name}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${event.type === 'Webinar' ? 'bg-blue-100 text-blue-700' : event.type === 'Seminar' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
-                            {event.type}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.start}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.end}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.speaker}</td>
-                        <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.date}</td>
-                      </tr>
-                    ))
-                  )}
+                    ));
+                  })()}
                 </tbody>
               </table>
             </CardContent>
@@ -319,25 +365,27 @@ export default function MarketingManagerDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {[
-                  { id: 1, name: "Annual General Meeting", type: "Seminar", start: "10:00 AM", end: "02:00 PM", speaker: "Board / 2h", date: "15/05/2026" },
-                  { id: 2, name: "Product Launch QA", type: "Webinar", start: "11:00 AM", end: "12:30 PM", speaker: "Dev Team / 1h", date: "22/05/2026" },
-                  { id: 3, name: "Sales Bootcamp", type: "Training", start: "09:00 AM", end: "05:00 PM", speaker: "HR Dept / 8h", date: "25/05/2026" }
-                ].map((event) => (
-                  <tr key={event.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.id}</td>
-                    <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{event.name}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${event.type === 'Webinar' ? 'bg-blue-100 text-blue-700' : event.type === 'Seminar' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
-                        {event.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.start}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.end}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.speaker}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.date}</td>
+                {monthlyEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-zinc-400">No events this month.</td>
                   </tr>
-                ))}
+                ) : (
+                  monthlyEvents.map((event) => (
+                    <tr key={event.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.id.slice(0, 6)}</td>
+                      <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{event.name}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${event.eventType === 'Webinar' ? 'bg-blue-100 text-blue-700' : event.eventType === 'Seminar' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {event.eventType || "-"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.startTime || "-"}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.endTime || "-"}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{speakerSummary(event)}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{format(new Date(event.eventDate), "dd/MM/yyyy")}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </CardContent>
@@ -347,7 +395,7 @@ export default function MarketingManagerDashboard() {
           <CardHeader className="border-b bg-white py-3 flex flex-row items-center justify-between dark:bg-zinc-900">
             <CardTitle className="text-[16px] font-bold text-gray-700 dark:text-zinc-400">All Events</CardTitle>
             <div className="w-32">
-              <Select defaultValue="all">
+              <Select value={allEventsTypeFilter} onValueChange={setAllEventsTypeFilter}>
                 <SelectTrigger className="h-8 text-xs bg-white border-gray-300 dark:bg-zinc-900 dark:border-zinc-800">
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
@@ -355,11 +403,6 @@ export default function MarketingManagerDashboard() {
                   <SelectItem value="all">All Events</SelectItem>
                   <SelectItem value="seminar">Seminar</SelectItem>
                   <SelectItem value="webinar">Webinar</SelectItem>
-                  <SelectItem value="next-event">Next Event</SelectItem>
-                  <SelectItem value="attending">Attending</SelectItem>
-                  <SelectItem value="not-attending">Not Attending</SelectItem>
-                  <SelectItem value="event-cost">Event Cost</SelectItem>
-                  <SelectItem value="total-sales">Total Sales</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -369,40 +412,45 @@ export default function MarketingManagerDashboard() {
               <thead className="text-xs text-gray-600 uppercase bg-gray-50 border-b dark:bg-zinc-900 dark:text-zinc-300">
                 <tr>
                   <th className="px-4 py-3 font-bold">No#</th>
-                  <th className="px-4 py-3 font-bold">Company</th>
-                  <th className="px-4 py-3 font-bold">Meeting</th>
-                  <th className="px-4 py-3 font-bold">Time</th>
-                  <th className="px-4 py-3 font-bold">Last Contact</th>
+                  <th className="px-4 py-3 font-bold">Name</th>
+                  <th className="px-4 py-3 font-bold">Type</th>
+                  <th className="px-4 py-3 font-bold">Venue</th>
+                  <th className="px-4 py-3 font-bold">Event Date</th>
+                  <th className="px-4 py-3 font-bold">Attendees</th>
                   <th className="px-4 py-3 font-bold">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {[
-                  "Chaudhary Faizan", "Brothers Textile", "RICHI STORE", 
-                  "Royal's Enterprises", "SUNCREST INTRNATIONAL", 
-                  "MAKKO CLOTHING INDUSTRY TRADE LTD COMPANY", "APPAREL STITCH IND."
-                ].map((company, i) => (
-                  <tr key={i} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{i + 1}</td>
-                    <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{company}</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">Muhammad Tayyab</td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
-                      {["05:51 PM", "05:49 PM", "05:45 PM", "05:42 PM", "05:35 PM", "05:31 PM", "05:25 PM"][i]}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">28/04/2026</td>
-                    <td className="px-4 py-3">
-                      <button 
-                        className="text-[#00a65a] hover:text-[#008d4c] transition-colors font-bold p-1 rounded hover:bg-green-50 dark:text-zinc-400"
-                        title={`Start Meeting with ${company}`}
-                        onClick={() => {
-                          window.open("https://meet.google.com/new", "_blank");
-                        }}
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </td>
+                {filteredAllEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-zinc-400">No events found.</td>
                   </tr>
-                ))}
+                ) : (
+                  filteredAllEvents.map((event, i) => (
+                    <tr key={event.id} className="border-b last:border-b-0 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{i + 1}</td>
+                      <td className="px-4 py-3 font-medium text-gray-700 dark:text-zinc-400">{event.name}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${event.eventType === 'Webinar' ? 'bg-blue-100 text-blue-700' : event.eventType === 'Seminar' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {event.eventType || "-"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.venue || "-"}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.eventDate ? format(new Date(event.eventDate), "dd/MM/yyyy") : "-"}</td>
+                      <td className="px-4 py-3 text-gray-500 dark:text-zinc-400">{event.attendeeCount ?? 0}</td>
+                      <td className="px-4 py-3">
+                        <Link href="/events/add">
+                          <button
+                            className="text-[#00a65a] hover:text-[#008d4c] transition-colors font-bold p-1 rounded hover:bg-green-50 dark:text-zinc-400"
+                            title="Manage this event"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </CardContent>

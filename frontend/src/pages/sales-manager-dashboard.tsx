@@ -5,7 +5,7 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { GmApprovalCard } from "@/components/gm-approval-card";
 import { PipelineSummary } from "@/components/pipeline-summary";
 import { Breadcrumb } from "@/components/breadcrumb";
@@ -131,11 +131,28 @@ type FollowUpsResponse = {
             subserviceName?: string | null;
             purpose?: string | null;
             method?: string | null;
+            followupNote?: string | null;
+            managerComment?: string | null;
+            smComment?: string | null;
             services?: { name: string; code: string }[];
             details?: { purpose: string; method: string }[];
         }>;
         total?: number;
+        smName?: string | null;
     };
+};
+
+type PromotionsResponse = {
+    data: Array<{
+        id: string;
+        title: string;
+        subTitle?: string | null;
+        packageName?: string | null;
+        discount?: string | null;
+        bannerUrl?: string | null;
+        mediaType?: string | null;
+    }>;
+    total: number;
 };
 
 type TeamWorkResponse = {
@@ -254,13 +271,16 @@ function minutesLabel(m: number) {
 }
 
 export default function SalesManagerDashboard() {
+    const [, navigate] = useLocation();
     const [kpiPeriod, setKpiPeriod] = useState<string>("ALL");
     const [activityPeriod, setActivityPeriod] = useState<string>("TD");
     const [activityDateFrom, setActivityDateFrom] = useState<string>("");
     const [activityDateTo, setActivityDateTo] = useState<string>("");
+    const [activityPage, setActivityPage] = useState<number>(1);
     const [queuePeriod, setQueuePeriod] = useState<string>("MONTH");
     const [queuePage, setQueuePage] = useState<number>(1);
-    const [followUpFilter, setFollowUpFilter] = useState<string>("all");
+    const [teamWorkDateFrom, setTeamWorkDateFrom] = useState<string>("");
+    const [teamWorkDateTo, setTeamWorkDateTo] = useState<string>("");
     const [followUpDateFrom, setFollowUpDateFrom] = useState<string>("");
     const [followUpDateTo, setFollowUpDateTo] = useState<string>("");
     const [followUpUser, setFollowUpUser] = useState<string>("All Users");
@@ -278,6 +298,7 @@ export default function SalesManagerDashboard() {
     const [currentMeetingUser, setCurrentMeetingUser] = useState<string | null>(null);
     const [viewMeeting, setViewMeeting] = useState<any>(null);
     const [meetingComment, setMeetingComment] = useState("");
+    const [promoIndex, setPromoIndex] = useState(0);
 
 
 
@@ -350,13 +371,12 @@ export default function SalesManagerDashboard() {
     const { data: followUpsRes = emptyFollowUps, isLoading: loadingFollowups } = useQuery<FollowUpsResponse>({
         queryKey: [
             "/api/dashboard/followups",
-            { page: followUpPage, pageSize: followUpPageSize, filter: followUpFilter, service: followUpService, user: followUpUser, dateFrom: followUpDateFrom, dateTo: followUpDateTo }
+            { page: followUpPage, pageSize: followUpPageSize, service: followUpService, user: followUpUser, dateFrom: followUpDateFrom, dateTo: followUpDateTo }
         ],
         queryFn: async () => {
             const searchParams = new URLSearchParams();
             searchParams.append("page", followUpPage.toString());
             searchParams.append("pageSize", followUpPageSize.toString());
-            if (followUpFilter && followUpFilter !== "all") searchParams.append("filter", followUpFilter);
             if (followUpService) searchParams.append("service", followUpService);
             if (followUpUser && followUpUser !== "All Users") searchParams.append("user", followUpUser);
             if (followUpDateFrom) searchParams.append("dateFrom", followUpDateFrom);
@@ -371,7 +391,7 @@ export default function SalesManagerDashboard() {
     });
 
     const { data: teamWorkRes = emptyTeamWork, isLoading: loadingTeamWork } = useQuery<TeamWorkResponse>({
-        queryKey: ["/api/dashboard/team-work-performance"],
+        queryKey: [`/api/dashboard/team-work-performance?${teamWorkDateFrom ? `start=${teamWorkDateFrom}&` : ""}${teamWorkDateTo ? `end=${teamWorkDateTo}` : ""}`],
         ...commonQueryOptions,
         placeholderData: emptyTeamWork,
     });
@@ -404,6 +424,20 @@ export default function SalesManagerDashboard() {
         }
     });
 
+    const saveFollowUpCommentMutation = useMutation({
+        mutationFn: async ({ id, field, value }: { id: string; field: "managerComment" | "smComment"; value: string }) => {
+            const res = await apiRequest("PATCH", `/api/dashboard/followups/${id}/comment`, { [field]: value });
+            if (!res.ok) throw new Error("Failed to save comment");
+            return res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/dashboard/followups"] });
+        },
+        onError: (err: Error) => {
+            console.error("Failed to save follow-up comment:", err.message);
+        },
+    });
+
     const endMeetingMutation = useMutation({
         mutationFn: async ({ userId, comment }: { userId: string, comment: string }) => {
             const res = await apiRequest("POST", `/api/dashboard/team-meetings/${userId}/end`, { comment });
@@ -421,6 +455,13 @@ export default function SalesManagerDashboard() {
         staleTime: 0,
         placeholderData: emptyTrend,
     });
+
+    const { data: promotionsRes } = useQuery<PromotionsResponse>({
+        queryKey: ["/api/drm/promotions?is_active=true&status=approved"],
+        ...commonQueryOptions,
+    });
+    const activePromotions = promotionsRes?.data ?? [];
+    const currentPromo = activePromotions.length > 0 ? activePromotions[promoIndex % activePromotions.length] : null;
 
     const { data: assignedUsersRaw } = useQuery<any>({
         queryKey: ["/api/users?assigned=true"],
@@ -613,6 +654,7 @@ export default function SalesManagerDashboard() {
                                             setActivityPeriod(val);
                                             setActivityDateFrom("");
                                             setActivityDateTo("");
+                                            setActivityPage(1);
                                         }}>
                                             <SelectTrigger className="w-24 border-border h-8 text-xs">
                                                 <SelectValue />
@@ -632,7 +674,7 @@ export default function SalesManagerDashboard() {
                                     </div>
                                 </div>
                                 <div className="flex items-center w-full">
-                                    <Select value={activityUser} onValueChange={setActivityUser}>
+                                    <Select value={activityUser} onValueChange={(val) => { setActivityUser(val); setActivityPage(1); }}>
                                         <SelectTrigger className="w-[150px] border-border h-8 text-xs">
                                             <SelectValue placeholder="Apply Filter: All Users" />
                                         </SelectTrigger>
@@ -698,16 +740,16 @@ export default function SalesManagerDashboard() {
                                                                 </td>
                                                             );
                                                         })}
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">0 M</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">0 M</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">{filteredActivityRows.reduce((acc, row) => acc + row.totals.timeMinutes, 0)} M</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">0 M</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
                                                     </tr>
-                                                    {filteredActivityRows.map((row) => (
+                                                    {filteredActivityRows.slice((activityPage - 1) * 10, activityPage * 10).map((row) => (
                                                     <tr key={row.userId} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800 last:border-0">
                                                         <td className="px-3 py-2 font-semibold text-slate-700 dark:text-zinc-400 whitespace-nowrap text-[11px]">{row.name}</td>
                                                         {activityColumns.map((col) => {
@@ -726,10 +768,10 @@ export default function SalesManagerDashboard() {
                                                                 </td>
                                                             );
                                                         })}
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">0 M</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">0 M</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">{row.totals.timeMinutes} M</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">0 M</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
                                                         <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">-</td>
@@ -769,6 +811,26 @@ export default function SalesManagerDashboard() {
                                         </tbody>
                                     </table>
                                 </div>
+                                {filteredActivityRows.length > 10 && (
+                                    <div className="flex items-center justify-end mt-3">
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setActivityPage(p => Math.max(1, p - 1))}
+                                                disabled={activityPage === 1}
+                                                className="px-4 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Previous
+                                            </button>
+                                            <button
+                                                onClick={() => setActivityPage(p => p + 1)}
+                                                disabled={activityPage * 10 >= filteredActivityRows.length}
+                                                className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                                            >
+                                                Next
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </CardContent>
                         </Card>
 
@@ -796,12 +858,12 @@ export default function SalesManagerDashboard() {
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">#</th>
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Person</th>
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Target</th>
-                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Achive</th>
+                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Achieve</th>
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Remain</th>
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">A-</th>
                                                 <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px]">Prediction</th>
-                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">GM</th>
-                                                <th className="px-6 py-4 text-left font-black text-slate-400 uppercase tracking-widest text-[10px] text-center">BV</th>
+                                                <th className="px-6 py-4 text-center font-black text-slate-400 uppercase tracking-widest text-[10px]">GM</th>
+                                                <th className="px-6 py-4 text-center font-black text-slate-400 uppercase tracking-widest text-[10px]">BV</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-50">
@@ -816,7 +878,7 @@ export default function SalesManagerDashboard() {
                                                         <tr key={actualIdx} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
                                                             <td className="px-4 py-3 text-slate-500 dark:text-zinc-400">{actualIdx + 1}</td>
                                                             <td className="px-4 py-3 font-semibold text-slate-700 dark:text-zinc-400">{item.person}</td>
-                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.target}</td>
+                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.target}</td>
                                                             <td className="px-4 py-3">
                                                                 <div className="flex items-center gap-1.5">
                                                                     <span className="font-semibold text-slate-700 dark:text-zinc-400">{item.achieve}</span>
@@ -825,14 +887,24 @@ export default function SalesManagerDashboard() {
                                                                     </span>
                                                                 </div>
                                                             </td>
-                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.remain}</td>
-                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.aMinus}</td>
+                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.remain}</td>
+                                                            <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.aMinus}</td>
                                                             <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{formatCurrency(item.prediction)}</td>
                                                             <td className="px-4 py-3 text-center">
-                                                                <button className="px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-[10px] font-bold text-slate-600 rounded uppercase dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">GM List</button>
+                                                                <button
+                                                                    onClick={() => navigate("/gm-pool/add-gm")}
+                                                                    className="px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-[10px] font-bold text-slate-600 rounded uppercase dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800"
+                                                                >
+                                                                    GM List
+                                                                </button>
                                                             </td>
                                                             <td className="px-4 py-3 text-center">
-                                                                <button className="px-3 py-1 bg-white border border-slate-300 hover:bg-slate-100/50 text-[10px] font-bold text-slate-600 rounded uppercase dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800">BV List</button>
+                                                                <button
+                                                                    onClick={() => navigate("/sales/lead-pools?pool=GMBV")}
+                                                                    className="px-3 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-[10px] font-bold text-slate-600 rounded uppercase dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800"
+                                                                >
+                                                                    BV List
+                                                                </button>
                                                             </td>
                                                         </tr>
                                                     );
@@ -869,21 +941,44 @@ export default function SalesManagerDashboard() {
                     </div>
 
                     <div className="space-y-3 min-w-0 dashboard-col">
-                        {/* GM Approvals - View Only for Sales Manager */}
-                        <GmApprovalCard role="sales-manager" viewOnly={true} />
-
                         <Card className="overflow-hidden dashboard-card border-none shadow-sm">
                             <CardContent className="p-0">
                                 <div className="relative h-48 bg-white border border-slate-100 rounded-lg overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                                    <img src="/webexcels-logo.png" alt="Decoration" className="absolute inset-0 w-full h-full object-cover opacity-20 contrast-125" />
+                                    <img
+                                        src={currentPromo?.bannerUrl || "/webexcels-logo.png"}
+                                        alt={currentPromo?.title || "Decoration"}
+                                        className={cn(
+                                            "absolute inset-0 w-full h-full",
+                                            currentPromo?.bannerUrl ? "object-cover opacity-90" : "object-contain p-8 opacity-20 contrast-125 bg-slate-50 dark:bg-zinc-950"
+                                        )}
+                                    />
                                     <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/40 to-transparent flex items-end p-4">
-                                        <p className="text-white font-bold text-lg drop-shadow-md">Innovative Business Solutions</p>
+                                        <p className="text-white font-bold text-lg drop-shadow-md">
+                                            {currentPromo?.title || "Innovative Business Solutions"}
+                                        </p>
                                     </div>
-                                    <div className="absolute top-1/2 -translate-y-1/2 left-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"><ChevronRight className="h-5 w-5 rotate-180" /></div>
-                                    <div className="absolute top-1/2 -translate-y-1/2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"><ChevronRight className="h-5 w-5" /></div>
+                                    {activePromotions.length > 1 && (
+                                        <>
+                                            <div
+                                                onClick={() => setPromoIndex((i) => (i - 1 + activePromotions.length) % activePromotions.length)}
+                                                className="absolute top-1/2 -translate-y-1/2 left-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"
+                                            >
+                                                <ChevronRight className="h-5 w-5 rotate-180" />
+                                            </div>
+                                            <div
+                                                onClick={() => setPromoIndex((i) => (i + 1) % activePromotions.length)}
+                                                className="absolute top-1/2 -translate-y-1/2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/20 text-white backdrop-blur-sm cursor-pointer hover:bg-black/40"
+                                            >
+                                                <ChevronRight className="h-5 w-5" />
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
+
+                        {/* GM Approvals - View Only for Sales Manager */}
+                        <GmApprovalCard role="sales-manager" viewOnly={true} />
 
                         <Card className="shadow-sm border-slate-100 dark:border-zinc-800">
                             <CardHeader className={denseHeaderPlain}>
@@ -929,11 +1024,11 @@ export default function SalesManagerDashboard() {
                                 <CardTitle className="text-lg font-semibold text-slate-700 dark:text-zinc-400">Daily Team Meeting</CardTitle>
                             </CardHeader>
                             <CardContent className={denseContent}>
-                                <div className="rounded-lg border border-slate-100 overflow-hidden dark:border-zinc-800">
+                                <div className="rounded-lg border border-slate-100 overflow-x-auto dark:border-zinc-800">
                                     <table className="w-full text-[11px]">
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-100 font-bold text-slate-400 uppercase dark:bg-zinc-900 dark:border-zinc-800">
-                                                <th className="px-3 py-2 text-left">Person</th>
+                                                <th className="px-3 py-2 text-left whitespace-nowrap">Person</th>
                                                 <th className="px-3 py-2 text-center">Start</th>
                                                 <th className="px-3 py-2 text-center">End</th>
                                                 <th className="px-3 py-2 text-center">Total</th>
@@ -968,9 +1063,9 @@ export default function SalesManagerDashboard() {
 
                         <Card className="shadow-sm border-slate-100 dark:border-zinc-800">
                             <CardHeader className={denseHeaderPlain}>
-                                <CardTitle className="text-lg font-semibold text-slate-700 dark:text-zinc-400">Quick Enteries</CardTitle>
+                                <CardTitle className="text-lg font-semibold text-slate-700 dark:text-zinc-400">Quick Entries</CardTitle>
                             </CardHeader>
-                            <CardContent className="px-4 pb-5 pt-0">
+                            <CardContent className={denseContent}>
                                 <div className="grid grid-cols-2 gap-2">
                                     {quickEntries.map((entry, idx) => (
                                         <Link
@@ -1011,16 +1106,13 @@ export default function SalesManagerDashboard() {
                                         ))}
                                     </SelectContent>
                                 </Select>
-                                <button className="h-8 px-4 bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold rounded shadow-sm transition-colors">
-                                    Filter
-                                </button>
                             </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 w-full h-10 shadow-sm rounded-md overflow-hidden font-bold text-sm text-white">
                             <button onClick={() => { setFollowUpService("Alibaba Membership"); setActiveFollowSubtype("All"); setActiveFollowGrade("All"); }} className={`flex items-center justify-center transition-opacity hover:opacity-90 ${followUpService === "Alibaba Membership" ? "opacity-100" : "opacity-80"} bg-[#22c55e]`}>
                                 Alibaba Membership
                             </button>
-                            <button onClick={() => { setFollowUpService("Alibaba Services"); setActiveFollowSubtype("All"); setActiveFollowGrade("All"); }} className={`flex items-center justify-center transition-opacity hover:opacity-90 ${followUpService === "Alibaba Services" ? "opacity-100" : "opacity-80"} bg-[#f87171]`}>
+                            <button onClick={() => { setFollowUpService("Alibaba Services"); setActiveFollowSubtype("All"); setActiveFollowGrade("All"); }} className={`flex items-center justify-center transition-opacity hover:opacity-90 ${followUpService === "Alibaba Services" ? "opacity-100" : "opacity-80"} bg-[#8b5cf6]`}>
                                 Alibaba Services
                             </button>
                             <button onClick={() => { setFollowUpService("Design Development"); setActiveFollowSubtype("All"); setActiveFollowGrade("All"); }} className={`flex items-center justify-center transition-opacity hover:opacity-90 ${followUpService === "Design Development" ? "opacity-100" : "opacity-80"} bg-[#3b82f6]`}>
@@ -1101,8 +1193,8 @@ export default function SalesManagerDashboard() {
                         </div>
                     </CardHeader>
                     <CardContent className={denseTableContent}>
-                        <div className="rounded border border-slate-100 overflow-hidden dark:border-zinc-800">
-                            <div className="max-h-[420px] overflow-y-auto">
+                        <div className="rounded border border-slate-100 dark:border-zinc-800">
+                            <div className="max-h-[420px] overflow-auto">
                                 <table className="w-full text-[11px] min-w-max">
                                     <thead>
                                         <tr className="bg-white border-b border-slate-100 sticky top-0 z-10 dark:bg-zinc-900 dark:border-zinc-800 text-center">
@@ -1134,7 +1226,13 @@ export default function SalesManagerDashboard() {
                                                     <td className="px-3 py-3 text-slate-500 dark:text-zinc-400 border-r border-slate-100 dark:border-zinc-800">{(followUpPage - 1) * followUpPageSize + idx + 1}</td>
                                                     <td className="px-3 py-3 text-slate-600 whitespace-nowrap dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{new Date(item.createdAt).toLocaleDateString()}</td>
                                                     <td className="px-3 py-3 text-slate-600 font-medium dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.salesPerson ?? "-"}</td>
-                                                    <td className="px-3 py-3 font-semibold text-slate-700 dark:text-zinc-400 border-r border-slate-100 dark:border-zinc-800">{item.company ?? "-"}</td>
+                                                    <td
+                                                        className="px-3 py-3 font-semibold text-slate-700 dark:text-zinc-400 border-r border-slate-100 dark:border-zinc-800 cursor-pointer hover:text-emerald-600 hover:underline"
+                                                        title="View follow-up details"
+                                                        onClick={() => setViewFollowup(item)}
+                                                    >
+                                                        {item.company ?? "-"}
+                                                    </td>
                                                     <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.serviceType ?? "-"}</td>
                                                     <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.subserviceName || item.serviceType || "-"}</td>
                                                     <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.grade ?? "-"}</td>
@@ -1142,10 +1240,32 @@ export default function SalesManagerDashboard() {
                                                     <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.method ?? "-"}</td>
                                                     <td className="px-3 py-3 text-slate-600 whitespace-nowrap dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.dateTime || item.dueAt ? new Date(item.dateTime || item.dueAt || "").toLocaleDateString() : "-"}</td>
                                                     <td className="px-3 py-3 text-slate-600 max-w-[150px] truncate dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.notes ?? "-"}</td>
-                                                    <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">-</td>
-                                                    <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">-</td>
-                                                    <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">-</td>
-                                                    <td className="px-3 py-3 text-slate-600 dark:text-zinc-300">-</td>
+                                                    <td className="px-3 py-3 text-slate-600 max-w-[150px] truncate dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{item.followupNote || "-"}</td>
+                                                    <td className="px-3 py-3 border-r border-slate-100 dark:border-zinc-800">
+                                                        <input
+                                                            key={`mc-${item.id}-${item.managerComment ?? ""}`}
+                                                            defaultValue={item.managerComment ?? ""}
+                                                            placeholder="Add comment..."
+                                                            onBlur={(e) => {
+                                                                const value = e.target.value.trim();
+                                                                if (value !== (item.managerComment ?? "")) saveFollowUpCommentMutation.mutate({ id: item.id, field: "managerComment", value });
+                                                            }}
+                                                            className="w-[130px] bg-transparent text-slate-600 dark:text-zinc-300 text-[12.5px] outline-none border-b border-transparent focus:border-emerald-500 transition-colors"
+                                                        />
+                                                    </td>
+                                                    <td className="px-3 py-3 text-slate-600 dark:text-zinc-300 border-r border-slate-100 dark:border-zinc-800">{followUpsRes?.data?.smName || "-"}</td>
+                                                    <td className="px-3 py-3">
+                                                        <input
+                                                            key={`sc-${item.id}-${item.smComment ?? ""}`}
+                                                            defaultValue={item.smComment ?? ""}
+                                                            placeholder="Add comment..."
+                                                            onBlur={(e) => {
+                                                                const value = e.target.value.trim();
+                                                                if (value !== (item.smComment ?? "")) saveFollowUpCommentMutation.mutate({ id: item.id, field: "smComment", value });
+                                                            }}
+                                                            className="w-[130px] bg-transparent text-slate-600 dark:text-zinc-300 text-[12.5px] outline-none border-b border-transparent focus:border-emerald-500 transition-colors"
+                                                        />
+                                                    </td>
                                                 </tr>
                                             ))
                                         )}
@@ -1182,8 +1302,8 @@ export default function SalesManagerDashboard() {
                         <CardTitle className="text-lg font-semibold text-slate-700 dark:text-zinc-400">Team Work Performance</CardTitle>
                         <div className="flex items-center gap-4 mt-2">
                             <div className="flex border border-slate-200 rounded-md overflow-hidden bg-white dark:bg-zinc-900 dark:border-zinc-800">
-                                <input type="text" placeholder="Start Date" className="px-3 py-1 text-xs outline-none border-r border-slate-200 w-32 dark:border-zinc-800" />
-                                <input type="text" placeholder="End Date" className="px-3 py-1 text-xs outline-none w-32" />
+                                <input type="date" value={teamWorkDateFrom} onChange={e => setTeamWorkDateFrom(e.target.value)} placeholder="Start Date" className="px-3 py-1 text-xs outline-none border-r border-slate-200 w-32 dark:border-zinc-800 bg-transparent" />
+                                <input type="date" value={teamWorkDateTo} onChange={e => setTeamWorkDateTo(e.target.value)} placeholder="End Date" className="px-3 py-1 text-xs outline-none w-32 bg-transparent" />
                             </div>
                         </div>
                     </CardHeader>
@@ -1205,22 +1325,22 @@ export default function SalesManagerDashboard() {
                             ))}
                         </div>
 
-                        <div className="rounded-lg border border-slate-100 overflow-hidden dark:border-zinc-800">
+                        <div className="rounded-lg border border-slate-100 overflow-x-auto dark:border-zinc-800">
                             <table className="w-full text-sm">
                                 <thead>
                                     <tr className="bg-white border-b border-slate-100 dark:bg-zinc-900 dark:border-zinc-800">
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Name</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Leads</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Follow</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Not Follow</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">A- Customer</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">B+ Customer</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">B Csutomer</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">B- Csutomer</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Call Connected</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Not Response</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Appointment</th>
-                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100">Meeting</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Name</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Leads</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Follow</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Not Follow</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">A- Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">B+ Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">B Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">B- Customer</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Call Connected</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Not Response</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Appointment</th>
+                                        <th className="px-4 py-3 text-left font-bold text-slate-800 dark:text-zinc-100 whitespace-nowrap">Meeting</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
@@ -1231,18 +1351,18 @@ export default function SalesManagerDashboard() {
                                             .filter(it => selectedUser === "All Team" || it.name.toUpperCase() === selectedUser)
                                             .map((item) => (
                                                 <tr key={item.userId} className="hover:bg-white transition-colors dark:hover:bg-zinc-800">
-                                                    <td className="px-4 py-3 font-semibold text-slate-700 dark:text-zinc-400">{item.name}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.leads}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.follow}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.notFollow}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.aMinusCustomer}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.bPlusCustomer}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.bCustomer}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.bMinusCustomer}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.callConnected}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.notResponse}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.appointment}</td>
-                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300">{item.meeting}</td>
+                                                    <td className="px-4 py-3 font-semibold text-slate-700 dark:text-zinc-400 whitespace-nowrap">{item.name}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.leads}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.follow}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.notFollow}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.aMinusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.bPlusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.bCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.bMinusCustomer}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.callConnected}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.notResponse}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.appointment}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 whitespace-nowrap">{item.meeting}</td>
                                                 </tr>
                                             ))
                                     )}

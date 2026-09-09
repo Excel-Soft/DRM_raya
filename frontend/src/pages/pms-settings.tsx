@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Target, X } from "lucide-react";
+import { Target, X, Zap, Hand } from "lucide-react";
+
+type ProjectCreationMode = "Manual" | "Automatic";
 
 type Department = {
     id: string;
@@ -76,6 +79,41 @@ export default function PmsSettings() {
         },
     });
 
+    // Project Creation Trigger: Manual (default) requires a manager to create
+    // the project via PMS Pending Approvals; Automatic creates it immediately
+    // when a product posting invoice is fully approved (see invoice-routes.ts).
+    const { data: pmsSettings, isLoading: isSettingsLoading } = useQuery<{ projectCreationMode?: ProjectCreationMode }>({
+        queryKey: ["/api/pms/settings"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/pms/settings");
+            if (!res.ok) throw new Error("Failed to load PMS settings");
+            return res.json();
+        },
+    });
+
+    const projectCreationMode: ProjectCreationMode =
+        pmsSettings?.projectCreationMode === "Automatic" ? "Automatic" : "Manual";
+
+    const creationModeMutation = useMutation({
+        mutationFn: async (mode: ProjectCreationMode) => {
+            const res = await apiRequest("POST", "/api/pms/settings", { projectCreationMode: mode });
+            if (!res.ok) throw new Error("Failed to update Project Creation Trigger");
+            return res.json();
+        },
+        onSuccess: (_data, mode) => {
+            queryClient.setQueryData(["/api/pms/settings"], (old: any) => ({ ...(old || {}), projectCreationMode: mode }));
+            queryClient.invalidateQueries({ queryKey: ["/api/pms/settings"] });
+            toast({ title: `Project Creation Trigger set to ${mode}` });
+        },
+        onError: () => {
+            toast({ title: "Failed to update Project Creation Trigger", variant: "destructive" });
+        },
+    });
+
+    const handleToggleCreationMode = (checked: boolean) => {
+        creationModeMutation.mutate(checked ? "Automatic" : "Manual");
+    };
+
     // Save assignment mutation
     const saveMutation = useMutation({
         mutationFn: async (data: AssignmentForm) => {
@@ -113,6 +151,52 @@ export default function PmsSettings() {
                     ASSIGN PMS PROJECT
                 </h1>
             </div>
+
+            {/* Project Creation Trigger */}
+            <Card className="border border-gray-200 dark:border-zinc-800" data-testid="card-project-creation-trigger">
+                <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold text-gray-700 uppercase tracking-wide dark:text-zinc-400">
+                        Project Creation Trigger
+                    </CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="flex items-start gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${projectCreationMode === "Automatic" ? "bg-green-600" : "bg-gray-400"}`}>
+                                {projectCreationMode === "Automatic" ? (
+                                    <Zap className="w-5 h-5 text-white" />
+                                ) : (
+                                    <Hand className="w-5 h-5 text-white" />
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-gray-800 dark:text-zinc-100">
+                                    {projectCreationMode === "Automatic" ? "Automatic" : "Manual"} mode
+                                </p>
+                                <p className="text-xs text-gray-500 dark:text-zinc-400 max-w-md">
+                                    {projectCreationMode === "Automatic"
+                                        ? "A PMS project is created immediately once a product posting invoice is fully approved by Accounts."
+                                        : "A manager must create the project from PMS Pending Approvals after the invoice is fully approved."}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <span className={`text-xs font-semibold uppercase ${projectCreationMode === "Manual" ? "text-gray-700 dark:text-zinc-100" : "text-gray-400"}`}>
+                                Manual
+                            </span>
+                            <Switch
+                                checked={projectCreationMode === "Automatic"}
+                                onCheckedChange={handleToggleCreationMode}
+                                disabled={isSettingsLoading || creationModeMutation.isPending}
+                                data-testid="switch-project-creation-mode"
+                            />
+                            <span className={`text-xs font-semibold uppercase ${projectCreationMode === "Automatic" ? "text-green-700 dark:text-green-400" : "text-gray-400"}`}>
+                                Automatic
+                            </span>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
 
             {/* Department Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">

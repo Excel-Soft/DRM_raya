@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { pool } from "../db";
-import { authService } from "../auth.service";
+import { pool } from "./db";
+import { authService } from "./auth.service";
 
 const router = Router();
 
@@ -15,6 +15,12 @@ const reportSchema = z.object({
 // GET /api/admin/activities/summary - Real data for the dashboard cards
 router.get("/summary", async (req, res) => {
     try {
+        // RBAC fix: this route previously had NO authentication check at all —
+        // any unauthenticated request could read org-wide leads/tasks/users/
+        // reports counts. Counts only (no row-level detail), so authentication
+        // alone is the appropriate fix — no evidence any authenticated staff
+        // role should be excluded from seeing these dashboard-card totals.
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
         const leadsCount = await pool.query("SELECT COUNT(*) from drm.customers");
         const tasksCount = await pool.query("SELECT COUNT(*) FROM tasks WHERE status != 'Completed'");
         const usersCount = await pool.query("SELECT COUNT(*) FROM users");

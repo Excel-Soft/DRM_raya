@@ -1,11 +1,11 @@
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { requireReportPermission } from "../middleware/report-permission";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { pool } from "./db";
+import { requireReportPermission } from "./middleware/report-permission";
+import { normalizeRole, isManagerialRole } from "./utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { eventsReportHandler, eventsReportExportHandler } from "./events-routes";
-import { ActivityLogService } from "../services/activity-service";
-import { buildExportFilename } from "../utils/export-filename";
+import { ActivityLogService } from "./services/activity-service";
+import { buildExportFilename } from "./utils/export-filename";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
 
@@ -244,11 +244,36 @@ export function registerStage3ReportsRoutes(app: Express) {
       const { start, end } = parseDateRange(req);
       const { page, pageSize, offset } = parsePaging(req);
 
+      // Data-scope fix: `userId` was previously an optional filter only — any
+      // authenticated role (of any kind) could omit it to see every sales
+      // person's GM entries org-wide, or pass ANY other user's id. Apply the
+      // same isPrivileged/department scoping already established for the
+      // sibling report routes in reports-routes.ts: non-managerial callers are
+      // restricted to their own entries; managers get their department's
+      // allowed-user set; admin/hod-tier callers keep full org-wide access
+      // (getDepartmentFilterUserIds already returns null for that tier).
+      const role = normalizeRole((req.user as any).activeRoleId || (req.user as any).roleId || "");
+      const isPrivileged = isManagerialRole(role);
+      let scopedUserIds: string[] | null = null;
+      if (!isPrivileged) {
+        scopedUserIds = [req.user.userId];
+      } else {
+        scopedUserIds = await getDepartmentFilterUserIds(req);
+      }
+
       const where: string[] = ["g.is_deleted IS NOT TRUE"];
       const params: any[] = [];
       if (start) { params.push(start); where.push(`g.created_at >= $${params.length}`); }
       if (end) { params.push(end); where.push(`g.created_at <= $${params.length}`); }
-      if (req.query.userId) { params.push(String(req.query.userId)); where.push(`g.sales_person_id = $${params.length}`); }
+      if (scopedUserIds) {
+        params.push(scopedUserIds);
+        where.push(`g.sales_person_id = ANY($${params.length}::text[])`);
+      } else if (req.query.userId) {
+        // Only an org-wide-scoped caller (scopedUserIds === null) may filter to
+        // an arbitrary other user's id.
+        params.push(String(req.query.userId));
+        where.push(`g.sales_person_id = $${params.length}`);
+      }
       if (req.query.company) { params.push(`%${String(req.query.company)}%`); where.push(`g.company_name ILIKE $${params.length}`); }
       if (req.query.status) { params.push(String(req.query.status)); where.push(`g.status = $${params.length}`); }
       const clause = `WHERE ${where.join(" AND ")}`;
@@ -257,7 +282,7 @@ export function registerStage3ReportsRoutes(app: Express) {
       const total = countRes.rows[0]?.total ?? 0;
 
       const rowsRes = await pool.query(
-        `SELECT g.id, g.company_name, g.sales_person_name, g.added_by_name,
+        `SELECT g.id, g.drm_id, g.company_name, g.sales_person_name, g.added_by_name,
                 g.entry_type, g.package_type, g.gm_type, g.status,
                 g.amount_usd, g.amount_pkr, g.created_at
          FROM drm.gm_entries g
@@ -277,6 +302,15 @@ export function registerStage3ReportsRoutes(app: Express) {
   app.get("/api/reports/department", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      // Role gate (previously entirely absent): this report's whole purpose is
+      // cross-department comparison, so it is intentionally NOT self/own-
+      // department-scoped (unlike daily-added-gm above) — it is a managerial
+      // oversight view, consistent with project-report-routes.ts's identical
+      // "cross-department visibility for managers, 403 for executives" design.
+      const role = normalizeRole((req.user as any).activeRoleId || (req.user as any).roleId || "");
+      if (!isManagerialRole(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to view the department report" });
+      }
       const { start, end } = parseDateRange(req);
       const { page, pageSize, offset } = parsePaging(req);
 
@@ -483,7 +517,7 @@ export function registerStage3ReportsRoutes(app: Express) {
         const countRes = await pool.query(
           `SELECT COUNT(*)::int AS total
              FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             LEFT JOIN drm.users u ON u.id = a.user_id
              ${clause}`,
           params,
         );
@@ -491,11 +525,11 @@ export function registerStage3ReportsRoutes(app: Express) {
 
         const rowsRes = await pool.query(
           `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
-                  a.late_checkin, a.late_checkout, a.is_late, a.working_hours, a.notes,
+                  a.late_checkin, a.late_checkout, a.is_late, a.notes,
                   COALESCE(u.full_name, u.name, u.username) AS employee_name,
                   u.branch, u.department
              FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             LEFT JOIN drm.users u ON u.id = a.user_id
              ${clause}
              ORDER BY a.date DESC, employee_name ASC
              LIMIT ${limit} OFFSET ${offset}`,
@@ -528,11 +562,11 @@ export function registerStage3ReportsRoutes(app: Express) {
 
         const rowsRes = await pool.query(
           `SELECT a.id, a.user_id, a.date, a.check_in, a.check_out, a.status,
-                  a.late_checkin, a.late_checkout, a.is_late, a.working_hours, a.notes,
+                  a.late_checkin, a.late_checkout, a.is_late, a.notes,
                   COALESCE(u.full_name, u.name, u.username) AS employee_name,
                   u.branch, u.department
              FROM drm.attendance a
-             LEFT JOIN drm.users u ON u.id::text = a.user_id
+             LEFT JOIN drm.users u ON u.id = a.user_id
              ${clause}
              ORDER BY a.date DESC, employee_name ASC
              LIMIT 5000`,

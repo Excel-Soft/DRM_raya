@@ -1,9 +1,9 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { pool } from "../db";
-import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "../utils/api-error";
-import { ValidationService } from "../services/validation.service";
-import { ActivityLogService } from "../services/activity-service";
+import { pool } from "./db";
+import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "./utils/api-error";
+import { ValidationService } from "./services/validation.service";
+import { ActivityLogService } from "./services/activity-service";
 
 const repeatOptions = ["HOUR", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "NONE"] as const;
 const reminderOptions = ["same_day", "5m", "10m", "15m", "1d"] as const;
@@ -46,6 +46,11 @@ export function registerTodoRoutes(app: Express) {
   app.get("/api/attendance/todo/categories", (req, res) => {
     if (!req.user) return sendError(res, unauthorized("Not authenticated"));
     return res.json([
+      "Work",
+      "Meeting",
+      "Announcement",
+      "Personal",
+      "Wishlist",
       "General",
       "HR",
       "Attendance",
@@ -60,9 +65,9 @@ export function registerTodoRoutes(app: Express) {
     try {
       if (!req.user) return sendError(res, unauthorized("Not authenticated"));
       const { rows } = await pool.query(
-        "select id, full_name from drm.users order by full_name asc limit 200",
+        "select id, full_name, role_id from drm.users order by full_name asc limit 200",
       );
-      return res.json(rows.map((r: any) => ({ id: r.id, name: r.full_name })));
+      return res.json(rows.map((r: any) => ({ id: r.id, name: r.full_name, role: r.role_id })));
     } catch (error) {
       console.error("Error fetching participants", error);
       return res.status(500).json(errorEnvelope("INTERNAL_ERROR", "Failed to fetch participants"));

@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import crypto from "crypto";
-import { authService } from "../auth.service";
-import { authMiddleware, setAuthCookie, clearAuthCookie } from "../middleware/auth.middleware";
-import { pool } from "../db";
-import { normalizeRole } from "../utils/role-utils";
-import { emailService } from "../email.service";
-import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "../utils/api-error";
+import { authService } from "./auth.service";
+import { authMiddleware, setAuthCookie, clearAuthCookie } from "./auth.middleware";
+import { pool } from "./db";
+import { normalizeRole } from "./utils/role-utils";
+import { emailService } from "./email.service";
+import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "./utils/api-error";
 
 
 const router = Router();
@@ -96,8 +96,8 @@ router.post("/signup", async (req: Request, res: Response) => {
     const passwordHash = await authService.hashPassword(password);
 
     const created = await pool.query(
-      "insert into drm.users (full_name, email, username, password_hash, role, is_active, created_at, updated_at) values ($1, $2, $3, $4, $5, true, now(), now()) returning id, full_name, email, role",
-      [fullName, email, email, passwordHash, SIGNUP_DEFAULT_ROLE],
+      "insert into drm.users (full_name, email, password_hash, role, is_active, created_at, updated_at) values ($1, $2, $3, $4, true, now(), now()) returning id, full_name, email, role",
+      [fullName, email, passwordHash, SIGNUP_DEFAULT_ROLE],
     );
 
     const user = created.rows[0] as {

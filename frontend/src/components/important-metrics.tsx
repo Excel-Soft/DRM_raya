@@ -56,7 +56,7 @@ const orderedMetrics: { key: ImportantMetricKey; label: string }[] = [
   { key: "todo_list", label: "To Do List" },
 ];
 
-export function ImportantMetrics() {
+export function ImportantMetrics({ inServiceApiEndpoint }: { inServiceApiEndpoint?: string } = {}) {
   const [isInServiceModalOpen, setIsInServiceModalOpen] = useState(false);
   const { data: metrics, isLoading } = useQuery<ImportantMetrics>({
     queryKey: ["/api/sales/important-metrics"],
@@ -95,7 +95,7 @@ export function ImportantMetrics() {
                     </span>
                   ) : (
                     <span className="text-slate-800 text-[13px] italic dark:text-zinc-100">
-                      {metric.key === "followup_1" ? 4 : metric.key === "b_followup" ? 1 : metrics?.[metric.key] || 0}
+                      {metrics?.[metric.key] || 0}
                     </span>
                   )}
                 </Link>
@@ -108,6 +108,7 @@ export function ImportantMetrics() {
       <InServiceModal
         isOpen={isInServiceModalOpen}
         onClose={() => setIsInServiceModalOpen(false)}
+        apiEndpoint={inServiceApiEndpoint}
       />
     </div>
   );

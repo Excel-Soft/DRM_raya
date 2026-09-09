@@ -358,7 +358,7 @@ export default function AccountLedger() {
                                             const coName = entry.description.split(':').pop()?.trim() || entry.description;
 
                                             return (
-                                                <TableRow key={entry.id} className="hover:bg-slate-50/50 border-slate-100 transition-colors dark:border-zinc-800">
+                                                <TableRow key={entry.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-slate-100 transition-colors dark:border-zinc-800">
                                                     <TableCell className="text-[13px] font-bold text-slate-400 py-4 pl-6">{(currentPage - 1) * pageSize + i + 1}</TableCell>
                                                     <TableCell className="text-[13px] font-black text-slate-700 py-4 whitespace-nowrap dark:text-zinc-400">
                                                         {coName}

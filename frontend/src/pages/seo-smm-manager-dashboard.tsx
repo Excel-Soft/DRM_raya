@@ -1,8 +1,7 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 
 import { Breadcrumb } from "@/components/breadcrumb";
@@ -35,20 +34,19 @@ import {
     ClipboardList,
     BarChart3,
     Briefcase,
-    Award,
     DollarSign,
     AlertCircle,
     Target,
     Building2,
     ArrowLeftRight,
     ChevronLeft,
-    Search,
     Activity,
     Rocket,
     Globe,
     Zap,
     PieChart,
-    Filter
+    Filter,
+    Loader2
 } from "lucide-react";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -84,10 +82,43 @@ const QUICK_SHORTS = [
     { label: "Add Penalty", icon: AlertCircle, href: "/drm/add-penalty", color: "rose" },
 ];
 
+// Normalizes the various API response shapes (raw array vs { data: [...] }) into a plain array.
+function normalizeList(raw: any): any[] {
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw?.data)) return raw.data;
+    return [];
+}
+
+// Formats an ISO timestamp into a short relative "time ago" string for feed items.
+function timeAgo(dateString?: string | null): string {
+    if (!dateString) return "—";
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return "—";
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60) return "Just now";
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    return date.toLocaleDateString();
+}
+
+const NOTIFICATION_ICON: Record<string, { icon: typeof Activity; color: string }> = {
+    SUCCESS: { icon: CheckCircle2, color: "text-emerald-500" },
+    WARNING: { icon: AlertCircle, color: "text-amber-500" },
+    ERROR: { icon: AlertCircle, color: "text-rose-500" },
+    INFO: { icon: Activity, color: "text-blue-500" },
+};
+
+const STATUS_TRACKER_PAGE_SIZE = 10;
+
 export default function SeoSmmManagerDashboard() {
     const [activeTab, setActiveTab] = useState<TabType>("waiting");
+    const [statusTrackerPage, setStatusTrackerPage] = useState(1);
     const [activityPeriod, setActivityPeriod] = useState("TD");
-    const [dailyReportPeriod, setDailyReportPeriod] = useState<string>("select");
+    const [dailyReportPeriod, setDailyReportPeriod] = useState<string>("today");
     const [moveTaskModalOpen, setMoveTaskModalOpen] = useState(false);
     const [dailyReportMoveModalOpen, setDailyReportMoveModalOpen] = useState(false);
     const [selectedVerificationProject, setSelectedVerificationProject] = useState<any>(null);
@@ -110,16 +141,126 @@ export default function SeoSmmManagerDashboard() {
         }
     });
 
+    // Live Feed — reuses the same notifications mechanism the rest of the app already
+    // relies on for real activity events (approvals, verifications, task actions, etc.)
+    const { data: notificationsRes, isLoading: notificationsLoading } = useQuery({
+        queryKey: ["/api/notifications"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/notifications");
+            return res.json();
+        }
+    });
+
+    // Daily Report — reuses the same real endpoint already powering the HOD & Product
+    // Posting dashboards' Daily Report panels.
+    const { data: dailyReportRes, isLoading: dailyReportLoading } = useQuery({
+        queryKey: ["/api/hod/daily-report", dailyReportPeriod],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/hod/daily-report?period=${dailyReportPeriod}`);
+            return res.json();
+        }
+    });
+
+    // Activities — reuses the same real endpoint already powering the Product Posting
+    // dashboard's Activities panel, scoped to this manager's department via the backend.
+    const { data: activitiesRes, isLoading: activitiesLoading } = useQuery({
+        queryKey: ["/api/dashboard/activities", activityPeriod],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/dashboard/activities?period=${activityPeriod}`);
+            return res.json();
+        }
+    });
+
     // ── Derived Data ─────────────────────────────────────────────────────────
     const stats = useMemo(() => {
         const h = hodImportantStats?.data || {};
+        const inProgress = Number(h.inProgress || 0);
+        const completed = Number(h.completed || 0);
+        const delayed = Number(h.delayProjects || 0);
+        // "Social Media Posts" has no backing table/endpoint anywhere in the codebase
+        // (Today Post / All Social Accounts pages are themselves static mocks with no
+        // API). Total managed projects is the closest real, already-fetched figure.
+        const totalManaged = normalizeList(projects).length;
         return [
-            { label: "Ongoing Tasks", value: (h.inProgress || 223).toString(), icon: Zap, color: "text-blue-500", bg: "bg-blue-50", trend: "+12%" },
-            { label: "Social Media Posts", value: "48", icon: Globe, color: "text-purple-500", bg: "bg-purple-50", trend: "+5%" },
-            { label: "Campaigns Finished", value: (h.completed || 267).toString(), icon: Rocket, color: "text-emerald-500", bg: "bg-emerald-50", trend: "+18%" },
-            { label: "Critical Delays", value: (h.delayProjects || 6).toString(), icon: AlertCircle, color: "text-rose-500", bg: "bg-rose-50", trend: "-2%" },
+            { label: "Ongoing Tasks", value: inProgress.toString(), icon: Zap, color: "text-blue-500", bg: "bg-blue-50" },
+            { label: "Total Managed Projects", value: totalManaged.toString(), icon: Globe, color: "text-purple-500", bg: "bg-purple-50" },
+            { label: "Campaigns Finished", value: completed.toString(), icon: Rocket, color: "text-emerald-500", bg: "bg-emerald-50" },
+            { label: "Critical Delays", value: delayed.toString(), icon: AlertCircle, color: "text-rose-500", bg: "bg-rose-50" },
         ];
-    }, [hodImportantStats]);
+    }, [hodImportantStats, projects]);
+
+    const liveFeed = useMemo(() => {
+        const list = normalizeList(notificationsRes?.data ?? notificationsRes);
+        return list.slice(0, 6).map((n: any) => {
+            const meta = NOTIFICATION_ICON[String(n.type || "INFO").toUpperCase()] || NOTIFICATION_ICON.INFO;
+            return {
+                id: n.id,
+                action: n.message || "Activity recorded",
+                time: timeAgo(n.createdAt),
+                icon: meta.icon,
+                color: meta.color,
+            };
+        });
+    }, [notificationsRes]);
+
+    const dailyReportRows = useMemo(() => {
+        if (!dailyReportRes?.success || !Array.isArray(dailyReportRes.data)) return [];
+        return dailyReportRes.data.map((row: any) => ({
+            id: row.id,
+            name: row.name || "Unassigned",
+            company: row.company || "N/A",
+            project: row.project || "N/A",
+            task: row.task || "—",
+            status: row.status || "Pending",
+            spent: row.spent || "0 mins",
+        }));
+    }, [dailyReportRes]);
+
+    const activityRows = useMemo(() => {
+        if (!activitiesRes?.success || !activitiesRes.data?.rows) return [];
+        return activitiesRes.data.rows.flatMap((user: any) =>
+            Object.entries(user.methods || {})
+                .filter(([, val]: any) => (val?.done ?? 0) > 0)
+                .map(([method, val]: any) => {
+                    const percent = val.target > 0 ? Math.round((val.done / val.target) * 100) : 0;
+                    return {
+                        name: user.name,
+                        method: method.charAt(0).toUpperCase() + method.slice(1),
+                        done: val.done,
+                        target: val.target,
+                        percent,
+                        time: user.totals?.timeMinutes ?? 0,
+                    };
+                })
+        );
+    }, [activitiesRes]);
+
+    // Real task-status breakdown aggregated from each project's own taskStats
+    // (already fetched above) — replaces a previous hardcoded 72% / SEO 45% /
+    // SMM 35% / Content 20% mock that had no backing data source at all.
+    const workDistribution = useMemo(() => {
+        const safeProjects = normalizeList(projects);
+        const totals = safeProjects.reduce((acc, p: any) => {
+            const ts = p.taskStats || {};
+            acc.total += Number(ts.total || 0);
+            acc.toDo += Number(ts.toDo || 0);
+            acc.inProgress += Number(ts.inProgress || 0);
+            acc.blocked += Number(ts.blocked || 0);
+            acc.completed += Number(ts.completed || 0);
+            return acc;
+        }, { total: 0, toDo: 0, inProgress: 0, blocked: 0, completed: 0 });
+        const pct = (n: number) => (totals.total > 0 ? Math.round((n / totals.total) * 100) : 0);
+        return {
+            total: totals.total,
+            completedPercent: pct(totals.completed),
+            segments: [
+                { label: "To Do", value: pct(totals.toDo), color: "bg-slate-400" },
+                { label: "In Progress", value: pct(totals.inProgress), color: "bg-indigo-600" },
+                { label: "Blocked", value: pct(totals.blocked), color: "bg-rose-500" },
+                { label: "Completed", value: pct(totals.completed), color: "bg-emerald-600" },
+            ],
+        };
+    }, [projects]);
 
     const dynamicTableData = useMemo(() => {
         const safeProjects = Array.isArray(projects) ? projects : (projects as any)?.data || [];
@@ -153,6 +294,17 @@ export default function SeoSmmManagerDashboard() {
     }, [projects]);
 
     const currentTableRows = dynamicTableData[activeTab];
+    const statusTrackerTotalPages = Math.max(1, Math.ceil(currentTableRows.length / STATUS_TRACKER_PAGE_SIZE));
+    const currentStatusTrackerPage = Math.min(statusTrackerPage, statusTrackerTotalPages);
+    const pagedTableRows = currentTableRows.slice(
+        (currentStatusTrackerPage - 1) * STATUS_TRACKER_PAGE_SIZE,
+        currentStatusTrackerPage * STATUS_TRACKER_PAGE_SIZE,
+    );
+
+    const handleTabChange = (tab: TabType) => {
+        setActiveTab(tab);
+        setStatusTrackerPage(1);
+    };
 
     return (
         <div className="flex-1 bg-[#f0f2f5] min-h-screen overflow-y-auto dark:bg-zinc-950">
@@ -189,8 +341,9 @@ export default function SeoSmmManagerDashboard() {
                                     <div className={cn("p-3 rounded-xl", stat.bg)}>
                                         <stat.icon className={cn("w-6 h-6", stat.color)} />
                                     </div>
-                                    <span className={cn("text-xs font-bold px-2 py-1 rounded-full", stat.trend.startsWith('+') ? "text-emerald-600 bg-emerald-50" : "text-rose-600 bg-rose-50")}>
-                                        {stat.trend}
+                                    <span className="text-xs font-bold px-2 py-1 rounded-full text-emerald-600 bg-emerald-50 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        Live
                                     </span>
                                 </div>
                                 <div className="mt-4">
@@ -207,7 +360,7 @@ export default function SeoSmmManagerDashboard() {
                     <div className="lg:col-span-8 space-y-8">
                         {/* Status Tracker */}
                         <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900">
-                            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50">
+                            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50 dark:bg-zinc-900">
                                 <div className="flex items-center gap-3">
                                     <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100">
                                         <Activity className="w-5 h-5" />
@@ -226,7 +379,7 @@ export default function SeoSmmManagerDashboard() {
                                                     ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md"
                                                     : "text-slate-500 dark:text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
                                             )}
-                                            onClick={() => setActiveTab(tab)}
+                                            onClick={() => handleTabChange(tab)}
                                         >
                                             {tab === 'waiting' ? 'Pending' : tab === 'delay' ? 'Delayed' : 'Approved'}
                                         </Button>
@@ -255,8 +408,8 @@ export default function SeoSmmManagerDashboard() {
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                currentTableRows.map((row: any, idx: number) => (
-                                                    <tr key={idx} className="group hover:bg-slate-50/50 transition-colors">
+                                                pagedTableRows.map((row: any, idx: number) => (
+                                                    <tr key={idx} className="group hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors">
                                                         <td className="px-6 py-5">
                                                             <div className="flex items-center gap-3">
                                                                 <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-black text-xs border border-white group-hover:border-indigo-100 transition-colors dark:text-zinc-400 dark:bg-zinc-900">
@@ -300,6 +453,33 @@ export default function SeoSmmManagerDashboard() {
                                         </tbody>
                                     </table>
                                 </div>
+                                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-4 border-t bg-slate-50/50 dark:bg-zinc-900">
+                                    <span className="text-xs font-bold text-slate-500 dark:text-zinc-400">
+                                        {currentTableRows.length === 0
+                                            ? "Showing 0 entries"
+                                            : `Page ${currentStatusTrackerPage} of ${statusTrackerTotalPages} (${currentTableRows.length} total)`}
+                                    </span>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 text-xs px-3"
+                                            disabled={currentStatusTrackerPage <= 1}
+                                            onClick={() => setStatusTrackerPage((p) => Math.max(1, p - 1))}
+                                        >
+                                            <ChevronLeft className="w-4 h-4 mr-1" /> Previous
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 text-xs px-3"
+                                            disabled={currentStatusTrackerPage >= statusTrackerTotalPages}
+                                            onClick={() => setStatusTrackerPage((p) => Math.min(statusTrackerTotalPages, p + 1))}
+                                        >
+                                            Next <ChevronRight className="w-4 h-4 ml-1" />
+                                        </Button>
+                                    </div>
+                                </div>
                             </CardContent>
                         </Card>
 
@@ -313,35 +493,44 @@ export default function SeoSmmManagerDashboard() {
                                     </CardTitle>
                                 </CardHeader>
                                 <CardContent className="p-6">
-                                    <div className="flex items-center gap-8">
-                                        <div className="relative w-32 h-32 flex items-center justify-center">
-                                             <svg className="w-full h-full transform -rotate-90">
-                                                <circle cx="64" cy="64" r="54" className="stroke-slate-100 fill-none" strokeWidth="12" />
-                                                <circle cx="64" cy="64" r="54" className="stroke-indigo-600 fill-none" strokeWidth="12" strokeDasharray="339" strokeDashoffset="100" />
-                                             </svg>
-                                             <div className="absolute inset-0 flex flex-col items-center justify-center mt-1">
-                                                <span className="text-2xl font-black text-slate-800 leading-none dark:text-zinc-100">72%</span>
-                                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Active</span>
-                                             </div>
+                                    {workDistribution.total === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-6 opacity-40 text-center">
+                                            <PieChart className="w-10 h-10 mb-3 text-slate-300" />
+                                            <p className="font-bold text-slate-500 italic text-sm dark:text-zinc-400">No tasks logged against your projects yet</p>
                                         </div>
-                                        <div className="space-y-3 flex-1">
-                                            {[
-                                                { label: "Search Engine Optimization", value: "45%", color: "bg-indigo-600" },
-                                                { label: "Social Media Marketing", value: "35%", color: "bg-purple-600" },
-                                                { label: "Content Strategy", value: "20%", color: "bg-emerald-600" },
-                                            ].map((item, i) => (
-                                                <div key={i} className="space-y-1">
-                                                    <div className="flex justify-between text-[10px] font-bold text-slate-500 uppercase tracking-tight dark:text-zinc-400">
-                                                        <span>{item.label}</span>
-                                                        <span>{item.value}</span>
+                                    ) : (
+                                        <div className="flex items-center gap-8">
+                                            <div className="relative w-32 h-32 flex items-center justify-center">
+                                                 <svg className="w-full h-full transform -rotate-90">
+                                                    <circle cx="64" cy="64" r="54" className="stroke-slate-100 fill-none" strokeWidth="12" />
+                                                    <circle
+                                                        cx="64" cy="64" r="54"
+                                                        className="stroke-emerald-600 fill-none"
+                                                        strokeWidth="12"
+                                                        strokeDasharray={2 * Math.PI * 54}
+                                                        strokeDashoffset={2 * Math.PI * 54 * (1 - workDistribution.completedPercent / 100)}
+                                                    />
+                                                 </svg>
+                                                 <div className="absolute inset-0 flex flex-col items-center justify-center mt-1">
+                                                    <span className="text-2xl font-black text-slate-800 leading-none dark:text-zinc-100">{workDistribution.completedPercent}%</span>
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Completed</span>
+                                                 </div>
+                                            </div>
+                                            <div className="space-y-3 flex-1">
+                                                {workDistribution.segments.map((item, i) => (
+                                                    <div key={i} className="space-y-1">
+                                                        <div className="flex justify-between text-[10px] font-bold text-slate-500 uppercase tracking-tight dark:text-zinc-400">
+                                                            <span>{item.label}</span>
+                                                            <span>{item.value}%</span>
+                                                        </div>
+                                                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden dark:bg-zinc-900">
+                                                            <div className={cn("h-full rounded-full transition-all duration-1000", item.color)} style={{ width: `${item.value}%` }}></div>
+                                                        </div>
                                                     </div>
-                                                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden dark:bg-zinc-900">
-                                                        <div className={cn("h-full rounded-full transition-all duration-1000", item.color)} style={{ width: item.value }}></div>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </CardContent>
                             </Card>
 
@@ -359,6 +548,154 @@ export default function SeoSmmManagerDashboard() {
                                 </CardContent>
                             </Card>
                         </div>
+
+                        {/* Daily Report */}
+                        <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900">
+                            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50 dark:bg-zinc-900">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-purple-600 text-white rounded-xl shadow-lg shadow-purple-100">
+                                        <ClipboardList className="w-5 h-5" />
+                                    </div>
+                                    <CardTitle className="text-lg font-bold text-slate-800 dark:text-zinc-100">Daily Report</CardTitle>
+                                </div>
+                                <Select value={dailyReportPeriod} onValueChange={setDailyReportPeriod}>
+                                    <SelectTrigger className="w-36 h-9 text-xs font-bold border-slate-200 dark:border-zinc-800">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="today">Today</SelectItem>
+                                        <SelectItem value="yesterday">Yesterday</SelectItem>
+                                        <SelectItem value="weekly">This Week</SelectItem>
+                                        <SelectItem value="monthly">This Month</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead>
+                                            <tr className="bg-slate-50/80 border-b">
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Team Member</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Project</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Task</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Status</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Time Spent</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {dailyReportLoading ? (
+                                                <tr>
+                                                    <td colSpan={5} className="px-6 py-16 text-center">
+                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-indigo-400" />
+                                                    </td>
+                                                </tr>
+                                            ) : dailyReportRows.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} className="px-6 py-16 text-center">
+                                                        <div className="flex flex-col items-center justify-center opacity-40">
+                                                            <ClipboardList className="w-10 h-10 mb-3 text-slate-300" />
+                                                            <p className="font-bold text-slate-500 italic dark:text-zinc-400">No activity recorded for this period</p>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                dailyReportRows.slice(0, 8).map((row: any, idx: number) => (
+                                                    <tr key={row.id || idx} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="px-6 py-4">
+                                                            <p className="text-sm font-bold text-slate-800 dark:text-zinc-100">{row.name}</p>
+                                                            <p className="text-[11px] text-slate-400 font-medium">{row.company}</p>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-xs font-bold text-slate-600 dark:text-zinc-300">{row.project}</td>
+                                                        <td className="px-6 py-4 text-xs text-slate-500 dark:text-zinc-400">{row.task}</td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            <Badge className={cn(
+                                                                "rounded-md shadow-none font-black text-[9px] uppercase tracking-wider px-2 py-0.5",
+                                                                row.status.toLowerCase().includes("complet") || row.status.toLowerCase().includes("approv")
+                                                                    ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+                                                                    : "bg-amber-50 text-amber-600 border-amber-100"
+                                                            )}>
+                                                                {row.status}
+                                                            </Badge>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right text-xs font-bold text-slate-600 dark:text-zinc-300">{row.spent}</td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Activities */}
+                        <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900">
+                            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50 dark:bg-zinc-900">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-100">
+                                        <BarChart3 className="w-5 h-5" />
+                                    </div>
+                                    <CardTitle className="text-lg font-bold text-slate-800 dark:text-zinc-100">Team Activities</CardTitle>
+                                </div>
+                                <Select value={activityPeriod} onValueChange={setActivityPeriod}>
+                                    <SelectTrigger className="w-32 h-9 text-xs font-bold border-slate-200 dark:border-zinc-800">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="TD">Today</SelectItem>
+                                        <SelectItem value="WC">This Week</SelectItem>
+                                        <SelectItem value="MC">This Month</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead>
+                                            <tr className="bg-slate-50/80 border-b">
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Team Member</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Method</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Progress</th>
+                                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Time Logged</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {activitiesLoading ? (
+                                                <tr>
+                                                    <td colSpan={4} className="px-6 py-16 text-center">
+                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-indigo-400" />
+                                                    </td>
+                                                </tr>
+                                            ) : activityRows.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={4} className="px-6 py-16 text-center">
+                                                        <div className="flex flex-col items-center justify-center opacity-40">
+                                                            <BarChart3 className="w-10 h-10 mb-3 text-slate-300" />
+                                                            <p className="font-bold text-slate-500 italic dark:text-zinc-400">No activity recorded for this period</p>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                activityRows.map((row: any, idx: number) => (
+                                                    <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                        <td className="px-6 py-4 text-sm font-bold text-slate-800 dark:text-zinc-100">{row.name}</td>
+                                                        <td className="px-6 py-4 text-xs font-bold text-slate-600 dark:text-zinc-300">{row.method}</td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="h-1.5 w-24 bg-slate-100 rounded-full overflow-hidden dark:bg-zinc-900">
+                                                                    <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, row.percent)}%` }}></div>
+                                                                </div>
+                                                                <span className="text-[11px] font-bold text-slate-500">{row.done}/{row.target}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right text-xs font-bold text-slate-600 dark:text-zinc-300">{row.time} mins</td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </CardContent>
+                        </Card>
                     </div>
 
                     {/* ── Sidebar (Right) ── */}
@@ -396,29 +733,34 @@ export default function SeoSmmManagerDashboard() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="p-0">
-                                <div className="divide-y divide-slate-50">
-                                    {[
-                                        { user: "Sarah K.", action: "Posted New Content", time: "12m ago", icon: Globe, color: "text-blue-500" },
-                                        { user: "James M.", action: "SEO Weekly Report Sent", time: "45m ago", icon: FileText, color: "text-emerald-500" },
-                                        { user: "Team Alpha", action: "Campaign Milestone reached", time: "2h ago", icon: Award, color: "text-purple-500" },
-                                        { user: "Emma W.", action: "Keyword Audit Completed", time: "5h ago", icon: Search, color: "text-indigo-500" },
-                                    ].map((feed, i) => (
-                                        <div key={i} className="p-4 flex items-center gap-4 hover:bg-slate-50/50 transition-colors cursor-pointer">
-                                            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center dark:bg-zinc-900">
-                                                <feed.icon className={cn("w-4 h-4", feed.color)} />
+                                {notificationsLoading ? (
+                                    <div className="p-8 flex items-center justify-center">
+                                        <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                                    </div>
+                                ) : liveFeed.length === 0 ? (
+                                    <div className="p-8 flex flex-col items-center justify-center opacity-40 text-center">
+                                        <History className="w-8 h-8 mb-2 text-slate-300" />
+                                        <p className="text-xs font-bold text-slate-500 italic dark:text-zinc-400">No recent activity</p>
+                                    </div>
+                                ) : (
+                                    <div className="divide-y divide-slate-50">
+                                        {liveFeed.map((feed) => (
+                                            <div key={feed.id} className="p-4 flex items-center gap-4 hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors">
+                                                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 dark:bg-zinc-900">
+                                                    <feed.icon className={cn("w-4 h-4", feed.color)} />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-[11px] text-slate-700 font-semibold leading-snug dark:text-zinc-300 line-clamp-2">{feed.action}</p>
+                                                </div>
+                                                <span className="text-[10px] text-slate-400 font-bold shrink-0">{feed.time}</span>
                                             </div>
-                                            <div className="flex-1">
-                                                <p className="text-[12px] font-bold text-slate-800 leading-none dark:text-zinc-100">{feed.user}</p>
-                                                <p className="text-[10px] text-slate-500 mt-1 font-medium dark:text-zinc-400">{feed.action}</p>
-                                            </div>
-                                            <span className="text-[10px] text-slate-400 font-bold">{feed.time}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div className="p-4 bg-slate-50 text-center dark:bg-zinc-900">
-                                    <Button variant="ghost" size="sm" className="text-[10px] font-black text-indigo-600 hover:bg-indigo-50/50 p-0 h-auto">
-                                        View All Internal Logs
-                                    </Button>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="p-3 bg-slate-50 text-center dark:bg-zinc-900">
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-wide">
+                                        {normalizeList(notificationsRes?.data ?? notificationsRes).length} total notifications
+                                    </span>
                                 </div>
                             </CardContent>
                         </Card>

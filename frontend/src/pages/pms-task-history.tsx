@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Eye, Plug, Link as LinkIcon, ExternalLink, Loader2 } from "lucide-react";
+import { Eye, Plug, Link as LinkIcon, ExternalLink, Loader2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -14,9 +14,18 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+function isValidHttpUrl(value: string): boolean {
+    try {
+        const parsed = new URL(value);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+        return false;
+    }
+}
 
 interface TaskStatusHistoryRecord {
     id: string;
@@ -25,6 +34,7 @@ interface TaskStatusHistoryRecord {
     toStatus: string | null;
     changedAt: string | null;
     notes: string | null;
+    company?: string | null;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
 }
@@ -33,6 +43,7 @@ const TASK_HISTORY_KEY = "/api/pms/task-history";
 
 export default function PmsTaskHistory() {
     const { toast } = useToast();
+    const queryClient = useQueryClient();
 
     const {
         data: historyRecords = [],
@@ -60,24 +71,44 @@ export default function PmsTaskHistory() {
     const history = useMemo(() => {
         return (historyRecords || []).map((record, idx) => {
             const userName = record.user?.name || "Unknown";
+
+            // `notes` is sometimes a plain remark, sometimes a JSON blob like
+            // {"links": [...]} written by the submission/complete-task flows.
+            // Pull the links out of it for the "Submitted Project Links" modal
+            // instead of always showing an empty list.
+            let parsedLinks: string[] = [];
+            let detailText = record.notes || "";
+            if (record.notes) {
+                try {
+                    const parsed = JSON.parse(record.notes);
+                    if (Array.isArray(parsed?.links)) {
+                        parsedLinks = parsed.links.filter((l: any) => typeof l === "string" && l.trim());
+                        detailText = parsedLinks.length > 0 ? `${parsedLinks.length} link(s) submitted` : "";
+                    }
+                } catch {
+                    // Not JSON — keep the raw notes text as-is.
+                }
+            }
+
             return {
                 no: idx + 1,
+                taskId: record.task?.id || record.taskId,
                 name: userName,
                 avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}`,
-                company: "",
+                company: record.company || "—",
                 qa: "N/A",
                 vm: "",
                 project: record.task?.title || "—",
                 taskDesc: record.fromStatus
                     ? `${record.fromStatus} → ${record.toStatus ?? ""}`
                     : record.toStatus ?? "",
-                detail: record.notes || "",
+                detail: detailText,
                 free: "",
                 taskTime: "",
                 status: record.toStatus || "",
                 run: "",
                 spent: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
-                links: [] as string[],
+                links: parsedLinks,
             };
         });
     }, [historyRecords]);
@@ -98,19 +129,89 @@ export default function PmsTaskHistory() {
         );
     }, [searchQuery, history]);
 
+    const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+
+    const handleSort = (key: string) => {
+        setSortConfig((prev) => {
+            if (prev?.key === key) {
+                return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
+            }
+            return { key, direction: "asc" };
+        });
+    };
+
+    const sortedHistory = useMemo(() => {
+        if (!sortConfig) return filteredHistory;
+        const { key, direction } = sortConfig;
+        const sorted = [...filteredHistory].sort((a: any, b: any) => {
+            const av = a[key];
+            const bv = b[key];
+            if (av == null || av === "") return bv == null || bv === "" ? 0 : 1;
+            if (bv == null || bv === "") return -1;
+            if (typeof av === "number" && typeof bv === "number") return av - bv;
+            return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+        });
+        return direction === "asc" ? sorted : sorted.reverse();
+    }, [filteredHistory, sortConfig]);
+
+    const SortIcon = ({ column }: { column: string }) => {
+        if (sortConfig?.key !== column) return <ArrowUpDown className="w-3 h-3 opacity-40" />;
+        return sortConfig.direction === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
+    };
+
+    const managerReviewMutation = useMutation({
+        mutationFn: async () => {
+            const links = actionLinks.split("\n").map((l) => l.trim()).filter(Boolean);
+            return apiRequestJson("POST", `/api/tasks/${selectedActionRow?.taskId}/manager-review`, {
+                status: actionStatus,
+                stage: actionStage,
+                links,
+            });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+            setActionModalOpen(false);
+            toast({
+                title: actionStatus === "complete" ? "Task sent to QA" : "Progress saved",
+                description: selectedActionRow?.project
+                    ? `Changes for "${selectedActionRow.project}" were saved.`
+                    : "Your changes were saved.",
+            });
+        },
+        onError: (err: any) => {
+            toast({
+                title: "Could not save task",
+                description: err?.message || "Please try again.",
+                variant: "destructive",
+            });
+        },
+    });
+
     const handleSaveTask = () => {
+        if (!selectedActionRow?.taskId) {
+            toast({ title: "Missing task reference", description: "Can't save — this row has no linked task.", variant: "destructive" });
+            return;
+        }
+        if (!actionStatus) {
+            toast({ title: "Choose a status", description: "Select Complete or Changing before saving.", variant: "destructive" });
+            return;
+        }
+        const enteredLines = actionLinks.split("\n").map((l) => l.trim()).filter(Boolean);
+        const invalidLines = enteredLines.filter((l) => !isValidHttpUrl(l));
+        if (invalidLines.length > 0) {
+            toast({
+                title: "Invalid link",
+                description: `"${invalidLines[0]}" is not a valid link. Links must start with http:// or https://.`,
+                variant: "destructive",
+            });
+            return;
+        }
         setConfirmOpen(true);
     };
 
     const handleConfirmSave = () => {
         setConfirmOpen(false);
-        setActionModalOpen(false);
-        toast({
-            title: "Task submitted",
-            description: selectedActionRow?.project
-                ? `Changes for "${selectedActionRow.project}" were submitted.`
-                : "Your changes were submitted.",
-        });
+        managerReviewMutation.mutate();
     };
 
     return (
@@ -161,19 +262,62 @@ export default function PmsTaskHistory() {
                                 <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider w-[60px]">
                                     <div className="flex items-center gap-2">
                                         <input type="checkbox" className="rounded border-gray-300 w-3.5 h-3.5 accent-[#2bc18c] dark:border-zinc-800" />
-                                        <span>NO.</span>
+                                        <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("no")}>
+                                            <span>NO.</span>
+                                            <SortIcon column="no" />
+                                        </button>
                                     </div>
                                 </th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">Name</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">Company</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">QA Comment</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">VM Comment</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">Project</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Free</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Task</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Status</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Run</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Spent</th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">
+                                    <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("name")}>
+                                        Name <SortIcon column="name" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">
+                                    <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("company")}>
+                                        Company <SortIcon column="company" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">
+                                    <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("qa")}>
+                                        QA Comment <SortIcon column="qa" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">
+                                    <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("vm")}>
+                                        VM Comment <SortIcon column="vm" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider">
+                                    <button className="flex items-center gap-1 hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("project")}>
+                                        Project <SortIcon column="project" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">
+                                    <button className="flex items-center gap-1 mx-auto hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("free")}>
+                                        Free <SortIcon column="free" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">
+                                    <button className="flex items-center gap-1 mx-auto hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("taskTime")}>
+                                        Task <SortIcon column="taskTime" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">
+                                    <button className="flex items-center gap-1 mx-auto hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("status")}>
+                                        Status <SortIcon column="status" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">
+                                    <button className="flex items-center gap-1 mx-auto hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("run")}>
+                                        Run <SortIcon column="run" />
+                                    </button>
+                                </th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">
+                                    <button className="flex items-center gap-1 mx-auto hover:text-[#2bc18c] transition-colors" onClick={() => handleSort("spent")}>
+                                        Spent <SortIcon column="spent" />
+                                    </button>
+                                </th>
                                 <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Link</th>
                                 <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Action</th>
                             </tr>
@@ -194,14 +338,14 @@ export default function PmsTaskHistory() {
                                         Failed to load task history{error instanceof Error ? `: ${error.message}` : ""}.
                                     </td>
                                 </tr>
-                            ) : filteredHistory.length === 0 ? (
+                            ) : sortedHistory.length === 0 ? (
                                 <tr>
                                     <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
                                         No task history found.
                                     </td>
                                 </tr>
-                            ) : filteredHistory.map((row, index) => (
-                                <tr key={index} className="hover:bg-gray-50/50 transition-colors">
+                            ) : sortedHistory.map((row, index) => (
+                                <tr key={index} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
                                     <td className="px-4 py-3">
                                         <div className="flex items-center gap-2 text-[13px] text-[#495057] dark:text-zinc-400">
                                             <input type="checkbox" className="rounded border-gray-300 w-3.5 h-3.5 accent-[#2bc18c] dark:border-zinc-800" />
@@ -267,6 +411,9 @@ export default function PmsTaskHistory() {
                                             className="text-[#2bc18c] hover:bg-[#2bc18c]/10 p-1.5 rounded-full transition-colors inline-block dark:text-zinc-100"
                                             onClick={() => {
                                                 setSelectedActionRow(row);
+                                                setActionStatus("complete");
+                                                setActionStage("");
+                                                setActionLinks((row.links || []).join("\n"));
                                                 setActionModalOpen(true);
                                             }}
                                             title="Complete Task"
@@ -284,7 +431,7 @@ export default function PmsTaskHistory() {
             {/* Links Viewer Modal */}
             <Dialog open={linksModalOpen} onOpenChange={setLinksModalOpen}>
                 <DialogContent className="max-w-md bg-white p-0 overflow-hidden border-0 shadow-lg font-sans dark:bg-zinc-900">
-                    <DialogHeader className="p-6 pb-4 border-b border-gray-100 bg-gray-50/50 dark:border-zinc-800">
+                    <DialogHeader className="p-6 pb-4 border-b border-gray-100 bg-gray-50/50 dark:bg-zinc-900 dark:border-zinc-800">
                         <DialogTitle className="text-lg font-bold text-[#343a40] flex items-center gap-2 dark:text-zinc-100">
                             <LinkIcon className="text-emerald-500 w-5 h-5" />
                             Submitted Project Links
@@ -383,11 +530,8 @@ export default function PmsTaskHistory() {
                             <label className="text-[14px] font-semibold text-[#495057] dark:text-zinc-400">Final Links</label>
                             <textarea
                                 className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-[#495057] placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 min-h-[140px] resize-y dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
-                                value={actionLinks || (
-                                    (selectedActionRow?.links && selectedActionRow.links.length > 0)
-                                        ? selectedActionRow.links.join('\n')
-                                        : `\\10.10.10.50TempSahilMinisite${selectedActionRow?.company || "BAJWA CO APPAREL"}`
-                                )}
+                                placeholder="One link per line..."
+                                value={actionLinks}
                                 onChange={(e) => setActionLinks(e.target.value)}
                             />
                         </div>
@@ -401,11 +545,12 @@ export default function PmsTaskHistory() {
                         >
                             Close
                         </Button>
-                        <Button 
+                        <Button
                             className="bg-[#0f9d58] hover:bg-[#0b8043] text-white text-[14px] font-medium px-6 shadow-sm"
                             onClick={handleSaveTask}
+                            disabled={managerReviewMutation.isPending}
                         >
-                            Save
+                            {managerReviewMutation.isPending ? "Saving..." : "Save"}
                         </Button>
                     </div>
                 </DialogContent>

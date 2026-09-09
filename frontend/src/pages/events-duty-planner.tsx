@@ -185,7 +185,7 @@ export default function EventsDutyPlanner() {
       <div className="space-y-6">
         {/* Add Plan Form */}
         {showForm && (
-          <Card className="shadow-sm border-t border-t-gray-200">
+          <Card className="shadow-sm border-t border-t-gray-200 dark:border-t-zinc-800">
             <CardContent className="p-6">
               {editingId && (
                 <div className="mb-4 flex items-center justify-between rounded bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
@@ -269,7 +269,7 @@ export default function EventsDutyPlanner() {
         )}
 
         {/* Data Table */}
-        <Card className="shadow-sm border-t border-t-gray-200 bg-white dark:bg-zinc-900">
+        <Card className="shadow-sm border-t border-t-gray-200 dark:border-t-zinc-800 bg-white dark:bg-zinc-900">
           <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-[13px] text-left">
               <thead className="text-xs text-gray-700 bg-white border-b font-bold dark:bg-zinc-900 dark:text-zinc-400">

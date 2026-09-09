@@ -1,15 +1,16 @@
 import type { Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
+import { authMiddleware } from "./auth.middleware";
 import { z } from "zod";
-import { customersRepository } from "../repositories/customers.repository";
-import { followUpsRepository } from "../repositories/followups.repository";
+import { customersRepository } from "./repositories/customers.repository";
+import { followUpsRepository } from "./repositories/followups.repository";
 import { insertFollowUpSchema } from "@shared/schema";
-import { pool } from "../db";
-import { normalizeRole } from "../utils/role-utils";
+import { pool } from "./db";
+import { normalizeRole } from "./utils/role-utils";
+import { safePage, safePageSize } from "./utils/sql-safety";
 
 const gradeValues = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"] as const;
 
-import { isManagerialRole } from "../utils/role-utils";
+import { isManagerialRole } from "./utils/role-utils";
 
 function requireManager(req: any, res: any, next: any) {
   if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
@@ -29,8 +30,8 @@ export function registerManagerRoutes(app: Express) {
     try {
       const month = parseInt(String(req.query.month ?? new Date().getMonth() + 1), 10);
       const year = parseInt(String(req.query.year ?? new Date().getFullYear()), 10);
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "20"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 20, 100);
       const offset = (page - 1) * pageSize;
 
       const perfSql = `
@@ -106,8 +107,8 @@ export function registerManagerRoutes(app: Express) {
   // Activities list (paginated)
   app.get("/api/crm/activities", async (req, res) => {
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 50, 100);
       const offset = (page - 1) * pageSize;
       const type = req.query.type as string | undefined;
       const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : null;
@@ -186,8 +187,8 @@ export function registerManagerRoutes(app: Express) {
   // Meetings
   app.get("/api/crm/meetings", async (req, res) => {
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 50, 100);
       const offset = (page - 1) * pageSize;
       const dateFrom = req.query.dateFrom ? new Date(String(req.query.dateFrom)) : null;
       const dateTo = req.query.dateTo ? new Date(String(req.query.dateTo)) : null;
@@ -228,8 +229,8 @@ export function registerManagerRoutes(app: Express) {
   // Queue sales
   app.get("/api/crm/queue-sales", async (req, res) => {
     try {
-      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
-      const pageSize = Math.max(1, parseInt(String(req.query.pageSize ?? "50"), 10));
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 50, 100);
       const offset = (page - 1) * pageSize;
       const status = String(req.query.status ?? "Waiting");
       const listSql = `select id, customer_id as "customerId", sales_person_id as "salesPersonId", priority, status, queue_number as "queueNumber", estimated_time as "estimatedTime", notes, assigned_at as "assignedAt", completed_at as "completedAt"
@@ -330,8 +331,8 @@ export function registerManagerRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const page = parseInt(req.query.page as string) || 1;
-      const pageSize = parseInt(req.query.pageSize as string) || 10;
+      const page = safePage(req.query.page, 1);
+      const pageSize = safePageSize(req.query.pageSize, 10, 100);
       const search = req.query.search as string;
       const gradeFilter = req.query.grade as string;
       const statusFilter = req.query.status as string;

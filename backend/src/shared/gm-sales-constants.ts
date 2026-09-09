@@ -114,10 +114,13 @@ export type ProjectDependencyType =
 
 /** Project routing "kind" stored on drm.projects.project_type (Stage 5).
  *  INVOICE_ROOT = the single project generated/linked for an approved invoice;
- *  SUBPROJECT = a child created by the assign-task flow. */
+ *  SUBPROJECT = a child created by the assign-task flow;
+ *  GM_ROOT = the single project generated/linked directly from a GM entry with
+ *  no associated invoice (Phase 5). */
 export const PROJECT_TYPES = {
   INVOICE_ROOT: "INVOICE_ROOT",
   SUBPROJECT: "SUBPROJECT",
+  GM_ROOT: "GM_ROOT",
 } as const;
 export type ProjectType = (typeof PROJECT_TYPES)[keyof typeof PROJECT_TYPES];
 
@@ -241,6 +244,48 @@ export function mapDbFlagsToGmType(
   return { ok: true, value: GM_TYPES.FULL, warnings: [] };
 }
 
+/**
+ * Resolve a GM row's canonical type, preferring the explicit `canonical_gm_type`
+ * column when present (rows created after this field was added) and falling
+ * back to `is_loan`/`is_partial_payment` for legacy rows. Never throws.
+ */
+export function resolveStoredOrDerivedGmType(row: {
+  canonicalGmType?: string | null;
+  isLoan?: number | boolean | null;
+  isPartialPayment?: number | boolean | null;
+}): GmType {
+  const stored = String(row.canonicalGmType ?? "").trim().toUpperCase();
+  if (stored === GM_TYPES.FULL || stored === GM_TYPES.PARTIAL || stored === GM_TYPES.LOAN) {
+    return stored as GmType;
+  }
+  return mapDbFlagsToGmType(row.isLoan, row.isPartialPayment).value ?? GM_TYPES.FULL;
+}
+
+const GM_TYPE_APPROVED_LABEL: Record<GmType, string> = {
+  [GM_TYPES.FULL]: "Full GM Approved",
+  [GM_TYPES.PARTIAL]: "Partial GM Approved",
+  [GM_TYPES.LOAN]: "Loan GM Approved",
+};
+
+/**
+ * Distinct "Full/Partial/Loan GM Approved" label for a GM row, computed at
+ * READ time only — the underlying DB status stays the generic 'approved'
+ * everywhere (many raw-SQL sites and aggregate queries match that literal;
+ * changing it would silently break them). Returns the plain generic status
+ * unchanged when the GM isn't actually approved yet.
+ */
+export function getApprovedStatusLabel(row: {
+  genericStatus: string | null | undefined;
+  canonicalGmType?: string | null;
+  isLoan?: number | boolean | null;
+  isPartialPayment?: number | boolean | null;
+}): string {
+  const generic = String(row.genericStatus ?? "").trim();
+  if (generic.toLowerCase() !== "approved") return generic;
+  const gmType = resolveStoredOrDerivedGmType(row);
+  return GM_TYPE_APPROVED_LABEL[gmType];
+}
+
 /** Canonical invoice type -> the product-posting project name used today. */
 export function mapInvoiceTypeToProductName(
   invoiceType: string | null | undefined,
@@ -330,6 +375,9 @@ export const minimumPaymentThresholdsSchema = z.record(
   z.record(z.string(), z.number().nonnegative()),
 );
 
+export const gmCommissionAmountBasisSchema = z.enum(["amount_usd", "amount_pkr", "customer_dollar"]);
+export type GmCommissionAmountBasis = z.infer<typeof gmCommissionAmountBasisSchema>;
+
 export const gmSalesConfigSchema = z
   .object({
     serviceExecutiveCanCreateGM: z.boolean(),
@@ -346,6 +394,8 @@ export const gmSalesConfigSchema = z
     accountGmAllowedInitiatorRoles: roleArraySchema,
     gmCreateOverrideRoles: roleArraySchema,
     loanGmCreationEnabled: z.boolean(),
+    abPaymentLifecycleEnabled: z.boolean(),
+    gmCommissionAmountBasis: gmCommissionAmountBasisSchema,
   })
   .strict();
 
@@ -359,8 +409,17 @@ export type GmSalesConfigKey = keyof GmSalesConfig;
 export const GM_SALES_CONFIG_DEFAULTS: GmSalesConfig = {
   serviceExecutiveCanCreateGM: false,
   serviceExecutiveCanCreateManualInvoice: false,
-  gmInvoiceGenerationTiming: GM_INVOICE_GENERATION_TIMING.ON_GM_CREATION,
+  gmInvoiceGenerationTiming: GM_INVOICE_GENERATION_TIMING.AFTER_FINAL_GM_APPROVAL,
   projectGenerationMode: PROJECT_GENERATION_MODE.MANUAL,
+  // Still false (2026-07-28): the reviewed-vs-passed conflation bug is fixed
+  // (invoice-to-project.service.ts, listingQaSatisfiedForGm now checks
+  // current_phase, not qa_reviewed_at), but the "no Listing Page sibling ->
+  // stuck OnHold forever" gap is NOT fixed — an attempted safeguard for it was
+  // reverted because it broke an existing, intentional test asserting a
+  // Product Posting root is blocked-by-default the instant this flag is on
+  // (product-posting-workflow-uat.test.ts). Flip this only once that tension
+  // between "safe default" and "block by default" is resolved as a product
+  // decision, not silently here.
   requireProductPostingWaitForListingQa: false,
   verificationManagerRequiredAfterQa: true,
   defaultProjectStatusAfterInvoiceApproval: PROJECT_INITIAL_STATUSES.ACTIVE,
@@ -371,6 +430,15 @@ export const GM_SALES_CONFIG_DEFAULTS: GmSalesConfig = {
   accountGmAllowedInitiatorRoles: ["account_manager", "hod", "super_hod", "sales_manager"],
   gmCreateOverrideRoles: ["admin", "super_hod"],
   loanGmCreationEnabled: true,
+  abPaymentLifecycleEnabled: false,
+  // MD-16(c) (Project Owner, 2026-07-27): "the exact amount field must be
+  // selected from amount_pkr, amount_usd, or Order Dollar by management."
+  // "Order Dollar" is amount_usd itself (same field, different UI label).
+  // Confirmed by the Project Owner (2026-07-28): customer_dollar — the actual
+  // amount collected from the customer after the AB discount, not the gross
+  // package price. See server/services/gm-sales-config.service.ts's one-time
+  // upgrade of any environment still seeded with the original amount_usd default.
+  gmCommissionAmountBasis: "customer_dollar",
 };
 
 export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> = {
@@ -399,6 +467,10 @@ export const GM_SALES_CONFIG_KEY_DESCRIPTIONS: Record<GmSalesConfigKey, string> 
     "Elevated roles permitted to create GM records as an override; every override creation is audited.",
   loanGmCreationEnabled:
     "Whether LOAN GM creation is accepted. When false, LOAN GM submissions are rejected until the loan-terms workflow is enabled.",
+  abPaymentLifecycleEnabled:
+    "Whether the AB payment lifecycle features (approve, reject, void, cancel) are enabled (default: false).",
+  gmCommissionAmountBasis:
+    "Which GM amount field commission is calculated from: customer_dollar (post-AB-discount collected amount, default — confirmed by the Project Owner, MD-16(c)), amount_usd ('Order Dollar', the gross package price), or amount_pkr.",
 };
 
 export const GM_SALES_CONFIG_KEYS = Object.keys(
@@ -551,7 +623,9 @@ export const INVOICE_LEGAL_TRANSITIONS: Record<
     INVOICE_WORKFLOW_STATUSES.CANCELLED,
   ],
   [INVOICE_WORKFLOW_STATUSES.PAID]: [],
-  [INVOICE_WORKFLOW_STATUSES.REJECTED]: [],
+  // Resubmission: a rejected invoice goes back to DRAFT for the creator to fix
+  // and re-submit, mirroring InvoiceWorkflowService.LEGAL_TRANSITIONS exactly.
+  [INVOICE_WORKFLOW_STATUSES.REJECTED]: [INVOICE_WORKFLOW_STATUSES.DRAFT],
   [INVOICE_WORKFLOW_STATUSES.CANCELLED]: [],
 };
 

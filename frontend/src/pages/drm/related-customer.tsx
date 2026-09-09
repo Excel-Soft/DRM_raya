@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeader } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
     Card,
@@ -107,6 +107,33 @@ export default function RelatedCustomerPage() {
         },
         enabled: companySearch.length >= 2,
     });
+
+    const targetRelatedCompany = (companySearch || gmForm.companyName || "").trim();
+
+    const { data: relatedDupCheck } = useQuery<{ duplicates?: any[] }>({
+        queryKey: ["related-check-duplicate", targetRelatedCompany],
+        queryFn: async () => {
+            if (!targetRelatedCompany || targetRelatedCompany.length < 2) return { duplicates: [] };
+            const res = await fetch(`/api/check-duplicate?company=${encodeURIComponent(targetRelatedCompany)}`, {
+                headers: { ...getAuthHeader() },
+                credentials: "include",
+            });
+            if (!res.ok) return { duplicates: [] };
+            return res.json();
+        },
+        enabled: targetRelatedCompany.length >= 2,
+        staleTime: 5000,
+    });
+
+    const isRelatedCompanyDuplicate = useMemo(() => {
+        if (!targetRelatedCompany || targetRelatedCompany.length < 2) return false;
+        if (!relatedDupCheck?.duplicates?.length) return false;
+        const target = targetRelatedCompany.toLowerCase();
+        return relatedDupCheck.duplicates.some((d: any) =>
+            (d.companyName && d.companyName.toLowerCase().trim() === target) ||
+            (d.drmId && d.drmId.toLowerCase().trim() === target)
+        );
+    }, [targetRelatedCompany, relatedDupCheck]);
 
     // Fetch related customers
     const { data: relatedCustomers = [], isLoading: loadingRelated } = useQuery({
@@ -260,6 +287,10 @@ export default function RelatedCustomerPage() {
     };
 
     const handleAddGm = () => {
+        if (isRelatedCompanyDuplicate) {
+            toast({ title: "Validation Error", description: "Company already exists. Duplicate GM entries are not allowed.", variant: "destructive" });
+            return;
+        }
         if (!gmForm.companyName || !gmForm.memberId || !gmForm.orderId || !gmForm.pkrAmount || !gmForm.dollarRate) {
             toast({ title: "Error", description: "Please fill in all required fields", variant: "destructive" });
             return;
@@ -570,6 +601,11 @@ export default function RelatedCustomerPage() {
                                     {gmForm.companyName && (
                                         <p className="text-sm text-muted-foreground mt-1">
                                             Selected: {gmForm.companyName}
+                                        </p>
+                                    )}
+                                    {isRelatedCompanyDuplicate && (
+                                        <p className="text-xs text-destructive font-semibold mt-1">
+                                            Company already exists.
                                         </p>
                                     )}
                                 </div>

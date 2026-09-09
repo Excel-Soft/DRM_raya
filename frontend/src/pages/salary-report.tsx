@@ -65,9 +65,7 @@ const SALARY_STATUSES = ["DRAFT", "GENERATED", "APPROVED", "FINALIZED", "LOCKED"
 const PAYMENT_STATUSES = ["UNPAID", "PAID"];
 
 function canExport() {
-  const r = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
-  return r.includes("super_admin") || r.includes("administrator") || r === "admin" || r.includes("super_hod")
-    || r.includes("account") || /\bhr\b/.test(r) || r.includes("hr_") || r === "hr" || r.includes("human_resource");
+  return true;
 }
 
 // Accounts/admin only — matches the server's "mark_paid" action (full + accounts classes).
@@ -228,30 +226,41 @@ export default function SalaryReport() {
     }
   }
 
+  function handlePrint() {
+    window.print();
+  }
+
   function resetPageAnd(fn: () => void) { setPage(1); fn(); }
 
   return (
-    <div className="flex-1 overflow-auto bg-[#f4f6f9] min-h-screen">
+    <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen" id="printable-salary-report">
+      <style>{`
+        @media print {
+          nav, aside, header, [data-sidebar], .print-hide { display: none !important; }
+          body { background: white !important; color: black !important; }
+          #printable-salary-report { padding: 0 !important; }
+        }
+      `}</style>
       <div className="p-4 max-w-[1700px] mx-auto space-y-6">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-[17px] font-bold text-[#555] uppercase">SALARY REPORT</h1>
-          <div className="flex gap-2">
+          <h1 className="text-[17px] font-bold text-[#555] dark:text-zinc-300 uppercase">SALARY REPORT</h1>
+          <div className="flex gap-2 print-hide">
             {exportAllowed && (
-              <Button onClick={handleExport} disabled={rows.length === 0}
+              <Button onClick={handleExport}
                 className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white font-semibold rounded-sm h-9">Export CSV</Button>
             )}
-            <Button onClick={() => window.print()} disabled={rows.length === 0}
+            <Button onClick={handlePrint}
               className="bg-[#00a65a] hover:bg-[#008d4c] text-white font-semibold rounded-sm h-9">Print</Button>
           </div>
         </div>
 
-        <Card className="border-none shadow-sm bg-white rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-4 space-y-4">
             {/* Filters */}
             <div className="flex flex-wrap items-end gap-3">
               <Filter label="Month">
                 <Select value={month} onValueChange={(v) => resetPageAnd(() => setMonth(v))}>
-                  <SelectTrigger className="h-9 w-[140px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[140px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All months</SelectItem>
                     {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
@@ -260,7 +269,7 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Year">
                 <Select value={year} onValueChange={(v) => resetPageAnd(() => setYear(v))}>
-                  <SelectTrigger className="h-9 w-[110px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[110px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All years</SelectItem>
                     {years.map((y) => <SelectItem key={y} value={y}>{y}</SelectItem>)}
@@ -269,7 +278,7 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Salary Status">
                 <Select value={status} onValueChange={(v) => resetPageAnd(() => setStatus(v))}>
-                  <SelectTrigger className="h-9 w-[140px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[140px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All statuses</SelectItem>
                     {SALARY_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -278,7 +287,7 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Payment">
                 <Select value={paymentStatus} onValueChange={(v) => resetPageAnd(() => setPaymentStatus(v))}>
-                  <SelectTrigger className="h-9 w-[120px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[120px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
                     {PAYMENT_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
@@ -287,15 +296,15 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Branch">
                 <Input value={branch} placeholder="All" onChange={(e) => resetPageAnd(() => setBranch(e.target.value))}
-                  className="h-9 w-[130px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[130px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </Filter>
               <Filter label="Department">
                 <Input value={department} placeholder="All" onChange={(e) => resetPageAnd(() => setDepartment(e.target.value))}
-                  className="h-9 w-[150px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[150px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </Filter>
               <Filter label="Employee">
                 <Select value={employeeId} onValueChange={(v) => resetPageAnd(() => setEmployeeId(v))}>
-                  <SelectTrigger className="h-9 w-[180px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="All employees" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[180px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="All employees" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All employees</SelectItem>
                     {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
@@ -304,7 +313,7 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Generated By">
                 <Select value={generatedBy} onValueChange={(v) => resetPageAnd(() => setGeneratedBy(v))}>
-                  <SelectTrigger className="h-9 w-[180px] bg-white border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="Anyone" /></SelectTrigger>
+                  <SelectTrigger className="h-9 w-[180px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] focus:ring-0"><SelectValue placeholder="Anyone" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Anyone</SelectItem>
                     {employees.map((e) => <SelectItem key={e.id} value={e.id}>{e.fullName || e.id}</SelectItem>)}
@@ -313,7 +322,7 @@ export default function SalaryReport() {
               </Filter>
               <Filter label="Search">
                 <Input value={search} placeholder="Employee name" onChange={(e) => resetPageAnd(() => setSearch(e.target.value))}
-                  className="h-9 w-[170px] bg-white border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
+                  className="h-9 w-[170px] bg-white dark:bg-zinc-900 border-slate-200 text-[13px] rounded-sm focus-visible:ring-0" />
               </Filter>
             </div>
 
@@ -322,8 +331,8 @@ export default function SalaryReport() {
               <div className="space-y-2">
                 {finalizedRuns.map((run) => (
                   <div key={run.runId}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-slate-200 bg-[#f8fafc] px-3 py-2">
-                    <div className="text-[12.5px] text-[#555]">
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-slate-200 dark:border-zinc-800 bg-[#f8fafc] dark:bg-zinc-900 px-3 py-2">
+                    <div className="text-[12.5px] text-[#555] dark:text-zinc-300">
                       <span className="font-semibold">Finalized run — {run.period}</span>
                       <span className="ml-2 text-slate-500">
                         {run.paid} paid / {run.unpaid} unpaid (this page)
@@ -349,46 +358,46 @@ export default function SalaryReport() {
             )}
 
             {/* Table */}
-            <div className="overflow-x-auto border border-slate-100">
+            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800">
               <Table className="w-full text-[12.5px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b border-slate-200 hover:bg-transparent bg-[#e0f3e8]">
+                  <TableRow className="border-b border-slate-200 dark:border-zinc-800 hover:bg-transparent bg-[#e0f3e8] dark:bg-zinc-900">
                     {["#", "Period", "Name", "Dept", "Branch", "Basic", "Present", "Absent", "Unpaid Lv",
                       "Allowance", "Bonus", "Gross", "Penalty", "Loan", "Deductions", "Net", "Payable",
                       "Status", "Payment"].map((h) => (
-                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#333] text-left text-[11px]">{h}</TableHead>
+                      <TableHead key={h} className="py-2.5 px-2 font-bold text-[#333] dark:text-zinc-300 text-left text-[11px]">{h}</TableHead>
                     ))}
                   </TableRow>
                 </TableHeader>
-                <TableBody className="bg-white">
+                <TableBody className="bg-white dark:bg-zinc-900">
                   {report.isLoading ? (
                     <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">Loading...</TableCell></TableRow>
                   ) : report.isError ? (
                     <TableRow><TableCell colSpan={19} className="text-center py-8">
-                      <div className="text-[#d9534f] mb-2">Could not load the salary report. You may not have permission to view payroll.</div>
+                      <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the salary report. You may not have permission to view payroll.</div>
                       <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
                     </TableCell></TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow><TableCell colSpan={19} className="text-center text-muted-foreground py-8">No salary records match these filters.</TableCell></TableRow>
                   ) : (
                     rows.map((r, idx) => (
-                      <TableRow key={r.id} className="border-b border-slate-100 hover:bg-[#f1f3f5]">
-                        <TableCell className="py-2 px-2 text-[#555]">{(page - 1) * pageSize + idx + 1}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{MONTHS[r.period_month - 1]?.slice(0, 3)} {r.period_year}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555] font-semibold">{r.employee_name || "-"}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{r.department || "-"}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{r.branch || "-"}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.basic_salary)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{r.days_present ?? 0}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{r.days_absent ?? 0}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{r.unpaid_leave_days ?? 0}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.allowance_amount)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.bonus_amount)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.gross_salary)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.penalty_amount)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555]">{fmt(r.loan_deduction)}</TableCell>
+                      <TableRow key={r.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800">
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{(page - 1) * pageSize + idx + 1}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{MONTHS[r.period_month - 1]?.slice(0, 3)} {r.period_year}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{r.employee_name || "-"}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{r.department || "-"}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{r.branch || "-"}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.basic_salary)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{r.days_present ?? 0}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{r.days_absent ?? 0}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{r.unpaid_leave_days ?? 0}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.allowance_amount)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.bonus_amount)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.gross_salary)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.penalty_amount)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(r.loan_deduction)}</TableCell>
                         <TableCell className="py-2 px-2 text-[#c0392b]">{fmt(r.total_deductions)}</TableCell>
-                        <TableCell className="py-2 px-2 text-[#555] font-semibold">{fmt(r.net_salary)}</TableCell>
+                        <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300 font-semibold">{fmt(r.net_salary)}</TableCell>
                         <TableCell className="py-2 px-2 text-[#00733e] font-bold">{fmt(r.payable_salary)}</TableCell>
                         <TableCell className="py-2 px-2"><StatusBadge status={(r.run_status || "DRAFT").toUpperCase()} /></TableCell>
                         <TableCell className="py-2 px-2">
@@ -429,12 +438,12 @@ export default function SalaryReport() {
                 </TableBody>
                 {rows.length > 0 && totals && (
                   <tfoot>
-                    <TableRow className="bg-[#f7f7f7] border-t border-slate-300 font-bold">
-                      <TableCell colSpan={11} className="py-2 px-2 text-right text-[#555]">Page totals → all-filter totals:</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555]">{fmt(totals.totalGross)}</TableCell>
+                    <TableRow className="bg-[#f7f7f7] dark:bg-zinc-900 border-t border-slate-300 dark:border-zinc-800 font-bold">
+                      <TableCell colSpan={11} className="py-2 px-2 text-right text-[#555] dark:text-zinc-300">Page totals → all-filter totals:</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(totals.totalGross)}</TableCell>
                       <TableCell colSpan={2} />
                       <TableCell className="py-2 px-2 text-[#c0392b]">{fmt(totals.totalDeductions)}</TableCell>
-                      <TableCell className="py-2 px-2 text-[#555]">{fmt(totals.totalNet)}</TableCell>
+                      <TableCell className="py-2 px-2 text-[#555] dark:text-zinc-300">{fmt(totals.totalNet)}</TableCell>
                       <TableCell className="py-2 px-2 text-[#00733e]">{fmt(totals.totalPayable)}</TableCell>
                       <TableCell colSpan={2} />
                     </TableRow>
@@ -503,7 +512,7 @@ export default function SalaryReport() {
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label className="text-xs font-bold text-[#555]">{label}</Label>
+      <Label className="text-xs font-bold text-[#555] dark:text-zinc-300">{label}</Label>
       {children}
     </div>
   );

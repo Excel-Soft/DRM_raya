@@ -1,24 +1,28 @@
 import { Express, Request, Response } from "express";
 
-import { db, pool } from "../db";
+import { db, pool } from "./db";
 import {
   serviceFollowups,
   serviceComplaints,
   serviceDropouts,
-  serviceRenewals
-} from "../../shared/schema";
-import { eq } from "drizzle-orm";
-import { serviceReportsRepository, type ServiceListOptions } from "../repositories/service-reports.repository";
+  serviceRenewals,
+  serviceCustomerFeedback,
+  serviceSampleRequests,
+  serviceCustomers,
+} from "../shared/schema";
+import { eq, and, desc, notInArray } from "drizzle-orm";
+import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "../utils/role-utils";
-import { requireActionPermission } from "../middleware/action-permission.middleware";
-import { CommunicationService } from "../services/communication.service";
-import { CrossDepartmentStatusService } from "../services/cross-department-status.service";
-import { safePage, safePageSize } from "../utils/sql-safety";
-import { ValidationService } from "../services/validation.service";
-import { sendError, badRequest, unauthorized } from "../utils/api-error";
-import { AuditLogService } from "../services/audit-log.service";
+import { isManagerialRole } from "./utils/role-utils";
+import { requireActionPermission } from "./middleware/action-permission.middleware";
+import { CommunicationService } from "./services/communication.service";
+import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
+import { safePage, safePageSize } from "./utils/sql-safety";
+import { ValidationService } from "./services/validation.service";
+import { sendError, badRequest, unauthorized } from "./utils/api-error";
+import { AuditLogService } from "./services/audit-log.service";
 import {
+  serviceCustomerCreateSchema,
   serviceFollowupCreateSchema,
   serviceComplaintCreateSchema,
   serviceDropoutCreateSchema,
@@ -28,12 +32,14 @@ import {
   serviceComplaintCloseSchema,
   serviceComplaintUpdateSchema,
   serviceDropoutRecoverSchema,
-} from "../validators/service.validators";
-import { getConfigValue } from "../services/service-bridge-config.service";
+  serviceCustomerFeedbackCreateSchema,
+  serviceSampleRequestCreateSchema,
+} from "./validators/service.validators";
+import { getConfigValue } from "./services/service-bridge-config.service";
 import {
   SERVICE_BRIDGE_DISABLED_MESSAGE,
   SERVICE_BRIDGE_TARGET_TO_FLAG,
-} from "../../shared/service-bridge-constants";
+} from "../shared/service-bridge-constants";
 import {
   bridgeToGm,
   bridgeToVas,
@@ -41,7 +47,8 @@ import {
   ensureBridgeLinksTable,
   mapServiceBridgeError,
   type BridgeActor,
-} from "../services/service-bridge.service";
+} from "./services/service-bridge.service";
+import { requireRole } from "./auth.middleware";
 
 // --- Stage 7 best-effort communication logging helpers ---------------------
 const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -98,6 +105,43 @@ function summarizeBridgeReport(target: BridgeReportTarget, rows: any[]): Record<
   return s;
 }
 
+// db:push is broken repo-wide — these two tables are new (added to
+// shared/schema.ts alongside the existing serviceFollowups/etc.), so they need
+// an idempotent runtime create the same way every other "new column/table
+// since db:push broke" fix in this codebase does.
+let serviceFeedbackTablesEnsured = false;
+export async function ensureServiceFeedbackTables() {
+  if (serviceFeedbackTablesEnsured) return;
+  try {
+    await pool.query(`
+      create table if not exists drm.service_customer_feedback (
+        id uuid primary key default gen_random_uuid(),
+        customer_id uuid not null references drm.customers(id) on delete cascade,
+        created_by_user_id uuid references drm.users(id) on delete set null,
+        rating integer not null,
+        note text,
+        created_at timestamptz not null default now()
+      );
+      create table if not exists drm.service_sample_requests (
+        id uuid primary key default gen_random_uuid(),
+        customer_id uuid not null references drm.customers(id) on delete cascade,
+        created_by_user_id uuid references drm.users(id) on delete set null,
+        product_name text,
+        note text,
+        created_at timestamptz not null default now()
+      );
+      create index if not exists idx_service_customer_feedback_customer on drm.service_customer_feedback(customer_id);
+      create index if not exists idx_service_customer_feedback_created_by on drm.service_customer_feedback(created_by_user_id);
+      create index if not exists idx_service_sample_requests_customer on drm.service_sample_requests(customer_id);
+      create index if not exists idx_service_sample_requests_created_by on drm.service_sample_requests(created_by_user_id);
+    `);
+  } catch (err) {
+    console.error("Failed ensuring service feedback/sample tables (continuing):", err);
+  } finally {
+    serviceFeedbackTablesEnsured = true;
+  }
+}
+
 async function scopedUserIds(req: Request): Promise<string[] | null> {
   const isManager = isManagerialRole((req.user as any).activeRoleId || req.user!.roleId);
   return isManager ? await getDepartmentFilterUserIds(req) : [req.user!.userId];
@@ -126,6 +170,83 @@ export function registerServiceCoreRoutes(app: Express) {
       res.json(followups);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch due followups" });
+    }
+  });
+
+  // Onboard a customer into the service module — creates the drm.service_customers
+  // row that every other service write (followups, complaints, dropouts, renewals)
+  // requires via hard FK. Without this route the table had no real write path at
+  // all (only a dev test-seed script ever inserted into it).
+  app.post("/api/service/customers", requireActionPermission("service.customer.create"), async (req: Request, res: Response) => {
+    try {
+      const dto = ValidationService.parse(serviceCustomerCreateSchema, req.body);
+      const actorId = req.user!.userId || (req.user as any)!.id;
+
+      const existingActive = await db.select({ id: serviceCustomers.id })
+        .from(serviceCustomers)
+        .where(and(
+          eq(serviceCustomers.customerId, dto.customerId),
+          notInArray(serviceCustomers.status, ["closed", "dropout"]),
+        ))
+        .limit(1);
+      if (existingActive.length > 0) {
+        return res.status(409).json({ error: "This company is already an active service customer." });
+      }
+
+      const serviceStartDate = dto.serviceStartDate || new Date();
+      const oneYearOut = new Date(serviceStartDate);
+      oneYearOut.setFullYear(oneYearOut.getFullYear() + 1);
+
+      const result = await db.insert(serviceCustomers).values({
+        ...dto,
+        // drm.service_customers.user_id and .expiry_date are both NOT NULL in
+        // the live DB even though the Drizzle columns are declared nullable —
+        // default them (same schema-drift pattern as elsewhere: DB is
+        // stricter than the ORM believes).
+        userId: dto.assignedTo || actorId,
+        serviceStartDate,
+        expiryDate: dto.expiryDate || oneYearOut,
+        assignedTo: dto.assignedTo || actorId,
+        assignedBy: actorId,
+        assignedAt: new Date(),
+        createdBy: actorId,
+      }).returning();
+      const created = result[0];
+
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: actorId,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_customer",
+          entityId: String(created.id),
+          after: { customerId: created.customerId, status: created.status },
+          req,
+        });
+      }
+      res.json(created);
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // Follow-ups require a real drm.service_customers row (hard FK), which is a
+  // separate id from drm.customers — this lets the client resolve one before
+  // submitting instead of hitting a raw FK-violation 500. Returns null when
+  // this customer has never been onboarded into the service module yet.
+  app.get("/api/service/followups/service-customer-lookup", requireActionPermission("service.followup.create"), async (req: Request, res: Response) => {
+    try {
+      const customerId = String(req.query.customerId || "");
+      if (!customerId) return res.status(400).json({ error: "customerId is required" });
+      const rows = await db.select({ id: serviceCustomers.id })
+        .from(serviceCustomers)
+        .where(eq(serviceCustomers.customerId, customerId))
+        .orderBy(desc(serviceCustomers.createdAt))
+        .limit(1);
+      res.json({ serviceCustomerId: rows[0]?.id ?? null });
+    } catch (err) {
+      sendError(res, err);
     }
   });
 
@@ -167,6 +288,64 @@ export function registerServiceCoreRoutes(app: Express) {
         });
       }
       res.json(result[0] || { success: true });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // Customer satisfaction rating — feeds the Team Work Performance "startRating"
+  // column, and (joined against customers.source = Alibaba/WebExcels) the
+  // "happyAlibaba"/"happyWebxl" columns.
+  app.post("/api/service/feedback", requireActionPermission("service.feedback.create"), async (req: Request, res: Response) => {
+    try {
+      await ensureServiceFeedbackTables();
+      const dto = ValidationService.parse(serviceCustomerFeedbackCreateSchema, req.body);
+      const result = await db.insert(serviceCustomerFeedback).values({
+        ...dto,
+        createdByUserId: req.user!.userId || (req.user as any)!.id,
+      }).returning();
+      const created = result[0];
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user!.userId || (req.user as any)!.id,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_customer_feedback",
+          entityId: String(created.id),
+          after: { customerId: created.customerId, rating: created.rating },
+          req,
+        });
+      }
+      res.status(201).json(created || { success: true });
+    } catch (err) {
+      sendError(res, err);
+    }
+  });
+
+  // Sample request/shipment log — feeds the Team Work Performance "sample" column.
+  app.post("/api/service/sample-requests", requireActionPermission("service.sample.create"), async (req: Request, res: Response) => {
+    try {
+      await ensureServiceFeedbackTables();
+      const dto = ValidationService.parse(serviceSampleRequestCreateSchema, req.body);
+      const result = await db.insert(serviceSampleRequests).values({
+        ...dto,
+        createdByUserId: req.user!.userId || (req.user as any)!.id,
+      }).returning();
+      const created = result[0];
+      if (created?.id) {
+        void AuditLogService.record({
+          actorUserId: req.user!.userId || (req.user as any)!.id,
+          actorRole: (req.user as any)?.activeRoleId || req.user?.roleId,
+          action: "create",
+          module: "service",
+          entityType: "service_sample_request",
+          entityId: String(created.id),
+          after: { customerId: created.customerId, productName: created.productName },
+          req,
+        });
+      }
+      res.status(201).json(created || { success: true });
     } catch (err) {
       sendError(res, err);
     }
@@ -652,17 +831,25 @@ export function registerServiceCoreRoutes(app: Express) {
     return res.json({ targetModule: target, items: rows, summary: summarizeBridgeReport(target, rows) });
   };
 
-  app.get("/api/service/gm-report", async (req: Request, res: Response) => {
+  // Restrict to the Service department (+ admin) — matches the role gate
+  // already established below for the POST bridge write actions in this same
+  // feature area (moved up here so the GET reads below can reuse it too).
+  const bridgeRoleGate = requireRole("service_executive", "service_assistant_manager", "service_manager", "admin");
+
+  // Phase 2 fix: these reads previously had no role gate at all, unlike their
+  // POST bridge counterparts below. Applying the SAME `bridgeRoleGate` here
+  // (not a new role list) since it is the same feature area's read side.
+  app.get("/api/service/gm-report", bridgeRoleGate, async (req: Request, res: Response) => {
     try { await serviceBridgeReport(req, res, "gm"); }
     catch (err) { sendError(res, err); }
   });
 
-  app.get("/api/service/vas-report", async (req: Request, res: Response) => {
+  app.get("/api/service/vas-report", bridgeRoleGate, async (req: Request, res: Response) => {
     try { await serviceBridgeReport(req, res, "vas"); }
     catch (err) { sendError(res, err); }
   });
 
-  app.get("/api/service/bv-report", async (req: Request, res: Response) => {
+  app.get("/api/service/bv-report", bridgeRoleGate, async (req: Request, res: Response) => {
     try { await serviceBridgeReport(req, res, "bv"); }
     catch (err) { sendError(res, err); }
   });
@@ -709,7 +896,11 @@ export function registerServiceCoreRoutes(app: Express) {
     }
   };
 
-  app.post("/api/service/gm", (req: Request, res: Response) => runBridge(req, res, "gm", bridgeToGm));
-  app.post("/api/service/vas", (req: Request, res: Response) => runBridge(req, res, "vas", bridgeToVas));
-  app.post("/api/service/bv", (req: Request, res: Response) => runBridge(req, res, "bv", bridgeToBv));
+  // Phase 7 — these previously had no role gate beyond "is authenticated"; any
+  // logged-in user of any role could call them once the corresponding flag was
+  // enabled. `bridgeRoleGate` (Service department + admin) is defined above,
+  // shared with the GET reads.
+  app.post("/api/service/gm", bridgeRoleGate, (req: Request, res: Response) => runBridge(req, res, "gm", bridgeToGm));
+  app.post("/api/service/vas", bridgeRoleGate, (req: Request, res: Response) => runBridge(req, res, "vas", bridgeToVas));
+  app.post("/api/service/bv", bridgeRoleGate, (req: Request, res: Response) => runBridge(req, res, "bv", bridgeToBv));
 }

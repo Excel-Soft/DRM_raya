@@ -160,6 +160,7 @@ export default function KwaHistory() {
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Company</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Person</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Pay</TableHead>
+                  <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Used</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Remaining</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Detail</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Date</TableHead>
@@ -168,7 +169,7 @@ export default function KwaHistory() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-6 text-gray-500 dark:text-zinc-400">Loading live data...</TableCell>
+                    <TableCell colSpan={8} className="text-center py-6 text-gray-500 dark:text-zinc-400">Loading live data...</TableCell>
                   </TableRow>
                 ) : (
                   <>
@@ -178,6 +179,7 @@ export default function KwaHistory() {
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.company}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.employee}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.kwa}$</TableCell>
+                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{(Number(row.kwa) - Number(row.remaining)).toFixed(2)}$</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.remaining}$</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.detail}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{new Date(row.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '')}</TableCell>
@@ -185,7 +187,7 @@ export default function KwaHistory() {
                     ))}
                     {displayedData.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-6 text-gray-500 dark:text-zinc-400">No records found matching your filters.</TableCell>
+                        <TableCell colSpan={8} className="text-center py-6 text-gray-500 dark:text-zinc-400">No records found matching your filters.</TableCell>
                       </TableRow>
                     )}
                   </>

@@ -20,8 +20,8 @@ const rolesList = [
 ];
 
 const contactMethods = [
-  "Mobile", "OnSite Visit", "Whatsapp", "Group Whatsapp (Broadcast)", 
-  "VAS Call", "Facebook Post", "E-mail", "Seminar"
+  "Mobile", "OnSite Visit", "Whatsapp", "Group Whatsapp (Broadcast)",
+  "VAS Call", "Facebook Post", "E-mail", "Seminar", "Copy Product", "New Product"
 ];
 
 export default function DailyTarget() {
@@ -263,12 +263,12 @@ export default function DailyTarget() {
             <Table>
               <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
                 <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black text-center w-16">#</TableHead>
-                  <TableHead className="font-bold text-black text-center">Role</TableHead>
-                  <TableHead className="font-bold text-black text-center">Method</TableHead>
-                  <TableHead className="font-bold text-black text-center">Target</TableHead>
-                  <TableHead className="font-bold text-black text-center">Create</TableHead>
-                  <TableHead className="font-bold text-black text-center w-24">Action</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-16">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Role</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Method</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Create</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-24">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { isSupportModuleEnabled } from "@/lib/feature-flags";
-import { apiRequestJson } from "@/lib/queryClient";
+import { apiRequestJson, apiRequest, queryClient, throwIfResNotOk } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -57,7 +57,8 @@ import {
     Loader2,
     Lock,
     GraduationCap,
-    ExternalLink
+    ExternalLink,
+    CheckCircle2 as CheckCircleIcon,
 } from "lucide-react";
 import {
     Table,
@@ -75,15 +76,14 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { PieChart as RePieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { CheckCircle2 as CheckCircleIcon } from "lucide-react";
 
 const itemVariants = {
     hidden: { opacity: 0 },
@@ -115,8 +115,29 @@ export default function DDExecutiveDashboard() {
         detail: ""
     });
 
+    // ── Task execution modal state (real backend wiring, mirroring Posting Executive) ──
+    const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+    const [overtimeDialogOpen, setOvertimeDialogOpen] = useState(false);
+    const [linkUrl, setLinkUrl] = useState("");
+    const [linkLabel, setLinkLabel] = useState("");
+    const [overtimeMinutes, setOvertimeMinutes] = useState("30");
+    const [overtimeReason, setOvertimeReason] = useState("");
+    const [outputNotes, setOutputNotes] = useState("");
+    const [selfReviewConfirmed, setSelfReviewConfirmed] = useState(false);
+
     // Fetch summary stats
     const { data: summaryStats } = useQuery({ queryKey: ["/api/dd-executive/summary", topSellingFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/summary?period=${topSellingFilter}`) });
+    const { data: activityPlanData } = useQuery({ queryKey: ["/api/dashboard/activities", topSellingFilter], queryFn: async () => apiRequestJson("GET", `/api/dashboard/activities?period=${topSellingFilter}`) });
+    const myActivityRow = (activityPlanData as any)?.data?.rows?.[0] ?? null;
+    const activityMethodLabels: Array<{ key: string; label: string }> = [
+        { key: "mobile", label: "Mobile" },
+        { key: "whatsapp", label: "Whatsapp" },
+        { key: "onsite", label: "On-Site Visit" },
+        { key: "email", label: "E-mail" },
+        { key: "seminar", label: "Seminar" },
+        { key: "appointment", label: "Appointment" },
+        { key: "meeting", label: "Meeting" },
+    ];
     const { data: dbTaskListData } = useQuery({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
     const { data: dailyReportData } = useQuery({ queryKey: ["/api/dd-executive/daily-report", dailyReportFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/daily-report?period=${dailyReportFilter}`) });
     const { data: monthlyCompleteData } = useQuery({ queryKey: ["/api/dd-executive/monthly-complete", monthlyCompleteFilter], queryFn: async () => apiRequestJson("GET", `/api/dd-executive/monthly-complete?period=${monthlyCompleteFilter}`) });
@@ -153,7 +174,8 @@ export default function DDExecutiveDashboard() {
                 notes: JSON.stringify({
                     duration: newTask.duration,
                     links: newTask.links
-                })
+                }),
+                ensureProductPostingWorkflow: true,
             }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
@@ -174,23 +196,110 @@ export default function DDExecutiveDashboard() {
             });
         },
         onError: (error: any) => {
-            toast({ 
-                title: "Error", 
-                description: error.message || "Failed to create task", 
-                variant: "destructive" 
+            toast({
+                title: "Error",
+                description: error.message || "Failed to create task",
+                variant: "destructive"
             });
         }
     });
 
+    // ── Task execution mutations against the real task-execution / product-posting-workflow
+    // backend already used successfully by Posting Executive (server/routes/task-execution-routes.ts
+    // and server/routes/product-posting-workflow-routes.ts both already allow the dd_executive role). ──
+    const refreshExecutions = () => {
+        queryClient.invalidateQueries({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
+        queryClient.invalidateQueries({ queryKey: ["/api/dd-executive/summary"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/dd-executive/daily-report"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/tasks/my-executions"] });
+    };
+
+    const startTimerMutation = useMutation({
+        mutationFn: async (taskId: string) => {
+            const res = await apiRequest("POST", `/api/tasks/${taskId}/timers/start`, {});
+            await throwIfResNotOk(res);
+            return res;
+        },
+        onSuccess: refreshExecutions,
+        onError: (error: any) => toast({ title: "Could not start timer", description: error.message, variant: "destructive" }),
+    });
+
+    const stopTimerMutation = useMutation({
+        mutationFn: async (taskId: string) => {
+            const res = await apiRequest("POST", `/api/tasks/${taskId}/timers/stop`, {});
+            await throwIfResNotOk(res);
+            return res;
+        },
+        onSuccess: refreshExecutions,
+        onError: (error: any) => toast({ title: "Could not stop timer", description: error.message, variant: "destructive" }),
+    });
+
+    const addLinkMutation = useMutation({
+        mutationFn: async ({ taskId, url, label }: { taskId: string; url: string; label: string }) => {
+            const res = await apiRequest("POST", `/api/product-posting/tasks/${taskId}/evidence-links`, { url, label });
+            await throwIfResNotOk(res);
+            return res;
+        },
+        onSuccess: () => {
+            refreshExecutions();
+            setLinkUrl("");
+            setLinkLabel("");
+            toast({ title: "Link saved", description: "Evidence link uploaded successfully." });
+        },
+        onError: (error: any) => toast({ title: "Could not save link", description: error.message, variant: "destructive" }),
+    });
+
+    const overtimeMutation = useMutation({
+        mutationFn: async ({ taskId, requestedMinutes, reason }: { taskId: string; requestedMinutes: number; reason: string }) => {
+            const res = await apiRequest("POST", `/api/product-posting/tasks/${taskId}/request-overtime`, { requestedMinutes, reason });
+            await throwIfResNotOk(res);
+            return res;
+        },
+        onSuccess: () => {
+            refreshExecutions();
+            setOvertimeDialogOpen(false);
+            setOvertimeMinutes("30");
+            setOvertimeReason("");
+            toast({ title: "Overtime requested", description: "Your manager has been notified." });
+        },
+        onError: (error: any) => toast({ title: "Could not request overtime", description: error.message, variant: "destructive" }),
+    });
+
+    const submitMutation = useMutation({
+        mutationFn: async ({ taskId, notes }: { taskId: string; notes: string }) => {
+            const res = await apiRequest("POST", `/api/product-posting/tasks/${taskId}/submit-to-manager`, { outputNotes: notes, selfReviewConfirmed: true });
+            await throwIfResNotOk(res);
+            return res;
+        },
+        onSuccess: () => {
+            refreshExecutions();
+            setOutputNotes("");
+            setSelfReviewConfirmed(false);
+            setIsDetailModalOpen(false);
+            toast({ title: "Work submitted", description: "Task submitted for manager review." });
+        },
+        onError: (error: any) => toast({ title: "Could not submit work", description: error.message, variant: "destructive" }),
+    });
+
+    const openTaskDetail = (task: any) => {
+        setSelectedTask(task);
+        setOutputNotes("");
+        setIsDetailModalOpen(true);
+    };
+
+    // No real "vs previous period" comparison data exists anywhere for these
+    // (would need a second historical query) — subValue/trend were literal
+    // "+0.0%" placeholders on every card regardless of the real value above
+    // them, so they're left out entirely rather than showing invented numbers.
     const stats = [
-        { label: "Total Task", value: (summaryStats as any)?.totalTasks || 0, subValue: "0%", trend: "+0.0%", icon: ClipboardList },
-        { label: "Pending", value: (summaryStats as any)?.pendingTasks || 0, subValue: "0", trend: "+0.0%", icon: Clock },
-        { label: "Running", value: (summaryStats as any)?.runningTasks || 0, subValue: "0%", trend: "+0.0%", icon: Activity },
-        { label: "Complete", value: (summaryStats as any)?.completeTasks || 0, subValue: "0", trend: "+0.0%", icon: CheckCircle2 },
+        { label: "Total Task", value: (summaryStats as any)?.totalTasks || 0, icon: ClipboardList },
+        { label: "Pending", value: (summaryStats as any)?.pendingTasks || 0, icon: Clock },
+        { label: "Running", value: (summaryStats as any)?.runningTasks || 0, icon: Activity },
+        { label: "Complete", value: (summaryStats as any)?.completeTasks || 0, icon: CheckCircle2 },
     ];
 
     return (
-        <div className="p-4 bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 min-h-screen font-sans selection:bg-emerald-100">
+        <div className="p-4 bg-slate-50/50 dark:bg-zinc-900 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 min-h-screen font-sans selection:bg-emerald-100">
             {/* Breadcrumb Header */}
             <div className="mb-6 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-[15px] font-bold tracking-tight">
@@ -221,22 +330,13 @@ export default function DDExecutiveDashboard() {
                 <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
                     <div className="xl:col-span-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         {stats.map((stat, i) => (
-                            <div key={i} className="bg-slate-50/50 p-4 rounded-xl border border-slate-100 flex flex-col justify-between h-[120px] dark:border-zinc-800">
+                            <div key={i} className="bg-slate-50/50 dark:bg-zinc-900 p-4 rounded-xl border border-slate-100 flex flex-col justify-between h-[120px] dark:border-zinc-800">
                                 <div className="flex justify-between items-start w-full">
                                     <div>
                                         <p className="text-[11px] font-bold text-slate-400 tracking-wider">{stat.label}</p>
                                         <p className="text-[28px] font-bold text-slate-800 leading-tight mt-1 dark:text-zinc-100">{stat.value}</p>
                                     </div>
-                                    <div className="flex items-center gap-1 text-emerald-500 font-bold text-[13px]">
-                                        <TrendingUp className="h-4 w-4" />
-                                        <span>{stat.trend}</span>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-2 mt-auto">
-                                    <stat.icon className={cn("h-4 w-4", stat.label === "Pending" ? "text-orange-400" : "text-slate-300")} />
-                                    <span className={cn("text-[13px] font-semibold", stat.label === "Pending" ? "text-orange-400" : "text-slate-400")}>
-                                        {stat.subValue} {stat.label === "Pending" ? "+0%" : stat.label === "Running" ? "0%" : ""}
-                                    </span>
+                                    <stat.icon className={cn("h-5 w-5", stat.label === "Pending" ? "text-orange-400" : "text-slate-300")} />
                                 </div>
                             </div>
                         ))}
@@ -305,7 +405,7 @@ export default function DDExecutiveDashboard() {
                         </CardHeader>
                         <div className="overflow-x-auto">
                             <Table>
-                                <TableHeader className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20">
+                                <TableHeader className="bg-slate-50/50 dark:bg-zinc-900 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950">
                                     <TableRow className="hover:bg-transparent border-none">
                                         <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 pl-6 dark:text-zinc-400">Company</TableHead>
                                         <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 text-center dark:text-zinc-400">Project</TableHead>
@@ -344,6 +444,13 @@ export default function DDExecutiveDashboard() {
                                                             className="opacity-40 group-hover:opacity-100 transition-opacity hover:text-indigo-600"
                                                         >
                                                             <ExternalLink className="h-4 w-4 text-indigo-400" />
+                                                        </button>
+                                                        <button
+                                                            title="Task actions"
+                                                            onClick={() => openTaskDetail(task)}
+                                                            className="opacity-40 group-hover:opacity-100 transition-opacity hover:text-emerald-600"
+                                                        >
+                                                            <Settings className="h-4 w-4 text-emerald-500" />
                                                         </button>
                                                     </div>
                                                 </TableCell>
@@ -419,7 +526,7 @@ export default function DDExecutiveDashboard() {
                             {/* Table */}
                             <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-zinc-800">
                                 <Table>
-                                    <TableHeader className="bg-slate-50/50">
+                                    <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
                                         <TableRow className="hover:bg-transparent border-none">
                                             <TableHead className="text-[12px] font-bold text-slate-500 py-3.5 pl-4 uppercase dark:text-zinc-400">Name</TableHead>
                                             <TableHead className="text-[12px] font-bold text-slate-500 py-3.5 uppercase text-center dark:text-zinc-400">Company</TableHead>
@@ -472,7 +579,7 @@ export default function DDExecutiveDashboard() {
                         </CardHeader>
                         <div className="overflow-x-auto">
                             <Table>
-                                <TableHeader className="bg-slate-50/50">
+                                <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
                                     <TableRow className="hover:bg-transparent border-none">
                                         <TableHead className="text-[12px] font-bold text-slate-500 py-4 pl-6 uppercase dark:text-zinc-400">Name</TableHead>
                                         <TableHead className="text-[12px] font-bold text-slate-500 py-4 uppercase dark:text-zinc-400">Company</TableHead>
@@ -554,18 +661,47 @@ export default function DDExecutiveDashboard() {
                                     </ResponsiveContainer>
                                     <div className="absolute inset-0 flex items-center justify-center flex-col">
                                         <span className="text-[28px] font-bold text-slate-800 dark:text-zinc-100">
-                                            {(summaryStats as any)?.totalTasks || 22}
+                                            {(summaryStats as any)?.totalTasks ?? 0}
                                         </span>
                                     </div>
                                 </div>
 
                                 {/* Legend */}
                                 <div className="space-y-3.5 pl-6">
-                                    <ActivityLegendItem label="Total Task" value={(summaryStats as any)?.totalTasks || 22} color="bg-[#15803d]" />
+                                    <ActivityLegendItem label="Total Task" value={(summaryStats as any)?.totalTasks ?? 0} color="bg-[#15803d]" />
                                     <ActivityLegendItem label="Complete" value={(summaryStats as any)?.completeTasks || 0} color="bg-[#d97706]" />
                                     <ActivityLegendItem label="Pending" value={(summaryStats as any)?.pendingTasks || 0} color="bg-[#86efac]" />
                                     <ActivityLegendItem label="Running" value={(summaryStats as any)?.runningTasks || 0} color="bg-[#334155]" />
                                 </div>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Activities and Talk Time — real method/target/talk-time breakdown */}
+                    <Card className="border-none shadow-sm rounded-xl bg-white overflow-hidden dark:bg-zinc-900">
+                        <CardHeader className="py-4 px-6 border-b border-slate-50 dark:border-zinc-800">
+                            <CardTitle className="text-[16px] font-bold text-slate-700 tracking-tight dark:text-zinc-400">Activities and Talk Time</CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-4 px-5 pb-5">
+                            <div className="grid grid-cols-3 gap-2 pb-2 text-[11px] font-bold text-slate-500 dark:text-zinc-500">
+                                <div>Method</div>
+                                <div className="text-center">Target (Done)</div>
+                                <div className="text-center">Talk Time</div>
+                            </div>
+                            <div className="space-y-1.5">
+                                {activityMethodLabels.map(({ key, label }) => {
+                                    const m = myActivityRow?.methods?.[key];
+                                    return (
+                                        <div key={key} className="grid grid-cols-3 gap-2 text-[12px] items-center border-b border-slate-50 pb-1.5 last:border-0 dark:border-zinc-800">
+                                            <div className="text-slate-700 dark:text-zinc-400">{label}</div>
+                                            <div className="text-center bg-slate-50 rounded px-2 py-1 text-slate-700 dark:bg-zinc-900 dark:text-zinc-400">{m?.target ?? 0} ({m?.done ?? 0})</div>
+                                            <div className="text-center text-slate-500 dark:text-zinc-500">—</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="pt-3 text-center text-[12px] text-slate-600 dark:text-zinc-400">
+                                Talk Time ({myActivityRow?.totals?.timeMinutes ?? 0} M) · W-H 8 (480 M) · Free ({Math.max(0, 480 - (myActivityRow?.totals?.timeMinutes ?? 0))} M)
                             </div>
                         </CardContent>
                     </Card>
@@ -581,8 +717,8 @@ export default function DDExecutiveDashboard() {
                                     label="Running Project" 
                                     value={(summaryStats as any)?.runningProjects || 0}
                                     icon={Play} 
-                                    colorClass="text-emerald-600" 
-                                    bgClass="bg-emerald-50/60" 
+                                    colorClass="text-emerald-600 dark:text-emerald-400" 
+                                    bgClass="bg-emerald-50/60 dark:bg-emerald-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/pms/running-projects")}
                                 />
@@ -590,8 +726,8 @@ export default function DDExecutiveDashboard() {
                                     label="Pending Project" 
                                     value={(summaryStats as any)?.pendingTasks || 0}
                                     icon={Clock} 
-                                    colorClass="text-amber-600" 
-                                    bgClass="bg-amber-50/60" 
+                                    colorClass="text-amber-600 dark:text-amber-400" 
+                                    bgClass="bg-amber-50/60 dark:bg-amber-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/pms/approvals")}
                                 />
@@ -599,8 +735,8 @@ export default function DDExecutiveDashboard() {
                                     label="Project Task" 
                                     value={(summaryStats as any)?.totalTasks || 0}
                                     icon={CheckSquare} 
-                                    colorClass="text-blue-600" 
-                                    bgClass="bg-blue-50/60" 
+                                    colorClass="text-blue-600 dark:text-blue-400" 
+                                    bgClass="bg-blue-50/60 dark:bg-blue-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/pms/tasks")}
                                 />
@@ -608,8 +744,8 @@ export default function DDExecutiveDashboard() {
                                     label="Over Time" 
                                     value={(summaryStats as any)?.overTimeTasks || 0}
                                     icon={Timer} 
-                                    colorClass="text-rose-600" 
-                                    bgClass="bg-rose-50/60" 
+                                    colorClass="text-rose-600 dark:text-rose-400" 
+                                    bgClass="bg-rose-50/60 dark:bg-rose-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/hr/overtime")}
                                 />
@@ -617,8 +753,8 @@ export default function DDExecutiveDashboard() {
                                     label="Leave Application" 
                                     value={(summaryStats as any)?.pendingLeaves || 0}
                                     icon={Calendar} 
-                                    colorClass="text-indigo-600" 
-                                    bgClass="bg-indigo-50/60" 
+                                    colorClass="text-indigo-600 dark:text-indigo-400" 
+                                    bgClass="bg-indigo-50/60 dark:bg-indigo-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/hr/leave-request")}
                                 />
@@ -626,8 +762,8 @@ export default function DDExecutiveDashboard() {
                                     label="Attendance" 
                                     value={(summaryStats as any)?.attendanceStatus || "Not Marked"}
                                     icon={UserCheck} 
-                                    colorClass="text-teal-600" 
-                                    bgClass="bg-teal-50/60" 
+                                    colorClass="text-teal-600 dark:text-teal-400" 
+                                    bgClass="bg-teal-50/60 dark:bg-teal-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/hr/attendance")}
                                 />
@@ -635,8 +771,8 @@ export default function DDExecutiveDashboard() {
                                     label="Customer" 
                                     value="View"
                                     icon={Users} 
-                                    colorClass="text-blue-600" 
-                                    bgClass="bg-blue-50/60" 
+                                    colorClass="text-blue-600 dark:text-blue-400" 
+                                    bgClass="bg-blue-50/60 dark:bg-blue-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/sales/customers")}
                                 />
@@ -644,8 +780,8 @@ export default function DDExecutiveDashboard() {
                                     label="Lead" 
                                     value="View"
                                     icon={Layers} 
-                                    colorClass="text-emerald-600" 
-                                    bgClass="bg-emerald-50/60" 
+                                    colorClass="text-emerald-600 dark:text-emerald-400" 
+                                    bgClass="bg-emerald-50/60 dark:bg-emerald-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/sales/lead-pools")}
                                 />
@@ -653,8 +789,8 @@ export default function DDExecutiveDashboard() {
                                     label="Training" 
                                     value="Open"
                                     icon={GraduationCap} 
-                                    colorClass="text-amber-600" 
-                                    bgClass="bg-amber-50/60" 
+                                    colorClass="text-amber-600 dark:text-amber-400" 
+                                    bgClass="bg-amber-50/60 dark:bg-amber-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/training")}
                                 />
@@ -663,7 +799,7 @@ export default function DDExecutiveDashboard() {
                                     value="View"
                                     icon={FileText} 
                                     colorClass="text-slate-600 dark:text-slate-300" 
-                                    bgClass="bg-slate-50/60" 
+                                    bgClass="bg-slate-50/60 dark:bg-slate-900/60" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/reports")}
                                 />
@@ -671,8 +807,8 @@ export default function DDExecutiveDashboard() {
                                     label="Pms Setting" 
                                     value="Open"
                                     icon={Settings} 
-                                    colorClass="text-indigo-600" 
-                                    bgClass="bg-indigo-50/60" 
+                                    colorClass="text-indigo-600 dark:text-indigo-400" 
+                                    bgClass="bg-indigo-50/60 dark:bg-indigo-950/40" 
                                     iconColorClass="bg-white dark:bg-zinc-900/90"
                                     onClick={() => setLocation("/drm/pms-setting")}
                                 />
@@ -712,7 +848,7 @@ export default function DDExecutiveDashboard() {
             </div>
 
             <Dialog open={isDetailModalOpen} onOpenChange={setIsDetailModalOpen}>
-                <DialogContent className="max-w-2xl bg-white shadow-2xl border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto bg-white shadow-2xl border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
                     <DialogHeader>
                         <DialogTitle className="text-xl font-bold flex items-center gap-2 text-slate-800 dark:text-zinc-100">
                             <ClipboardList className="h-5 w-5 text-emerald-500" />
@@ -751,6 +887,112 @@ export default function DDExecutiveDashboard() {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Real status-change actions against the task-execution backend */}
+                        <div className="pt-4 border-t border-slate-100 space-y-4 dark:border-zinc-800">
+                            <div className="grid grid-cols-2 gap-3">
+                                <Button
+                                    className="h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[13px]"
+                                    disabled={!selectedTask?.id || startTimerMutation.isPending}
+                                    onClick={() => startTimerMutation.mutate(selectedTask.id)}
+                                >
+                                    {startTimerMutation.isPending ? "Starting..." : "Start Timer"}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="h-10 border-rose-200 text-rose-600 hover:bg-rose-50 font-bold text-[13px]"
+                                    disabled={!selectedTask?.id || stopTimerMutation.isPending}
+                                    onClick={() => stopTimerMutation.mutate(selectedTask.id)}
+                                >
+                                    {stopTimerMutation.isPending ? "Stopping..." : "Stop Timer"}
+                                </Button>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <Button
+                                    variant="outline"
+                                    className="h-11 flex items-center gap-2 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50 text-slate-700 font-bold text-[13px] dark:border-zinc-800 dark:text-zinc-300"
+                                    onClick={() => setLinkDialogOpen(true)}
+                                >
+                                    <Tag className="w-4 h-4 text-emerald-600" /> Add Link
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="h-11 flex items-center gap-2 border-slate-200 hover:border-rose-200 hover:bg-rose-50 text-slate-700 font-bold text-[13px] dark:border-zinc-800 dark:text-zinc-300"
+                                    onClick={() => setOvertimeDialogOpen(true)}
+                                >
+                                    <Clock className="w-4 h-4 text-rose-500" /> Overtime
+                                </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                                <span className="text-[11px] font-bold text-slate-500 uppercase dark:text-zinc-400">Submit Work to Manager</span>
+                                <Textarea
+                                    className="w-full border-slate-200 rounded-lg text-[12px] min-h-[80px] dark:border-zinc-800"
+                                    placeholder="Type notes here..."
+                                    value={outputNotes}
+                                    onChange={(e) => setOutputNotes(e.target.value)}
+                                />
+                                <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3 text-[12px] cursor-pointer dark:border-zinc-800">
+                                    <input
+                                        type="checkbox"
+                                        className="mt-0.5"
+                                        checked={selfReviewConfirmed}
+                                        onChange={(e) => setSelfReviewConfirmed(e.target.checked)}
+                                    />
+                                    <span className="text-slate-700 dark:text-zinc-300">
+                                        I have reviewed my own work and it is ready for the manager to check.
+                                    </span>
+                                </label>
+                                <Button
+                                    className="bg-emerald-600 hover:bg-emerald-700 w-full font-black h-11 rounded-xl shadow-lg active:scale-95 transition-all text-white"
+                                    disabled={!selectedTask?.id || !selfReviewConfirmed || submitMutation.isPending}
+                                    onClick={() => submitMutation.mutate({ taskId: selectedTask.id, notes: outputNotes })}
+                                >
+                                    {submitMutation.isPending ? "Submitting..." : "Submit Work"}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Add Evidence Link Dialog */}
+            <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+                <DialogContent className="sm:max-w-[460px] dark:bg-zinc-900">
+                    <DialogHeader>
+                        <DialogTitle>Add Output Link</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <Input placeholder="https://..." value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} />
+                        <Input placeholder="Label" value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} />
+                        <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 w-full font-bold h-10"
+                            disabled={!selectedTask?.id || !linkUrl || addLinkMutation.isPending}
+                            onClick={() => addLinkMutation.mutate({ taskId: selectedTask.id, url: linkUrl, label: linkLabel })}
+                        >
+                            {addLinkMutation.isPending ? "Saving..." : "Save Link"}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Request Overtime Dialog */}
+            <Dialog open={overtimeDialogOpen} onOpenChange={setOvertimeDialogOpen}>
+                <DialogContent className="sm:max-w-[460px] dark:bg-zinc-900">
+                    <DialogHeader>
+                        <DialogTitle>Request Overtime</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <Input type="number" min="1" value={overtimeMinutes} onChange={(e) => setOvertimeMinutes(e.target.value)} />
+                        <Textarea placeholder="Reason for overtime" value={overtimeReason} onChange={(e) => setOvertimeReason(e.target.value)} />
+                        <Button
+                            className="bg-emerald-600 hover:bg-emerald-700 w-full font-bold h-10"
+                            disabled={!selectedTask?.id || !overtimeReason || overtimeMutation.isPending}
+                            onClick={() => overtimeMutation.mutate({ taskId: selectedTask.id, requestedMinutes: Number(overtimeMinutes) || 0, reason: overtimeReason })}
+                        >
+                            {overtimeMutation.isPending ? "Requesting..." : "Request Overtime"}
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -974,7 +1216,7 @@ function OverviewItem({ label, value, icon: Icon, colorClass, bgClass, iconColor
             className={cn(
                 "flex flex-col gap-2 p-3.5 rounded-2xl border transition-all duration-300 group cursor-pointer hover:shadow-[0_8px_20px_-8px_rgba(0,0,0,0.1)] active:scale-[0.98]",
             bgClass,
-            "border-white/40 backdrop-blur-sm"
+            "border-white/40 dark:border-zinc-700/50 backdrop-blur-sm"
         )}>
             <div className="flex items-center justify-between w-full">
                 <span className={cn("text-[11px] font-black tracking-widest transition-colors leading-tight uppercase opacity-60", colorClass)}>
@@ -992,14 +1234,14 @@ function ImportantRow({ label, value, isSubValue, isTime, onClick }: { label: st
     return (
         <div 
             onClick={onClick}
-            className="flex items-center justify-between p-3.5 py-4 bg-slate-50/80 hover:bg-white border border-transparent hover:border-slate-100 shadow-sm transition-all duration-300 rounded-2xl cursor-pointer group dark:hover:bg-zinc-800"
+            className="flex items-center justify-between p-3.5 py-4 bg-slate-50/80 hover:bg-white border border-transparent hover:border-slate-100 shadow-sm transition-all duration-300 rounded-2xl cursor-pointer group dark:bg-zinc-800/60 dark:hover:bg-zinc-800"
         >
-            <span className="text-sm font-bold text-slate-500 tracking-tight group-hover:text-slate-800 transition-colors uppercase dark:text-zinc-400">{label}</span>
+            <span className="text-sm font-bold text-slate-500 tracking-tight group-hover:text-slate-800 transition-colors uppercase dark:text-zinc-400 dark:group-hover:text-zinc-100">{label}</span>
             <div className={cn(
                 "px-3 py-1 rounded-full text-xs font-black shadow-sm transition-all group-hover:px-4",
-                isSubValue ? "bg-emerald-50 text-emerald-600" : 
-                isTime ? "bg-slate-100 text-slate-800 dark:text-slate-200" : 
-                "bg-rose-50 text-rose-500"
+                isSubValue ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400" :
+                isTime ? "bg-slate-100 text-slate-800 dark:bg-zinc-900 dark:text-slate-200" :
+                "bg-rose-50 text-rose-500 dark:bg-rose-950/50 dark:text-rose-400"
             )}>
                 {value}
             </div>

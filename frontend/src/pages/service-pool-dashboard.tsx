@@ -39,7 +39,7 @@ export default function ServicePoolDashboard() {
     const rows = data?.items ?? [];
 
     return (
-        <div className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 font-sans p-4 min-h-screen">
+        <div className="bg-slate-50/50 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 via-slate-50 to-emerald-50/20 dark:bg-none dark:bg-zinc-950 font-sans p-4 min-h-screen">
             <div className="mb-4 flex items-center gap-2">
                 <h2 className="text-[16px] font-bold text-[#475569] uppercase tracking-tight dark:text-zinc-400">CUSTOMER LIST</h2>
                 <span className="bg-[#bbf7d0] bg-clip-text text-transparent bg-gradient-to-r from-emerald-600 to-teal-500 text-[12px] font-bold px-2 py-0.5 rounded-full">{data?.total ?? 0}</span>
@@ -98,7 +98,7 @@ export default function ServicePoolDashboard() {
                                 </TableRow>
                             ) : (
                                 rows.map((row) => (
-                                    <TableRow key={row.id} className="border-b-0 hover:bg-slate-50/50">
+                                    <TableRow key={row.id} className="border-b-0 hover:bg-slate-50/50 dark:hover:bg-zinc-800">
                                         <TableCell className="pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
                                         <TableCell className="text-[12px] text-center font-semibold text-slate-500 py-3 uppercase dark:text-zinc-400">{row.drmId || "—"}</TableCell>
                                         <TableCell className="text-[12px] text-center font-semibold text-slate-500 py-3 uppercase dark:text-zinc-400">{row.companyName || "—"}</TableCell>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
     Card,
@@ -27,7 +27,7 @@ export default function AddPortfolio() {
     const [subCategory, setSubCategory] = useState("");
     const [serverLink, setServerLink] = useState("");
     
-    // For now, handling as text URLs or local state for the demo
+    // Real File objects — uploaded via multipart FormData and saved to disk by the server (see handleSave below).
     const [topHeaderImage, setTopHeaderImage] = useState<File | null>(null);
     const [bodyImage, setBodyImage] = useState<File | null>(null);
     const [fullImage, setFullImage] = useState<File | null>(null);
@@ -35,16 +35,10 @@ export default function AddPortfolio() {
 
     const createMutation = useMutation({
         mutationFn: async (formData: FormData) => {
-            // Since this is a demo, I'll mock the actual multipart upload if needed,
-            // but the system already has some file upload patterns.
-            // Multipart upload: keep fetch so the browser sets the multipart
-            // boundary. Attach auth manually (do NOT set Content-Type).
-            const res = await fetch("/api/portfolio", {
-                method: "POST",
-                headers: { ...getAuthHeader() },
-                credentials: "include",
-                body: formData,
-            });
+            // Uses apiRequest so the authenticated user's token/credentials are attached,
+            // same as every other API call in the app. The server saves the images to disk
+            // via multer (see server/portfolio-routes.ts) and returns the real stored URLs.
+            const res = await apiRequest("POST", "/api/portfolio", formData);
             if (!res.ok) throw new Error("Failed to save portfolio");
             return res.json();
         },
@@ -53,6 +47,7 @@ export default function AddPortfolio() {
                 title: "Portfolio Saved",
                 description: "The portfolio item has been successfully added.",
             });
+            queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
             resetForm();
         },
         onError: (error: Error) => {
@@ -88,7 +83,6 @@ export default function AddPortfolio() {
             formData.append(`sliders`, file);
         });
 
-        // For now, let's just simulate success since the backend endpoint might not be ready
         createMutation.mutate(formData);
     };
 

@@ -213,12 +213,12 @@ export default function ChequeSystem() {
             {isLoading ? (
               <div className="p-8 text-center text-gray-500">Loading cheques...</div>
             ) : chequesList.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 bg-white border border-gray-100 rounded-md">
+              <div className="p-8 text-center text-gray-500 bg-white dark:bg-zinc-900 border border-gray-100 rounded-md">
                 No cheques generated yet.
               </div>
             ) : (
               chequesList.map((cheque) => (
-                <div key={cheque.id} className="relative w-full max-w-[850px] bg-white border border-gray-300 shadow-sm overflow-hidden flex flex-col font-sans" style={{ minHeight: '320px' }}>
+                <div key={cheque.id} className="relative w-full max-w-[850px] bg-white dark:bg-zinc-900 border border-gray-300 shadow-sm overflow-hidden flex flex-col font-sans" style={{ minHeight: '320px' }}>
                   
                   {/* Ribbon FOR DOLLAR */}
                   <div className="absolute top-0 left-0 w-24 h-24 overflow-hidden z-10 pointer-events-none">
@@ -269,7 +269,7 @@ export default function ChequeSystem() {
                       {/* Date */}
                       <div className="flex items-center gap-3">
                         <span className="text-gray-400 font-bold text-sm">Date</span>
-                        <div className="flex gap-0.5 bg-white">
+                        <div className="flex gap-0.5 bg-white dark:bg-zinc-900">
                           {format(new Date(cheque.chequeDate), "yyyyMMdd").split("").map((digit: string, i: number) => (
                             <div key={i} className="w-[18px] h-7 flex items-center justify-center border border-gray-300 font-mono text-[16px] text-gray-800">
                               {digit}

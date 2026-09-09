@@ -159,6 +159,8 @@ function GmReportTable({
   const [perPage, setPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [entryTypeFilter, setEntryTypeFilter] = useState("all");
 
   const { data: packagesData } = useQuery<{ packages: any[] }>({
     queryKey: ["gm-packages"],
@@ -181,6 +183,8 @@ function GmReportTable({
 
   const filtered = useMemo(() => {
     return filteredDetails.filter(item => {
+      if (typeFilter !== "all" && item.gmType !== typeFilter) return false;
+      if (entryTypeFilter !== "all" && item.rcNew !== entryTypeFilter) return false;
       if (!searchTerm) return true;
       const lower = searchTerm.toLowerCase();
       return (
@@ -188,7 +192,7 @@ function GmReportTable({
         item.person?.toLowerCase().includes(lower)
       );
     });
-  }, [filteredDetails, searchTerm]);
+  }, [filteredDetails, searchTerm, typeFilter, entryTypeFilter]);
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginatedData = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
@@ -213,7 +217,7 @@ function GmReportTable({
               <Input
                 readOnly
                 value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f4f8] border-none h-11 text-[#555] cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
               />
             </div>
 
@@ -256,20 +260,35 @@ function GmReportTable({
 
             <div className="md:col-span-2 space-y-2">
               <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select Type</Label>
-              <Select>
-                <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800">
+              <Select value={entryTypeFilter} onValueChange={(v) => { setEntryTypeFilter(v); setCurrentPage(1); }}>
+                <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-gm-entry-type-filter">
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="new">New</SelectItem>
-                  <SelectItem value="renew">Renew</SelectItem>
-                  <SelectItem value="expire">Expire</SelectItem>
+                  <SelectItem value="New">New</SelectItem>
+                  <SelectItem value="Renew">Renew</SelectItem>
+                  <SelectItem value="Expire">Expire</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="md:col-span-3 grid grid-cols-2 gap-2">
+            <div className="md:col-span-2 space-y-2">
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Payment Type</Label>
+              <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setCurrentPage(1); }}>
+                <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-gm-type-filter">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="FULL">Full</SelectItem>
+                  <SelectItem value="PARTIAL">Partial</SelectItem>
+                  <SelectItem value="LOAN">Loan</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-4 grid grid-cols-3 gap-2">
               <div className="space-y-2">
                 <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Start Date</Label>
                 <div className="relative">
@@ -292,27 +311,23 @@ function GmReportTable({
                   />
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Ab Pay Date</Label>
+                <Select>
+                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800">
+                    <SelectValue placeholder="Choose..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="md:col-span-12 mt-2">
-              <div className="sm:w-48">
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Ab Pay Date</Label>
-                  <Select>
-                    <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="mt-4">
-                <Button onClick={() => onRefresh && onRefresh()} className="bg-[#008d4c] hover:bg-[#00733e] text-white px-8 h-11 font-bold text-lg rounded-md">
-                  View
-                </Button>
-              </div>
+              <Button onClick={() => onRefresh && onRefresh()} className="bg-[#008d4c] hover:bg-[#00733e] text-white px-8 h-11 font-bold text-lg rounded-md">
+                View
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -350,33 +365,46 @@ function GmReportTable({
             <Table>
               <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
                 <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black w-10 text-center">#</TableHead>
-                  <TableHead className="font-bold text-black min-w-[150px]">Company</TableHead>
-                  <TableHead className="font-bold text-black text-center">Package</TableHead>
-                  <TableHead className="font-bold text-black text-center">KWA</TableHead>
-                  <TableHead className="font-bold text-black text-center">PSA</TableHead>
-                  <TableHead className="font-bold text-black text-center">Package Amount</TableHead>
-                  <TableHead className="font-bold text-black text-center">Method</TableHead>
-                  <TableHead className="font-bold text-black text-center">BV Submit Date</TableHead>
-                  <TableHead className="font-bold text-black text-center">BV Date</TableHead>
-                  <TableHead className="font-bold text-black text-center">Person</TableHead>
-                  <TableHead className="font-bold text-black text-center">Rc/New</TableHead>
-                  <TableHead className="font-bold text-black min-w-[150px]">Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Package</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Type</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">PSA</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Package Amount</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Method</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">BV Submit Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">BV Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Person</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Rc/New</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                       No Records Found
                     </TableCell>
                   </TableRow>
                 ) : (
                   paginatedData.map((item, idx) => (
-                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
                       <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.companyName}</TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.package}</TableCell>
+                      <TableCell className="text-center py-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            item.gmType === "LOAN" ? "border-blue-200 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300" :
+                            item.gmType === "PARTIAL" ? "border-amber-200 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300" :
+                            "border-emerald-200 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          }
+                        >
+                          {item.gmType === "LOAN" ? "Loan" : item.gmType === "PARTIAL" ? "Partial" : "Full"}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.kwa}</TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.psa}</TableCell>
                       <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.packageAmount}</TableCell>
@@ -507,7 +535,7 @@ function BvReportTable({
               <Input
                 readOnly
                 value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-white border-slate-200 h-11 text-[#555] cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                className="bg-white border-slate-200 h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
               />
             </div>
 
@@ -592,17 +620,17 @@ function BvReportTable({
             <Table>
               <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
                 <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black w-10 text-center">#</TableHead>
-                  <TableHead className="font-bold text-black min-w-[120px]">Date</TableHead>
-                  <TableHead className="font-bold text-black min-w-[150px]">Title</TableHead>
-                  <TableHead className="font-bold text-black min-w-[150px]">Company</TableHead>
-                  <TableHead className="font-bold text-black min-w-[130px]">Author</TableHead>
-                  <TableHead className="font-bold text-black text-center">Status</TableHead>
-                  <TableHead className="font-bold text-black text-center">Total Tasks</TableHead>
-                  <TableHead className="font-bold text-black text-center">Value Sold</TableHead>
-                  <TableHead className="font-bold text-black text-center">Success Rate</TableHead>
-                  <TableHead className="font-bold text-black text-center">Follow-ups</TableHead>
-                  <TableHead className="font-bold text-black text-center">Missed Leads</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Title</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Author</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total Tasks</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Value Sold</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Success Rate</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Follow-ups</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Missed Leads</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -614,7 +642,7 @@ function BvReportTable({
                   </TableRow>
                 ) : (
                   paginatedData.map((item, idx) => (
-                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
                       <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
                       <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
@@ -736,7 +764,7 @@ function VasReportTable({
               <Input
                 readOnly
                 value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f4f8] border-none h-11 text-[#555] cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
               />
             </div>
 
@@ -784,28 +812,36 @@ function VasReportTable({
             <Table>
               <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
                 <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black text-center h-12">Company</TableHead>
-                  <TableHead className="font-bold text-black text-center h-12">Amount</TableHead>
-                  <TableHead className="font-bold text-black text-center h-12">Method</TableHead>
-                  <TableHead className="font-bold text-black text-center h-12">Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Company</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Amount</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Method</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Commission %</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Reward</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Final Commission</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No Records Found
                     </TableCell>
                   </TableRow>
                 ) : (
                   filtered.map((item, idx) => (
-                    <TableRow key={item.id || idx} className="border-b border-slate-100 hover:bg-slate-50/50 dark:border-zinc-800">
+                    <TableRow key={item.id || idx} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <TableCell className="text-center font-bold text-slate-700 py-4 dark:text-zinc-400">{item.companyName || "-"}</TableCell>
                       <TableCell className="text-center font-medium text-slate-700 py-4 dark:text-zinc-400">{Number(item.amount || 0)}</TableCell>
                       <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{item.method || "-"}</TableCell>
                       <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">
                         {item.date ? new Date(item.date).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '') : "-"}
                       </TableCell>
+                      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300" title="GM commission engine's effective rate for this user's quarter (MD-16(c)) — not a per-row VAS commission, which was never a defined concept.">
+                        {Number(item.commissionPercent || 0)}%
+                      </TableCell>
+                      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{Number(item.reward || 0)}</TableCell>
+                      <TableCell className="text-center font-semibold text-slate-700 py-4 dark:text-zinc-300">{Number(item.finalCommission || 0)}</TableCell>
                     </TableRow>
                   ))
                 )}
@@ -1067,18 +1103,18 @@ function LoanReportTable({
     <Card className="border-none shadow-none bg-transparent">
       <CardHeader className="pb-3 px-0">
         <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
-          <span className="uppercase text-slate-600">ADVANCE SALARY LIST</span>
-          <span className="text-slate-400 mx-1 text-lg font-bold">/</span>
-          <button 
-            onClick={() => setShowAddLoan(!showAddLoan)} 
-            className={`uppercase transition-colors hover:opacity-80 ${showAddLoan ? "text-[#00a65a]" : "text-slate-600"}`}
+          <span className="uppercase text-slate-600 dark:text-zinc-400">ADVANCE SALARY LIST</span>
+          <span className="text-slate-400 dark:text-zinc-600 mx-1 text-lg font-bold">/</span>
+          <button
+            onClick={() => setShowAddLoan(!showAddLoan)}
+            className={`uppercase transition-colors hover:opacity-80 ${showAddLoan ? "text-[#00a65a]" : "text-slate-600 dark:text-zinc-400"}`}
           >
             ADD LOAN
           </button>
-          <span className="text-slate-400 mx-1 text-lg font-bold">/</span>
-          <button 
-            onClick={() => setShowLoanHistory(!showLoanHistory)} 
-            className={`uppercase transition-colors hover:opacity-80 ${showLoanHistory ? "text-[#3c8dbc]" : "text-slate-600"}`}
+          <span className="text-slate-400 dark:text-zinc-600 mx-1 text-lg font-bold">/</span>
+          <button
+            onClick={() => setShowLoanHistory(!showLoanHistory)}
+            className={`uppercase transition-colors hover:opacity-80 ${showLoanHistory ? "text-[#3c8dbc]" : "text-slate-600 dark:text-zinc-400"}`}
           >
             LOAN HISTORY
           </button>
@@ -1086,27 +1122,27 @@ function LoanReportTable({
       </CardHeader>
       <CardContent className="space-y-6 pt-2 px-0">
         {showAddLoan && (
-          <form onSubmit={handleAddLoan} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white p-4 rounded-md border border-slate-200 shadow-sm">
+          <form onSubmit={handleAddLoan} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white dark:bg-zinc-900 p-4 rounded-md border border-slate-200 dark:border-zinc-800 shadow-sm">
             <div className="space-y-1.5 md:col-span-1">
-              <Label className="text-xs font-semibold text-slate-600">Employee</Label>
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
               <Input
                 readOnly
                 value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f2f5] border-slate-200 h-9 text-xs text-[#555] cursor-not-allowed focus-visible:ring-0"
+                className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
               />
               <input type="hidden" name="userId" value={currentUser?.id || currentUser?.userId || ""} />
             </div>
             <div className="space-y-1.5 md:col-span-1">
-              <Label className="text-xs font-semibold text-slate-600">Amount:</Label>
-              <Input name="amount" type="number" step="0.01" required placeholder="00:00" className="bg-white border-slate-200 h-9 text-xs" />
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Amount:</Label>
+              <Input name="amount" type="number" step="0.01" required placeholder="00:00" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs" />
             </div>
             <div className="space-y-1.5 md:col-span-1">
-              <Label className="text-xs font-semibold text-slate-600">Instalment:</Label>
-              <Input name="installmentAmount" type="number" step="0.01" required placeholder="Instalment" className="bg-white border-slate-200 h-9 text-xs" />
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Instalment:</Label>
+              <Input name="installmentAmount" type="number" step="0.01" required placeholder="Instalment" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs" />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs font-semibold text-slate-600">Detail</Label>
-              <Textarea name="detail" required placeholder="add detail" className="bg-white border-slate-200 h-9 min-h-[36px] py-1.5 text-xs resize-none" />
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Detail</Label>
+              <Textarea name="detail" required placeholder="add detail" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 min-h-[36px] py-1.5 text-xs resize-none" />
             </div>
             <div className="md:col-span-5">
               <Button type="submit" disabled={createLoanMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-bold text-sm rounded-sm">
@@ -1117,22 +1153,22 @@ function LoanReportTable({
         )}
 
         {showLoanHistory && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white p-4 rounded-md border border-slate-200 shadow-sm">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white dark:bg-zinc-900 p-4 rounded-md border border-slate-200 dark:border-zinc-800 shadow-sm">
             <div className="space-y-1.5 md:col-span-1">
-              <Label className="text-xs font-semibold text-slate-600">Employee</Label>
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
               <Input
                 readOnly
                 value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f2f5] border-slate-200 h-9 text-xs text-[#555] cursor-not-allowed focus-visible:ring-0"
+                className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
               />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs font-semibold text-slate-600">Start:</Label>
-              <Input type="date" value={historyStart} onChange={e => setHistoryStart(e.target.value)} className="bg-white border-slate-200 h-9 text-xs" />
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Start:</Label>
+              <Input type="date" value={historyStart} onChange={e => setHistoryStart(e.target.value)} className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs" />
             </div>
             <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-xs font-semibold text-slate-600">End:</Label>
-              <Input type="date" value={historyEnd} onChange={e => setHistoryEnd(e.target.value)} className="bg-white border-slate-200 h-9 text-xs" />
+              <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">End:</Label>
+              <Input type="date" value={historyEnd} onChange={e => setHistoryEnd(e.target.value)} className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs" />
             </div>
             <div className="md:col-span-5">
               <Button 
@@ -1160,9 +1196,9 @@ function LoanReportTable({
             </div>
             {isManager && (
               <div className="flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-slate-600">Filter:</span>
+                <span className="text-[13px] font-semibold text-slate-600 dark:text-zinc-400">Filter:</span>
                 <Select value={selectedEmployee} onValueChange={setSelectedEmployee}>
-                  <SelectTrigger className="w-[200px] h-8 bg-white border-slate-300 text-xs rounded-sm focus-visible:ring-0">
+                  <SelectTrigger className="w-[200px] h-8 bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 text-xs rounded-sm focus-visible:ring-0">
                     <SelectValue placeholder="Select Employee" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1178,46 +1214,46 @@ function LoanReportTable({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-slate-600">Search:</span>
+            <span className="text-[13px] font-semibold text-slate-600 dark:text-zinc-400">Search:</span>
             <Input
-              className="w-[200px] h-8 bg-white border-slate-300 text-xs rounded-sm focus-visible:ring-0 focus-visible:border-slate-400"
+              className="w-[200px] h-8 bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-300 dark:border-zinc-700 text-xs rounded-sm focus-visible:ring-0 focus-visible:border-slate-400"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
         </div>
-        
-        <div className="bg-white">
+
+        <div className="bg-white dark:bg-zinc-900 rounded-md border border-transparent dark:border-zinc-800">
           <Table className="w-full text-[13px]">
             <TableHeader>
-              <TableRow className="border-b border-[#dee2e6] hover:bg-transparent">
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">No#</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">Employee</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">Advance</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left w-1/4">Detail</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">Instalment</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">Remaining</TableHead>
-                <TableHead className="py-2.5 px-3 font-bold text-[#555] text-left">Date</TableHead>
-                {isManager && <TableHead className="py-2.5 px-3 font-bold text-[#555] text-center">Action</TableHead>}
+              <TableRow className="border-b border-[#dee2e6] dark:border-zinc-800 hover:bg-transparent">
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">No#</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Employee</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Advance</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left w-1/4">Detail</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Instalment</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Remaining</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Date</TableHead>
+                {isManager && <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-center">Action</TableHead>}
               </TableRow>
             </TableHeader>
-            <TableBody className="bg-[#f8f9fa]">
+            <TableBody className="bg-[#f8f9fa] dark:bg-zinc-900">
               {filtered.length === 0 ? (
-                <TableRow>
+                <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={isManager ? 8 : 7} className="text-center text-muted-foreground py-4">
                     No data available in table
                   </TableCell>
                 </TableRow>
               ) : (
                 filtered.map((loan, idx) => (
-                  <TableRow key={loan.id} className="border-b border-white hover:bg-[#f1f3f5] transition-colors">
-                    <TableCell className="py-3 px-3 text-[#555]">{idx + 1}/{String(loan.id || '').substring(0, 5)}</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555] font-semibold">{loan.employeeName} (Main)</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555]">{Number(loan.amount || 0).toString()}</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555] truncate max-w-[200px]">{loan.detail}</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555]">{Number(loan.installmentAmount || 0).toString()}</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555]">{Number(loan.remainingAmount || 0).toString()}</TableCell>
-                    <TableCell className="py-3 px-3 text-[#555] whitespace-nowrap">
+                  <TableRow key={loan.id} className="border-b border-white dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{loan.employeeName} (Main)</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{Number(loan.amount || 0).toString()}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 truncate max-w-[200px]">{loan.detail}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{Number(loan.installmentAmount || 0).toString()}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{Number(loan.remainingAmount || 0).toString()}</TableCell>
+                    <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 whitespace-nowrap">
                       {loan.date ? new Date(loan.date).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : "-"}
                     </TableCell>
                     {isManager && (
@@ -1242,34 +1278,34 @@ function LoanReportTable({
         </p>
         <Dialog open={!!viewItem} onOpenChange={(open) => setViewItem(open ? viewItem : null)}>
           <DialogContent className="max-w-[450px] p-0 gap-0">
-            <DialogHeader className="p-4 border-b border-slate-100 bg-white">
-              <DialogTitle className="text-[17px] font-bold text-[#555] text-left">Pay Loan</DialogTitle>
+            <DialogHeader className="p-4 border-b border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+              <DialogTitle className="text-[17px] font-bold text-[#555] dark:text-zinc-100 text-left">Pay Loan</DialogTitle>
             </DialogHeader>
             {viewItem && (
               <form onSubmit={(e) => {
                 e.preventDefault();
                 // TODO: implement loan payment submission logic
                 setViewItem(null);
-              }} className="p-5 space-y-4 bg-white">
+              }} className="p-5 space-y-4 bg-white dark:bg-zinc-900">
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555]">Name</Label>
-                  <Input readOnly value={viewItem.employeeName} className="bg-[#f0f2f5] border-slate-200 text-[#555] h-9 focus-visible:ring-0 cursor-not-allowed" />
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Name</Label>
+                  <Input readOnly value={viewItem.employeeName} className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-[#555] dark:text-zinc-300 h-9 focus-visible:ring-0 cursor-not-allowed" />
                 </div>
-                
+
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555]">Remaning</Label>
-                  <Input readOnly value={Number(viewItem.remainingAmount || 0).toString()} className="bg-white border-slate-200 text-[#555] h-9 focus-visible:ring-0" />
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Remaning</Label>
+                  <Input readOnly value={Number(viewItem.remainingAmount || 0).toString()} className="bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 text-[#555] dark:text-zinc-300 h-9 focus-visible:ring-0" />
                 </div>
-                
+
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555]">Pay</Label>
-                  <Input type="number" step="0.01" placeholder="00:00" className="bg-white border-slate-200 text-[#555] h-9 focus-visible:ring-0" />
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Pay</Label>
+                  <Input type="number" step="0.01" placeholder="00:00" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0" />
                 </div>
-                
+
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555]">Status</Label>
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Status</Label>
                   <Select defaultValue="Pending">
-                    <SelectTrigger className="bg-white border-slate-200 text-[#555] h-9 focus-visible:ring-0">
+                    <SelectTrigger className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1280,7 +1316,7 @@ function LoanReportTable({
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] text-[#555] hover:bg-[#e4e6e9] border-none px-5 h-9 text-[13px] font-semibold">
+                  <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] dark:bg-zinc-800 text-[#555] dark:text-zinc-300 hover:bg-[#e4e6e9] dark:hover:bg-zinc-700 border-none px-5 h-9 text-[13px] font-semibold">
                     Close
                   </Button>
                   <Button type="submit" className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-9 text-[13px] font-semibold">
@@ -1423,7 +1459,7 @@ function ReportChart({ data, type, details }: { data: ChartDataPoint[]; type: Re
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ border: 'none', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
+                    contentStyle={{ border: 'none', borderRadius: '8px', backgroundColor: 'hsl(var(--card))', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}
                   />
                   <Legend verticalAlign="bottom" height={36} iconType="circle" />
                 </PieChart>

@@ -1,8 +1,8 @@
 import { Router, type Express } from "express";
 import { z } from "zod";
-import { gmBvPoolRepository } from "../repositories/gm-bv-pool.repository";
+import { gmBvPoolRepository } from "./repositories/gm-bv-pool.repository";
 
-const createSchema = z.object({
+export const createSchema = z.object({
   customerId: z.string().uuid().optional().nullable(),
   companyName: z.string().trim().min(2).max(160).optional(),
   title: z.string().trim().min(2).max(160).optional(),
@@ -18,9 +18,9 @@ const createSchema = z.object({
   meta: z.record(z.any()).optional(),
   metrics: z.record(z.any()).optional(),
   assignedTo: z.string().uuid().optional(),
-});
+}).strict();
 
-const updateSchema = createSchema.partial();
+export const updateSchema = createSchema.partial();
 
 const parseDate = (val?: string) => (val ? new Date(val) : undefined);
 
@@ -106,9 +106,9 @@ export function registerGmBvPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const parsed = z.object({ assignedTo: z.string().uuid() }).parse(req.body);
-      const result = await gmBvPoolRepository.assign(req.params.id, parsed.assignedTo);
+      const result = await gmBvPoolRepository.assign(req.params.id, parsed.assignedTo, req.user.userId, req.user.roleId);
       if (!result.rowCount) {
-        return res.status(404).json({ error: "GM BV entry not found" });
+        return res.status(404).json({ error: "GM BV entry not found or not authorized" });
       }
       return res.json({ success: true });
     } catch (error: any) {
@@ -123,9 +123,9 @@ export function registerGmBvPoolRoutes(app: Express) {
   router.post("/gm-bv-pool/:id/link-customer", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const linked = await gmBvPoolRepository.linkCustomer(req.params.id, req.user.userId);
+      const linked = await gmBvPoolRepository.linkCustomer(req.params.id, req.user.userId, req.user.roleId);
       if (!linked?.customerId) {
-        return res.status(404).json({ error: "GM BV entry not found or could not link customer" });
+        return res.status(404).json({ error: "GM BV entry not found, not authorized, or could not link customer" });
       }
       return res.json({ success: true, customerId: linked.customerId });
     } catch (error) {

@@ -261,7 +261,7 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
                                 View Only
                             </Badge>
                         )}
-                        <Badge variant="secondary" className="bg-orange-100 text-orange-700">
+                        <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400">
                             {pendingCount} {viewOnly ? "Entries" : "Pending"}
                         </Badge>
                     </div>
@@ -287,7 +287,7 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
                                             <p className="font-semibold text-slate-900 dark:text-zinc-100">{entry.company_name || entry.companyName}</p>
                                             <p className="text-sm text-slate-600 dark:text-zinc-300">DRM ID: {entry.drm_id || entry.drmId}</p>
                                         </div>
-                                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900">
                                             {entry.package_type || entry.packageType || "Standard"}
                                         </Badge>
                                     </div>
@@ -324,16 +324,16 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
                                     </div>
 
                                     {entry.hod_comment && (
-                                        <div className="mb-3 p-2 bg-blue-50 rounded text-xs">
-                                            <span className="font-medium text-blue-900">HOD Comment:</span>
-                                            <p className="text-blue-700 mt-1">{entry.hod_comment}</p>
+                                        <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-950/40 rounded text-xs">
+                                            <span className="font-medium text-blue-900 dark:text-blue-300">HOD Comment:</span>
+                                            <p className="text-blue-700 dark:text-blue-400 mt-1">{entry.hod_comment}</p>
                                         </div>
                                     )}
 
                                     {entry.account_manager_comment && (
-                                        <div className="mb-3 p-2 bg-purple-50 rounded text-xs">
-                                            <span className="font-medium text-purple-900">Account Manager Comment:</span>
-                                            <p className="text-purple-700 mt-1">{entry.account_manager_comment}</p>
+                                        <div className="mb-3 p-2 bg-purple-50 dark:bg-purple-950/40 rounded text-xs">
+                                            <span className="font-medium text-purple-900 dark:text-purple-300">Account Manager Comment:</span>
+                                            <p className="text-purple-700 dark:text-purple-400 mt-1">{entry.account_manager_comment}</p>
                                         </div>
                                     )}
 
@@ -440,7 +440,7 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
                                 className={action === "approve" ? "bg-green-600 hover:bg-green-700" : ""}
                                 variant={action === "reject" ? "destructive" : "default"}
                                 onClick={handleSubmit}
-                                disabled={approveMutation.isPending || rejectMutation.isPending}
+                                disabled={!comment || !comment.trim() || approveMutation.isPending || rejectMutation.isPending}
                             >
                                 {approveMutation.isPending || rejectMutation.isPending ? "Processing..." : action === "approve" ? "Approve" : "Reject"}
                             </Button>

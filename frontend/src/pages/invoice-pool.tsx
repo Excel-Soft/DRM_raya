@@ -30,6 +30,23 @@ export default function InvoicePool() {
     enabled: !!selectedInvoiceId
   });
 
+  const invoiceDepartmentLabel = (inv: any): string => {
+    switch (inv?.invoiceType) {
+      case "LISTING_PAGE": return "Listing Page";
+      case "MINIWEBSITE": return "Alibaba Minisite";
+      case "PRODUCT_POSTING": return "Product Posting";
+      default: return inv?.serviceType || "Posting";
+    }
+  };
+
+  const invoiceItemDetail = (inv: any): string => {
+    return inv?.invoiceType === "PRODUCT_POSTING" ? "100" : "1";
+  };
+
+  const invoiceItemQty = (inv: any): number => {
+    return inv?.invoiceType === "PRODUCT_POSTING" ? 100 : 1;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status?.toUpperCase()) {
       case "APPROVED": return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
@@ -38,16 +55,17 @@ export default function InvoicePool() {
     }
   };
 
+  // "Approved" here tracks the Sales Executive's own concern — has HOD signed
+  // off? — not whether Accounts has also finished, which is a separate
+  // back-office step still visible per-row in the Account Status column.
+  // Only an invoice still waiting on HOD itself counts as "Pending".
+  const isHodApprovedStatus = (s: string) => s === "PENDING_ACCOUNT" || s === "APPROVED";
+  const isPendingHodStatus = (s: string) => s === "PENDING_HOD" || s === "PENDING";
+
   const getTabCounts = () => {
     return {
-      Approved: invoices.filter(i => {
-        const s = i.finalStatus?.toUpperCase() || "";
-        return s === "APPROVED";
-      }).length,
-      Pending: invoices.filter(i => {
-        const s = i.finalStatus?.toUpperCase() || "";
-        return s === "PENDING_HOD" || s === "PENDING_ACCOUNT" || s === "PENDING";
-      }).length,
+      Approved: invoices.filter(i => isHodApprovedStatus(i.finalStatus?.toUpperCase() || "")).length,
+      Pending: invoices.filter(i => isPendingHodStatus(i.finalStatus?.toUpperCase() || "")).length,
       Rejected: invoices.filter(i => {
         const s = i.finalStatus?.toUpperCase() || "";
         return s === "REJECTED";
@@ -57,8 +75,8 @@ export default function InvoicePool() {
 
   const filteredInvoices = invoices.filter(i => {
     const s = i.finalStatus?.toUpperCase() || "";
-    if (activeTab === "Approved") return s === "APPROVED";
-    if (activeTab === "Pending") return s === "PENDING_HOD" || s === "PENDING_ACCOUNT" || s === "PENDING";
+    if (activeTab === "Approved") return isHodApprovedStatus(s);
+    if (activeTab === "Pending") return isPendingHodStatus(s);
     if (activeTab === "Rejected") return s === "REJECTED";
     return true;
   });
@@ -86,23 +104,23 @@ export default function InvoicePool() {
                     <Table>
                       <TableBody>
                         <TableRow>
-                          <TableCell className="font-semibold w-1/3 text-slate-600 bg-slate-50/50">Invoice ID</TableCell>
-                          <TableCell>{invoiceDetails.id}</TableCell>
+                          <TableCell className="font-semibold w-1/3 text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Invoice ID</TableCell>
+                          <TableCell>{invoiceDetails.invoiceNumber || invoiceDetails.id}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Client Name</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Client Name</TableCell>
                           <TableCell>{invoiceDetails.company_name || invoiceDetails.account_name || "N/A"}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Email</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Email</TableCell>
                           <TableCell>{invoiceDetails.email || "-"}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Phone</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Phone</TableCell>
                           <TableCell>{invoiceDetails.phone || invoiceDetails.mobile || "-"}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Address</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Address</TableCell>
                           <TableCell>{invoiceDetails.city || "-"}</TableCell>
                         </TableRow>
                       </TableBody>
@@ -117,44 +135,54 @@ export default function InvoicePool() {
                     <Table>
                       <TableBody>
                         <TableRow>
-                          <TableCell className="font-semibold w-1/3 text-slate-600 bg-slate-50/50">Sub Total</TableCell>
+                          <TableCell className="font-semibold w-1/3 text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Sub Total</TableCell>
                           <TableCell>{Number(invoiceDetails.amount || 0).toLocaleString()}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Discount</TableCell>
-                          <TableCell>{Number(invoiceDetails.amount || 0).toLocaleString()}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Grand Total</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Discount</TableCell>
                           <TableCell>0</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">HOD Status</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Grand Total</TableCell>
+                          <TableCell>{Number(invoiceDetails.amount || 0).toLocaleString()}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">HOD Status</TableCell>
                           <TableCell>
-                            <Badge className={getStatusColor(invoiceDetails.status === 'PENDING_ACCOUNT' || invoiceDetails.status === 'APPROVED' ? 'APPROVED' : invoiceDetails.status)}>
-                              {invoiceDetails.status === 'PENDING_ACCOUNT' || invoiceDetails.status === 'APPROVED' ? 'Approved' : 'Pending'}
+                            <Badge className={getStatusColor(invoiceDetails.status === 'REJECTED' ? 'REJECTED' : invoiceDetails.status === 'PENDING_ACCOUNT' || invoiceDetails.status === 'APPROVED' ? 'APPROVED' : invoiceDetails.status)}>
+                              {invoiceDetails.status === 'REJECTED' ? 'Rejected' : invoiceDetails.status === 'PENDING_ACCOUNT' || invoiceDetails.status === 'APPROVED' ? 'Approved' : 'Pending'}
                             </Badge>
                           </TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Account Status</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Account Status</TableCell>
                           <TableCell>
-                            <Badge className={getStatusColor(invoiceDetails.status === 'APPROVED' ? 'APPROVED' : 'PENDING')}>
-                              {invoiceDetails.status === 'APPROVED' ? 'Paid' : 'Pending'}
+                            <Badge className={getStatusColor(invoiceDetails.status === 'REJECTED' ? 'REJECTED' : invoiceDetails.status === 'APPROVED' ? 'APPROVED' : 'PENDING')}>
+                              {invoiceDetails.status === 'REJECTED' ? 'Rejected' : invoiceDetails.status === 'APPROVED' ? 'Paid' : 'Pending'}
                             </Badge>
                           </TableCell>
                         </TableRow>
+                        {invoiceDetails.status === 'REJECTED' && (
+                          <TableRow>
+                            <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Rejection Reason</TableCell>
+                            <TableCell className="text-rose-600">{invoiceDetails.rejectionReason || "-"}</TableCell>
+                          </TableRow>
+                        )}
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Invoice Department</TableCell>
-                          <TableCell>Posting</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Invoice Department</TableCell>
+                          <TableCell>{invoiceDepartmentLabel(invoiceDetails)}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Created Date</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Created Date</TableCell>
                           <TableCell>{new Date(invoiceDetails.created_at).toLocaleString()}</TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50">Updated Date</TableCell>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Updated Date</TableCell>
                           <TableCell>{new Date(invoiceDetails.updated_at).toLocaleString()}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell className="font-semibold text-slate-600 bg-slate-50/50 dark:bg-zinc-900">Comment</TableCell>
+                          <TableCell>{invoiceDetails.notes || "-"}</TableCell>
                         </TableRow>
                       </TableBody>
                     </Table>
@@ -179,9 +207,9 @@ export default function InvoicePool() {
                     <TableBody>
                       <TableRow>
                         <TableCell>{invoiceDetails.project_name || "N/A"}</TableCell>
-                        <TableCell>-</TableCell>
+                        <TableCell>{invoiceItemDetail(invoiceDetails)}</TableCell>
                         <TableCell>{Number(invoiceDetails.amount || 0).toLocaleString()}</TableCell>
-                        <TableCell>1</TableCell>
+                        <TableCell>{invoiceItemQty(invoiceDetails)}</TableCell>
                         <TableCell className="text-right">{Number(invoiceDetails.amount || 0).toLocaleString()}</TableCell>
                       </TableRow>
                     </TableBody>
@@ -205,9 +233,9 @@ export default function InvoicePool() {
                     <TableBody>
                       <TableRow>
                         <TableCell>{invoiceDetails.project_name || "N/A"}</TableCell>
-                        <TableCell>0</TableCell>
-                        <TableCell>Free</TableCell>
-                        <TableCell className="text-right">{new Date(invoiceDetails.created_at).toLocaleString()}</TableCell>
+                        <TableCell>{Number(invoiceDetails.paidAmount || 0).toLocaleString()}</TableCell>
+                        <TableCell>{invoiceDetails.paymentMethod || "-"}</TableCell>
+                        <TableCell className="text-right">{invoiceDetails.paidDate ? new Date(invoiceDetails.paidDate).toLocaleString() : "-"}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -291,7 +319,7 @@ export default function InvoicePool() {
                 filteredInvoices.map((invoice) => (
                   <TableRow key={invoice.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/50">
                     <TableCell className="font-medium text-slate-700 dark:text-zinc-300 truncate max-w-[120px]" title={invoice.id}>
-                      {invoice.id}
+                      {invoice.invoiceNumber || invoice.id}
                     </TableCell>
                     <TableCell className="text-slate-600 dark:text-zinc-400">
                       {invoice.client || "N/A"}
@@ -310,8 +338,8 @@ export default function InvoicePool() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={getStatusColor(invoice.finalStatus === "PENDING_HOD" || invoice.finalStatus === "PENDING_ACCOUNT" || invoice.finalStatus?.toUpperCase() === "PENDING" ? "PENDING" : invoice.finalStatus)}>
-                        {invoice.finalStatus === "PENDING_HOD" || invoice.finalStatus === "PENDING_ACCOUNT" || invoice.finalStatus?.toUpperCase() === "PENDING" ? "Pending" : (invoice.finalStatus?.toUpperCase() === "APPROVED" ? "Approved" : "Rejected")}
+                      <Badge variant="outline" className={getStatusColor(isHodApprovedStatus(invoice.finalStatus?.toUpperCase() || "") ? "APPROVED" : isPendingHodStatus(invoice.finalStatus?.toUpperCase() || "") ? "PENDING" : "REJECTED")}>
+                        {isHodApprovedStatus(invoice.finalStatus?.toUpperCase() || "") ? "Approved" : isPendingHodStatus(invoice.finalStatus?.toUpperCase() || "") ? "Pending" : "Rejected"}
                       </Badge>
                     </TableCell>
                     <TableCell>

@@ -6,6 +6,11 @@ import { useToast } from "@/hooks/use-toast";
 
 import { useQuery } from "@tanstack/react-query";
 
+interface RunningProjectLink {
+    url: string;
+    label: string | null;
+}
+
 interface RunningProject {
     id: string;
     company: string;
@@ -14,7 +19,7 @@ interface RunningProject {
     time: string;
     assign: string;
     date: string;
-    link: string;
+    links: RunningProjectLink[];
 }
 
 export default function PmsRunningProjects() {
@@ -54,7 +59,7 @@ export default function PmsRunningProjects() {
             row.time,
             row.assign,
             row.date,
-            row.link
+            (row.links || []).map((l) => l.url).join(", ")
         ]);
 
         if (formatType === "copy") {
@@ -171,7 +176,25 @@ export default function PmsRunningProjects() {
                                         <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">{row.time}</td>
                                         <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">{row.assign}</td>
                                         <td className="px-4 py-4 text-[13px] border-r border-gray-100 whitespace-nowrap dark:border-zinc-800">{row.date}</td>
-                                        <td className="px-4 py-4 text-[13px]">{row.link}</td>
+                                        <td className="px-4 py-4 text-[13px]">
+                                            {row.links && row.links.length > 0 ? (
+                                                <div className="flex flex-col gap-1">
+                                                    {row.links.map((l, idx) => (
+                                                        <a
+                                                            key={idx}
+                                                            href={l.url.startsWith("http") ? l.url : `https://${l.url}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-emerald-600 hover:underline break-all"
+                                                        >
+                                                            {l.label || l.url}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400">—</span>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))
                             )}

@@ -9,6 +9,16 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -65,6 +75,9 @@ type PostRow = {
   rejectionReason: string | null;
   cancelReason: string | null;
   externalRef: string | null;
+  likes: number;
+  comments: number;
+  shares: number;
   createdBy: string | null;
   createdByName: string | null;
   approvedBy: string | null;
@@ -376,6 +389,18 @@ export default function SocialMedia() {
     mutationFn: (vars: { id: string; action: string; payload?: Record<string, unknown> }) =>
       apiRequestJson("POST", `/api/social-media/posts/${vars.id}/${vars.action}`, vars.payload ?? {}),
   });
+  const engagementMutation = useMutation({
+    mutationFn: (vars: { id: string; likes: number; comments: number; shares: number }) =>
+      apiRequestJson("PATCH", `/api/social-media/posts/${vars.id}/engagement`, { likes: vars.likes, comments: vars.comments, shares: vars.shares }),
+    onSuccess: (row: any) => {
+      toast({ title: "Engagement updated" });
+      setViewTarget(row);
+      invalidate();
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to update engagement", description: err?.message, variant: "destructive" }),
+  });
+  const [engagementDraft, setEngagementDraft] = useState({ likes: "0", comments: "0", shares: "0" });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequestJson("DELETE", `/api/social-media/posts/${id}`),
     onSuccess: () => {
@@ -385,7 +410,7 @@ export default function SocialMedia() {
     onError: (err: any) =>
       toast({ title: "Failed to delete post", description: err?.message, variant: "destructive" }),
   });
-
+  const [deleteConfirmPost, setDeleteConfirmPost] = useState<any | null>(null);
   // Row-level capability helpers ---------------------------------------------
   const isOwner = (row: PostRow) => !!uid && String(row.createdBy) === uid;
   // Management (edit/submit/schedule/cancel/delete): FULL, the owner, or a posting
@@ -827,7 +852,7 @@ export default function SocialMedia() {
       <div className="w-full bg-white shadow-sm border border-gray-100 rounded-sm overflow-x-auto dark:bg-zinc-900 dark:border-zinc-800">
         <table className="w-full text-left border-collapse min-w-[1000px]">
           <thead>
-            <tr className="border-b border-gray-100 dark:border-zinc-800" style={{ backgroundColor: "#e2f2e7" }}>
+            <tr className="border-b border-gray-100 dark:border-zinc-800 bg-[#e2f2e7] dark:bg-zinc-900">
               {["S.No", "Platform", "Account", "Title / Content", "Approval", "Publishing", "Scheduled", "Created By", "Action"].map((h) => (
                 <th key={h} className="px-4 py-3 text-[13px] font-bold text-[#212529] whitespace-nowrap dark:text-zinc-100">
                   {h}
@@ -903,7 +928,10 @@ export default function SocialMedia() {
                       <Eye
                         size={16}
                         className="text-[#6c757d] cursor-pointer hover:scale-110 transition-transform"
-                        onClick={() => setViewTarget(row)}
+                        onClick={() => {
+                          setViewTarget(row);
+                          setEngagementDraft({ likes: String(row.likes ?? 0), comments: String(row.comments ?? 0), shares: String(row.shares ?? 0) });
+                        }}
                         data-testid={`button-view-${row.id}`}
                       />
                       {canEdit(row) && (
@@ -978,9 +1006,7 @@ export default function SocialMedia() {
                         <Trash2
                           size={16}
                           className="text-[#e74c3c] cursor-pointer hover:scale-110 transition-transform"
-                          onClick={() => {
-                            if (window.confirm("Delete this post?")) deleteMutation.mutate(row.id);
-                          }}
+                          onClick={() => setDeleteConfirmPost(row)}
                           data-testid={`button-delete-${row.id}`}
                         />
                       )}
@@ -1105,6 +1131,60 @@ export default function SocialMedia() {
                 <div>Scheduled: {formatDateTime(viewTarget.scheduledAt)}</div>
                 <div>Published by: {viewTarget.publishedByName ?? "—"}</div>
                 <div>Published: {formatDateTime(viewTarget.publishedAt)}</div>
+              </div>
+              <div className="border rounded p-3 dark:border-zinc-700 space-y-2">
+                <div className="text-[12px] font-semibold text-[#495057] dark:text-zinc-400">
+                  Engagement{viewTarget.publishingStatus !== "PUBLISHED" && " (recorded once published)"}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="text-[11px] text-[#6c757d] dark:text-zinc-500">
+                    Likes
+                    <Input
+                      type="number"
+                      min={0}
+                      value={engagementDraft.likes}
+                      onChange={(e) => setEngagementDraft((d) => ({ ...d, likes: e.target.value }))}
+                      className="mt-1 h-8 text-[12.5px]"
+                      disabled={!canManage(viewTarget)}
+                    />
+                  </label>
+                  <label className="text-[11px] text-[#6c757d] dark:text-zinc-500">
+                    Comments
+                    <Input
+                      type="number"
+                      min={0}
+                      value={engagementDraft.comments}
+                      onChange={(e) => setEngagementDraft((d) => ({ ...d, comments: e.target.value }))}
+                      className="mt-1 h-8 text-[12.5px]"
+                      disabled={!canManage(viewTarget)}
+                    />
+                  </label>
+                  <label className="text-[11px] text-[#6c757d] dark:text-zinc-500">
+                    Shares
+                    <Input
+                      type="number"
+                      min={0}
+                      value={engagementDraft.shares}
+                      onChange={(e) => setEngagementDraft((d) => ({ ...d, shares: e.target.value }))}
+                      className="mt-1 h-8 text-[12.5px]"
+                      disabled={!canManage(viewTarget)}
+                    />
+                  </label>
+                </div>
+                {canManage(viewTarget) && (
+                  <Button
+                    size="sm"
+                    disabled={engagementMutation.isPending}
+                    onClick={() => engagementMutation.mutate({
+                      id: viewTarget.id,
+                      likes: Math.max(0, parseInt(engagementDraft.likes, 10) || 0),
+                      comments: Math.max(0, parseInt(engagementDraft.comments, 10) || 0),
+                      shares: Math.max(0, parseInt(engagementDraft.shares, 10) || 0),
+                    })}
+                  >
+                    {engagementMutation.isPending ? "Saving…" : "Save Engagement"}
+                  </Button>
+                )}
               </div>
               {viewTarget.rejectionReason && (
                 <div className="text-[12px] text-red-600">Rejection reason: {viewTarget.rejectionReason}</div>
@@ -1248,6 +1328,31 @@ export default function SocialMedia() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteConfirmPost} onOpenChange={(open) => !open && setDeleteConfirmPost(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this post?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the SMM post <strong>{deleteConfirmPost?.title}</strong> and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                if (deleteConfirmPost) {
+                  deleteMutation.mutate(deleteConfirmPost.id);
+                  setDeleteConfirmPost(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

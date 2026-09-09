@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 
 interface PendingProject {
     id: string;
+    projectNumber?: string;
     company: string;
     project: string;
     status: string;
@@ -35,6 +36,8 @@ interface PendingProject {
     rejectedAt?: string | null;
     rejectionReason?: string | null;
     sentToManager?: boolean;
+    hodApprovedAt?: string | null;
+    accountsApprovedAt?: string | null;
 }
 
 export default function PmsPendingApprovals() {
@@ -125,12 +128,13 @@ export default function PmsPendingApprovals() {
             return;
         }
 
-        const headers = ["#P-ID", "Projects", "Status", "Hod", "Dep", "Date"];
+        const headers = ["#P-ID", "Projects", "Status", "Hod", "Account", "Dep", "Date"];
         const rows = filteredData.map((row) => [
-            `#${row.id?.toString().slice(-4).toUpperCase() || "N/A"}`,
+            `#${row.projectNumber || "N/A"}`,
             `${row.project} (${row.company})`,
             row.status,
-            "Verified",
+            row.hodApprovedAt ? "Verified" : "Waiting",
+            row.accountsApprovedAt ? "Verified" : "Waiting",
             "Product Posting",
             row.date ? format(new Date(row.date), "dd-MM-yyyy") : "N/A"
         ]);
@@ -218,6 +222,7 @@ export default function PmsPendingApprovals() {
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Projects</th>
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Status</th>
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Hod</th>
+                                <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Account</th>
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Dep</th>
                                 <th className="px-4 py-3 text-[13px] font-bold border-r border-[#badbcc] dark:border-zinc-800">Date</th>
                                 <th className="px-4 py-3 text-[13px] font-bold">Action</th>
@@ -226,7 +231,7 @@ export default function PmsPendingApprovals() {
                         <tbody className="divide-y divide-gray-100 text-[#495057] dark:text-zinc-400">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={7} className="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-zinc-400">
+                                    <td colSpan={8} className="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-zinc-400">
                                         <div className="flex justify-center items-center">
                                             <Loader2 className="w-4 h-4 animate-spin mr-2" />
                                             Loading pending projects...
@@ -235,7 +240,7 @@ export default function PmsPendingApprovals() {
                                 </tr>
                             ) : filteredData.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-zinc-400">
+                                    <td colSpan={8} className="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-zinc-400">
                                         No pending documents to upload.
                                     </td>
                                 </tr>
@@ -249,10 +254,10 @@ export default function PmsPendingApprovals() {
                                     return (
                                         <tr key={row.id} className="hover:bg-gray-50 transition-colors dark:hover:bg-zinc-800">
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 font-bold text-gray-400 dark:border-zinc-800">
-                                                #{row.id?.toString().slice(-4).toUpperCase() || "N/A"}
+                                                #{row.projectNumber || "N/A"}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                <div className="font-bold text-[#333] mb-1">{row.project}</div>
+                                                <div className="font-bold text-[#333] dark:text-zinc-300 mb-1">{row.project}</div>
                                                 <div className="text-[12px] text-blue-500 font-medium">{row.company}</div>
                                                 {showRejection && (
                                                     <div className="mt-2 text-[11px] bg-red-50 text-red-600 border border-red-100 p-1.5 rounded-sm dark:bg-red-900/20 dark:border-red-900/50">
@@ -283,16 +288,21 @@ export default function PmsPendingApprovals() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                {row.sentToManager ? (
-                                                    <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-600 font-medium text-[11px] border border-blue-200">
-                                                        Reviewing
-                                                    </span>
-                                                ) : showRejection ? (
+                                                {!showRejection && row.hodApprovedAt ? (
+                                                    <span className="text-emerald-600 font-bold">Verified</span>
+                                                ) : (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
                                                         Waiting
                                                     </span>
-                                                ) : (
+                                                )}
+                                            </td>
+                                            <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
+                                                {!showRejection && row.accountsApprovedAt ? (
                                                     <span className="text-emerald-600 font-bold">Verified</span>
+                                                ) : (
+                                                    <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
+                                                        Waiting
+                                                    </span>
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
@@ -362,11 +372,18 @@ export default function PmsPendingApprovals() {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div className="space-y-2">
                                 <label className="text-[12px] font-semibold text-[#495057] dark:text-zinc-400">company name</label>
-                                <Input 
-                                    readOnly 
-                                    value={projects.find(p => p.id === selectedProjectId)?.company || ""} 
+                                <Input
+                                    readOnly
+                                    value={projects.find(p => p.id === selectedProjectId)?.company || ""}
                                     className="bg-[#e9ecef] border-gray-200 h-10 text-[13px] dark:border-zinc-800 dark:bg-zinc-900"
                                 />
+                                <p className="text-[11px] text-muted-foreground">
+                                    {(() => {
+                                        const p = projects.find(p => p.id === selectedProjectId);
+                                        if (!p) return "";
+                                        return p.projectNumber ? `${p.project} (#${p.projectNumber})` : p.project;
+                                    })()}
+                                </p>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-[12px] font-semibold text-[#495057] dark:text-zinc-400">Package</label>

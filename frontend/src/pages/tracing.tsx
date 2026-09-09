@@ -26,7 +26,8 @@ type TracingItem = {
   accountHolder: string;
   email: string | null;
   contactNo: string | null;
-  ntnCnic: string | null;
+  ntn: string | null;
+  cnic: string | null;
   grade: string;
   createdAt: string;
 };
@@ -47,7 +48,8 @@ const addSchema = z.object({
   accountHolder: z.string().min(1, "Account Holder is required"),
   contactNo: z.string().min(1, "Contact No is required"),
   email: z.string().email().optional().or(z.literal("")).transform((v) => v || undefined),
-  ntnCnic: z.string().optional(),
+  ntn: z.string().optional(),
+  cnic: z.string().optional(),
   grade: z.enum(["A+", "A-", "B+", "B-", "B", "C+", "C", "D"]),
 });
 
@@ -115,7 +117,8 @@ export default function TracingPage() {
       accountHolder: "",
       contactNo: "",
       email: "",
-      ntnCnic: "",
+      ntn: "",
+      cnic: "",
       grade: "A+",
     },
   });
@@ -138,7 +141,7 @@ export default function TracingPage() {
       toast({ title: "Customer created" });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/tracing/summary"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/tracing/list"] });
-      form.reset({ companyName: "", accountHolder: "", contactNo: "", email: "", ntnCnic: "", grade: "A+" });
+      form.reset({ companyName: "", accountHolder: "", contactNo: "", email: "", ntn: "", cnic: "", grade: "A+" });
       setPage(1);
       setPageInput("1");
     },
@@ -233,15 +236,28 @@ export default function TracingPage() {
                     )}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
-                    name="ntnCnic"
+                    name="ntn"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>NTN / CNIC</FormLabel>
+                        <FormLabel>NTN</FormLabel>
                         <FormControl>
-                          <Input placeholder="NTN / CNIC (optional)" {...field} />
+                          <Input placeholder="NTN (optional)" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="cnic"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>CNIC</FormLabel>
+                        <FormControl>
+                          <Input placeholder="CNIC (optional)" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -361,12 +377,13 @@ export default function TracingPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12"></TableHead>
-                  <TableHead>Company ID</TableHead>
+                  <TableHead>DRM ID</TableHead>
                   <TableHead>Co Name</TableHead>
                   <TableHead>Acc Holder</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Contact No</TableHead>
-                  <TableHead>NTN / CNIC</TableHead>
+                  <TableHead>NTN</TableHead>
+                  <TableHead>CNIC</TableHead>
                   <TableHead>Account Create Date</TableHead>
                   <TableHead>Action</TableHead>
                 </TableRow>
@@ -374,13 +391,13 @@ export default function TracingPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8">
+                    <TableCell colSpan={10} className="text-center py-8">
                       Loading...
                     </TableCell>
                   </TableRow>
                 ) : (listData?.items ?? []).length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                       No records found
                     </TableCell>
                   </TableRow>
@@ -401,7 +418,8 @@ export default function TracingPage() {
                       <TableCell>{item.accountHolder}</TableCell>
                       <TableCell>{item.email || "-"}</TableCell>
                       <TableCell>{item.contactNo || "-"}</TableCell>
-                      <TableCell>{item.ntnCnic || "-"}</TableCell>
+                      <TableCell>{item.ntn || "-"}</TableCell>
+                      <TableCell>{item.cnic || "-"}</TableCell>
                       <TableCell>
                         {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "-"}
                       </TableCell>

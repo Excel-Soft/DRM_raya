@@ -607,7 +607,7 @@ export default function PostingDataPage() {
                                         </TableRow>
                                     ) : filteredData.length > 0 ? (
                                         filteredData.map((item, idx) => (
-                                            <TableRow key={item.id} className="hover:bg-slate-50/50 border-b border-slate-100 dark:border-zinc-800">
+                                            <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800">
                                                 <TableCell className="text-slate-600 text-xs font-medium dark:text-zinc-400 py-3">{idx + 1}</TableCell>
                                                 <TableCell className="text-slate-800 text-xs font-medium dark:text-zinc-100 py-3">{item.title}</TableCell>
                                                 <TableCell className="text-slate-600 text-xs max-w-[200px] truncate dark:text-zinc-300 py-3">{item.keywords}</TableCell>
@@ -821,7 +821,7 @@ export default function PostingDataPage() {
                                         </TableRow>
                                     ) : linkReportData.length > 0 ? (
                                         linkReportData.map((item, idx) => (
-                                            <TableRow key={item.id} className="hover:bg-slate-50/50">
+                                            <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800">
                                                 <TableCell className="text-slate-500 font-medium dark:text-zinc-400">{idx + 1}</TableCell>
                                                 <TableCell className="text-slate-500 text-xs font-mono dark:text-zinc-400">{item.id}</TableCell>
                                                 <TableCell className="font-medium text-slate-800 dark:text-zinc-100">{item.title || "Example Company"}</TableCell>
@@ -914,7 +914,7 @@ export default function PostingDataPage() {
                                         restrictedKeywords
                                             .filter((k: any) => k.keyword?.toLowerCase().includes(restrictedSearch.toLowerCase()))
                                             .map((item, idx) => (
-                                                <TableRow key={item.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:border-zinc-800">
+                                                <TableRow key={item.id} className="border-b border-slate-50 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                                     <TableCell className="text-sm font-medium text-slate-400">{idx + 1}</TableCell>
                                                     <TableCell className="text-sm font-semibold text-slate-700 uppercase tracking-tight dark:text-zinc-400">{item.keyword}</TableCell>
                                                     <TableCell className="text-center">
@@ -955,7 +955,7 @@ export default function PostingDataPage() {
                         </div>
                         <CardContent className="p-0">
                             <Table>
-                                <TableHeader className="bg-slate-50/50">
+                                <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
                                     <TableRow>
                                         <TableHead className="w-12 font-bold text-slate-700 dark:text-zinc-400">#</TableHead>
                                         <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Product</TableHead>
@@ -1062,7 +1062,7 @@ export default function PostingDataPage() {
                                                 </TableCell>
                                             </TableRow>
                                         ) : filteredData.map((item) => (
-                                            <TableRow key={item.id} className="hover:bg-slate-50/50">
+                                            <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800">
                                                 <TableCell className="text-slate-500 font-medium font-mono text-xs truncate max-w-[80px] dark:text-zinc-400">
                                                     {item.id}
                                                 </TableCell>

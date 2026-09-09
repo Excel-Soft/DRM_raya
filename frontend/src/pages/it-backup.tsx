@@ -6,8 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2, Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
@@ -77,6 +87,19 @@ export default function ItBackup() {
       toast({ title: extractErrorMessage(err, "Failed to add backup"), variant: "destructive" }),
   });
 
+  const deleteBackupMutation = useMutation({
+    mutationFn: async (id: string) =>
+      apiRequestJson("DELETE", `/api/it/backups/${id}`),
+    onSuccess: () => {
+      toast({ title: "Backup record deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/it/backups"] });
+    },
+    onError: (err: any) =>
+      toast({ title: extractErrorMessage(err, "Failed to delete backup"), variant: "destructive" }),
+  });
+
+  const [deleteConfirmBackupId, setDeleteConfirmBackupId] = useState<string | null>(null);
+
   const handleSave = () => {
     if (!form.domainId) {
       toast({ title: "Please select a domain", variant: "destructive" });
@@ -103,7 +126,7 @@ export default function ItBackup() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 bg-slate-50/50 min-h-screen dark:bg-zinc-950">
+    <div className="flex flex-col gap-6 p-6 bg-slate-50/50 dark:bg-zinc-900 min-h-screen dark:bg-zinc-950">
       <h1 className="text-xl font-bold tracking-tight text-slate-800 uppercase dark:text-zinc-100">Domain Backup</h1>
 
       <Card className="border-none shadow-sm overflow-hidden bg-white dark:bg-zinc-900">
@@ -124,7 +147,7 @@ export default function ItBackup() {
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider dark:text-zinc-400">Domain:</label>
                       <Select value={form.domainId} onValueChange={(v) => setForm((f) => ({ ...f, domainId: v }))}>
-                        <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                        <SelectTrigger className="h-11 bg-slate-50/50 dark:bg-zinc-900 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
                           <SelectValue placeholder="Select domain..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -140,7 +163,7 @@ export default function ItBackup() {
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-slate-500 uppercase tracking-wider dark:text-zinc-400">Backup Type:</label>
                       <Select value={form.backupType} onValueChange={(v) => setForm((f) => ({ ...f, backupType: v }))}>
-                        <SelectTrigger className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
+                        <SelectTrigger className="h-11 bg-slate-50/50 dark:bg-zinc-900 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100">
                           <SelectValue placeholder="Choose..." />
                         </SelectTrigger>
                         <SelectContent>
@@ -158,7 +181,7 @@ export default function ItBackup() {
                       placeholder="Storage location or URL"
                       value={form.backupUrl}
                       onChange={(e) => setForm((f) => ({ ...f, backupUrl: e.target.value }))}
-                      className="h-11 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                      className="h-11 bg-slate-50/50 dark:bg-zinc-900 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                     />
                   </div>
 
@@ -167,12 +190,12 @@ export default function ItBackup() {
                     <Textarea
                       value={form.details}
                       onChange={(e) => setForm((f) => ({ ...f, details: e.target.value }))}
-                      className="min-h-[120px] bg-slate-50/50 border-slate-200 resize-none dark:border-zinc-800"
+                      className="min-h-[120px] bg-slate-50/50 dark:bg-zinc-900 border-slate-200 resize-none dark:border-zinc-800"
                       placeholder="Enter backup details..."
                     />
                   </div>
                 </div>
-                <DialogFooter className="p-6 bg-slate-50/50 flex flex-row justify-end gap-3 border-t">
+                <DialogFooter className="p-6 bg-slate-50/50 dark:bg-zinc-900 flex flex-row justify-end gap-3 border-t">
                   <Button variant="ghost" onClick={() => setDialogOpen(false)} className="bg-white dark:bg-zinc-900 border text-slate-700 hover:bg-slate-100 px-8 h-11 font-bold dark:hover:bg-zinc-800 dark:text-zinc-400">Close</Button>
                   <Button onClick={handleSave} disabled={createBackup.isPending} className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 h-11 font-bold shadow-sm">
                     {createBackup.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
@@ -188,7 +211,7 @@ export default function ItBackup() {
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-500 font-medium dark:text-zinc-400">Search:</span>
               <Input
-                className="h-9 w-64 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                className="h-9 w-64 bg-slate-50/50 dark:bg-zinc-900 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                 placeholder="Find by domain..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -206,6 +229,7 @@ export default function ItBackup() {
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Storage URL</TableHead>
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Description</TableHead>
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Backup Date</TableHead>
+                  <TableHead className="font-bold text-slate-700 dark:text-zinc-400 text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -223,11 +247,23 @@ export default function ItBackup() {
                     <TableCell className="text-slate-600 font-medium text-sm dark:text-zinc-300">
                       {item.backupDate ? new Date(item.backupDate).toLocaleDateString() : (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "N/A")}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-full"
+                        onClick={() => setDeleteConfirmBackupId(item.id)}
+                        disabled={deleteBackupMutation.isPending}
+                        aria-label="Delete backup"
+                      >
+                        {deleteBackupMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
                 {filteredBackups.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-16 text-slate-400">
+                    <TableCell colSpan={7} className="text-center py-16 text-slate-400">
                       <p className="font-medium">No backup records available</p>
                     </TableCell>
                   </TableRow>
@@ -237,6 +273,31 @@ export default function ItBackup() {
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!deleteConfirmBackupId} onOpenChange={(open) => !open && setDeleteConfirmBackupId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this backup record?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the backup record and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                if (deleteConfirmBackupId) {
+                  deleteBackupMutation.mutate(deleteConfirmBackupId);
+                  setDeleteConfirmBackupId(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

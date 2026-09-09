@@ -111,7 +111,7 @@ export default function OverallReportPage() {
                                                         </tr>
                                                     ) : (
                                                         item.data.map((row, rIdx) => (
-                                                            <tr key={rIdx} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 dark:border-zinc-800">
+                                                            <tr key={rIdx} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                                                                 {item.columns.map((col, cIdx) => {
                                                                     // Simple extraction mapping for rendering row values based on column name pattern match
                                                                     const keyMap: Record<string, string> = {

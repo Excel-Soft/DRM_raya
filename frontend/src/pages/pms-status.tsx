@@ -39,12 +39,34 @@ export default function PmsStatus() {
     const [overtimeTaskId, setOvertimeTaskId] = useState<string | null>(null);
     const [overtimeForm, setOvertimeForm] = useState({ minutes: "60", reason: "" });
 
+    const NEW_TASK_INITIAL_STATE = { title: "", description: "", assignedToUserId: "unassigned", priority: "Medium", dueDate: "" };
+    const [isAddTaskFormOpen, setIsAddTaskFormOpen] = useState(false);
+    const [newTaskForm, setNewTaskForm] = useState(NEW_TASK_INITIAL_STATE);
+
     const [elapsedTimes, setElapsedTimes] = useState<Record<string, number>>({});
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
+    // Filter Section state — "filters" is the draft the user is editing, "appliedFilters" is
+    // what actually drives the query (only updated when the "View" button is clicked).
+    const EMPTY_FILTERS = { department: "all", city: "all", status: "all", startDate: "", endDate: "" };
+    const [filters, setFilters] = useState(EMPTY_FILTERS);
+    const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
+
     const { data: projects = [], isLoading, isError, error } = useQuery<ProjectStatus[]>({
-        queryKey: ["/api/pms/department-status"],
+        queryKey: ["/api/pms/department-status", appliedFilters],
+        queryFn: async () => {
+            const params = new URLSearchParams();
+            if (appliedFilters.department && appliedFilters.department !== "all") params.set("department", appliedFilters.department);
+            if (appliedFilters.city && appliedFilters.city !== "all") params.set("city", appliedFilters.city);
+            if (appliedFilters.status && appliedFilters.status !== "all") params.set("status", appliedFilters.status);
+            if (appliedFilters.startDate) params.set("startDate", appliedFilters.startDate);
+            if (appliedFilters.endDate) params.set("endDate", appliedFilters.endDate);
+            const qs = params.toString();
+            const res = await fetch(`/api/pms/department-status${qs ? `?${qs}` : ""}`, { credentials: "include" });
+            if (!res.ok) throw new Error("Failed to fetch project status");
+            return res.json();
+        },
     });
 
     const { data: projectTasks = [], isLoading: isLoadingTasks, isError: isTasksError, error: tasksError } = useQuery<any[]>({
@@ -75,6 +97,34 @@ export default function PmsStatus() {
         queryClient.invalidateQueries({ queryKey: ["project-time-logs", selectedProjectId] });
         queryClient.invalidateQueries({ queryKey: ["/api/pms/department-status"] });
     };
+
+    const { data: taskMeta } = useQuery<{ users: { id: string; name: string | null }[] }>({
+        queryKey: ["/api/pms/tasks/meta"],
+        enabled: isDetailsModalOpen,
+        queryFn: async () => apiRequestJson("GET", "/api/pms/tasks/meta"),
+    });
+
+    const createTaskMutation = useMutation({
+        mutationFn: async () => {
+            return apiRequestJson("POST", "/api/pms/tasks", {
+                projectId: selectedProjectId,
+                title: newTaskForm.title.trim(),
+                description: newTaskForm.description.trim() || undefined,
+                assignedToUserId: newTaskForm.assignedToUserId !== "unassigned" ? newTaskForm.assignedToUserId : undefined,
+                priority: newTaskForm.priority,
+                dueDate: newTaskForm.dueDate ? new Date(newTaskForm.dueDate).toISOString() : undefined,
+            });
+        },
+        onSuccess: () => {
+            invalidateTaskData();
+            setNewTaskForm(NEW_TASK_INITIAL_STATE);
+            setIsAddTaskFormOpen(false);
+            toast({ title: "Task created", description: "The task was added to this project." });
+        },
+        onError: (error: any) => {
+            toast({ title: "Failed to create task", description: error?.message || "Please try again.", variant: "destructive" });
+        },
+    });
 
     // Mutations for timer
     const startTimerMutation = useMutation({
@@ -240,50 +290,57 @@ export default function PmsStatus() {
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Department</label>
-                        <Select>
+                        <Select value={filters.department} onValueChange={(v) => setFilters(prev => ({ ...prev, department: v }))}>
                             <SelectTrigger className="h-10 text-[13px] text-gray-500 dark:text-zinc-400">
                                 <SelectValue placeholder="Choose ..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="seo">SEO/SMM</SelectItem>
-                                <SelectItem value="dev">Development</SelectItem>
-                                <SelectItem value="design">Design</SelectItem>
+                                <SelectItem value="all">All Departments</SelectItem>
+                                <SelectItem value="SEO/SMM">SEO/SMM</SelectItem>
+                                <SelectItem value="Development">Development</SelectItem>
+                                <SelectItem value="Design">Design</SelectItem>
+                                <SelectItem value="Product Posting">Product Posting</SelectItem>
+                                <SelectItem value="D&D">D&D</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select City</label>
-                        <Select>
+                        <Select value={filters.city} onValueChange={(v) => setFilters(prev => ({ ...prev, city: v }))}>
                             <SelectTrigger className="h-10 text-[13px] text-gray-500 dark:text-zinc-400">
                                 <SelectValue placeholder="Choose..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="isb">Islamabad</SelectItem>
-                                <SelectItem value="lhr">Lahore</SelectItem>
-                                <SelectItem value="khi">Karachi</SelectItem>
+                                <SelectItem value="all">All Cities</SelectItem>
+                                <SelectItem value="Islamabad">Islamabad</SelectItem>
+                                <SelectItem value="Lahore">Lahore</SelectItem>
+                                <SelectItem value="Karachi">Karachi</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select Status</label>
-                        <Select>
+                        <Select value={filters.status} onValueChange={(v) => setFilters(prev => ({ ...prev, status: v }))}>
                             <SelectTrigger className="h-10 text-[13px] text-gray-500 dark:text-zinc-400">
                                 <SelectValue placeholder="Choose..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="new">New</SelectItem>
-                                <SelectItem value="renewal">Renewal</SelectItem>
-                                <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="all">All Statuses</SelectItem>
+                                <SelectItem value="Active">Active</SelectItem>
+                                <SelectItem value="OnHold">On Hold</SelectItem>
+                                <SelectItem value="Completed">Completed</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Start Date</label>
                         <div className="relative">
-                            <Input 
-                                type="date" 
-                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0" 
-                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()} 
+                            <Input
+                                type="date"
+                                value={filters.startDate}
+                                onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()}
                             />
                             <CalendarIcon className="w-4 h-4 absolute right-3 top-3 text-gray-400 pointer-events-none" />
                         </div>
@@ -291,18 +348,33 @@ export default function PmsStatus() {
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">End Date</label>
                         <div className="relative">
-                            <Input 
-                                type="date" 
-                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0" 
-                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()} 
+                            <Input
+                                type="date"
+                                value={filters.endDate}
+                                onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                                className="h-10 text-[13px] pr-10 cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-0"
+                                onClick={(e) => 'showPicker' in e.currentTarget && e.currentTarget.showPicker()}
                             />
                             <CalendarIcon className="w-4 h-4 absolute right-3 top-3 text-gray-400 pointer-events-none" />
                         </div>
                     </div>
                 </div>
-                <div>
-                    <Button className="h-10 px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide">
+                <div className="flex items-center gap-3">
+                    <Button
+                        className="h-10 px-8 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold tracking-wide"
+                        onClick={() => setAppliedFilters(filters)}
+                    >
                         View
+                    </Button>
+                    <Button
+                        variant="outline"
+                        className="h-10 px-8 font-bold tracking-wide"
+                        onClick={() => {
+                            setFilters(EMPTY_FILTERS);
+                            setAppliedFilters(EMPTY_FILTERS);
+                        }}
+                    >
+                        Reset
                     </Button>
                 </div>
             </div>
@@ -353,7 +425,7 @@ export default function PmsStatus() {
                                 </TableRow>
                             ) : (
                                 projects.map((row, idx) => (
-                                    <TableRow key={row.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-50 text-[13px] dark:border-zinc-800">
+                                    <TableRow key={row.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-b border-gray-50 text-[13px] dark:border-zinc-800">
                                         <TableCell className="px-4 py-4 font-bold text-gray-500 dark:text-zinc-400">{idx + 1}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-[#495057] text-center dark:text-zinc-400">{row.company}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-emerald-600 text-center">{row.assign || "Not Assigned"}</TableCell>
@@ -409,7 +481,94 @@ export default function PmsStatus() {
                     <div className="p-8">
                         <div className="mb-6 flex items-center justify-between">
                             <h3 className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Assign Projects</h3>
+                            <button
+                                onClick={() => setIsAddTaskFormOpen((v) => !v)}
+                                className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
+                                data-testid="button-toggle-add-task"
+                            >
+                                <Plus className="h-4 w-4" />
+                                Add Task
+                            </button>
                         </div>
+
+                        {isAddTaskFormOpen && (
+                            <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-1.5">
+                                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Task Title *</label>
+                                        <Input
+                                            value={newTaskForm.title}
+                                            onChange={(e) => setNewTaskForm((f) => ({ ...f, title: e.target.value }))}
+                                            placeholder="e.g., Design homepage banner"
+                                            className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
+                                            data-testid="input-new-task-title"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Assign To</label>
+                                        <Select value={newTaskForm.assignedToUserId} onValueChange={(v) => setNewTaskForm((f) => ({ ...f, assignedToUserId: v }))}>
+                                            <SelectTrigger className="h-10 text-[13px] border-gray-200 dark:border-zinc-800">
+                                                <SelectValue placeholder="Unassigned" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="unassigned">Unassigned</SelectItem>
+                                                {(taskMeta?.users || []).map((u) => (
+                                                    <SelectItem key={u.id} value={u.id}>{u.name || u.id}</SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Priority</label>
+                                        <Select value={newTaskForm.priority} onValueChange={(v) => setNewTaskForm((f) => ({ ...f, priority: v }))}>
+                                            <SelectTrigger className="h-10 text-[13px] border-gray-200 dark:border-zinc-800">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="Low">Low</SelectItem>
+                                                <SelectItem value="Medium">Medium</SelectItem>
+                                                <SelectItem value="High">High</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Due Date</label>
+                                        <Input
+                                            type="date"
+                                            value={newTaskForm.dueDate}
+                                            onChange={(e) => setNewTaskForm((f) => ({ ...f, dueDate: e.target.value }))}
+                                            className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
+                                            data-testid="input-new-task-due-date"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Description</label>
+                                    <textarea
+                                        value={newTaskForm.description}
+                                        onChange={(e) => setNewTaskForm((f) => ({ ...f, description: e.target.value }))}
+                                        placeholder="Add any details about this task..."
+                                        className="w-full border border-gray-200 rounded min-h-[80px] p-3 text-[13px] outline-none focus:ring-1 focus:ring-emerald-500 dark:border-zinc-800"
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-3">
+                                    <button
+                                        onClick={() => { setIsAddTaskFormOpen(false); setNewTaskForm(NEW_TASK_INITIAL_STATE); }}
+                                        className="px-4 py-2 rounded text-[13px] font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-zinc-800"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={() => createTaskMutation.mutate()}
+                                        disabled={!newTaskForm.title.trim() || createTaskMutation.isPending}
+                                        className="bg-[#00a65a] hover:bg-[#008d4c] disabled:opacity-50 text-white px-5 py-2 rounded text-[13px] font-bold"
+                                        data-testid="button-submit-new-task"
+                                    >
+                                        {createTaskMutation.isPending ? "Saving..." : "Save Task"}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
                             <Table>
@@ -487,10 +646,10 @@ export default function PmsStatus() {
                                             }
 
                                             return (
-                                                <TableRow key={task.id} className="hover:bg-gray-50/50 transition-colors border-0 border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
+                                                <TableRow key={task.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-0 border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
                                                     <TableCell className="px-6 py-5 text-center">
                                                         <div className="flex flex-col items-center gap-1.5">
-                                                            <span className="font-bold text-gray-500 dark:text-zinc-400">{task.id ? String(task.id).slice(0, 5) : (idx + 1)}</span>
+                                                            <span className="font-bold text-gray-500 dark:text-zinc-400">#{idx + 1}</span>
                                                             <a href="#" className="text-[11px] font-bold text-rose-400 hover:text-rose-500 flex items-center gap-1">
                                                                 Open URL
                                                             </a>
@@ -649,7 +808,7 @@ export default function PmsStatus() {
                                         ) : timeLogs.length === 0 ? (
                                             <TableRow><TableCell colSpan={4} className="text-center py-8 text-gray-400 font-medium">No time logs recorded yet.</TableCell></TableRow>
                                         ) : timeLogs.map((log: any) => (
-                                            <TableRow key={log.id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
+                                            <TableRow key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
                                                 <TableCell className="px-6 py-3 text-center font-bold text-gray-700 dark:text-zinc-300 uppercase text-[12px]">{log.taskTitle || "—"}</TableCell>
                                                 <TableCell className="px-6 py-3 text-center text-gray-500 dark:text-zinc-400">{log.user?.name || "—"}</TableCell>
                                                 <TableCell className="px-6 py-3 text-center">
@@ -843,14 +1002,14 @@ export default function PmsStatus() {
 
             {/* Project Overview Modal */}
             <Dialog open={isProjectOverviewOpen} onOpenChange={setIsProjectOverviewOpen}>
-                <DialogContent className="max-w-[95vw] w-[950px] bg-white p-0 border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
-                    <div className="p-6 border-b border-gray-100 flex items-center justify-between dark:border-zinc-800">
+                <DialogContent className="max-w-[95vw] w-[950px] max-h-[85vh] bg-white p-0 flex flex-col border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="p-6 border-b border-gray-100 flex items-center justify-between dark:border-zinc-800 flex-shrink-0">
                         <h2 className="text-[14px] font-bold text-gray-500 uppercase tracking-wider dark:text-zinc-400">
                             PROJECTS OVERVIEW
                         </h2>
                     </div>
-                    
-                    <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-10 bg-white dark:bg-zinc-900">
+
+                    <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-10 bg-white overflow-y-auto dark:bg-zinc-900">
                         <div className="lg:col-span-2 space-y-8">
                             <div className="flex justify-between items-start">
                                 <div className="flex items-center gap-4">

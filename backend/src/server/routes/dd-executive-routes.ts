@@ -1,6 +1,24 @@
 import type { Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
-import { pool } from "../db";
+import { authMiddleware } from "./auth.middleware";
+import { pool } from "./db";
+
+// Software Executive reuses these D&D Executive endpoints (same task-execution model),
+// but must only ever see SOFTWARE-department projects, never D&D's — previously it was
+// treated as an org-wide admin here, seeing every task regardless of department.
+function resolveTaskFilter(user: any, userId: string, alias?: string) {
+    const col = alias ? `${alias}.` : "";
+    const roles = user?.roles || [];
+    const isTrueAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin";
+    const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
+    if (isTrueAdmin) return { filterSql: "true", queryParams: [] as any[] };
+    if (isSoftware) {
+        return {
+            filterSql: `${col}assigned_to_user_id::text = $1::text and ${col}project_id in (select id from drm.projects where department_type = 'SOFTWARE')`,
+            queryParams: [userId] as any[],
+        };
+    }
+    return { filterSql: `${col}assigned_to_user_id::text = $1::text`, queryParams: [userId] as any[] };
+}
 
 export function registerDdExecutiveRoutes(app: Express) {
     app.use("/api/dd-executive", authMiddleware);
@@ -12,17 +30,16 @@ export function registerDdExecutiveRoutes(app: Express) {
             const userId = user?.userId || user?.id;
             if (!userId) return res.status(401).json({ error: "User context not found" });
 
-            const roles = user?.roles || [];
-            const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
-            const isAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin" || isSoftware;
-            
-            const queryParams: any[] = isAdmin ? [] : [userId];
-            const filterSql = isAdmin ? "true" : "assigned_to_user_id::text = $1::text";
+            const { filterSql, queryParams } = resolveTaskFilter(user, userId);
 
-            // Period filter: TD=Today, WK=Week, MH=Month, QU=Quarter
+            // Period filter: TD/LD=Today, WK=Week, MH=Month, QU=Quarter.
+            // The Top Selling dropdown's "Today" option is labeled "LD"
+            // client-side — without this alias it matched no branch below,
+            // silently applying no date filter at all (i.e. an all-time
+            // total instead of today's).
             const period = (req.query.period as string) || "MH";
             let periodSql = "";
-            if (period === "TD") periodSql = "AND created_at >= CURRENT_DATE";
+            if (period === "TD" || period === "LD") periodSql = "AND created_at >= CURRENT_DATE";
             else if (period === "WK") periodSql = "AND created_at >= date_trunc('week', CURRENT_DATE)";
             else if (period === "MH") periodSql = "AND created_at >= date_trunc('month', CURRENT_DATE)";
             else if (period === "QU") periodSql = "AND created_at >= date_trunc('quarter', CURRENT_DATE)";
@@ -63,11 +80,18 @@ export function registerDdExecutiveRoutes(app: Express) {
 
             // Fetch Portfolio counts (Real Data)
             const portfolioResult = await pool.query(`
-                SELECT 
+                SELECT
                     COUNT(*)::int as "totalPortfolio",
                     COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int as "addedToday"
                 FROM drm.customers
                 WHERE owner_user_id::text = $1::text
+            `, [userId]);
+
+            // Fetch unread notice count (Real Data)
+            const noticeResult = await pool.query(`
+                SELECT COUNT(*)::int as "unreadNotices"
+                FROM drm.notice_assignments
+                WHERE user_id::text = $1::text AND read_status = 'unread'
             `, [userId]);
 
             const taskStats = tasksResult.rows[0];
@@ -75,6 +99,7 @@ export function registerDdExecutiveRoutes(app: Express) {
             const pendingLeaves = leavesResult.rows[0]?.pendingLeaves || 0;
             const attendance = attendanceResult.rows[0];
             const portfolio = portfolioResult.rows[0];
+            const notice = noticeResult.rows[0];
 
             res.json({
                 totalTasks: taskStats?.totalTasks || 0,
@@ -86,7 +111,7 @@ export function registerDdExecutiveRoutes(app: Express) {
                 pendingLeaves: pendingLeaves,
                 attendanceStatus: attendance?.status || "Not Marked",
                 important: {
-                    notice: 0,
+                    notice: notice?.unreadNotices || 0,
                     portfolio: `${portfolio?.totalPortfolio || 0}(${(portfolio?.totalPortfolio || 0) * 200})`, 
                     addPortfolio: portfolio?.addedToday || 0,
                     loginTime: attendance?.timeIn ? new Date(attendance.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Not Marked"
@@ -103,15 +128,11 @@ export function registerDdExecutiveRoutes(app: Express) {
         try {
             const user = (req as any).user;
             const userId = user?.userId || user?.id;
-            const roles = user?.roles || [];
-            const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
-            const isAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin" || isSoftware;
-            
             if (!userId) return res.status(401).json({ error: "User context not found" });
 
             const { statusType } = req.params;
-            let statusSql = isAdmin ? "true" : "t.assigned_to_user_id::text = $1::text";
-            const queryParams: any[] = isAdmin ? [] : [userId];
+            const { filterSql, queryParams } = resolveTaskFilter(user, userId, "t");
+            let statusSql = filterSql;
 
             if (statusType === "today") {
                 statusSql += " AND t.updated_at >= CURRENT_DATE";
@@ -120,7 +141,7 @@ export function registerDdExecutiveRoutes(app: Express) {
             }
 
             const listResult = await pool.query(`
-                SELECT 
+                SELECT
                     t.id,
                     t.project_id as "projectId",
                     t.title as "taskTitle",
@@ -129,6 +150,8 @@ export function registerDdExecutiveRoutes(app: Express) {
                     p.name as "projectName",
                     COALESCE(c.company_name, inv.company_name, 'No Company') as "companyName",
                     t.status,
+                    t.priority,
+                    t.created_at as "createdAt",
                     t.updated_at as "updatedAt"
                 FROM drm.tasks t
                 LEFT JOIN drm.projects p ON p.id::text = t.project_id::text
@@ -149,6 +172,8 @@ export function registerDdExecutiveRoutes(app: Express) {
                 description: row.description || "",
                 dueDate: row.dueDate ? new Date(row.dueDate).toLocaleDateString() : "-",
                 status: row.status,
+                priority: row.priority || "Medium",
+                assignedDate: row.createdAt ? new Date(row.createdAt).toLocaleDateString() : "-",
                 time: row.updatedAt ? new Date(row.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "-"
             })));
         } catch (error) {
@@ -162,12 +187,9 @@ export function registerDdExecutiveRoutes(app: Express) {
         try {
             const user = (req as any).user;
             const userId = user?.userId || user?.id;
-            const roles = user?.roles || [];
-            const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
-            const isAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin" || isSoftware;
             if (!userId) return res.status(401).json({ error: "User context not found" });
 
-            const queryParams: any[] = isAdmin ? [] : [userId];
+            const { filterSql, queryParams } = resolveTaskFilter(user, userId, "t");
 
             const period = (req.query.period as string) || "daily";
             let periodSql = "";
@@ -176,7 +198,7 @@ export function registerDdExecutiveRoutes(app: Express) {
             else if (period === "monthly") periodSql = "AND t.updated_at >= date_trunc('month', CURRENT_DATE)";
 
             const reportResult = await pool.query(`
-                SELECT 
+                SELECT
                     u.name as "userName",
                     u.email as "userEmail",
                     c.company_name as "companyName",
@@ -188,7 +210,7 @@ export function registerDdExecutiveRoutes(app: Express) {
                 LEFT JOIN drm.users u ON u.id::text = t.assigned_to_user_id::text
                 LEFT JOIN drm.projects p ON p.id::text = t.project_id::text
                 LEFT JOIN drm.customers c ON c.id::text = p.customer_id::text
-                WHERE ${isAdmin ? "true" : "t.assigned_to_user_id::text = $1::text"} ${periodSql}
+                WHERE ${filterSql} ${periodSql}
                 ORDER BY t.updated_at DESC
                 LIMIT 20
             `, queryParams);
@@ -211,12 +233,9 @@ export function registerDdExecutiveRoutes(app: Express) {
         try {
             const user = (req as any).user;
             const userId = user?.userId || user?.id;
-            const roles = user?.roles || [];
-            const isSoftware = roles.includes("software_executive") || user?.roleId === "software_executive";
-            const isAdmin = roles.includes("admin") || roles.includes("super_admin") || user?.roleId === "admin" || isSoftware;
             if (!userId) return res.status(401).json({ error: "User context not found" });
 
-            const queryParams: any[] = isAdmin ? [] : [userId];
+            const { filterSql, queryParams } = resolveTaskFilter(user, userId, "t");
 
             const period = (req.query.period as string) || "WK";
             let periodStartSql = "date_trunc('month', CURRENT_DATE)";
@@ -226,7 +245,7 @@ export function registerDdExecutiveRoutes(app: Express) {
             else if (period === "QU") periodStartSql = "date_trunc('quarter', CURRENT_DATE)";
 
             const result = await pool.query(`
-                SELECT 
+                SELECT
                     u.name as "userName",
                     c.company_name as "companyName",
                     p.name as "projectName",
@@ -237,7 +256,7 @@ export function registerDdExecutiveRoutes(app: Express) {
                 LEFT JOIN drm.users u ON u.id::text = t.assigned_to_user_id::text
                 LEFT JOIN drm.projects p ON p.id::text = t.project_id::text
                 LEFT JOIN drm.customers c ON c.id::text = p.customer_id::text
-                WHERE ${isAdmin ? "true" : "t.assigned_to_user_id::text = $1::text"} 
+                WHERE ${filterSql}
                   AND t.status = 'Completed'
                   AND t.updated_at >= ${periodStartSql}
                 ORDER BY t.updated_at DESC

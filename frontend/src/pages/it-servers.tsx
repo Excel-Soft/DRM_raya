@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequestJson } from "@/lib/queryClient";
-import { Loader2, Search, User, RefreshCw, Plus, Server, Database, Trash2, Globe, HardDrive, Pencil, AlertCircle } from "lucide-react";
+import { Loader2, Search, User, RefreshCw, Plus, Server, Database, Trash2, Globe, HardDrive, Pencil, AlertCircle, Copy, FileText, Download, Printer, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,9 +9,20 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { utils, writeFile } from "xlsx";
 
 const SERVER_STATUS_OPTIONS = ["ACTIVE", "INACTIVE", "SUSPENDED", "ARCHIVED"] as const;
 
@@ -93,6 +104,47 @@ const EMPTY_DOMAIN_FORM: DomainForm = {
 const DOMAIN_HOSTNAME_RE =
   /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
+const fmtDate = (d: string | null | undefined) =>
+  d && !isNaN(new Date(d).getTime()) ? new Date(d).toLocaleDateString() : "N/A";
+
+function expiryStatus(dateStr: string | null | undefined): { label: string; cls: string } {
+  if (!dateStr || isNaN(new Date(dateStr).getTime())) {
+    return { label: "N/A", cls: "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400" };
+  }
+  const days = Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
+  if (days < 0) return { label: "Expired", cls: "bg-red-100 text-red-700" };
+  if (days <= 30) return { label: `${days}d left`, cls: "bg-emerald-100 text-emerald-700" }; // normal active status or warning
+  return { label: "Active", cls: "bg-emerald-100 text-emerald-700" };
+}
+
+function MessageComposer({ item, onCopied }: { item: any; onCopied: () => void }) {
+  const initial =
+    `Reminder for ${item.domainName || item.domain || "your domain"}:\n` +
+    `Domain expiry: ${fmtDate(item.expiryDate)}\n` +
+    `Hosting expiry: ${fmtDate(item.hostingExpiryDate)}\n` +
+    `SSL expiry: ${fmtDate(item.sslExpiryDate)}\n\n` +
+    `Please contact us to arrange renewal.`;
+  const [msg, setMsg] = useState(initial);
+  return (
+    <div className="space-y-4">
+      <Textarea
+        value={msg}
+        onChange={(e) => setMsg(e.target.value)}
+        className="min-h-[120px] bg-slate-50 border-slate-200 resize-none dark:bg-zinc-900 dark:border-zinc-800"
+      />
+      <Button
+        onClick={() => {
+          navigator.clipboard.writeText(msg);
+          onCopied();
+        }}
+        className="w-full bg-emerald-600 hover:bg-emerald-700 h-9 font-bold uppercase text-[11px] tracking-wide flex items-center gap-2"
+      >
+        <Copy className="h-4 w-4" /> Copy Message
+      </Button>
+    </div>
+  );
+}
+
 function customerLabel(c: any): string {
   return c?.companyName || c?.accountName || c?.name || c?.email || c?.id || "Unknown";
 }
@@ -109,6 +161,7 @@ export default function ItServers() {
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
   const [serverForm, setServerForm] = useState<ServerForm>(EMPTY_SERVER_FORM);
   const [serverFormError, setServerFormError] = useState<string | null>(null);
+  const [deleteConfirmServer, setDeleteConfirmServer] = useState<any | null>(null);
 
   // --- Domain Hosting create form state (Patch 6 Stage 6) ---
   const [domainForm, setDomainForm] = useState<DomainForm>(EMPTY_DOMAIN_FORM);
@@ -378,6 +431,77 @@ export default function ItServers() {
     return hay.includes(serverSearchLc);
   });
 
+  const exportServerRows = () =>
+    filteredServers.map((s: any, i: number) => ({
+      No: i + 1,
+      Name: s.name || "",
+      HostIP: s.ip || "",
+      Provider: s.provider || "—",
+      Status: s.status || "ACTIVE",
+      "Created At": s.createdAt ? new Date(s.createdAt).toLocaleDateString() : "—",
+    }));
+
+  const exportServersToCSV = () => {
+    const data = exportServerRows();
+    if (data.length === 0) return;
+    const headers = Object.keys(data[0]);
+    const lines = [
+      headers.join(","),
+      ...data.map((row) =>
+        headers.map((h) => `"${String((row as any)[h] ?? "").replace(/"/g, '""')}"`).join(",")
+      ),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "it_servers.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportServersToExcel = () => {
+    const ws = utils.json_to_sheet(exportServerRows());
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Servers");
+    writeFile(wb, "it_servers.xlsx");
+  };
+
+  const handleServerExport = (type: string) => {
+    if (type !== "Print" && filteredServers.length === 0) {
+      toast({ title: "Info", description: "No data to export" });
+      return;
+    }
+    switch (type) {
+      case "Copy": {
+        const text = filteredServers
+          .map((s: any) => `${s.name || ""}\t${s.ip || ""}\t${s.provider || "—"}\t${s.status || "ACTIVE"}`)
+          .join("\n");
+        navigator.clipboard.writeText(text);
+        toast({ title: "Copied!", description: "Server data copied to clipboard" });
+        break;
+      }
+      case "Print":
+        window.print();
+        break;
+      case "Excel":
+        exportServersToExcel();
+        break;
+      case "CSV":
+        exportServersToCSV();
+        break;
+    }
+  };
+
+  const serverExportButtons = [
+    { label: "Copy", icon: Copy },
+    { label: "Excel", icon: Download },
+    { label: "CSV", icon: FileText },
+    { label: "Print", icon: Printer },
+  ];
+
   return (
     <div className="flex flex-col gap-6 p-6 bg-slate-50/50 min-h-screen dark:bg-zinc-950">
       {/* Header Section */}
@@ -590,17 +714,154 @@ export default function ItServers() {
                   </TableCell>
                   <TableCell className="text-slate-600 text-sm dark:text-zinc-300">{item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "N/A"}</TableCell>
                   <TableCell className="text-right flex items-center justify-end gap-2">
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
-                      className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full"
-                      onClick={() => toast({ title: "User credentials module under construction" })}
-                    >
-                      <User className="h-4 w-4" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full" onClick={() => toast({ title: "Refreshing domain status..." })}>
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
+                          <User className="h-4 w-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
+                        <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b flex flex-row items-center justify-between space-y-0">
+                          <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Attribute</DialogTitle>
+                        </DialogHeader>
+                        <div className="p-6 overflow-y-auto max-h-[85vh]">
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                            {/* Left Column: Client Info */}
+                            <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
+                              <CardContent className="p-6 flex flex-col items-center text-center">
+                                <h3 className="font-bold text-slate-800 text-lg mb-2 dark:text-zinc-100">{item.company || "N/A"}</h3>
+                                <div className="h-12 w-12 rounded-full bg-blue-100/50 flex items-center justify-center text-blue-600 font-bold text-xl mb-4">
+                                  {(item.company || "N").charAt(0)}
+                                </div>
+                                <h4 className="font-bold text-slate-700 dark:text-zinc-400">Client Contact</h4>
+                                <p className="text-xs text-slate-400 mb-4">{item.email || "N/A"}</p>
+
+                                <div className="flex gap-2 mb-6">
+                                  <Badge className="bg-emerald-600 hover:bg-emerald-600 px-3 py-1 text-[10px] font-bold">{item.contactNo || "N/A"}</Badge>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            {/* Middle Column: Expiry History */}
+                            <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
+                              <CardContent className="p-6">
+                                <h3 className="font-bold text-slate-700 text-sm mb-6 flex items-center gap-2 dark:text-zinc-400">
+                                  Expiry Date
+                                </h3>
+                                <div className="space-y-8 relative before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
+                                  <div className="flex gap-4 relative">
+                                    <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
+                                      <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                                          <Globe className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                          <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">Domain</p>
+                                          <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
+                                        </div>
+                                      </div>
+                                      <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.expiryDate)}</Badge>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex gap-4 relative">
+                                    <div className="h-6 w-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 flex items-center justify-center z-10 shrink-0 mt-1 dark:border-zinc-800">
+                                      <div className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <div className="h-8 w-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                                          <ShieldCheck className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                          <p className="text-[11px] font-bold text-slate-700 dark:text-zinc-400">SSL</p>
+                                          <p className="text-[10px] text-slate-400 italic font-mono">{item.domainName || item.domain}</p>
+                                        </div>
+                                      </div>
+                                      <Badge className="bg-slate-800 text-white font-mono text-[9px] w-fit">Exp: {fmtDate(item.sslExpiryDate)}</Badge>
+                                    </div>
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+
+                            {/* Right Column: Message composer */}
+                            <div className="space-y-6">
+                              <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden">
+                                <CardContent className="p-6">
+                                  <h3 className="font-bold text-slate-700 text-sm mb-4 dark:text-zinc-400">Renewal Message</h3>
+                                  <MessageComposer
+                                    item={item}
+                                    onCopied={() => toast({ title: "Copied!", description: "Message copied to clipboard" })}
+                                  />
+                                </CardContent>
+                              </Card>
+                            </div>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 bg-emerald-600 text-white hover:bg-emerald-700 rounded-full">
+                          <RefreshCw className="h-4 w-4" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-[95vw] w-[1200px] p-0 gap-0 overflow-hidden border-none shadow-2xl bg-[#f8f9fa] dark:bg-zinc-900">
+                        <DialogHeader className="p-4 bg-white dark:bg-zinc-900 border-b">
+                          <div className="flex items-center gap-2">
+                            <DialogTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider dark:text-zinc-400">Quotation</DialogTitle>
+                            <span className="text-xs font-bold text-emerald-500">{new Date().toLocaleString()}</span>
+                          </div>
+                        </DialogHeader>
+                        <div className="p-6 overflow-y-auto max-h-[85vh]">
+                          <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 overflow-hidden p-6 mb-6 text-slate-800 dark:text-zinc-100">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-500 uppercase dark:text-zinc-400">Company</label>
+                                <Input value={item.company || "N/A"} readOnly className="h-10 bg-slate-50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800" />
+                              </div>
+                            </div>
+                            <Table>
+                              <TableHeader className="bg-slate-50/80 dark:bg-zinc-900/80">
+                                <TableRow>
+                                  <TableHead className="text-xs font-bold">Product</TableHead>
+                                  <TableHead className="text-xs font-bold">Detail</TableHead>
+                                  <TableHead className="text-xs font-bold text-right">Total</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                <TableRow>
+                                  <TableCell className="text-xs">Domain Renewal</TableCell>
+                                  <TableCell className="text-xs">{item.domainName || item.domain}</TableCell>
+                                  <TableCell className="text-xs text-right font-mono">$15.00</TableCell>
+                                </TableRow>
+                                {item.hostingPackageName && (
+                                  <TableRow>
+                                    <TableCell className="text-xs">Hosting Package ({item.hostingPackageName})</TableCell>
+                                    <TableCell className="text-xs">Capacity: {item.capacity || item.hostingPackageCapacity || "N/A"}</TableCell>
+                                    <TableCell className="text-xs text-right font-mono">
+                                      ${item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice).toFixed(2) : "0.00"}
+                                    </TableCell>
+                                  </TableRow>
+                                )}
+                                <TableRow className="border-t font-bold">
+                                  <TableCell className="text-xs">Total Renewal Amount</TableCell>
+                                  <TableCell className="text-xs"></TableCell>
+                                  <TableCell className="text-xs text-right font-mono">
+                                    ${(15.00 + (item.hostingPackagePrice ? parseFloat(item.hostingPackagePrice) : 0)).toFixed(2)}
+                                  </TableCell>
+                                </TableRow>
+                              </TableBody>
+                            </Table>
+                          </Card>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </TableCell>
                 </TableRow>
               ))}
@@ -628,16 +889,34 @@ export default function ItServers() {
           <CardTitle className="text-white text-sm font-semibold flex items-center gap-2">
             <Server className="h-4 w-4 text-white" /> Server Names
           </CardTitle>
-          <Button size="sm" variant="secondary" className="h-8 bg-white text-emerald-700 hover:bg-emerald-50" onClick={openCreateServer}>
+          <Button size="sm" variant="secondary" className="h-8 bg-white text-emerald-700 hover:bg-emerald-50 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-zinc-800" onClick={openCreateServer}>
             <Plus className="h-4 w-4 mr-1" /> Add Server
           </Button>
         </CardHeader>
         <CardContent className="p-0 bg-white dark:bg-zinc-900">
           {/* Toolbar: search + status filter + refresh */}
           <div className="p-4 border-b flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between dark:border-zinc-800">
-            <div className="relative w-full sm:w-72">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input placeholder="Search name, host, provider" className="pl-10 h-9" value={serverSearch} onChange={(e) => setServerSearch(e.target.value)} />
+            <div className="flex flex-wrap gap-3 items-center">
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input placeholder="Search name, host, provider" className="pl-10 h-9" value={serverSearch} onChange={(e) => setServerSearch(e.target.value)} />
+              </div>
+              <div className="flex gap-1.5">
+                {serverExportButtons.map((btn) => {
+                  const Icon = btn.icon;
+                  return (
+                    <Button
+                      key={btn.label}
+                      variant="outline"
+                      size="sm"
+                      className="h-9 px-3 flex items-center gap-1.5"
+                      onClick={() => handleServerExport(btn.label)}
+                    >
+                      <Icon className="h-4 w-4" /> {btn.label}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-slate-500 dark:text-zinc-400">Status</span>
@@ -695,7 +974,7 @@ export default function ItServers() {
                         <Button size="icon" variant="ghost" className="h-8 w-8 text-slate-500 hover:text-emerald-600" onClick={() => openEditServer(server)} aria-label="Edit server">
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Delete server "${server.name}"? It will be archived (soft delete).`)) deleteServerMutation.mutate(server.id); }} disabled={deleteServerMutation.isPending} aria-label="Delete server">
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => setDeleteConfirmServer(server)} disabled={deleteServerMutation.isPending} aria-label="Delete server">
                           {deleteServerMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         </Button>
                       </div>
@@ -865,6 +1144,31 @@ export default function ItServers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteConfirmServer} onOpenChange={(open) => !open && setDeleteConfirmServer(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this server?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently archive the server <strong>{deleteConfirmServer?.name}</strong> and soft delete it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => {
+                if (deleteConfirmServer) {
+                  deleteServerMutation.mutate(deleteConfirmServer.id);
+                  setDeleteConfirmServer(null);
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
