@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { db, pool } from "./db";
+import { db, pool } from "../db";
 import { trainingModules, trainingProgress, users } from "@shared/schema";
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { z } from "zod";

@@ -18,8 +18,8 @@ import request from "supertest";
 import {
   assertLegalInvoiceStatusTransition,
   assertPaymentProofForPaid,
-} from "./utils/financial-validation";
-import { ApiError } from "./utils/api-error";
+} from "../utils/financial-validation";
+import { ApiError } from "../utils/api-error";
 
 describe("assertLegalInvoiceStatusTransition (legacy drm.invoices guard)", () => {
   it("allows Draft -> Sent", () => {
@@ -60,8 +60,8 @@ describe("assertPaymentProofForPaid (legacy drm.invoices guard)", () => {
 // HTTP-level: canonical state-machine + legacy-guard behavior against the real
 // app. Soft-skips if the dev Postgres pool is unreachable.
 // ---------------------------------------------------------------------------
-import { pool } from "./db";
-import { registerRoutes } from "./routes";
+import { pool } from "../db";
+import { registerRoutes } from "../routes";
 import { authService } from "./auth.service";
 import { patchConfig } from "./services/gm-sales-config.service";
 

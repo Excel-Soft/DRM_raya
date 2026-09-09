@@ -2,10 +2,10 @@ import type { Express, Request, Response } from "express";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { parse as parseCsv } from "csv-parse/sync";
-import { pool, db } from "./db";
+import { pool, db } from "../db";
 import { customers } from "@shared/schema";
 import crypto from "crypto";
-import { generateDrmId, resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 import {
   findDuplicates,
   canOverrideDuplicates,
@@ -13,9 +13,9 @@ import {
   normalizePhone,
   normalizeCompany,
   type DuplicateMatch,
-} from "./utils/duplicate-policy";
+} from "../utils/duplicate-policy";
 import { ActivityLogService } from "./services/activity-service";
-import { ensureServicesSchema } from "./repositories/services.repository";
+import { ensureServicesSchema } from "../repositories/services.repository";
 
 const upload = multer({
   storage: multer.memoryStorage(),

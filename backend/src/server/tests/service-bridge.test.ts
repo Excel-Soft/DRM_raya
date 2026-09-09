@@ -16,11 +16,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 
-import { pool } from "./db";
-import { registerRoutes } from "./routes";
+import { pool } from "../db";
+import { registerRoutes } from "../routes";
 import { authService } from "./auth.service";
 import { getConfig, patchConfig } from "./services/service-bridge-config.service";
-import { SERVICE_BRIDGE_DISABLED_MESSAGE } from "../shared/service-bridge-constants";
+import { SERVICE_BRIDGE_DISABLED_MESSAGE } from "../../shared/service-bridge-constants";
 
 const SUFFIX = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 

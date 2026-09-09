@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db, pool } from "./db";
+import { db, pool } from "../db";
 import {
   customers,
   activities,
@@ -16,7 +16,7 @@ import {
 } from "@shared/schema";
 import { eq, and, or, ilike, gte, lte, desc, asc, sql } from "drizzle-orm";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
-import { resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 
 const router = Router();
 

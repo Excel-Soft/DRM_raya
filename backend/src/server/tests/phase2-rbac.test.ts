@@ -12,7 +12,7 @@ import type { Request, Response } from "express";
  * an integration test against a real server or database.
  */
 vi.mock("./services/gm-sales-config.service", async () => {
-  const { GM_SALES_CONFIG_DEFAULTS } = await import("../shared/gm-sales-constants");
+  const { GM_SALES_CONFIG_DEFAULTS } = await import("../../shared/gm-sales-constants");
   return {
     getConfig: vi.fn(async () => ({ config: GM_SALES_CONFIG_DEFAULTS, meta: [] })),
     ensureConfigTable: vi.fn(async () => {}),
@@ -47,7 +47,7 @@ vi.mock("./db", () => ({
   checkDbHealth: async () => ({ ok: true }),
 }));
 
-const { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS } = await import("./utils/gm-sales-permissions");
+const { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS } = await import("../utils/gm-sales-permissions");
 const { requireFinancialPermission, FINANCIAL_ACTIONS } = await import("./middleware/financial-permission");
 const { requireActionPermission, denyPendingManagementDecision } = await import(
   "./middleware/action-permission.middleware"

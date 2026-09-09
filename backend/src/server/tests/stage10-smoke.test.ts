@@ -18,8 +18,8 @@
 import express, { type Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "./db";
-import { registerRoutes } from "./routes";
+import { pool } from "../db";
+import { registerRoutes } from "../routes";
 
 let app: Express | null = null;
 let appReady = false;

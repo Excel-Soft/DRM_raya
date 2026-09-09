@@ -1,4 +1,4 @@
-import { pool } from "./db";
+import { pool } from "../db";
 
 async function run() {
     console.log("Testing DB connection...");

@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { projectsRepository } from "./repositories/projects.repository";
-import { authMiddleware } from "./auth.middleware";
-import { normalizeRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { projectsRepository } from "../repositories/projects.repository";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { normalizeRole } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission";
 
 const router = Router();

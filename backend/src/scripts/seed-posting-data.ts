@@ -1,4 +1,4 @@
-import "./env";
+import "../server/utils/env";
 import { db } from "../server/db";
 import { productPostingData, restrictedKeywords } from "../shared/schema";
 

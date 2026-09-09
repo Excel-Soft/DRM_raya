@@ -5,7 +5,7 @@ import compression from "compression";
 import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { loggerMiddleware } from "./logger.middleware";
+import { loggerMiddleware } from "./middleware/logger.middleware";
 import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";

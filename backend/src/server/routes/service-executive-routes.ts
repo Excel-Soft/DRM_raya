@@ -1,7 +1,7 @@
 import { Express, Request, Response } from "express";
 
-import { requireRole } from "./auth.middleware";
-import { db, pool } from "./db";
+import { requireRole } from "../middleware/auth.middleware";
+import { db, pool } from "../db";
 import {
   serviceCustomers,
   serviceActivities,
@@ -16,13 +16,13 @@ import {
   targetSystemDailyTargets,
   targetSystemUserTargets,
   users
-} from "../shared/schema";
+} from "../../shared/schema";
 import { eq, and, sql, gte, lte, desc, inArray } from "drizzle-orm";
 import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
-import { computeExpiryState } from "./utils/service-expiry";
-import { opportunitiesRepository } from "./repositories/opportunities.repository";
-import { appointmentsRepository } from "./repositories/appointments.repository";
-import { bucketServiceKpis } from "./utils/service-kpi";
+import { computeExpiryState } from "../utils/service-expiry";
+import { opportunitiesRepository } from "../repositories/opportunities.repository";
+import { appointmentsRepository } from "../repositories/appointments.repository";
+import { bucketServiceKpis } from "../utils/service-kpi";
 import { getPeriodRange } from "./dashboard-routes";
 
 export function registerServiceExecutiveRoutes(app: Express) {

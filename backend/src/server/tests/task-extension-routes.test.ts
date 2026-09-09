@@ -11,7 +11,7 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "./db";
+import { pool } from "../db";
 import { taskExecutionRouter } from "./routes/task-execution-routes";
 
 let currentUser: any = null;

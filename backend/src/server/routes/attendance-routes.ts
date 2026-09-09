@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { attendanceRepository } from "./repositories/attendance.repository";
-import { isManagerialRole } from "./utils/role-utils";
-import { pool } from "./db";
+import { attendanceRepository } from "../repositories/attendance.repository";
+import { isManagerialRole } from "../utils/role-utils";
+import { pool } from "../db";
 
 const normalizeDateRange = (start: Date, end: Date) => {
   const normalizedStart = new Date(start);

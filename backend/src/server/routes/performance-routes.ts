@@ -9,8 +9,8 @@
  * Unauthorized cross-user access returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import {
   buildSummary, buildRecords, buildTrends, buildTeamLeaderboard,
   getScoringConfig,

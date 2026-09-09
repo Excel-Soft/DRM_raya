@@ -1,15 +1,15 @@
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { sendError, ApiError } from "./utils/api-error";
+import { pool } from "../db";
+import { sendError, ApiError } from "../utils/api-error";
 import { AuditLogService } from "./services/audit-log.service";
-import { recordAssignment } from "./utils/assignment-history";
+import { recordAssignment } from "../utils/assignment-history";
 import {
   getRequestUserId,
   getRequestRole,
   hasFullAccess,
   getEditableUserIds,
-} from "./utils/ownership";
-import { isManagerialRole } from "./utils/role-utils";
+} from "../utils/ownership";
+import { isManagerialRole } from "../utils/role-utils";
 
 /**
  * Stage 8 — lead bulk actions: assign, reassign, status update, export.

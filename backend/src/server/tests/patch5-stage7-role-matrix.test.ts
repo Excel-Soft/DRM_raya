@@ -33,8 +33,8 @@
 import express, { type Express } from "express";
 import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "./db";
-import { registerRoutes } from "./routes";
+import { pool } from "../db";
+import { registerRoutes } from "../routes";
 import { authService } from "./auth.service";
 import { getConfig, patchConfig } from "./services/gm-sales-config.service";
 

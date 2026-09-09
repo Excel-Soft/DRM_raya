@@ -1,7 +1,7 @@
 import { Express, Request, Response } from "express";
 
-import { requireRole } from "./auth.middleware";
-import { db, pool } from "./db";
+import { requireRole } from "../middleware/auth.middleware";
+import { db, pool } from "../db";
 import {
   serviceCustomers,
   serviceActivities,
@@ -16,12 +16,12 @@ import {
   serviceDropouts,
   serviceCustomerFeedback,
   serviceSampleRequests
-} from "../shared/schema";
+} from "../../shared/schema";
 import { eq, and, sql, gte, lte, desc, inArray } from "drizzle-orm";
 import { startOfMonth, endOfMonth, eachDayOfInterval, format } from "date-fns";
-import { computeExpiryState } from "./utils/service-expiry";
+import { computeExpiryState } from "../utils/service-expiry";
 import { ensureBridgeLinksTable } from "./services/service-bridge.service";
-import { bucketServiceKpis } from "./utils/service-kpi";
+import { bucketServiceKpis } from "../utils/service-kpi";
 import { getDepartmentFilterUserIds, getPeriodRange } from "./dashboard-routes";
 import { ensureServiceFeedbackTables } from "./service-core-routes";
 

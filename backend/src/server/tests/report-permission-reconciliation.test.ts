@@ -32,9 +32,9 @@ vi.mock("./db", () => ({
 }));
 
 const { resolveReportRoles } = await import("./middleware/report-permission");
-const { MANAGERIAL_ROLES, isManagerialRole, normalizeRole } = await import("./utils/role-utils");
-const { canViewProjectReport } = await import("./project-report-routes");
-const { canVerify } = await import("./team-report-link-report-routes");
+const { MANAGERIAL_ROLES, isManagerialRole, normalizeRole } = await import("../utils/role-utils");
+const { canViewProjectReport } = await import("../routes/project-report-routes");
+const { canVerify } = await import("../routes/team-report-link-report-routes");
 
 const COMPREHENSIVE_ROLE_SAMPLE = [
   "admin",

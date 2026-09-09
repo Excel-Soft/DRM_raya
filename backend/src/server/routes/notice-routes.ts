@@ -1,13 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db } from "./db";
+import { db } from "../db";
 import { notices, insertNoticeSchema, users, noticeAssignments } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
-import { authMiddleware } from "./auth.middleware";
-import { isManagerialRole } from "./utils/role-utils";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { isManagerialRole } from "../utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
 import { ValidationService } from "./services/validation.service";
-import { sendError, unauthorized, forbidden, notFound } from "./utils/api-error";
+import { sendError, unauthorized, forbidden, notFound } from "../utils/api-error";
 
 const router = Router();
 

@@ -14,8 +14,8 @@
  */
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
 
 const STATUSES = ["active", "inactive"] as const;

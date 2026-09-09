@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { pool } from "./db";
-import { requireRole } from "./auth.middleware";
+import { pool } from "../db";
+import { requireRole } from "../middleware/auth.middleware";
 
 /**
  * Audit Log viewer (Stage 10, section G).

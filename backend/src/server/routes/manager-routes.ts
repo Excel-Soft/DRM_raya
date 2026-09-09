@@ -1,16 +1,16 @@
 import type { Express } from "express";
-import { authMiddleware } from "./auth.middleware";
+import { authMiddleware } from "../middleware/auth.middleware";
 import { z } from "zod";
-import { customersRepository } from "./repositories/customers.repository";
-import { followUpsRepository } from "./repositories/followups.repository";
+import { customersRepository } from "../repositories/customers.repository";
+import { followUpsRepository } from "../repositories/followups.repository";
 import { insertFollowUpSchema } from "@shared/schema";
-import { pool } from "./db";
-import { normalizeRole } from "./utils/role-utils";
-import { safePage, safePageSize } from "./utils/sql-safety";
+import { pool } from "../db";
+import { normalizeRole } from "../utils/role-utils";
+import { safePage, safePageSize } from "../utils/sql-safety";
 
 const gradeValues = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"] as const;
 
-import { isManagerialRole } from "./utils/role-utils";
+import { isManagerialRole } from "../utils/role-utils";
 
 function requireManager(req: any, res: any, next: any) {
   if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });

@@ -1,8 +1,8 @@
 import type { Express } from "express";
-import { authMiddleware, requireRole } from "./auth.middleware";
-import { ticketsRepository } from "./repositories/tickets.repository";
-import { supportMessagesRepository } from "./repositories/support-messages.repository";
-import { channelConfigRepository } from "./repositories/channel-config.repository";
+import { authMiddleware, requireRole } from "../middleware/auth.middleware";
+import { ticketsRepository } from "../repositories/tickets.repository";
+import { supportMessagesRepository } from "../repositories/support-messages.repository";
+import { channelConfigRepository } from "../repositories/channel-config.repository";
 import { 
   insertSupportTicketSchema, 
   insertSupportMessageSchema,

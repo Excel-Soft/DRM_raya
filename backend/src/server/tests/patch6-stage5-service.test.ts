@@ -43,7 +43,7 @@ import {
   SERVICE_BRIDGE_CONFIG_DEFAULTS,
   SERVICE_BRIDGE_TARGET_TO_FLAG,
   SERVICE_BRIDGE_DISABLED_MESSAGE,
-} from "../shared/service-bridge-constants";
+} from "../../shared/service-bridge-constants";
 
 const firstMsg = (r: { success: boolean; error?: any }) =>
   r.success ? null : r.error.issues[0]?.message;

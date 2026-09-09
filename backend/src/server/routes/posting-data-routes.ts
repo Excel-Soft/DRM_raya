@@ -1,9 +1,9 @@
 import { Express, Request, Response } from "express";
-import { db } from "./db";
+import { db } from "../db";
 import { productPostingData, insertProductPostingDataSchema, restrictedKeywords, insertRestrictedKeywordSchema } from "@shared/schema";
 import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
-import { authMiddleware } from "./auth.middleware";
-import { normalizeRole } from "./utils/role-utils";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { normalizeRole } from "../utils/role-utils";
 import { z } from "zod";
 import { ActivityLogService } from "./services/activity-service";
 

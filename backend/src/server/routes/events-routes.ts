@@ -17,13 +17,13 @@
  * { data, total, page, pageSize }. Real rows or empty — never fabricated.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
+import { pool } from "../db";
 import { ActivityLogService } from "./services/activity-service";
-import { buildExportFilename } from "./utils/export-filename";
-import { isManagerialRole } from "./utils/role-utils";
+import { buildExportFilename } from "../utils/export-filename";
+import { isManagerialRole } from "../utils/role-utils";
 import { NotificationService } from "./services/notification-service";
 import { requireReportPermission } from "./middleware/report-permission";
-import { safePage, safePageSize } from "./utils/sql-safety";
+import { safePage, safePageSize } from "../utils/sql-safety";
 
 // Fire-and-forget duty-assignment notification (uses the shared notification
 // abstraction). Never throws into the request path.

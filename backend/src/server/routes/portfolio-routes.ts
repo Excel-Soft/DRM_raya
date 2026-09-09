@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { pool } from "./db";
+import { pool } from "../db";
 import { portfolios } from "@shared/schema";
 import { sql, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
@@ -9,7 +9,7 @@ import fs from "fs";
 
 import { ActivityLogService } from "./services/activity-service";
 import { AuditLogService } from "./services/audit-log.service";
-import { requireRole } from "./auth.middleware";
+import { requireRole } from "../middleware/auth.middleware";
 
 const db = drizzle(pool);
 const router = Router();

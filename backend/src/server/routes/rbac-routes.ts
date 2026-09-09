@@ -1,10 +1,10 @@
 import { Router, type Request, type Response } from "express";
-import { authMiddleware, requireRole } from "./auth.middleware";
+import { authMiddleware, requireRole } from "../middleware/auth.middleware";
 import { getNavigationForRole, ROLE_REGISTRY } from "./services/rbac.service";
 import { impersonationService } from "./services/impersonation.service";
-import { ROLES, normalizeRole } from "./utils/role-utils";
-import { authService } from "./auth.service";
-import { usersRepository } from "./repositories/users.repository";
+import { ROLES, normalizeRole } from "../utils/role-utils";
+import { authService } from "../services/auth.service";
+import { usersRepository } from "../repositories/users.repository";
 
 const router = Router();
 
@@ -31,7 +31,7 @@ router.get("/me/navigation", authMiddleware, async (req: Request, res: Response)
         if (!isAdmin && req.user.impersonatorId) {
             // User is impersonating — check if the real user is admin via DB
             try {
-                const { pool } = await import("./db");
+                const { pool } = await import("../db");
                 const result = await pool.query(
                     `SELECT role, role_id, roles FROM drm.users WHERE id = $1 LIMIT 1`,
                     [req.user.impersonatorId]
@@ -97,7 +97,7 @@ router.post("/admin/impersonate", authMiddleware, async (req: Request, res: Resp
         // Final Fallback DB Lookup if all above somehow missed it
         if (!canImpersonate && realUserId) {
             try {
-                const { pool } = await import("./db");
+                const { pool } = await import("../db");
                 const dbResult = await pool.query(
                     `SELECT role, role_id FROM drm.users WHERE id = $1`,
                     [realUserId]

@@ -52,7 +52,7 @@ vi.mock("./db", () => ({
   checkDbHealth: async () => ({ ok: true }),
 }));
 
-const { gmApprovalScopeClause, resolveGmApprovalScopeUserIds } = await import("./gm-pool-routes");
+const { gmApprovalScopeClause, resolveGmApprovalScopeUserIds } = await import("../routes/gm-pool-routes");
 
 beforeEach(() => {
   mockPoolQuery.mockReset();

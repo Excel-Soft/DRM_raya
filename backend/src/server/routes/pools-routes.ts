@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
-import { poolsRepository, PoolType } from "./repositories/pools.repository";
-import { pool } from "./db";
-import { isManagerialRole } from "./utils/role-utils";
+import { poolsRepository, PoolType } from "../repositories/pools.repository";
+import { pool } from "../db";
+import { isManagerialRole } from "../utils/role-utils";
 
 const router = Router();
 

@@ -15,8 +15,8 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "./db";
-import { registerPerformanceRoutes } from "./performance-routes";
+import { pool } from "../db";
+import { registerPerformanceRoutes } from "../routes/performance-routes";
 
 // req.user is normally populated by auth middleware; the tests swap this in.
 let currentUser: any = null;

@@ -1,9 +1,9 @@
 import { Router, type Express } from "express";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { normalizeRole } from "./utils/role-utils";
-import { db, pool } from "./db";
-import { mapToCanonical } from "./utils/gm-bv-state-machine";
-import { resolveStoredOrDerivedGmType } from "../shared/gm-sales-constants";
+import { normalizeRole } from "../utils/role-utils";
+import { db, pool } from "../db";
+import { mapToCanonical } from "../utils/gm-bv-state-machine";
+import { resolveStoredOrDerivedGmType } from "../../shared/gm-sales-constants";
 import { deriveQuarterKey, getGmCommissionQuarterSummary, syncGmCommissionLedger } from "./services/gm-commission.service";
 import { z } from "zod";
 import {
@@ -29,18 +29,18 @@ import {
   productPostingInvoices,
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, count, ilike, or, desc, inArray } from "drizzle-orm";
-import { bvReportsRepository, ensureBvReportsSchema } from "./repositories/bv-reports.repository";
+import { bvReportsRepository, ensureBvReportsSchema } from "../repositories/bv-reports.repository";
 import {
   loanReportsRepository,
   vasReportsRepository,
   gmReportsRepository,
-} from "./repositories/generic-report.repository";
-import { isManagerialRole } from "./utils/role-utils";
-import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "./utils/api-error";
+} from "../repositories/generic-report.repository";
+import { isManagerialRole } from "../utils/role-utils";
+import { sendError, errorEnvelope, badRequest, unauthorized, forbidden, notFound, sendApiError } from "../utils/api-error";
 import { requireReportPermission, resolveReportRoles } from "./middleware/report-permission";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
 import { ActivityLogService } from "./services/activity-service";
-import { exportTimestamp } from "./utils/export-filename";
+import { exportTimestamp } from "../utils/export-filename";
 import { getBvReportData, type BvReportFilters } from "./services/bv-report.service";
 import {
   getDayTargetReport,

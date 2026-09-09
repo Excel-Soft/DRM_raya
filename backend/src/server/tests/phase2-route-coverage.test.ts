@@ -120,7 +120,7 @@ describe("GM-BV assign and link-customer enforce actual ownership scope (mocked 
         })),
       },
     }));
-    const { gmBvPoolRepository } = await import("./repositories/gm-bv-pool.repository");
+    const { gmBvPoolRepository } = await import("../repositories/gm-bv-pool.repository");
     await gmBvPoolRepository.assign("gm-1", "assignee-1", "caller-1", "sales_executive");
 
     const assignQuery = queries.find((q) => q.sql.includes("update bv_reports set assigned_to"));
@@ -145,7 +145,7 @@ describe("GM-BV assign and link-customer enforce actual ownership scope (mocked 
         })),
       },
     }));
-    const { gmBvPoolRepository } = await import("./repositories/gm-bv-pool.repository");
+    const { gmBvPoolRepository } = await import("../repositories/gm-bv-pool.repository");
     await gmBvPoolRepository.assign("gm-2", "assignee-2", "caller-2", "admin");
 
     const assignQuery = queries.find((q) => q.sql.includes("update bv_reports set assigned_to"));
@@ -172,7 +172,7 @@ describe("GM-BV assign and link-customer enforce actual ownership scope (mocked 
         })),
       },
     }));
-    const { gmBvPoolRepository } = await import("./repositories/gm-bv-pool.repository");
+    const { gmBvPoolRepository } = await import("../repositories/gm-bv-pool.repository");
     const result = await gmBvPoolRepository.linkCustomer("gm-3", "caller-3", "sales_executive");
 
     expect(result).toBeNull();

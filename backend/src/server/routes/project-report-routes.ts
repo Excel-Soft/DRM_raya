@@ -13,7 +13,7 @@
  *  server/pms-routes.ts.)
  */
 import type { Express, Request, Response } from "express";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { listProjectReport } from "./services/project-report.service";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

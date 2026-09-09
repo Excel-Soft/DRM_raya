@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db, pool } from "./db";
+import { db, pool } from "../db";
 import { desc } from "drizzle-orm";
 
 const router = Router();

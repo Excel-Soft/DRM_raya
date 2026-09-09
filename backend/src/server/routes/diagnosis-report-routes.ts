@@ -1,7 +1,7 @@
 import { Express, Request, Response } from "express";
 
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { requireReportPermission } from "./middleware/report-permission";
 
 /**

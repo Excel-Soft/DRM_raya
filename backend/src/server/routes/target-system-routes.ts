@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db } from "./db";
-import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemUserTargets, users } from "../shared/schema";
+import { db } from "../db";
+import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemUserTargets, users } from "../../shared/schema";
 import { eq, desc, and, or, inArray, lte, gte, isNull } from "drizzle-orm";
-import { requireRole } from "./auth.middleware";
+import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
 

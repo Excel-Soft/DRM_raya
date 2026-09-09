@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { generateAssistantResponse, type AssistantContext } from "./ai-assistant";
+import { generateAssistantResponse, type AssistantContext } from "../services/ai-assistant";
 import { z } from "zod";
 
 const router = Router();

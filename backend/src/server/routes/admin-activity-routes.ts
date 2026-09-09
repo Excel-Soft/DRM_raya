@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { authService } from "./auth.service";
+import { pool } from "../db";
+import { authService } from "../services/auth.service";
 
 const router = Router();
 

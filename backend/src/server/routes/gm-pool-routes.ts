@@ -1,10 +1,10 @@
 import { Router, type Express, type Request } from "express";
-import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "./db.js";
+import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "../db";
 import { z } from "zod";
-import { customersRepository } from "./repositories/customers.repository.js";
-import { tempContactsRepository } from "./repositories/temp-contacts.repository.js";
-import { resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "./utils/drm-id-utils.js";
-import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils.js";
+import { customersRepository } from "../repositories/customers.repository";
+import { tempContactsRepository } from "../repositories/temp-contacts.repository";
+import { resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "../utils/drm-id-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 import crypto from "crypto";
 import {
   generateDefaultInvoicesForGm,
@@ -14,10 +14,10 @@ import {
 } from "./services/gm-invoice-generation.service.js";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service.js";
 import { NotificationService } from "./services/notification-service.js";
-import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "./utils/gm-sales-permissions.js";
+import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "../utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service.js";
 import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit.js";
-import { sendError, sendSuccess, zodIssues } from "./utils/api-response.js";
+import { sendError, sendSuccess, zodIssues } from "../utils/api-response";
 import {
   resolveCanonicalGmType,
   checkLoanGmEnabled,
@@ -26,15 +26,15 @@ import {
   getInitialGmDbState,
   recheckGmThresholdAtApproval,
 } from "./services/gm-create-policy.service.js";
-import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../shared/gm-sales-constants.js";
+import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../../shared/gm-sales-constants";
 import { transitionWorkflowStatus } from "./services/workflow-status.service.js";
-import { ApiError } from "./utils/api-error.js";
+import { ApiError } from "../utils/api-error";
 import {
   WORKFLOW_ENTITY_TYPES,
   GM_WORKFLOW_STAGES,
   GM_LOAN_ADMIN_GATE_STATES,
   GM_LOAN_ADMIN_GATE_TRANSITIONS,
-} from "../shared/gm-sales-constants.js";
+} from "../../shared/gm-sales-constants";
 
 /** Build the central-service actor from the authenticated request user. */
 function gmWorkflowActor(req: any) {

@@ -1,10 +1,10 @@
 import type { Express } from "express";
-import { loanRepository } from "./repositories/loan.repository";
+import { loanRepository } from "../repositories/loan.repository";
 import { insertLoanRequestSchema, insertLoanRequestAdminSchema } from "@shared/schema";
-import { db } from "./db";
+import { db } from "../db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "./utils/role-utils";
+import { isManagerialRole, isHodAllowed, normalizeRole, ROLES } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission";
 import { ActivityLogService } from "./services/activity-service";
 import { z } from "zod";

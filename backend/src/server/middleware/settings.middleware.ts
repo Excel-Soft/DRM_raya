@@ -1,8 +1,8 @@
 import { type Request, type Response, type NextFunction } from "express";
 import type { PoolClient } from "pg";
-import { allowedIpsRepository } from "./repositories/allowed-ips.repository";
-import { pool, isDbAvailable, ensureDbAvailable } from "./db";
-import { normalizeRole, ROLES } from "./utils/role-utils";
+import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
+import { pool, isDbAvailable, ensureDbAvailable } from "../db";
+import { normalizeRole, ROLES } from "../utils/role-utils";
 
 // Configuration flag for IP restriction enforcement
 export const IP_RESTRICTION_ENABLED = process.env.IP_RESTRICTION_ENABLED === "true";

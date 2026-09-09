@@ -1,6 +1,6 @@
-import { db } from "./db";
+import { db } from "../db";
 import { roles, permissions, rolePermissions } from "@shared/schema";
-import { ROLES } from "./utils/role-utils";
+import { ROLES } from "../utils/role-utils";
 import { eq } from "drizzle-orm";
 
 async function seedRBAC() {

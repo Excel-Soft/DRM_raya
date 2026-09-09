@@ -1,7 +1,7 @@
 import type { Express } from "express";
-import { overtimeRepository } from "./repositories/overtime.repository.js";
+import { overtimeRepository } from "../repositories/overtime.repository";
 import { insertOvertimeRecordSchema } from "@shared/schema";
-import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils.js";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission.js";
 import { ActivityLogService } from "./services/activity-service.js";
 import { z } from "zod";
@@ -24,9 +24,9 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { normalizeRole } = await import("./utils/role-utils.js");
+      const { normalizeRole } = await import("../utils/role-utils.js");
       const { getDepartmentFilterUserIds } = await import("./dashboard-routes.js");
-      const { pool } = await import("./db.js");
+      const { pool } = await import("../db.js");
       const userRes = await pool.query("SELECT role FROM drm.users WHERE id = $1", [userId]);
       const dbRole = userRes.rows[0]?.role || req.user.roleId;
 
@@ -84,7 +84,7 @@ export function registerOvertimeRoutes(app: Express) {
       if (!isManagerialRole(callerRole(req))) {
         return res.status(403).json({ error: "You are not authorized to view all overtime records." });
       }
-      const { pool } = await import("./db.js");
+      const { pool } = await import("../db.js");
       const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ORDER BY o.created_at DESC`);
       res.json(rows);
     } catch (error) { res.status(500).json({ error: "Failed" }); }
@@ -208,8 +208,8 @@ export function registerOvertimeRoutes(app: Express) {
       }
 
       const userId = req.user.userId;
-      const { normalizeRole } = await import("./utils/role-utils.js");
-      const { pool } = await import("./db.js");
+      const { normalizeRole } = await import("../utils/role-utils.js");
+      const { pool } = await import("../db.js");
       const userRes = await pool.query("SELECT role FROM drm.users WHERE id = $1", [userId]);
       const dbRole = userRes.rows[0]?.role || req.user.roleId;
 

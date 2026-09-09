@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { isHodAllowed, normalizeRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { isHodAllowed, normalizeRole } from "../utils/role-utils";
 
 // Ensure audit table exists (id serial is acceptable for audit log)
 const ensureAuditTable = pool.query(`

@@ -1,8 +1,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import { authMiddleware } from "./auth.middleware";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
-import { safePage, safePageSize } from "./utils/sql-safety";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { safePage, safePageSize } from "../utils/sql-safety";
 
 function shortLog(method: string, path: string, status: number, ms: number) {
   console.log(`[${new Date().toISOString()}] ${method} ${path} -> ${status} (${ms}ms)`);

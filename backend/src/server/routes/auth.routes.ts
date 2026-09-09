@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import crypto from "crypto";
-import { authService } from "./auth.service";
-import { authMiddleware, setAuthCookie, clearAuthCookie } from "./auth.middleware";
-import { pool } from "./db";
-import { normalizeRole } from "./utils/role-utils";
-import { emailService } from "./email.service";
-import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "./utils/api-error";
+import { authService } from "../services/auth.service";
+import { authMiddleware, setAuthCookie, clearAuthCookie } from "../middleware/auth.middleware";
+import { pool } from "../db";
+import { normalizeRole } from "../utils/role-utils";
+import { emailService } from "../services/email.service";
+import { sendError, badRequest, unauthorized, forbidden, notFound, conflict } from "../utils/api-error";
 
 
 const router = Router();

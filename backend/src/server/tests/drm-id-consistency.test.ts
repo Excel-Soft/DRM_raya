@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { generateDrmId, resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "./utils/drm-id-utils";
-import { pool } from "./db";
+import { generateDrmId, resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "../utils/drm-id-utils";
+import { pool } from "../db";
 
 describe("DRM ID Consistency and Immutability Tests", () => {
   it("should generate deterministic DRM IDs for string seeds", () => {

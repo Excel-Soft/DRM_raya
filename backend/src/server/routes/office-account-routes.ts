@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { db } from "./db";
+import { db } from "../db";
 import { 
   accountHeads, officeExpenses, officeVas, cheques, businessCustomers, invoices, customers,
   ledgerEntries, journalVouchers, journalVoucherLines,
@@ -9,18 +9,18 @@ import {
 } from "@shared/schema";
 import { eq, desc, asc, and, gte, lte, ilike, or, notIlike, inArray, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { sendError, sendApiError, ApiError, badRequest, conflict, notFound } from "./utils/api-error";
+import { sendError, sendApiError, ApiError, badRequest, conflict, notFound } from "../utils/api-error";
 import {
   requireFinancialPermission,
   FINANCIAL_ACTIONS,
   STAGE2_FINANCIAL_ROLES,
 } from "./middleware/financial-permission";
-import { ROLES } from "./utils/role-utils";
-import { withFinancialTransaction } from "./utils/financial-transaction";
+import { ROLES } from "../utils/role-utils";
+import { withFinancialTransaction } from "../utils/financial-transaction";
 import { AuditLogService } from "./services/audit-log.service";
-import { pickWritable, assertPositiveAmount, assertValidDate } from "./utils/financial-validation";
-import { sendCsvExport } from "./utils/financial-export";
-import { computeTrialBalance } from "./utils/trial-balance";
+import { pickWritable, assertPositiveAmount, assertValidDate } from "../utils/financial-validation";
+import { sendCsvExport } from "../utils/financial-export";
+import { computeTrialBalance } from "../utils/trial-balance";
 
 const router = Router();
 

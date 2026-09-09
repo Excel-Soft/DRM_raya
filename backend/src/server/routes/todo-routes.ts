@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "./utils/api-error";
+import { pool } from "../db";
+import { sendError, sendApiError, errorEnvelope, unauthorized, forbidden, notFound, ApiError } from "../utils/api-error";
 import { ValidationService } from "./services/validation.service";
 import { ActivityLogService } from "./services/activity-service";
 

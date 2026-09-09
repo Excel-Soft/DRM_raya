@@ -1,6 +1,6 @@
-import { db } from "./db";
+import { db } from "../db";
 import { roles, urlPermissions, policies, allowedIps } from "@shared/schema";
-import { usersRepository } from "./repositories/users.repository";
+import { usersRepository } from "../repositories/users.repository";
 
 export async function seedSettings() {
   console.log("🌱 Seeding Settings data...");

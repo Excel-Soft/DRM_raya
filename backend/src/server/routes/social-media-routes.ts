@@ -37,8 +37,8 @@
  */
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { AuditLogService } from "./services/audit-log.service";
 import { NotificationService } from "./services/notification-service";
 import {

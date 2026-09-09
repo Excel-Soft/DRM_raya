@@ -1,6 +1,6 @@
 import pkg from 'pg';
 const { Pool } = pkg;
-import "./env.js"; // This will load the .env file
+import "../server/utils/env"; // This will load the .env file
 
 const connectionString = process.env.DATABASE_URL;
 

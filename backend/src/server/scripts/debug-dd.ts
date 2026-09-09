@@ -1,4 +1,4 @@
-import { pool } from "./db";
+import { pool } from "../db";
 
 async function testUpload() {
     // Simulate what POST /api/projects/:id/documents does
@@ -6,8 +6,8 @@ async function testUpload() {
     
     try {
         // Step 1: Find project + invoice (same as route)
-        const { db } = await import("./db");
-        const { projects, productPostingInvoices } = await import("../shared/schema");
+        const { db } = await import("../db");
+        const { projects, productPostingInvoices } = await import("../../shared/schema");
         const { eq } = await import("drizzle-orm");
         
         const [projectData] = await db

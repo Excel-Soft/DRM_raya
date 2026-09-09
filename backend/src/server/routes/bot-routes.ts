@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { authMiddleware } from "./auth.middleware";
+import { authMiddleware } from "../middleware/auth.middleware";
 
 export function registerBotRoutes(app: Express) {
     // Auth is enforced globally

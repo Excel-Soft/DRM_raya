@@ -1,6 +1,6 @@
 import { Express, Request, Response } from "express";
 
-import { db, pool } from "./db";
+import { db, pool } from "../db";
 import {
   serviceFollowups,
   serviceComplaints,
@@ -9,17 +9,17 @@ import {
   serviceCustomerFeedback,
   serviceSampleRequests,
   serviceCustomers,
-} from "../shared/schema";
+} from "../../shared/schema";
 import { eq, and, desc, notInArray } from "drizzle-orm";
-import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
+import { serviceReportsRepository, type ServiceListOptions } from "../repositories/service-reports.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "./utils/role-utils";
+import { isManagerialRole } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission.middleware";
 import { CommunicationService } from "./services/communication.service";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service";
-import { safePage, safePageSize } from "./utils/sql-safety";
+import { safePage, safePageSize } from "../utils/sql-safety";
 import { ValidationService } from "./services/validation.service";
-import { sendError, badRequest, unauthorized } from "./utils/api-error";
+import { sendError, badRequest, unauthorized } from "../utils/api-error";
 import { AuditLogService } from "./services/audit-log.service";
 import {
   serviceCustomerCreateSchema,
@@ -39,7 +39,7 @@ import { getConfigValue } from "./services/service-bridge-config.service";
 import {
   SERVICE_BRIDGE_DISABLED_MESSAGE,
   SERVICE_BRIDGE_TARGET_TO_FLAG,
-} from "../shared/service-bridge-constants";
+} from "../../shared/service-bridge-constants";
 import {
   bridgeToGm,
   bridgeToVas,
@@ -48,7 +48,7 @@ import {
   mapServiceBridgeError,
   type BridgeActor,
 } from "./services/service-bridge.service";
-import { requireRole } from "./auth.middleware";
+import { requireRole } from "../middleware/auth.middleware";
 
 // --- Stage 7 best-effort communication logging helpers ---------------------
 const COMM_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

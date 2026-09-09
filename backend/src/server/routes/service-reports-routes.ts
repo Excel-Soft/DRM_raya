@@ -1,9 +1,9 @@
 import { type Express, type Request, type Response } from "express";
-import { serviceReportsRepository, type ServiceListOptions } from "./repositories/service-reports.repository";
-import { serviceDocumentsRepository, type ServiceDocType } from "./repositories/service-documents.repository";
+import { serviceReportsRepository, type ServiceListOptions } from "../repositories/service-reports.repository";
+import { serviceDocumentsRepository, type ServiceDocType } from "../repositories/service-documents.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "./utils/role-utils";
-import { isServiceGradeKey } from "./utils/service-grade";
+import { isManagerialRole } from "../utils/role-utils";
+import { isServiceGradeKey } from "../utils/service-grade";
 import { ActivityLogService } from "./services/activity-service";
 
 function isValidHttpUrl(value: string): boolean {

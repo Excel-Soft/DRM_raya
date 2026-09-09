@@ -11,8 +11,8 @@
  * Alias path: /api/posting-data/link-report   (compatibility with the page URL)
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import {
   listUsersForReport,
   listLinkReport,

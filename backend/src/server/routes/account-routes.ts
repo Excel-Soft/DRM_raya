@@ -1,7 +1,7 @@
 import { Express, Request } from "express";
-import { generateDrmId, resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 import crypto from "crypto";
-import { db, pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "./db";
+import { db, pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "../db";
 import {
   donations,
   invoices,
@@ -23,13 +23,13 @@ import { z } from "zod";
 import { NotificationService } from "./services/notification-service";
 import { generateDefaultInvoicesForGm, revertGmInvoicesToHodOnReject } from "./services/gm-invoice-generation.service";
 import { getOrCreateProductPostingWorkflow } from "./services/product-posting-workflow.service";
-import { requireManualInvoiceCreator } from "./utils/gm-sales-permissions";
+import { requireManualInvoiceCreator } from "../utils/gm-sales-permissions";
 import { projects, projectFinancials, projectApprovals } from "@shared/schema";
-import { projectsRepository } from "./repositories/projects.repository";
-import { projectFinancialsRepository } from "./repositories/project-financials.repository";
-import { projectApprovalsRepository } from "./repositories/project-approvals.repository";
-import { sendError, sendApiError, ApiError } from "./utils/api-error";
-import { sendSuccess, sendError as sendEnvelopeError } from "./utils/api-response";
+import { projectsRepository } from "../repositories/projects.repository";
+import { projectFinancialsRepository } from "../repositories/project-financials.repository";
+import { projectApprovalsRepository } from "../repositories/project-approvals.repository";
+import { sendError, sendApiError, ApiError } from "../utils/api-error";
+import { sendSuccess, sendError as sendEnvelopeError } from "../utils/api-response";
 import {
   INVOICE_WRITABLE_FIELDS,
   pickWritable,
@@ -38,12 +38,12 @@ import {
   assertValidExchangeRate,
   assertLegalInvoiceStatusTransition,
   assertPaymentProofForPaid,
-} from "./utils/financial-validation";
+} from "../utils/financial-validation";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES, FINANCIAL_WRITE_ROLES, FINANCIAL_VOID_ROLES } from "./middleware/financial-permission";
-import { withPgTransaction } from "./utils/financial-transaction";
+import { withPgTransaction } from "../utils/financial-transaction";
 import { AuditLogService } from "./services/audit-log.service";
 import { requireActionPermission, denyPendingManagementDecision } from "./middleware/action-permission.middleware";
-import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS } from "./utils/gm-sales-permissions";
+import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS } from "../utils/gm-sales-permissions";
 import { gmApprovalScopeClause, ensureLoanReceivableOnFinalApproval } from "./gm-pool-routes";
 import { getConfig, getConfigValue } from "./services/gm-sales-config.service";
 import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "./services/gm-sales-audit";
@@ -64,8 +64,8 @@ import {
   PROJECT_GENERATION_MODE,
   type GmSalesConfig,
 } from "@shared/gm-sales-constants";
-import { normalizeRole, ROLES } from "./utils/role-utils";
-import { requireRole } from "./auth.middleware";
+import { normalizeRole, ROLES } from "../utils/role-utils";
+import { requireRole } from "../middleware/auth.middleware";
 import { InvoiceWorkflowService, INVOICE_AUDIT_ENTITY, type Actor } from "./services/invoice-workflow.service";
 import { transitionWorkflowStatus } from "./services/workflow-status.service";
 import {

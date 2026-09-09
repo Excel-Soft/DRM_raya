@@ -1,9 +1,9 @@
 import type { Express } from "express";
-import { authMiddleware } from "./auth.middleware";
-import { pool, db } from "./db";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { pool, db } from "../db";
 import { projects, tasks, users, taskTimeLogs } from "@shared/schema";
 import { sql, eq, and, or, gte, lte } from "drizzle-orm";
-import { normalizeRole } from "./utils/role-utils";
+import { normalizeRole } from "../utils/role-utils";
 import { getStatsPeriodRange } from "./pms-routes";
 
 export function registerDdManagerRoutes(app: Express) {

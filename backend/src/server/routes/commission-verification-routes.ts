@@ -12,10 +12,10 @@
  * approve/reject restricted to full-access + HOD. Cross-scope access returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { ActivityLogService } from "./services/activity-service";
-import { safePage, safePageSize } from "./utils/sql-safety";
+import { safePage, safePageSize } from "../utils/sql-safety";
 
 const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 const HR_ROLES = ["hr", "hr_manager"];

@@ -1,15 +1,15 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { Router } from "express";
 import { z } from "zod";
-import { hodRepository } from "./repositories/hod.repository";
-import { projectsRepository } from "./repositories/projects.repository";
-import { pool } from "./db";
-import { isHodAllowed, normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { hodRepository } from "../repositories/hod.repository";
+import { projectsRepository } from "../repositories/projects.repository";
+import { pool } from "../db";
+import { isHodAllowed, normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { registerHodQuickActionRoutes } from "./hod-quick-actions.routes";
 import { generateInvoicesAfterFinalGmApproval } from "./services/gm-invoice-generation.service";
-import { resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
-import { GM_INVOICE_GENERATION_TIMING } from "../shared/gm-sales-constants";
+import { resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
+import { GM_INVOICE_GENERATION_TIMING } from "../../shared/gm-sales-constants";
 import { NotificationService } from "./services/notification-service";
 
 

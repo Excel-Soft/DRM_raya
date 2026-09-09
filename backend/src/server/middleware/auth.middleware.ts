@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction, CookieOptions } from "express";
-import { authService, type TokenPayload } from "./auth.service.js";
-import { normalizeRole } from "./utils/role-utils.js";
+import { authService, type TokenPayload } from "../services/auth.service.js";
+import { normalizeRole } from "../utils/role-utils";
 
 // Extend Express Request to include user
 declare global {
@@ -128,7 +128,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     // 👇 NEW: Ensure per‑executive tables exist and expose the target table name
     // --------------------------------------------------------------
     try {
-      const { ensureSalesTables } = await import("./utils/sales-tables.js");
+      const { ensureSalesTables } = await import("../utils/sales-tables.js");
       const salesTable = await ensureSalesTables(userId, normalizedRoleId);
       (req as any).salesTable = salesTable;
     } catch (e) {

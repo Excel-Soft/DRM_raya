@@ -1,6 +1,6 @@
-import "./env";
-import { db } from "./db";
-import { users } from "../shared/schema";
+import "../utils/env";
+import { db } from "../db";
+import { users } from "../../shared/schema";
 import { createHash } from "node:crypto";
 
 function sha256(input: string): string {

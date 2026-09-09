@@ -1,4 +1,4 @@
-import { ensureServicesSchema } from "./repositories/services.repository.js";
+import { ensureServicesSchema } from "../repositories/services.repository";
 
 async function run() {
   console.log("Running ensureServicesSchema...");

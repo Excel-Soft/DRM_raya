@@ -1,5 +1,5 @@
 import { Request, Response, Router } from "express";
-import { db } from "./db";
+import { db } from "../db";
 import { 
   meetings, 
   meetingStatusEnum, 
@@ -7,7 +7,7 @@ import {
   customers, 
   notices,
   serviceComplaints
-} from "../shared/schema";
+} from "../../shared/schema";
 import { eq, desc, and, sql, gte, lte, or, inArray, ilike } from "drizzle-orm";
 import { z } from "zod";
 

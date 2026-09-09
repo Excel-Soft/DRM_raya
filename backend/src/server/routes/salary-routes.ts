@@ -1,8 +1,8 @@
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { recordAuditLog } from "./services/activity-service";
-import { buildExportFilename } from "./utils/export-filename";
+import { buildExportFilename } from "../utils/export-filename";
 
 // ---------------------------------------------------------------------------
 // Permissions (Patch 2 Stage 4) — action-aware, role-based.

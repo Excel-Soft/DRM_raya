@@ -1,5 +1,5 @@
 import { Router, type Express } from "express";
-import { pool } from "./db";
+import { pool } from "../db";
 
 function parsePagination(page?: string, pageSize?: string) {
   const pageNum = Math.max(1, Number(page) || 1);

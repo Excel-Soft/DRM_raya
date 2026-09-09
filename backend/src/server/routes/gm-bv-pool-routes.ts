@@ -1,6 +1,6 @@
 import { Router, type Express } from "express";
 import { z } from "zod";
-import { gmBvPoolRepository } from "./repositories/gm-bv-pool.repository";
+import { gmBvPoolRepository } from "../repositories/gm-bv-pool.repository";
 
 export const createSchema = z.object({
   customerId: z.string().uuid().optional().nullable(),

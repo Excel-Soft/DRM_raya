@@ -1,13 +1,13 @@
 import { Router, Request, Response } from "express";
-import { tempContactsRepository } from "./repositories/temp-contacts.repository";
+import { tempContactsRepository } from "../repositories/temp-contacts.repository";
 import { insertTempContactSchema } from "@shared/schema";
 import { z } from "zod";
-import { generateDrmId, resolveOrCreateCanonicalDrmId } from "./utils/drm-id-utils";
+import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 import crypto from "crypto";
-import { pool } from "./db";
+import { pool } from "../db";
 import { ActivityLogService } from "./services/activity-service";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "./utils/role-utils";
+import { isManagerialRole } from "../utils/role-utils";
 
 const TITLES = ["Mr", "Mrs", "Miss", "Ms", "Dr"];
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];

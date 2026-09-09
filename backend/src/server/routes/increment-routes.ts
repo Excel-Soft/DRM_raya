@@ -11,8 +11,8 @@
  * Cross-user access returns 403. Approve/Hold/Reject requires a managerial role.
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "./db";
-import { normalizeRole, isManagerialRole } from "./utils/role-utils";
+import { pool } from "../db";
+import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import {
   fetchUsers,
   fetchUserById,

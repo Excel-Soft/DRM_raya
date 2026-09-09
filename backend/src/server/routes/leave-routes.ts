@@ -1,11 +1,11 @@
 import type { Express } from "express";
-import { leaveRequestRepository } from "./repositories/leave-request.repository";
+import { leaveRequestRepository } from "../repositories/leave-request.repository";
 import { z } from "zod";
-import { pool } from "./db";
-import { isManagerialRole, normalizeRole, ROLES } from "./utils/role-utils";
+import { pool } from "../db";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 import { requireActionPermission } from "./middleware/action-permission";
 import { ActivityLogService } from "./services/activity-service";
-import { sendApiError, sendError, ApiError } from "./utils/api-error";
+import { sendApiError, sendError, ApiError } from "../utils/api-error";
 import { ValidationService } from "./services/validation.service";
 
 // Resolve the caller's effective (active) role from the auth payload.

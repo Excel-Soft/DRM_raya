@@ -1,4 +1,4 @@
-import "./env";
+import "../utils/env";
 import jwt from "jsonwebtoken";
 import { createHash } from "node:crypto";
 import bcrypt from "bcrypt";

@@ -1,6 +1,6 @@
 import type { Express } from "express";
-import { authMiddleware } from "./auth.middleware";
-import { pool } from "./db";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { pool } from "../db";
 
 // Software Executive reuses these D&D Executive endpoints (same task-execution model),
 // but must only ever see SOFTWARE-department projects, never D&D's — previously it was

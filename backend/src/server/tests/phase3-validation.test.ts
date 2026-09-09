@@ -21,17 +21,17 @@ import {
   dailyTargetSchema,
   kwaRecordSchema,
   assignRoleSchema,
-} from "./target-system-routes";
-import { gmVerificationStatusSchema } from "./hod-routes";
-import { createSchema as gmBvPoolCreateSchema, updateSchema as gmBvPoolUpdateSchema } from "./gm-bv-pool-routes";
-import { permissionCreateSchema } from "./drm-routes";
-import { createServerSchema, registryCreateSchema, hostingPackageCreateSchema } from "./it-assets-routes";
-import { createPostSchema as socialMediaCreatePostSchema } from "./social-media-routes";
+} from "../routes/target-system-routes";
+import { gmVerificationStatusSchema } from "../routes/hod-routes";
+import { createSchema as gmBvPoolCreateSchema, updateSchema as gmBvPoolUpdateSchema } from "../routes/gm-bv-pool-routes";
+import { permissionCreateSchema } from "../routes/drm-routes";
+import { createServerSchema, registryCreateSchema, hostingPackageCreateSchema } from "../routes/it-assets-routes";
+import { createPostSchema as socialMediaCreatePostSchema } from "../routes/social-media-routes";
 import { penaltyDecisionSchema, penaltyVoidSchema } from "./validators/penalty.validators";
 import { workflowCreateInvoiceSchema } from "./validators/invoice.validators";
 import { insertOfficeExpenseSchema, insertDollarBuyerSchema, insertDollarBuyingSchema } from "@shared/schema";
-import { pool } from "./db";
-import { registerRoutes } from "./routes";
+import { pool } from "../db";
+import { registerRoutes } from "../routes";
 import { authService } from "./auth.service";
 
 describe("target-system-routes schemas reject invalid/malicious payloads", () => {

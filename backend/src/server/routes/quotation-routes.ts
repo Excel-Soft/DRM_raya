@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { pool } from "./db";
+import { pool } from "../db";
 import type { PoolClient } from "pg";
 
 const discountEnum = z.enum(["PERCENT", "AMOUNT", "PERCENTAGE"]);

@@ -4,8 +4,8 @@ import {
   itAssetsRepository,
   normalizeServerStatus,
   SERVER_STATUSES,
-} from "./repositories/it-assets.repository";
-import { requireRole } from "./auth.middleware";
+} from "../repositories/it-assets.repository";
+import { requireRole } from "../middleware/auth.middleware";
 import { AuditLogService } from "./services/audit-log.service";
 import { insertItDomainSchema, insertItBackupSchema } from "@shared/schema";
 

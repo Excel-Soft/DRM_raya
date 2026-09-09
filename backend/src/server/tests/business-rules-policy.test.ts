@@ -7,7 +7,7 @@ import {
   walletNegativeBalanceApprovedSchema,
   decisionMetaSchema,
   type BusinessRulesConfig,
-} from "../shared/business-rules-config";
+} from "../../shared/business-rules-config";
 import {
   checkWalletNegativeBalanceAllowed,
   getApprovedProfitLossFormulaVersion,

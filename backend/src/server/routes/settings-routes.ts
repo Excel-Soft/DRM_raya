@@ -1,9 +1,9 @@
 import { Router, type Request, type Response, type Express } from "express";
-import { authMiddleware } from "./auth.middleware";
-import { rolesRepository } from "./repositories/roles.repository";
-import { urlPermissionsRepository } from "./repositories/url-permissions.repository";
-import { policiesRepository } from "./repositories/policies.repository";
-import { allowedIpsRepository } from "./repositories/allowed-ips.repository";
+import { authMiddleware } from "../middleware/auth.middleware";
+import { rolesRepository } from "../repositories/roles.repository";
+import { urlPermissionsRepository } from "../repositories/url-permissions.repository";
+import { policiesRepository } from "../repositories/policies.repository";
+import { allowedIpsRepository } from "../repositories/allowed-ips.repository";
 import {
   insertRoleSchema,
   insertUrlPermissionSchema,
@@ -11,7 +11,7 @@ import {
   insertAllowedIpSchema,
   attributes
 } from "@shared/schema";
-import { db } from "./db";
+import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { ActivityLogService } from "./services/activity-service";
 import { getConfig, patchConfig } from "./services/gm-sales-config.service";
