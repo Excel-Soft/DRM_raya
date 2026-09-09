@@ -5,12 +5,12 @@ import compression from "compression";
 import cors, { type CorsOptions } from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { loggerMiddleware } from "./logger.middleware";
-import { requestIdMiddleware } from "./middleware/request-id";
+import { loggerMiddleware } from "./middleware/logger.middleware";
+// import { requestIdMiddleware } from "./middleware/request-id";
 import { ensureDbOnce } from "./db/ensure";
 import { startOverdueJob } from "./jobs/overdue-checker";
-import { startOutboxWorker, stopOutboxWorker } from "./services/notification-worker";
-import { reconcileDrmIds } from "./services/drm-reconciliation.service";
+// import { startOutboxWorker, stopOutboxWorker } from "./services/notification-worker";
+// import { reconcileDrmIds } from "./services/drm-reconciliation.service";
 import { errorEnvelope } from "./utils/api-error";
 import { assertSecretsOrExit } from "./config/validate-secrets";
 
@@ -40,6 +40,11 @@ app.use(compression());
 declare module 'http' {
   interface IncomingMessage {
     rawBody: unknown
+  }
+}
+declare module 'express-serve-static-core' {
+  interface Request {
+    id?: string;
   }
 }
 app.use(express.json({
@@ -77,7 +82,7 @@ const corsOptions: CorsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-app.use(requestIdMiddleware);
+// app.use(requestIdMiddleware);
 app.use(loggerMiddleware);
 
 (async () => {
@@ -178,13 +183,13 @@ app.use(loggerMiddleware);
 
   // Start background jobs
   startOverdueJob();
-  startOutboxWorker();
-  reconcileDrmIds().catch((err) => console.error("[server] DRM ID reconciliation failed:", err));
+  // startOutboxWorker();
+  // reconcileDrmIds().catch((err) => console.error("[server] DRM ID reconciliation failed:", err));
 
   // Graceful shutdown handling
   const shutdown = async () => {
     log("Received shutdown signal. Stopping services...");
-    await stopOutboxWorker();
+    // await stopOutboxWorker();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);
