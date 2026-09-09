@@ -1,1 +1,0 @@
-import { pool } from './server/db'; async function main() { const res = await pool.query('select o.*, u.full_name from overtime_records o left join users u on u.id = o.user_id order by o.created_at desc limit 1'); console.log(res.rows[0]); process.exit(0); } main();

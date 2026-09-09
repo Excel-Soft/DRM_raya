@@ -1,1 +1,0 @@
-{"id":"DcgBv1Wya5sgkLZgumlP5","status":"PASSED","startedAt":1782844324426,"endedAt":1782844343667,"durationMs":19241,"commands":[{"executionId":"","commandId":"test","shell":"npm test","status":"PASSED","exitCode":0,"durationMs":19238,"logFilePath":"/home/runner/workspace/.local/state/workflow-logs/DcgBv1Wya5sgkLZgumlP5/validation.shell.exec.0","externallyManaged":false}]}

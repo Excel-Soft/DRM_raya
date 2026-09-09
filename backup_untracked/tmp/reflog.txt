@@ -1,9 +1,0 @@
-﻿f94be5c bilal@{0}: commit: Fix 500 errors in Product Posting Dashboard - Final Verified State
-bdda94a bilal@{1}: reset: moving to origin/main
-6bc3e5a bilal@{2}: commit: Fix 500 errors in product-posting dashboard by aligning code with actual DB schema
-6b25cad bilal@{3}: commit (merge): Merged product-posting-recovery into bilal
-bdda94a bilal@{4}: reset: moving to origin/main
-de95152 bilal@{5}: reset: moving to HEAD~1
-baa9c1f bilal@{6}: commit: Fix invoice approval workflow for HOD and Account Manager
-de95152 bilal@{7}: commit: Fix CRM permissions, sidebar visibility, and user creation. Added DRM permissions seeding script.
-63b86d5 bilal@{8}: branch: Created from origin/bilal
