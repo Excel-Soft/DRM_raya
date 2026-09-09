@@ -1,4 +1,4 @@
-import { pool } from "../server/db";
+import { pool } from "../db";
 
 const sqlQueries = `
 DO $$ BEGIN

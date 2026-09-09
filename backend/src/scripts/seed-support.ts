@@ -1,11 +1,11 @@
-import { db } from "../server/db";
+import { db } from "../db";
 import {
   users,
   customers,
   supportChannelConfig,
   supportTickets,
   supportMessages,
-} from "@shared/schema";
+} from "@models/schema";
 
 async function seedSupport() {
   console.log("🌱 Seeding Support module...");
@@ -54,6 +54,7 @@ async function seedSupport() {
   const ticketData = [
     {
       customerId: existingCustomers[0].id,
+      createdBy: user.id,
       channel: "web" as const,
       subject: "Unable to access dashboard",
       status: "Open" as const,
@@ -63,6 +64,7 @@ async function seedSupport() {
     },
     {
       customerId: existingCustomers[1]?.id || existingCustomers[0].id,
+      createdBy: user.id,
       channel: "whatsapp" as const,
       subject: "Need help with renewal process",
       status: "InProgress" as const,
@@ -72,6 +74,7 @@ async function seedSupport() {
     },
     {
       customerId: existingCustomers[2]?.id || existingCustomers[0].id,
+      createdBy: user.id,
       channel: "email" as const,
       subject: "Question about pricing tiers",
       status: "Open" as const,
@@ -80,6 +83,7 @@ async function seedSupport() {
     },
     {
       customerId: existingCustomers[0].id,
+      createdBy: user.id,
       channel: "phone" as const,
       subject: "Technical issue with integration",
       status: "Resolved" as const,
@@ -89,6 +93,7 @@ async function seedSupport() {
     },
     {
       customerId: existingCustomers[1]?.id || existingCustomers[0].id,
+      createdBy: user.id,
       channel: "web" as const,
       subject: "Feature request: Export to CSV",
       status: "Open" as const,

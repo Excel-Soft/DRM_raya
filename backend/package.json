@@ -4,15 +4,15 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "cross-env NODE_ENV=development tsx watch src/server/index.ts",
+    "dev": "cross-env NODE_ENV=development tsx watch src/index.ts",
     "test": "vitest run",
-    "build": "esbuild src/server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx src/server/scripts/seed.ts",
+    "db:seed": "tsx src/scripts/seed.ts",
     "db:setup": "npm run db:push && npm run db:seed"
   },
   "dependencies": {
@@ -127,6 +127,7 @@
     "esbuild": "^0.25.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
+    "ts-morph": "^28.0.0",
     "tsx": "^4.20.5",
     "typescript": "5.6.3"
   },

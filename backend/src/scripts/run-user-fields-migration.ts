@@ -1,4 +1,4 @@
-import { pool } from '../server/db';
+import { pool } from './db';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

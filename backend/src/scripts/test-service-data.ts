@@ -1,4 +1,4 @@
-import { db } from "../server/db";
+import { db } from "../db";
 import {
   users,
   customers,
@@ -7,7 +7,7 @@ import {
   serviceActivities,
   serviceTargets,
   serviceFollowups,
-} from "../shared/schema";
+} from "../models";
 import { eq, sql } from "drizzle-orm";
 
 async function runTest() {

@@ -1,6 +1,6 @@
 import "./env";
-import { db } from "../server/db";
-import { productPostingData, restrictedKeywords } from "../shared/schema";
+import { db } from "../db";
+import { productPostingData, restrictedKeywords } from "../models";
 
 async function seed() {
   console.log("Seeding posting data...");
