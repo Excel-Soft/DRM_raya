@@ -1,1 +1,0 @@
-import { pool } from '../server/db'; async function run() { const r = await pool.query('select id, full_name, role from drm.users where id in (\'292134ce-af47-413f-b635-c1becef59485\', \'512a8be4-e78c-4f7d-afbb-8c6740007ba5\')'); console.log(r.rows); process.exit(0); } run();

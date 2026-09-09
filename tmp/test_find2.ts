@@ -1,1 +1,0 @@
-import { customersRepository } from '../server/repositories/customers.repository'; async function run() { const res = await customersRepository.findByUserId('512a8be4-e78c-4f7d-afbb-8c6740007ba5', {}, 'sales_executive'); console.log(res.customers.map(c => c.companyName)); process.exit(0); } run();

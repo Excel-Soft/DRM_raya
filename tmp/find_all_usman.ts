@@ -1,1 +1,0 @@
-import { pool } from '../server/db'; async function run() { const r = await pool.query('select id, company_name, owner_user_id from drm.customers where company_name ilike \'%usman%\''); console.log(r.rows); process.exit(0); } run();

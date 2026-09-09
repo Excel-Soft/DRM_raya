@@ -1,1 +1,0 @@
-import { pool } from '../server/db'; async function run() { const r = await pool.query('select id, full_name, email from drm.users where email in (\'admin@excelstech.com\', \'testuser@example.com\')'); console.log(r.rows); process.exit(0); } run();

@@ -1,1 +1,0 @@
-import { pool } from '../server/db'; async function run() { const r = await pool.query('select company_name, pool_type, created_by, owner_user_id from drm.customers order by created_at desc limit 5'); console.log(r.rows); process.exit(0); } run();
