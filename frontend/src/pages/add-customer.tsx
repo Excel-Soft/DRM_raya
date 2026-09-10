@@ -65,9 +65,9 @@ const customerFormSchema = z.object({
   address: z.string().optional(),
   crmId: z.string().optional(),
   crmDate: z.string().optional(),
-  phone: z.string().min(1, "Contact number is required").regex(/^\d+$/, "Digits only").max(11, "Max 11 digits"),
+  phone: z.string().regex(/^\d*$/, "Digits only").max(11, "Max 11 digits").optional(),
   companyType: z.string().optional(),
-  title: z.string().optional(),
+  title: z.string().min(1, "Title is required"),
   personName: z.string().optional(),
   accountName: z.string().min(1, "Account holder name is required"),
   cnic: z.string().regex(/^\d*$/, "Digits only").max(13, "Max 13 digits").optional(),
@@ -75,18 +75,18 @@ const customerFormSchema = z.object({
   website: z.string().optional(),
   email: z.string().email("Valid email is required").trim().toLowerCase(),
   emails: z.array(z.string()).default([]),
-  mobile: z.string().regex(/^\d*$/, "Digits only").max(11, "Max 11 digits").optional(),
+  mobile: z.string().min(1, "Mobile number is required").regex(/^\d+$/, "Digits only").max(11, "Max 11 digits"),
   mobiles: z.array(z.string()).default([]),
   designation: z.string().optional(),
   comment: z.string().optional(),
   rcLink: z.string().optional(),
   source: z.string().optional(),
-  grade: z.string().min(1, "Grade is required"),
+  grade: z.string().optional(),
   status: z.string().default("New"),
   serviceTypes: z.array(z.string()).default([]),
   businessLine: z.string().optional(),
   abType: z.string().optional(),
-  region: z.string().min(1, "Region is required"),
+  region: z.string().optional(),
 });
 
 type CustomerFormData = z.infer<typeof customerFormSchema>;
@@ -925,7 +925,7 @@ export default function AddCustomer() {
                   name="companyName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Company Name *</FormLabel>
+                      <FormLabel>Company Name <span className="text-red-500">*</span></FormLabel>
                       <FormControl>
                         <Input
                           placeholder="Enter company name"
@@ -1042,7 +1042,7 @@ export default function AddCustomer() {
                   name="phone"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Contact No *</FormLabel>
+                      <FormLabel>Contact No</FormLabel>
                       <FormControl>
                         <Input 
                           placeholder="Enter contact number" 
@@ -1140,7 +1140,7 @@ export default function AddCustomer() {
                     name="title"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Title</FormLabel>
+                        <FormLabel>Title <span className="text-red-500">*</span></FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger data-testid="select-title">
@@ -1180,7 +1180,7 @@ export default function AddCustomer() {
                   name="accountName"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Account Holder Name *</FormLabel>
+                      <FormLabel>Account Holder Name <span className="text-red-500">*</span></FormLabel>
                       <FormControl>
                         <Input placeholder="Account holder name" autoComplete="off" {...field} data-testid="input-account-name" />
                       </FormControl>
@@ -1260,7 +1260,7 @@ export default function AddCustomer() {
                 {/* Dynamic Emails Field (Max 5) */}
                 <div className="space-y-2">
                   <FormLabel className="text-sm font-medium flex items-center gap-1">
-                    Email * <span className="text-xs text-muted-foreground font-normal">({emailsList.length}/5 max)</span>
+                    Email <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({emailsList.length}/5 max)</span>
                   </FormLabel>
                   {emailsList.map((emailVal, index) => {
                     const isLast = index === emailsList.length - 1;
@@ -1302,7 +1302,7 @@ export default function AddCustomer() {
                 {/* Dynamic Mobile Field (Max 5) */}
                 <div className="space-y-2">
                   <FormLabel className="text-sm font-medium flex items-center gap-1">
-                    Mobile <span className="text-xs text-muted-foreground font-normal">({mobilesList.length}/5 max)</span>
+                    Mobile <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({mobilesList.length}/5 max)</span>
                   </FormLabel>
                   {mobilesList.map((mobileVal, index) => {
                     const isLast = index === mobilesList.length - 1;
@@ -1423,7 +1423,7 @@ export default function AddCustomer() {
                   name="grade"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Grade *</FormLabel>
+                      <FormLabel>Grade</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger data-testid="select-grade">
@@ -1469,7 +1469,7 @@ export default function AddCustomer() {
                   name="region"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Region *</FormLabel>
+                      <FormLabel>Region</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger data-testid="select-region">

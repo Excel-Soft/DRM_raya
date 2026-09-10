@@ -64,6 +64,11 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind all interfaces (IPv4 + IPv6). Vite's default loopback-only bind
+    // resolved to IPv6 (::1) only on this stack, so the dev server was
+    // reachable via curl (which preferred IPv6) but refused connections
+    // from browsers that resolved "localhost"/127.0.0.1 to IPv4.
+    host: true,
     proxy: {
       "/api": {
         target: "http://localhost:5001",
