@@ -1,8 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Target, TrendingUp, TrendingDown, Loader2 } from "lucide-react";
+import { ChevronRight, Target, TrendingUp, TrendingDown } from "lucide-react";
 import { Link } from "wouter";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeader } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +49,18 @@ export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
       </CardHeader>
       <CardContent className="p-6 pt-2 space-y-6">
         {isLoading ? (
-          <div className="h-48 flex items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-slate-200" />
+          <div className="space-y-6">
+            <div className="flex justify-center relative py-2">
+              <Skeleton className="w-44 h-44 rounded-full" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Skeleton className="h-16 rounded-xl" />
+              <Skeleton className="h-16 rounded-xl" />
+            </div>
+            <div className="flex items-center justify-between px-1">
+              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-8 w-24" />
+            </div>
           </div>
         ) : (
           <>

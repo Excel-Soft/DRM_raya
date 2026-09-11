@@ -40,7 +40,9 @@ export async function checkUrlPermission(
     }
 
     // Auth endpoints are public by design.
-    if (fullPath.startsWith("/api/auth")) {
+    // Also bypass /api/account/invoices because it's a legacy endpoint used by sales executives
+    // and is protected by its own strong RBAC middleware (requireManualInvoiceCreator, etc).
+    if (fullPath.startsWith("/api/auth") || fullPath.startsWith("/api/account/invoices")) {
       return next();
     }
 

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRightCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ActivityMethod = "mobile" | "whatsapp" | "wh_call" | "in_meeting" | "out_meeting" | "email" | "appointment" | "seminar";
 type Period = "TD" | "WC" | "MC" | "QC" | "YC";
@@ -107,7 +108,26 @@ export function ActivitiesGrid() {
 
           {/* Activity rows */}
           {isLoading ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">Loading...</div>
+            Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={`skel-${i}`}
+                className="grid grid-cols-[1fr_1fr_1fr_1fr] gap-4 py-1.5 text-sm items-center border-b border-gray-100 last:border-0 dark:border-zinc-800"
+              >
+                <div className="flex items-center gap-2">
+                  <Skeleton className="w-4 h-4 rounded-full" />
+                  <Skeleton className="h-4 w-20" />
+                </div>
+                <div className="text-center flex justify-center">
+                  <Skeleton className="h-6 w-[80px]" />
+                </div>
+                <div className="text-center flex justify-center">
+                  <Skeleton className="h-6 w-[80px]" />
+                </div>
+                <div className="text-center flex justify-center">
+                  <Skeleton className="h-6 w-[80px]" />
+                </div>
+              </div>
+            ))
           ) : (
             data?.rows.map((row) => {
               return (

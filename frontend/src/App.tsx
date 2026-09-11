@@ -183,6 +183,7 @@ const DepartmentReport = lazy(() => import("@/pages/reports-department"));
 const DailyAddedGmReport = lazy(() => import("@/pages/daily-added-gm-report"));
 
 // Service
+const PublicPoolFollowup = lazy(() => import("@/pages/public-pool-followup"));
 const ServicePoolDashboard = lazy(() => import("@/pages/service-pool-dashboard"));
 const ServiceBvChecking = lazy(() => import("@/pages/service-bv-checking"));
 const ServicePublicPool = lazy(() => import("@/pages/service-public-pool"));
@@ -296,6 +297,7 @@ function Router() {
       <Route path="/customers/service-pool" component={ServicePool} />
       <Route path="/customers/gmbv-pool" component={LeadPools} />
       <Route path="/customers/public-pool" component={DynamicPublicPool} />
+      <Route path="/customers/public-pool-followup" component={PublicPoolFollowup} />
       <Route path="/sales/lead-pools" component={LeadPools} />
       <Route path="/sales/invoice-pool" component={InvoicePool} />
       <Route path="/drm/attributes" component={AttributesPage} />

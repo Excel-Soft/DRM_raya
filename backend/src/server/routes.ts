@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import aiRoutes from "./routes/ai-routes";
 import authRoutes from "./routes/auth.routes";
 import { registerSalesRoutes } from "./routes/sales-routes";
+import { registerPublicPoolFollowupRoutes } from "./routes/public-pool-followup-routes";
 import { registerPmsRoutes } from "./routes/pms-routes";
 import { assignmentOverrideRouter } from "./routes/assignment-override-routes";
 import { gmCommissionRouter } from "./routes/gm-commission-routes";
@@ -304,6 +305,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Sales routes (protected)
   registerSalesRoutes(app);
+  registerPublicPoolFollowupRoutes(app);
 
   // PMS routes (protected)
   registerPmsRoutes(app);

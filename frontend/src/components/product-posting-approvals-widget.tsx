@@ -133,9 +133,9 @@ export function ProductPostingApprovalsWidget({
     const [actionForm, setActionForm] = useState({ amount: "", method: "", status: "approved" });
 
     const { data: invoicesData, isLoading } = useQuery({
-        queryKey: ["/api/invoices"],
+        queryKey: ["/api/account/invoices"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/invoices");
+            const res = await apiRequest("GET", "/api/account/invoices");
             return res.json();
         }
     });
@@ -156,10 +156,10 @@ export function ProductPostingApprovalsWidget({
     }
 
     const { data: historyData, isLoading: historyLoading } = useQuery({
-        queryKey: ["/api/invoices", historyId, "history"],
+        queryKey: ["/api/account/invoices", historyId, "history"],
         enabled: !!historyId,
         queryFn: async () => {
-            const res = await apiRequest("GET", `/api/invoices/${historyId}/history`);
+            const res = await apiRequest("GET", `/api/account/invoices/${historyId}/history`);
             return res.json();
         }
     });
@@ -168,11 +168,11 @@ export function ProductPostingApprovalsWidget({
         mutationFn: async ({ id, action, reason }: { id: string, action: "APPROVE" | "REJECT", reason?: string }) => {
             const stage = role === "HOD" ? "hod" : "account";
             const verb = action === "APPROVE" ? "approve" : "reject";
-            const res = await apiRequest("POST", `/api/invoices/${id}/${stage}-${verb}`, action === "REJECT" ? { reason } : {});
+            const res = await apiRequest("POST", `/api/account/invoices/${id}/${stage}-${verb}`, action === "REJECT" ? { reason } : {});
             await throwIfResNotOk(res);
         },
         onSuccess: (_data, variables) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
             setRejectId(null);
             setRejectReason("");
             setActionModalId((cur) => (cur === variables.id ? null : cur));
@@ -192,11 +192,11 @@ export function ProductPostingApprovalsWidget({
     // (mirrors the Account Manager's existing "Free" payment-method option).
     const markFreeMutation = useMutation({
         mutationFn: async (id: string) => {
-            const res = await apiRequest("PATCH", `/api/invoices/${id}`, { paymentMethod: "free" });
+            const res = await apiRequest("PATCH", `/api/account/invoices/${id}`, { paymentMethod: "free" });
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
             toast({ title: "Marked as Free" });
         },
         onError: (err) => {
@@ -210,11 +210,11 @@ export function ProductPostingApprovalsWidget({
     // rest of this widget already uses for Mark Free.
     const patchInvoiceMutation = useMutation({
         mutationFn: async ({ id, body }: { id: string; body: Record<string, unknown> }) => {
-            const res = await apiRequest("PATCH", `/api/invoices/${id}`, body);
+            const res = await apiRequest("PATCH", `/api/account/invoices/${id}`, body);
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
         },
         onError: (err) => {
             toast({ title: "Could not save invoice details", description: readApiError(err), variant: "destructive" });
@@ -227,7 +227,7 @@ export function ProductPostingApprovalsWidget({
     const [generated, setGenerated] = useState<Record<string, { status: string | null; held: boolean }>>({});
     const generateMutation = useMutation({
         mutationFn: async ({ id }: { id: string }) => {
-            const res = await apiRequest("POST", `/api/invoices/${id}/generate-project`, {});
+            const res = await apiRequest("POST", `/api/account/invoices/${id}/generate-project`, {});
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
                 throw new Error(body?.error?.message || body?.error || "Could not generate project");
@@ -237,7 +237,7 @@ export function ProductPostingApprovalsWidget({
         onSuccess: (body, variables) => {
             const result = body?.data || {};
             setGenerated((m) => ({ ...m, [variables.id]: { status: result.status ?? null, held: !!result.held } }));
-            queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
             const already = !!result.linked && !result.created;
             toast({
                 title: already ? "Project already generated" : "Project generated",

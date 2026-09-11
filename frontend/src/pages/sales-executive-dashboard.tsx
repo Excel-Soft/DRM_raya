@@ -254,11 +254,12 @@ export default function SalesExecutiveDashboard() {
               <SalesKpiCard
                 key={key}
                 title={title}
-                count={isLoading ? 0 : (kpiData?.count ?? 0)}
-                amount={isLoading ? 0 : (kpiData?.amount ?? 0)}
+                count={kpiData?.count ?? 0}
+                amount={kpiData?.amount ?? 0}
                 icon={icon}
                 color={color}
                 iconBg={iconBg}
+                isLoading={isLoading}
               />
             );
           })}
