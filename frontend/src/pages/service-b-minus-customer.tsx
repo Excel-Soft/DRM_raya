@@ -17,14 +17,14 @@ type ServiceCustomer = {
 };
 
 type CustomerListResponse = {
-    data: ServiceCustomer[];
+    customers: ServiceCustomer[];
     total: number;
     page: number;
     pageSize: number;
 };
 
 const PAGE_SIZE = 25;
-const GRADE = "B_MINUS";
+const GRADE = "B-";
 
 export default function ServiceBMinusCustomer() {
     const [searchTerm, setSearchTerm] = useState("");
@@ -47,18 +47,18 @@ export default function ServiceBMinusCustomer() {
     }, [searchTerm]);
 
     const { data, isLoading } = useQuery<CustomerListResponse>({
-        queryKey: ["/api/service/customers", GRADE, page, debouncedSearch],
+        queryKey: ["/api/sales/customers", GRADE, page, debouncedSearch],
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set("grade", GRADE);
             params.set("page", String(page));
             params.set("pageSize", String(PAGE_SIZE));
             if (debouncedSearch) params.set("search", debouncedSearch);
-            return apiRequestJson("GET", `/api/service/customers?${params.toString()}`);
+            return apiRequestJson("GET", `/api/sales/customers?${params.toString()}`);
         },
     });
 
-    const rows = data?.data ?? [];
+    const rows = data?.customers ?? [];
     const total = data?.total ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     const startEntry = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;

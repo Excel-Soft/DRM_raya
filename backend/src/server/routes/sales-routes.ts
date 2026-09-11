@@ -2026,22 +2026,10 @@ export function registerSalesRoutes(app: Express) {
         return (await pool.query(sql, [...params, grade.toLowerCase()])).rows[0]?.count ?? 0;
       };
 
-      // A- specific for A-Followup metric
       const aFollowup = await gradeCountExact("A-");
       const bPlusFollowup = await gradeCountExact("B+");
-      const bFollowup = await gradeCountExact(["B", "B-"]);
-      // B Follow Up: grade B customers that already have at least one followup
-      const followupRes = await pool.query(
-        `
-          select count(distinct c.id)::int as count
-            from drm.customers c
-            join follow_ups f on f.customer_id = c.id and coalesce(f.is_deleted,false)=false
-           ${whereCustomers}
-             and lower(trim(coalesce(c.grade,''))) = 'b'
-        `,
-        params,
-      );
-      const followup1 = followupRes.rows[0]?.count ?? 0;
+      const bFollowup = await gradeCountExact("B-");
+      const followup1 = await gradeCountExact("B");
 
       const followup30Res = await pool.query(
         `select count(*)::int as count

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { InServiceModal } from "./in-service-modal";
 import { Play } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ImportantMetricKey =
   | "a_followup"
@@ -66,7 +67,14 @@ export function ImportantMetrics({ inServiceApiEndpoint }: { inServiceApiEndpoin
     <div className="bg-white rounded-[4px] border border-slate-100 shadow-sm p-4 dark:bg-zinc-900 dark:border-zinc-800" data-testid="card-important-metrics">
       <h2 className="text-[15px] font-bold text-slate-700 mb-4 dark:text-zinc-400">Important</h2>
       {isLoading ? (
-        <div className="py-4 text-center text-[13px] text-slate-500 dark:text-zinc-400">Loading...</div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {Array.from({ length: 14 }).map((_, i) => (
+            <div key={`skel-${i}`} className="flex justify-between items-center bg-[#f1f5f9] px-3 py-1.5 rounded-[2px] dark:bg-zinc-800 h-8">
+              <Skeleton className="h-4 w-24 bg-slate-200 dark:bg-zinc-700" />
+              <Skeleton className="h-4 w-6 bg-slate-200 dark:bg-zinc-700" />
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-2 gap-x-3 gap-y-2">
           {orderedMetrics.map((metric) => (

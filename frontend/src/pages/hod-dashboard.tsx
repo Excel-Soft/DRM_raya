@@ -180,9 +180,9 @@ export default function HodDashboard() {
   // invalidation after approve/reject/create, instead of the mismatched
   // paginated /api/hod/approvals list this badge used to read from.
   const invoicesQuery = useQuery<{ data?: any[] }>({
-    queryKey: ["/api/invoices"],
+    queryKey: ["/api/account/invoices"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/invoices");
+      const res = await apiRequest("GET", "/api/account/invoices");
       return res.json();
     },
   });

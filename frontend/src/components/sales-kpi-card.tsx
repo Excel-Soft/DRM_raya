@@ -10,6 +10,7 @@ interface SalesKpiCardProps {
   className?: string;
   color?: string;
   iconBg?: string;
+  isLoading?: boolean;
 }
 
 export function SalesKpiCard({
@@ -19,7 +20,8 @@ export function SalesKpiCard({
   icon: Icon,
   className,
   color = "text-slate-600",
-  iconBg = "bg-slate-500"
+  iconBg = "bg-slate-500",
+  isLoading = false
 }: SalesKpiCardProps) {
   const formatCurrency = (val: number) => {
     return new Intl.NumberFormat("en-US", { minimumFractionDigits: 0 }).format(val);
@@ -42,20 +44,29 @@ export function SalesKpiCard({
             <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest leading-none">
               {title}
             </p>
-            <div className="space-y-0.5">
-              <div
-                className="text-2xl font-black text-foreground tracking-tight leading-none uppercase"
-                data-testid={`text-count-${title.toLowerCase().replace(/[\s\/]/g, '-')}`}
-              >
-                {count}
-              </div>
-              <div
-                className={cn("text-xs font-bold tracking-wide flex items-center gap-1", color)}
-                data-testid={`text-amount-${title.toLowerCase().replace(/[\s\/]/g, '-')}`}
-              >
-                <span className="opacity-60">$</span>
-                {formatCurrency(amount)}
-              </div>
+            <div className="space-y-0.5 mt-2">
+              {isLoading ? (
+                <>
+                  <div className="h-6 w-16 bg-slate-200/50 animate-pulse rounded-md dark:bg-zinc-800" />
+                  <div className="h-4 w-20 bg-slate-200/50 animate-pulse rounded-md mt-1 dark:bg-zinc-800" />
+                </>
+              ) : (
+                <>
+                  <div
+                    className="text-2xl font-black text-foreground tracking-tight leading-none uppercase"
+                    data-testid={`text-count-${title.toLowerCase().replace(/[\s\/]/g, '-')}`}
+                  >
+                    {count}
+                  </div>
+                  <div
+                    className={cn("text-xs font-bold tracking-wide flex items-center gap-1 mt-1", color)}
+                    data-testid={`text-amount-${title.toLowerCase().replace(/[\s\/]/g, '-')}`}
+                  >
+                    <span className="opacity-60">$</span>
+                    {formatCurrency(amount)}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
