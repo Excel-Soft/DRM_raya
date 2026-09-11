@@ -1311,6 +1311,7 @@ export const invoices = drmSchema.table("invoices", {
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull(),
   tax: decimal("tax", { precision: 12, scale: 2 }).notNull().default("0"),
   total: decimal("total", { precision: 12, scale: 2 }).notNull(),
+  dollarRate: decimal("dollar_rate", { precision: 12, scale: 2 }).notNull().default("280"),
   currency: text("currency").notNull().default("USD"),
   status: invoiceStatusEnum("status").notNull().default("Draft"),
   issueDate: timestamp("issue_date").notNull().defaultNow(),

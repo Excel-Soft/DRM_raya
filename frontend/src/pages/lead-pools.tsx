@@ -661,6 +661,15 @@ export default function LeadPools() {
     enabled: !!transferLead
   });
 
+  const handlePickupPublicPool = async (customer: PoolCustomer) => {
+    try {
+      sessionStorage.setItem("pickupPublicPool", JSON.stringify(customer));
+      setLocation(`/sales/add-customer?fromPublicPool=true`);
+    } catch (err) {
+      toast({ title: "Failed to pick up", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    }
+  };
+
   const handleClaim = (customer: PoolCustomer) => {
     setSelectedCustomer(customer);
     setClaimDialogOpen(true);
@@ -2009,43 +2018,46 @@ export default function LeadPools() {
                                   <TableCell className="py-2 text-[10px] text-muted-foreground whitespace-nowrap">
                                     {formatDate(createdAt)}
                                   </TableCell>
-                                  <TableCell className="py-1 text-center" onClick={(e) => e.stopPropagation()}>
-                                    <div className="flex items-center justify-start gap-0.5 px-0.5">
-                                      <ActionIcon onClick={() => handleView(customer)} icon={User} label="User Profile" />
-                                      <ActionIcon onClick={() => handleView(customer)} icon={Eye} label="View" />
-                                      <ActionIcon onClick={() => handleFollowupOpen(customer)} icon={Clock} label="Follow up" />
-                                      <ActionIcon onClick={() => handleEmail(customer)} icon={Mail} label="Email" />
-                                      <ActionIcon onClick={() => handleWhatsApp(customer)} icon={MessageCircle} label="WhatsApp" />
-                                      <ActionIcon onClick={() => handleCall(customer)} icon={Phone} label="Call" />
-                                      <Button
-                                        size="sm"
-                                        variant="default"
-                                        className={`h-5 px-1.5 rounded-sm text-white text-[8px] font-medium uppercase transition-all shadow-sm ${canCreateInvoice ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
-                                        onClick={(e) => {
-                                          if (!canCreateInvoice) {
-                                            e.preventDefault();
-                                            toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
-                                            return;
-                                          }
-                                          console.log("Navigating to invoice for customer:", customer.id);
-                                          setLocation(`/sales/create-invoice/${customer.id}`);
-                                        }}
-                                        disabled={!canCreateInvoice}
-                                      >
-                                        <FileText className="w-2.5 h-2.5 mr-1" />
-                                        Invoice
-                                      </Button>
-                                      {(!isApproved || activePool !== "GMBV") && (
-                                        <ActionIcon onClick={() => handleEditOpen(customer)} icon={Pencil} label="Edit" />
-                                      )}
-                                      <ActionIcon onClick={() => handlePrint(customer)} icon={Printer} label="Print" />
-                                      {activePool === "Public" && (
-                                        <ActionIcon onClick={() => handleClaim(customer)} icon={UserPlus} label="Pick" />
-                                      )}
-                                      {activePool === "Private" && (
-                                        <ActionIcon onClick={() => moveToPublicMutation.mutate(customer.id)} icon={UserPlus} label="Move Customer" />
-                                      )}
-                                      {/* ── GMBV-specific actions ── */}
+                                    <TableCell className="py-1 text-center" onClick={(e) => e.stopPropagation()}>
+                                      <div className="flex items-center justify-start gap-0.5 px-0.5">
+                                        {activePool === "Public" ? (
+                                          <ActionIcon onClick={() => handlePickupPublicPool(customer)} icon={UserPlus} label="Pick Up" />
+                                        ) : (
+                                          <>
+                                            <ActionIcon onClick={() => handleView(customer)} icon={User} label="User Profile" />
+                                            <ActionIcon onClick={() => handleView(customer)} icon={Eye} label="View" />
+                                            <ActionIcon onClick={() => handleFollowupOpen(customer)} icon={Clock} label="Follow up" />
+                                            <ActionIcon onClick={() => handleEmail(customer)} icon={Mail} label="Email" />
+                                            <ActionIcon onClick={() => handleWhatsApp(customer)} icon={MessageCircle} label="WhatsApp" />
+                                            <ActionIcon onClick={() => handleCall(customer)} icon={Phone} label="Call" />
+                                            <Button
+                                              size="sm"
+                                              variant="default"
+                                              className={`h-5 px-1.5 rounded-sm text-white text-[8px] font-medium uppercase transition-all shadow-sm ${canCreateInvoice ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
+                                              onClick={(e) => {
+                                                if (!canCreateInvoice) {
+                                                  e.preventDefault();
+                                                  toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
+                                                  return;
+                                                }
+                                                console.log("Navigating to invoice for customer:", customer.id);
+                                                setLocation(`/sales/create-invoice/${customer.id}`);
+                                              }}
+                                              disabled={!canCreateInvoice}
+                                            >
+                                              <FileText className="w-2.5 h-2.5 mr-1" />
+                                              Invoice
+                                            </Button>
+                                            {(!isApproved || activePool !== "GMBV") && (
+                                              <ActionIcon onClick={() => handleEditOpen(customer)} icon={Pencil} label="Edit" />
+                                            )}
+                                            <ActionIcon onClick={() => handlePrint(customer)} icon={Printer} label="Print" />
+                                            {activePool === "Private" && (
+                                              <ActionIcon onClick={() => moveToPublicMutation.mutate(customer.id)} icon={UserPlus} label="Move Customer" />
+                                            )}
+                                          </>
+                                        )}
+                                        {/* ── GMBV-specific actions ── */}
                                       {activePool === "GMBV" && (() => {
                                         const gmId = (customer as any).gmBvId || customer.id;
                                         return (

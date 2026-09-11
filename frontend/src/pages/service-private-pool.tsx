@@ -11,6 +11,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { exportToCSV, exportToPDF } from "@/lib/export-utils";
 import { FollowCustomerServicesPanel, SubserviceDetail, FollowupServiceOption } from "@/components/FollowCustomerServicesPanel";
+import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
 
 const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
 
@@ -689,12 +690,25 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [, setLocation] = useLocation();
+    const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
     const [activeHistoryTab, setActiveHistoryTab] = useState("Contact History");
     const [isQuotationTemplateModalOpen, setQuotationTemplateModalOpen] = useState(false);
     const [activeCardModal, setActiveCardModal] = useState<string | null>(null);
     const [isRatingModalOpen, setRatingModalOpen] = useState(false);
     const [ratingValue, setRatingValue] = useState("5");
     const [ratingNote, setRatingNote] = useState("");
+    const [isGmModalOpen, setIsGmModalOpen] = useState(false);
+    const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+
+    const { data: selectedInvoice } = useQuery({
+        queryKey: [`/api/account/invoices/${selectedInvoiceId}`],
+        queryFn: async () => {
+            if (!selectedInvoiceId) return null;
+            const response = await apiRequest("GET", `/api/account/invoices/${selectedInvoiceId}`);
+            return response.json();
+        },
+        enabled: !!selectedInvoiceId,
+    });
     const [isSampleModalOpen, setSampleModalOpen] = useState(false);
     const [sampleProduct, setSampleProduct] = useState("");
     const [sampleNote, setSampleNote] = useState("");
@@ -760,7 +774,7 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
             const rows = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
             return rows;
         },
-        enabled: !!customerId && activeHistoryTab === "Contact History",
+        enabled: !!customerId,
     });
 
     const { data: quotationHistory = [], isLoading: isQuotationLoading } = useQuery<any[]>({
@@ -786,8 +800,15 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
     const lead = profileData?.lead || {};
     const phones = profileData?.phones || [];
     const grade = lead.grade || "-";
-    const contactCount = profileData?.activities?.length || 0;
-    const lastContact = profileData?.lastContactAt ? new Date(profileData.lastContactAt).toLocaleString() : "Never";
+    const contactCount = contactHistory?.length || 0;
+    const lastContact = (() => {
+        if (profileData?.lastContactAt) return new Date(profileData.lastContactAt).toLocaleString();
+        if (contactHistory && contactHistory.length > 0) {
+            const dateVal = contactHistory[0].createdAt || contactHistory[0].created_at;
+            if (dateVal) return new Date(dateVal).toLocaleString();
+        }
+        return "Never";
+    })();
 
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen relative dark:bg-zinc-950">
@@ -841,7 +862,13 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                     <div className="flex flex-wrap justify-center gap-[4px] w-full px-2">
                         <span onClick={() => setActiveCardModal('followup')} className="bg-[#059669] hover:bg-[#047857] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Followup</span>
                         <span onClick={() => setLocation(`/sales/quotation?leadId=${customerId}`)} className="bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Quotation</span>
-                        <span onClick={() => setActiveCardModal('invoice')} className="bg-[#6366f1] hover:bg-[#4f46e5] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Invoice</span>
+                        <span onClick={() => {
+                            if (canCreateManualInvoice) {
+                                setLocation(`/sales/create-invoice/${customerId}`);
+                            } else {
+                                setActiveCardModal('invoice');
+                            }
+                        }} className="bg-[#6366f1] hover:bg-[#4f46e5] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Invoice</span>
                         <span onClick={() => setActiveCardModal('gmdoc')} className="bg-[#ef4444] hover:bg-[#dc2626] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900 dark:hover:bg-zinc-800">Gm Doc</span>
                         <span onClick={() => setActiveCardModal('gmbv')} className="bg-[#d97706] hover:bg-[#b45309] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900">Gm BV submit</span>
                         <span onClick={() => setActiveCardModal('update_expiry')} className="bg-[#3b82f6] hover:bg-[#2563eb] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Update Expiry</span>
@@ -1081,6 +1108,7 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                             <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Type</TableHead>
                                             <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Amount</TableHead>
                                             <TableHead className="font-bold text-[#475569] text-[12px] py-4 dark:text-zinc-400">Status</TableHead>
+                                            <TableHead className="font-bold text-[#475569] text-[12px] py-4 text-right dark:text-zinc-400">Action</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -1093,6 +1121,17 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                                 <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.invoiceType || inv.projectName || "-"}</TableCell>
                                                 <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.amount ? `$${inv.amount}` : "0"}</TableCell>
                                                 <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{inv.status}</TableCell>
+                                                <TableCell className="text-right py-3">
+                                                    {inv.source === 'manual' && (
+                                                        <button 
+                                                            className="text-emerald-500 hover:text-emerald-600 transition-colors p-1"
+                                                            onClick={() => setSelectedInvoiceId(inv.id)}
+                                                            title="View Invoice"
+                                                        >
+                                                            <Eye className="w-[14px] h-[14px]" />
+                                                        </button>
+                                                    )}
+                                                </TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
@@ -1102,6 +1141,56 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                     )}
                 </div>
             </div>
+
+            {/* Invoice Receipt Modal */}
+            <Dialog open={!!selectedInvoiceId} onOpenChange={(open) => !open && setSelectedInvoiceId(null)}>
+                <DialogContent className="max-w-4xl p-0 h-auto max-h-[90vh] overflow-y-auto bg-transparent shadow-none border-none">
+                    <DialogTitle className="sr-only">Invoice Receipt</DialogTitle>
+                    {selectedInvoice && (
+                        <div className="p-0 bg-white rounded-lg dark:bg-zinc-900">
+                            <InvoiceReceipt
+                                invoiceData={{
+                                    invoiceNumber: selectedInvoice.invoiceNumber || selectedInvoice.id,
+                                    date: new Date(selectedInvoice.createdAt),
+                                    from: {
+                                        name: "Web Excels",
+                                        whatsapp: "+92-334-8086611",
+                                        phone: "+92-52-4271592",
+                                        email: "Support@Webexcels.com",
+                                        address: "Al-Amin Center, Paris Rd, Opposite The Sialkot Chamber Of Commerce, Sialkot 51310 Pakistan"
+                                    },
+                                    to: {
+                                        name: selectedInvoice.customerName || "N/A",
+                                        phone: selectedInvoice.customerPhone || "N/A",
+                                        email: selectedInvoice.customerEmail || "N/A",
+                                        address: selectedInvoice.customerAddress || "..."
+                                    },
+                                    items: (() => {
+                                        try {
+                                            const parsed = typeof selectedInvoice.items === 'string' ? JSON.parse(selectedInvoice.items) : selectedInvoice.items;
+                                            return Array.isArray(parsed) ? parsed.map((item: any) => ({
+                                                name: item.detail || "Service",
+                                                detail: item.detail,
+                                                price: item.unitPrice || 0,
+                                                quantity: item.quantity || 1,
+                                                total: item.totalPkr || 0
+                                            })) : [];
+                                        } catch(e) {
+                                            return [];
+                                        }
+                                    })(),
+                                    subTotalUsd: Number(selectedInvoice.subtotal) / Number(selectedInvoice.dollarRate || 280),
+                                    subTotalPkr: Math.round(Number(selectedInvoice.subtotal)),
+                                    taxUsd: Number(selectedInvoice.tax) || 0,
+                                    discountPkr: 0,
+                                    totalPkr: Math.round(Number(selectedInvoice.total))
+                                }}
+                                onClose={() => setSelectedInvoiceId(null)}
+                            />
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
             </>
             )}
         </div>

@@ -541,6 +541,7 @@ async function buildLeadPoolList(
   },
 ): Promise<LeadPoolListResponse> {
   await syncGmBvPool();
+  await syncPublicPool();
   const poolParam = (query.pool || (query.grade ? "all" : "private")).toLowerCase();
   const page = Math.max(1, parseInt(query.page || "1", 10));
   const pageSize = Math.max(1, Math.min(100, parseInt(query.pageSize || "10", 10)));
@@ -768,10 +769,41 @@ async function syncGmBvPool() {
     } catch (err: any) {
       if (err.code !== '40P01') console.warn("Failed to sync GMBV pool from bv_reports", err);
     }
-  } catch (err: any) {
-    if (err.code !== '40P01') console.warn("Failed to sync GMBV pool from gm_entries", err);
+  } catch (err) {
+    console.warn("Failed to sync GMBV pool", err);
   } finally {
     isSyncingGmBvPool = false;
+  }
+}
+
+let isSyncingPublicPool = false;
+async function syncPublicPool() {
+  if (isSyncingPublicPool) return;
+  isSyncingPublicPool = true;
+  try {
+    await pool.query(
+      `update drm.customers c
+          set pool_type = 'Public',
+              owner_user_id = NULL,
+              updated_at = now()
+        where pool_type = 'Private'
+          and (
+            -- either NO activity exists
+            not exists (
+              select 1 from drm.lead_activities ca 
+              where ca.customer_id = c.id
+            )
+            -- OR the most recent activity is older than 90 days
+            or (
+              select max(ca.created_at) from drm.lead_activities ca 
+              where ca.customer_id = c.id
+            ) < now() - interval '90 days'
+          )`
+    );
+  } catch (err) {
+    console.warn("Failed to sync Public pool", err);
+  } finally {
+    isSyncingPublicPool = false;
   }
 }
 
@@ -2526,7 +2558,12 @@ export function registerSalesRoutes(app: Express) {
       };
 
       let existingCustomer = null;
-      if (req.body.upsert) {
+      if (req.body.id) {
+        const checkRes = await pool.query(`select id from drm.customers where id = $1 limit 1`, [req.body.id]);
+        if (checkRes.rows.length > 0) {
+          existingCustomer = checkRes.rows[0];
+        }
+      } else if (req.body.upsert) {
         const q = `select id from drm.customers where regexp_replace(lower(coalesce(company_name, company, '')), '[^a-z0-9]', '', 'g') = regexp_replace(lower($1), '[^a-z0-9]', '', 'g') or lower(trim(email)) = lower(trim($2)) limit 1`;
         const checkRes = await pool.query(q, [companyVal, emailVal]);
         if (checkRes.rows.length > 0) {
@@ -2582,7 +2619,22 @@ export function registerSalesRoutes(app: Express) {
           title: req.body.title || null,
           crmId: req.body.crmId || null,
           crmDate: req.body.crmDate ? new Date(req.body.crmDate) : null,
+          ...(req.body.id ? { ownerUserId: req.user.userId, poolType: 'Private' } : {})
         } as any);
+
+        if (req.body.id) {
+          try {
+            await leadActivitiesRepository.log({
+              customerId: existingCustomer.id,
+              action: "edit",
+              performedBy: req.user.userId,
+              note: "Picked up from Public Pool and updated",
+            });
+          } catch (e) {
+            console.error("Failed to log pickup activity", e);
+          }
+        }
+
       } else {
         const drmId = await resolveOrCreateCanonicalDrmId(pool, {
           companyName: companyVal,
@@ -3915,17 +3967,30 @@ export function registerSalesRoutes(app: Express) {
       const { id } = req.params;
       const { rows } = await pool.query(`
         SELECT 
-          id,
+          id::text,
           project_name as "projectName",
           company_name as "companyName",
           invoice_type as "invoiceType",
-          status,
+          status::text,
           amount,
-          created_at as "createdAt"
+          created_at as "createdAt",
+          'auto' as "source"
         FROM drm.product_posting_invoices
-        WHERE customer_id = $1
-        ORDER BY created_at DESC
-      `, [id]);
+        WHERE customer_id = $1::uuid
+        UNION ALL
+        SELECT 
+          id::text,
+          'Manual Invoice' as "projectName",
+          customer_name as "companyName",
+          'Manual' as "invoiceType",
+          status::text,
+          total as amount,
+          created_at as "createdAt",
+          'manual' as "source"
+        FROM drm.invoices
+        WHERE customer_id = $2
+        ORDER BY "createdAt" DESC
+      `, [id, id]);
       res.json(rows);
     } catch (error) {
       console.error("Error fetching customer invoices:", error);
@@ -4600,6 +4665,7 @@ export function registerSalesRoutes(app: Express) {
       return res.json({
         lead,
         services,
+        activities,
         lastContactAt: lastContact?.createdAt ?? null,
         phones: [
           lead.phone ? { label: "Phone", value: lead.phone } : null,

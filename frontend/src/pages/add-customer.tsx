@@ -172,6 +172,7 @@ export default function AddCustomer() {
   const [, setLocation] = useLocation();
   const search = useSearch();
   const fromTempContactId = new URLSearchParams(search).get("fromTempContact") || undefined;
+  const isFromPublicPool = new URLSearchParams(search).get("fromPublicPool") === "true";
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
@@ -181,6 +182,7 @@ export default function AddCustomer() {
   const [fieldChecks, setFieldChecks] = useState<Record<string, { available: boolean; message: string }>>({});
   const [emailsList, setEmailsList] = useState<string[]>([""]);
   const [mobilesList, setMobilesList] = useState<string[]>([""]);
+  const [editCustomerId, setEditCustomerId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addEmailField = () => {
@@ -242,12 +244,15 @@ export default function AddCustomer() {
     queryKey: ["/api/posting/products"],
   });
 
-  // The temp contact's own captured data is handed off via sessionStorage by
-  // the "Convert to Customer" button (client/src/pages/temp-contact.tsx),
-  // not re-fetched here: GET /api/customer/temporary-contact/:id is scoped to
-  // the contact's original creator, so a manager converting someone else's
-  // pending lead would get a 404 and an empty form.
   const [sourceTempContact] = useState<any>(() => {
+    if (isFromPublicPool) {
+      try {
+        const raw = sessionStorage.getItem("pickupPublicPool");
+        if (raw) return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
     if (!fromTempContactId) return null;
     try {
       const raw = sessionStorage.getItem("convertTempContact");
@@ -298,6 +303,52 @@ export default function AddCustomer() {
   // left blank — the converting user fills those in themselves.
   useEffect(() => {
     if (!sourceTempContact) return;
+    if (isFromPublicPool) {
+      setEditCustomerId(sourceTempContact.id);
+      const emailList = Array.isArray(sourceTempContact.emails) && sourceTempContact.emails.length > 0 
+        ? sourceTempContact.emails 
+        : (sourceTempContact.email ? [sourceTempContact.email] : [""]);
+      const mobileList = Array.isArray(sourceTempContact.mobiles) && sourceTempContact.mobiles.length > 0 
+        ? sourceTempContact.mobiles 
+        : (sourceTempContact.mobile ? [sourceTempContact.mobile] : [""]);
+        
+      setEmailsList(emailList);
+      setMobilesList(mobileList);
+      
+      form.reset({
+        ...form.getValues(),
+        companyName: sourceTempContact.companyName || sourceTempContact.company || "",
+        accountName: sourceTempContact.accountName || sourceTempContact.accHolder || "",
+        email: emailList[0] || "",
+        emails: emailList,
+        phone: sourceTempContact.phone || sourceTempContact.contactNo || "",
+        mobile: mobileList[0] || "",
+        mobiles: mobileList,
+        country: sourceTempContact.country || "",
+        city: sourceTempContact.city || "",
+        address: sourceTempContact.address || "",
+        website: sourceTempContact.website || "",
+        cnic: sourceTempContact.cnic || "",
+        ntn: sourceTempContact.ntn || "",
+        source: sourceTempContact.source || "",
+        grade: sourceTempContact.grade || "",
+        status: sourceTempContact.status || "New",
+        comment: sourceTempContact.lastNote || sourceTempContact.comment || "",
+        region: sourceTempContact.region || "",
+        title: sourceTempContact.title || "",
+        personName: sourceTempContact.personName || "",
+        designation: sourceTempContact.designation || "",
+        companyType: sourceTempContact.companyType || "",
+        businessLine: sourceTempContact.businessLine || "",
+        rcLink: sourceTempContact.rcLink || "",
+        abType: sourceTempContact.abType || "",
+        serviceTypes: sourceTempContact.serviceTypes || sourceTempContact.service_types || [],
+      });
+      setSelectedServices(sourceTempContact.serviceTypes || sourceTempContact.service_types || []);
+      sessionStorage.removeItem("pickupPublicPool");
+      return;
+    }
+    
     const region = REGIONS.includes(sourceTempContact.country) ? sourceTempContact.country : "";
     if (sourceTempContact.email) {
       setEmailsList([sourceTempContact.email]);
@@ -321,7 +372,7 @@ export default function AddCustomer() {
     });
     setSelectedServices(sourceTempContact.serviceTypes || []);
     sessionStorage.removeItem("convertTempContact");
-  }, [sourceTempContact]);
+  }, [sourceTempContact, isFromPublicPool]);
 
   const createMutation = useMutation({
     mutationFn: async (data: CustomerFormData) => {
@@ -357,6 +408,7 @@ export default function AddCustomer() {
         city: data.city,
         country: data.country,
         abType: data.abType,
+        id: editCustomerId,
       });
       return response.json();
     },
@@ -377,14 +429,16 @@ export default function AddCustomer() {
       }
 
       toast({
-        title: fromTempContactId ? "Converted to Customer" : "Customer Added",
-        description: fromTempContactId
-          ? "The lead is now a customer in your Private Pool."
-          : "The customer has been successfully added to the system.",
+        title: editCustomerId ? "Customer Updated" : (fromTempContactId ? "Converted to Customer" : "Customer Added"),
+        description: editCustomerId 
+          ? "Customer information updated successfully." 
+          : (fromTempContactId
+              ? "The lead is now a customer in your Private Pool."
+              : "The customer has been successfully added to the system."),
       });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers/stats"] });
-      if (fromTempContactId) {
+      if (fromTempContactId || editCustomerId) {
         setLocation("/customers/private-pool");
       } else {
         // Reset the form to stay on the page and allow adding another customer
@@ -407,7 +461,7 @@ export default function AddCustomer() {
 
   const onSubmit = (data: CustomerFormData) => {
     // Check if there are any existing errors flagged by our API checks
-    if (companyCheck.available === false) {
+    if (companyCheck.available === false && !editCustomerId) {
       toast({
         title: "Validation Error",
         description: "Company name already exists in the system. Cannot proceed.",
@@ -516,7 +570,7 @@ export default function AddCustomer() {
     try {
       const res = await apiRequest("GET", `/api/sales/customers/check-field?field=${encodeURIComponent(checkField)}&value=${encodeURIComponent(val)}`);
       const result = await res.json();
-      if (result.available === false) {
+      if (result.available === false && !editCustomerId) {
         let displayLabel = isEmail ? 'Email Address' : isMobile ? 'Mobile Number' : fieldPath.toUpperCase().replace("_", " ");
         if (fieldPath === 'phone') displayLabel = 'Contact Number';
         setFieldChecks(prev => ({ ...prev, [fieldPath]: { available: false, message: `${displayLabel} already exists!` } }));
@@ -780,19 +834,21 @@ export default function AddCustomer() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setLocation(fromTempContactId ? "/customer/temporary-contact" : "/sales/customers")}
+            onClick={() => setLocation(fromTempContactId ? "/customer/temporary-contact" : (isFromPublicPool ? "/customers/public-pool" : "/sales/customers"))}
             data-testid="button-back"
           >
             <ChevronLeft className="w-5 h-5" />
           </Button>
           <div>
             <h1 className="text-2xl font-semibold" data-testid="text-page-title">
-              {fromTempContactId ? "Convert to Customer" : "Add Customer"}
+              {isFromPublicPool ? "Pick Up Customer" : (fromTempContactId ? "Convert to Customer" : "Add Customer")}
             </h1>
             <p className="text-muted-foreground mt-1">
-              {fromTempContactId
-                ? "Review the captured lead details and complete the remaining fields to create the customer."
-                : "Enter complete company, lead, and business details"}
+              {isFromPublicPool
+                ? "Review and update the information for the customer you are picking up from the Public Pool."
+                : (fromTempContactId
+                  ? "Review the captured lead details and complete the remaining fields to create the customer."
+                  : "Enter complete company, lead, and business details")}
             </p>
           </div>
         </div>

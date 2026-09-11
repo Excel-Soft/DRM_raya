@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, mutationRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -98,8 +98,10 @@ export default function CreateInvoice() {
     const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
     const canCreateInvoice = userRoleName === "sales_executive" || (userRoleName === "service_executive" && canCreateManualInvoice);
 
+    const [dollarRate, setDollarRate] = useState(280);
+
     const [items, setItems] = useState<InvoiceItem[]>([
-        { id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, totalPkr: 0.5, discount: 0 }
+        { id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, totalPkr: 0.5 * dollarRate, discount: 0 }
     ]);
 
     const [subAmount, setSubAmount] = useState(0);
@@ -140,24 +142,24 @@ export default function CreateInvoice() {
     }, [products]);
 
     useEffect(() => {
-        const sub = items.reduce((acc, item) => acc + (item.totalPkr - item.discount), 0);
-        setSubAmount(sub);
+        const subPkr = items.reduce((acc, item) => acc + (item.totalPkr - item.discount), 0);
+        setSubAmount(subPkr);
 
-        const gst = (sub * gstPercent) / 100;
-        const total = sub + gst;
-        setTotalAmount(total);
+        const gstAmount = (subPkr * gstPercent) / 100;
+        const totalPkr = subPkr + gstAmount;
+        setTotalAmount(totalPkr);
 
         let finalDiscount = 0;
         if (discountType === "percentage") {
-            finalDiscount = (total * pkrDiscountValue) / 100;
+            finalDiscount = (totalPkr * pkrDiscountValue) / 100;
         } else {
             finalDiscount = pkrDiscountValue;
         }
 
-        const gTotal = total - finalDiscount;
-        setGrandTotal(gTotal);
-        setPkrAmount(gTotal * 280);
-    }, [items, gstPercent, pkrDiscountValue, discountType]);
+        const gTotalPkr = totalPkr - finalDiscount;
+        setPkrAmount(gTotalPkr);
+        setGrandTotal(gTotalPkr / dollarRate);
+    }, [items, gstPercent, pkrDiscountValue, discountType, dollarRate]);
 
     const addItem = () => {
         setItems([...items, { id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0, quantity: 1, totalPkr: 0, discount: 0 }]);
@@ -173,7 +175,7 @@ export default function CreateInvoice() {
                 const updated = { ...item, [field]: value };
                 if (field === "unitPrice" || field === "quantity") {
                     const isXlserp = flatProducts.find((p: any) => p.id === item.productId)?.name === 'Xlserp - Free Website';
-                    updated.totalPkr = isXlserp ? (Number(updated.quantity) / 90) * (25600 / 280) : Number(updated.unitPrice) * Number(updated.quantity);
+                    updated.totalPkr = isXlserp ? (Number(updated.quantity) / 90) * 25600 : Number(updated.unitPrice) * Number(updated.quantity) * dollarRate;
                 }
                 return updated;
             }
@@ -184,14 +186,14 @@ export default function CreateInvoice() {
 
     const createInvoiceMutation = useMutation({
         mutationFn: async (payload: any) => {
-            const res = await apiRequest("POST", "/api/account/invoices", payload);
-            return res.json();
+            return await mutationRequest("POST", "/api/account/invoices", payload);
         },
         onSuccess: (data: any, variables: any) => {
             toast({ title: "Invoice Created", description: "The invoice has been saved successfully." });
             setLastSavedInvoice(data.data || data);
             setFinalInvoiceNumber(data?.data?.invoiceNumber || data?.data?.invoice_number || data?.invoiceNumber || data?.invoice_number || variables.invoiceNumber);
             setShowReceipt(true);
+            setTimeout(() => handleDownload(), 500);
         },
         onError: (err: Error) => {
             toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -201,14 +203,14 @@ export default function CreateInvoice() {
     const updateInvoiceMutation = useMutation({
         mutationFn: async ({ id, payload }: { id: string, payload: any }) => {
             const { invoiceNumber, ...updatePayload } = payload;
-            const res = await apiRequest("PATCH", `/api/account/invoices/${id}`, updatePayload);
-            return res.json();
+            return await mutationRequest("PATCH", `/api/account/invoices/${id}`, updatePayload);
         },
         onSuccess: (data: any, variables: any) => {
             toast({ title: "Invoice Updated", description: "The invoice has been updated successfully." });
             setLastSavedInvoice(data.data || data);
             setFinalInvoiceNumber(data?.data?.invoiceNumber || data?.data?.invoice_number || data?.invoiceNumber || data?.invoice_number || variables.payload.invoiceNumber);
             setShowReceipt(true);
+            setTimeout(() => handleDownload(), 500);
         },
         onError: (err: Error) => {
             toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -225,9 +227,10 @@ export default function CreateInvoice() {
             customerName: customer.accountName || customer.companyName,
             customerEmail: customer.email,
             items: JSON.stringify(items),
-            subtotal: subAmount.toString(),
-            tax: ((subAmount * gstPercent) / 100).toString(),
+            subtotal: (subAmount / dollarRate).toString(),
+            tax: (((subAmount / dollarRate) * gstPercent) / 100).toString(),
             total: grandTotal.toString(),
+            dollarRate: dollarRate.toString(),
             status: "Pending",
             invoiceNumber: invoiceInfo?.invoiceNumber || `INV-${Math.floor(Math.random() * 100000)}`,
         };
@@ -251,7 +254,7 @@ export default function CreateInvoice() {
             const element = receiptRef.current;
             
             // Allow browser to apply layout before capturing
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 500));
             
             const canvas = await html2canvas(element, {
                 scale: 2,
@@ -271,7 +274,10 @@ export default function CreateInvoice() {
             const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
 
             pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-            pdf.save(`Invoice_${customer?.accountName || "Guest"}.pdf`);
+            
+            const companyName = customer?.companyName || customer?.accountName || "Company";
+            const dateStr = new Date().toISOString().split('T')[0];
+            pdf.save(`${companyName}_${dateStr}.pdf`);
         } catch (error) {
             console.error("Error generating PDF:", error);
             toast({ title: "Error", description: "Failed to generate PDF.", variant: "destructive" });
@@ -332,7 +338,7 @@ export default function CreateInvoice() {
             <Card className="border-none shadow-sm rounded-lg overflow-hidden">
                 <CardContent className="p-6 space-y-8">
                     {/* Header Fields */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                         <div className="space-y-2">
                             <Label className="text-sm font-medium text-slate-600 dark:text-zinc-300">Account Holder</Label>
                             <Input
@@ -362,6 +368,26 @@ export default function CreateInvoice() {
                             <Input
                                 value={customer?.phone || ""}
                                 readOnly
+                                className="bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label className="text-sm font-medium text-slate-600 dark:text-zinc-300">Dollar Rate</Label>
+                            <Input
+                                type="number"
+                                value={dollarRate}
+                                onChange={(e) => {
+                                    const newRate = Number(e.target.value);
+                                    setDollarRate(newRate);
+                                    // Also update existing items' totalPkr based on new rate
+                                    setItems(prev => prev.map(item => {
+                                        const isXlserp = flatProducts.find((p: any) => p.id === item.productId)?.name === 'Xlserp - Free Website';
+                                        return {
+                                            ...item,
+                                            totalPkr: isXlserp ? (Number(item.quantity) / 90) * 25600 : Number(item.unitPrice) * Number(item.quantity) * newRate
+                                        };
+                                    }));
+                                }}
                                 className="bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800"
                             />
                         </div>
@@ -397,7 +423,7 @@ export default function CreateInvoice() {
                                                         detail: selectedProduct ? (selectedProduct.description !== null && selectedProduct.description !== undefined ? selectedProduct.description : "") : "",
                                                         unitPrice,
                                                         quantity,
-                                                        totalPkr: isNaN(unitPrice * quantity) ? 0 : (selectedProduct?.name === 'Xlserp - Free Website' ? (quantity / 90) * (25600 / 280) : unitPrice * quantity)
+                                                        totalPkr: isNaN(unitPrice * quantity) ? 0 : (selectedProduct?.name === 'Xlserp - Free Website' ? (quantity / 90) * 25600 : unitPrice * quantity * dollarRate)
                                                     };
                                                 }
                                                 return it;
@@ -430,7 +456,7 @@ export default function CreateInvoice() {
                                 </div>
                                 <div className="col-span-1 text-center">
                                     <Input
-                                        value={Math.round(item.totalPkr * 280)}
+                                        value={Math.round(item.totalPkr)}
                                         readOnly
                                         className="bg-slate-50 border-slate-200 h-11 text-center font-medium dark:bg-zinc-900 dark:border-zinc-800"
                                     />
@@ -616,11 +642,11 @@ export default function CreateInvoice() {
                             quantity: item.quantity,
                             total: item.totalPkr
                         })),
-                        subTotalUsd: subAmount,
-                        subTotalPkr: Math.round(subAmount * 280),
-                        taxUsd: (subAmount * gstPercent) / 100,
-                        discountPkr: Math.round((totalAmount - grandTotal) * 280),
-                        totalPkr: Math.round(grandTotal * 280)
+                        subTotalUsd: subAmount / dollarRate,
+                        subTotalPkr: Math.round(subAmount),
+                        taxUsd: ((subAmount / dollarRate) * gstPercent) / 100,
+                        discountPkr: Math.round(totalAmount - pkrAmount),
+                        totalPkr: Math.round(pkrAmount)
                     }}
                     hideButtons={true}
                 />
@@ -657,11 +683,11 @@ export default function CreateInvoice() {
                                         quantity: item.quantity,
                                         total: item.totalPkr
                                     })),
-                                    subTotalUsd: subAmount,
-                                    subTotalPkr: Math.round(subAmount * 280),
-                                    taxUsd: (subAmount * gstPercent) / 100,
-                                    discountPkr: Math.round((totalAmount - grandTotal) * 280),
-                                    totalPkr: Math.round(grandTotal * 280)
+                                    subTotalUsd: subAmount / dollarRate,
+                                    subTotalPkr: Math.round(subAmount),
+                                    taxUsd: ((subAmount / dollarRate) * gstPercent) / 100,
+                                    discountPkr: Math.round(totalAmount - pkrAmount),
+                                    totalPkr: Math.round(pkrAmount)
                                 }}
                                 onClose={() => {
                                     setShowReceipt(false);
