@@ -770,7 +770,7 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
             const data = await response.json().catch(() => ({}));
             return Array.isArray(data?.data) ? data.data : data?.data?.items ?? [];
         },
-        enabled: !!customerId && activeHistoryTab === "Quotation History",
+        enabled: !!customerId && (activeHistoryTab === "Quotation History" || activeHistoryTab === "Quotation Templates"),
     });
 
     const { data: gmHistory = [], isLoading: isGmLoading } = useQuery<any[]>({
@@ -1055,9 +1055,35 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                <TableRow>
-                                    <TableCell colSpan={8} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotation templates available.</TableCell>
-                                </TableRow>
+                                {isQuotationLoading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={8} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">Loading...</TableCell>
+                                    </TableRow>
+                                ) : quotationHistory.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={8} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No quotation templates available.</TableCell>
+                                    </TableRow>
+                                ) : (
+                                    quotationHistory.map((q: any) => (
+                                        <TableRow key={q.id}>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.company || "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.subAmount ?? 0}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.discountValue ?? 0}{q.discountType === "PERCENT" || q.discountType === "PERCENTAGE" ? "%" : ""}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.grandTotal ?? 0}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.paymentTermPercent ?? 0}%</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.createdBy ? String(q.createdBy).substring(0, 8) : "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{q.createdAt ? new Date(q.createdAt).toLocaleDateString() : "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3">
+                                                <span
+                                                    onClick={() => setLocation(`/sales/quotation?leadId=${customerId}&id=${q.id}`)}
+                                                    className="text-[#059669] font-semibold cursor-pointer hover:underline"
+                                                >
+                                                    View
+                                                </span>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
                             </TableBody>
                         </Table>
                     )}
