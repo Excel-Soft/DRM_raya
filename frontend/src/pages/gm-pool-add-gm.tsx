@@ -495,6 +495,7 @@ export default function GmPoolAddGm() {
   const userRole = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
   const isSalesExecutive = userRole === "sales_executive";
   const isSuperHod = userRole === "super_hod";
+  const isSalesManager = userRole === "sales_manager";
 
   const { data: packagesData, isLoading: loadingPackages } = useQuery<{ packages: GmPackage[] }>({
     queryKey: ["gm-packages"],
@@ -970,7 +971,7 @@ export default function GmPoolAddGm() {
             <h1 className="text-2xl font-bold uppercase tracking-tight">ADD GM</h1>
             <p className="text-muted-foreground">Manage GM pool entries</p>
           </div>
-          {canCreateGm && (
+          {canCreateGm && !isSalesManager && (
             <Button
               variant="outline"
               className="ml-auto"

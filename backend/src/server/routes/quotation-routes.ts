@@ -282,7 +282,7 @@ function mapItemRow(row: QuotationItemRow) {
 }
 
 async function insertQuotation(client: PoolClient, userId: string, payload: ParsedQuotation) {
-  const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal } = computeTotals(payload);
+  const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal, amount } = computeTotals(payload);
 
   const quotationRes = await client.query<QuotationRow>(
     `
@@ -349,7 +349,7 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
 }
 
 async function updateQuotation(client: PoolClient, id: string, payload: ParsedQuotation) {
-  const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal } = computeTotals(payload);
+  const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal, amount } = computeTotals(payload);
 
   const updateRes = await client.query<QuotationRow>(
     `
@@ -512,7 +512,6 @@ export function registerQuotationRoutes(app: Express) {
       if (!parsed.success) {
         const errorDetails = JSON.stringify(parsed.error.flatten(), null, 2);
         console.error("[QUOTATION] Validation failed:", errorDetails);
-        require('fs').appendFileSync('/tmp/quotation_error.log', `[${new Date().toISOString()}] Validation failed: ${errorDetails}\nPayload: ${JSON.stringify(req.body, null, 2)}\n\n`);
         return res.status(400).json({
           error: "VALIDATION_ERROR",
           message: "Validation failed for one or more fields",
@@ -528,8 +527,6 @@ export function registerQuotationRoutes(app: Express) {
         res.status(201).json({ success: true, data: created });
       } catch (err: any) {
         await client.query("rollback");
-        const errorMsg = `Error: ${err.message}\nStack: ${err.stack}\nDetail: ${err.detail || 'none'}\nHint: ${err.hint || 'none'}\nCode: ${err.code}\nQuery: ${err.query || 'none'}\n`;
-        require('fs').appendFileSync('/tmp/quotation_error.log', `[${new Date().toISOString()}] Creation error: ${errorMsg}\nPayload: ${JSON.stringify(req.body, null, 2)}\n\n`);
         console.error("[QUOTATION] Creation error:", err);
         res.status(500).json({
           error: "InternalError",
@@ -539,8 +536,6 @@ export function registerQuotationRoutes(app: Express) {
         client.release();
       }
     } catch (err: any) {
-      const errorMsg = `Outer Error: ${err.message}\nStack: ${err.stack}\n`;
-      require('fs').appendFileSync('/tmp/quotation_error.log', `[${new Date().toISOString()}] Outer creation error: ${errorMsg}\n`);
       console.error("[QUOTATION] Outer creation error:", err);
       res.status(500).json({
         error: "InternalError",

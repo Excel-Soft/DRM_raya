@@ -1,7 +1,7 @@
 import { Router, type Express } from "express";
 import { servicePoolRepository } from "../repositories/service-pool.repository";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "../utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 
 export function registerServicePoolRoutes(app: Express) {
     const router = Router();
@@ -21,8 +21,14 @@ export function registerServicePoolRoutes(app: Express) {
             const showDuplicates = req.query.duplicates === "true";
             const currentQ = req.query.currentQ === "true";
 
-            const isManager = isManagerialRole((req.user as any).activeRoleId || req.user.roleId);
-            const allowedUserIds = isManager ? await getDepartmentFilterUserIds(req) : [req.user.userId];
+            const roleForScoping = (req.user as any).activeRoleId || req.user.roleId;
+            const isManager = isManagerialRole(roleForScoping);
+            const isSalesManagerRole = normalizeRole(roleForScoping) === ROLES.SALES_MANAGER;
+            const allowedUserIds = isSalesManagerRole
+                ? [req.user.userId]
+                : isManager
+                    ? await getDepartmentFilterUserIds(req)
+                    : [req.user.userId];
 
             const result = await servicePoolRepository.list({
                 search,
@@ -45,8 +51,14 @@ export function registerServicePoolRoutes(app: Express) {
     router.get("/service-pool/summary", async (req, res) => {
         try {
             if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-            const isManager = isManagerialRole((req.user as any).activeRoleId || req.user.roleId);
-            const allowedUserIds = isManager ? await getDepartmentFilterUserIds(req) : [req.user.userId];
+            const roleForScoping = (req.user as any).activeRoleId || req.user.roleId;
+            const isManager = isManagerialRole(roleForScoping);
+            const isSalesManagerRole = normalizeRole(roleForScoping) === ROLES.SALES_MANAGER;
+            const allowedUserIds = isSalesManagerRole
+                ? [req.user.userId]
+                : isManager
+                    ? await getDepartmentFilterUserIds(req)
+                    : [req.user.userId];
             const summary = await servicePoolRepository.getSummary(allowedUserIds);
             res.json(summary);
         } catch (err) {

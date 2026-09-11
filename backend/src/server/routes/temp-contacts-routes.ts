@@ -7,7 +7,7 @@ import crypto from "crypto";
 import { pool } from "../db";
 import { ActivityLogService } from "./services/activity-service";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { isManagerialRole } from "../utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 
 const TITLES = ["Mr", "Mrs", "Miss", "Ms", "Dr"];
 const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
@@ -328,7 +328,11 @@ router.get("/", async (req: Request, res: Response) => {
     // under_works lookup); only true global roles (admin/hod/...) see all.
     const activeRoleId = (req.user as any)?.activeRoleId || req.user!.roleId;
     let userIds: string[] | undefined;
-    if (all === "true") {
+    if (normalizeRole(activeRoleId) === ROLES.SALES_MANAGER) {
+      // Sales Manager: only contacts they personally added — never their
+      // team's or anyone else's, and not overridable via ?all=true.
+      userIds = [userId];
+    } else if (all === "true") {
       userIds = undefined;
     } else if (!isManagerialRole(activeRoleId)) {
       userIds = [userId];

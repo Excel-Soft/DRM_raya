@@ -368,7 +368,17 @@ export default function QuotationPage() {
       if (returned?.quotation?.id) {
         setForm((prev) => ({ ...prev, id: returned.quotation.id }));
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/quotations", form.leadId] });
+      // Match by prefix rather than an exact key: the History tab's Quotation
+      // History query caches under a single combined "/api/quotations?leadId=..."
+      // key (built inline in service-private-pool.tsx), not the ["/api/quotations", id]
+      // shape used here — an exact-key invalidation silently missed it, so a
+      // freshly saved quotation never showed up until a hard refresh.
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey[0];
+          return typeof key === "string" && key.startsWith("/api/quotations");
+        },
+      });
       setLocation("/sales/lead-pools");
     } catch (err: any) {
       const message = err?.data?.message || err?.message || "Failed to save quotation";

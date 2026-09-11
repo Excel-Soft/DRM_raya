@@ -20,7 +20,7 @@ import { customers, targetSystemDailyTargets, targetSystemUserTargets, users, se
 import crypto from "crypto";
 import { ensureBvReportsSchema } from "../repositories/bv-reports.repository";
 import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
-import { isManagerialRole, normalizeRole } from "../utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 import { assertCanEditCustomer } from "../utils/ownership";
 import { sendError, ApiError } from "../utils/api-error";
 import { recordAssignment, getAssignmentHistory } from "../utils/assignment-history";
@@ -336,13 +336,14 @@ async function countGmBvEntries(userId: string, roleId?: string): Promise<number
   try {
     await ensureBvReportsSchema();
     const manager = isLeadPoolManager(roleId);
+    const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
     const allowedUserIds = manager
       ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
       : null;
     const params: any[] = [];
     let bvClause = "1=1";
     let gmClause = "coalesce(g.is_deleted,false)=false";
-    if (!manager) {
+    if (!manager || isSalesManagerRole) {
       params.push(userId);
       bvClause = `(br.assigned_to = $1 or br.user_id = $1 or exists (
         select 1 from drm.customers c where c.id = br.customer_id and (c.owner_user_id = $1 or c.pool_type = 'Public')
@@ -457,12 +458,13 @@ async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<Le
   await syncGmBvPool();
   const gmBvCount = await countGmBvEntries(userId, roleId);
   const manager = isLeadPoolManager(roleId);
+  const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
   const allowedUserIds = manager
     ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
     : null;
   const params: any[] = [];
   let scopeClause = "coalesce(c.is_deleted, false) = false";
-  if (!manager) {
+  if (!manager || isSalesManagerRole) {
     params.push(userId);
     // Include: customers owned by this user, OR (not owned by anyone AND created by this user), plus Public pool
     scopeClause += ` and (
@@ -552,6 +554,11 @@ async function buildLeadPoolList(
   const sourceFilter = query.sourceFilter;
 
   const manager = isLeadPoolManager(roleId);
+  // Sales Manager sees only what they personally own/added in this pool —
+  // never their team's — regardless of the (broken/unscoped) manager branch
+  // below. Kept as a separate flag rather than folding into `manager` since
+  // `manager` also drives the "all" pool case, which this ask didn't touch.
+  const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
   // Same gap as /api/sales/tracing/summary: a department manager (service_manager,
   // sales_manager, ...) got zero scoping here, seeing every department's pool —
   // not just their own team's. getDepartmentFilterUserIds only returns null for
@@ -568,7 +575,7 @@ async function buildLeadPoolList(
 
   switch (poolParam) {
     case "all":
-      if (!manager) {
+      if (!manager || isSalesManagerRole) {
         conditions.push(`(c.pool_type = 'Public' OR c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
       } else if (allowedUserIds) {
         const p = addParam(allowedUserIds);
@@ -577,7 +584,7 @@ async function buildLeadPoolList(
       break;
     case "private":
       conditions.push("(c.pool_type = 'Private' OR c.pool_type = 'GMBV')");
-      if (!manager) {
+      if (!manager || isSalesManagerRole) {
         // Show customers owned by this user OR (no owner set AND created by this user)
         conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
       } else if (allowedUserIds) {
@@ -587,10 +594,22 @@ async function buildLeadPoolList(
       break;
     case "service":
       conditions.push("c.pool_type = 'Service'");
+      if (!manager || isSalesManagerRole) {
+        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
+      } else if (allowedUserIds) {
+        const p = addParam(allowedUserIds);
+        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+      }
       break;
     case "gm_bv":
     case "gmbv":
       conditions.push("c.pool_type = 'GMBV'");
+      if (!manager || isSalesManagerRole) {
+        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
+      } else if (allowedUserIds) {
+        const p = addParam(allowedUserIds);
+        conditions.push(`(c.owner_user_id = ANY(${p}::uuid[]) OR (c.owner_user_id IS NULL AND c.created_by = ANY(${p}::uuid[])))`);
+      }
       break;
     case "public": {
       conditions.push("c.pool_type = 'Public'");
@@ -602,7 +621,9 @@ async function buildLeadPoolList(
       // creator's role, same ad hoc "role contains service" convention used
       // in App.tsx's DynamicPublicPool. True global roles see everything.
       const isGlobalRole = ["admin", "super_admin", "hod", "super_hod", "account_manager"].includes(normalizeRole(roleId || ""));
-      if (!isGlobalRole) {
+      if (isSalesManagerRole) {
+        conditions.push(`(c.owner_user_id = ${addParam(userId)} OR (c.owner_user_id IS NULL AND c.created_by = ${addParam(userId)}))`);
+      } else if (!isGlobalRole) {
         const viewerIsService = normalizeRole(roleId || "").includes("service");
         conditions.push(`not exists (
           select 1 from drm.users cb where cb.id = c.created_by
@@ -613,7 +634,7 @@ async function buildLeadPoolList(
     }
     case "expiring":
       conditions.push("c.expires_at between now() and now() + interval '7 day'");
-      if (!manager) {
+      if (!manager || isSalesManagerRole) {
         conditions.push(`c.owner_user_id = ${addParam(userId)}`);
       } else if (allowedUserIds) {
         conditions.push(`c.owner_user_id = ANY(${addParam(allowedUserIds)}::uuid[])`);

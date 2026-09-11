@@ -186,6 +186,41 @@ export async function resolveGmApprovalScopeUserIds(req: Request): Promise<strin
 }
 
 /**
+ * Same `under_works` reporting-line walk as `resolveGmApprovalScopeUserIds`,
+ * for the GM Pool **list** view instead of the approval workflow. Unlike the
+ * approval scope, this deliberately does NOT fall back to organization-wide
+ * when no team is found under the caller: showing a sales_manager every
+ * other manager's/executive's GM entries just because `under_works` isn't
+ * populated yet would be a real data-exposure regression for a read view (no
+ * approval action is blocked by staying self-only here, unlike D-013's
+ * approval case). So the fallback for "no team found" is self-only, not
+ * `null`. Never returns `null` — every non-admin caller gets at least
+ * `[callerId]`.
+ */
+export async function resolveGmListScopeUserIds(req: Request): Promise<string[]> {
+  const callerId = String((req.user as any)?.userId ?? "");
+
+  try {
+    const { rows } = await pool.query(
+      `WITH RECURSIVE scope_ids AS (
+         SELECT $1::text AS id
+         UNION
+         SELECT u.id::text FROM drm.users u
+         INNER JOIN scope_ids s ON u.under_works::text = s.id
+       )
+       SELECT id FROM scope_ids`,
+      [callerId],
+    );
+    const ids = rows.map((r: any) => String(r.id));
+    if (!ids.includes(callerId)) ids.push(callerId);
+    return ids;
+  } catch (err) {
+    console.error("[gm-list-scope] reporting-line lookup failed, failing closed to self-only", err);
+    return [callerId];
+  }
+}
+
+/**
  * Builds the SQL fragment + pushes the scope parameter for a GM-approval
  * WHERE clause. Exported (module scope) so `gm-approval-scope.test.ts` can
  * exercise it directly across every approve/reject/withdraw/pending-list
@@ -576,8 +611,6 @@ export function registerGmPoolRoutes(app: Express) {
       const whereParts: string[] = ["coalesce(is_deleted,false) = false"];
       const params: any[] = [];
 
-      const { getDepartmentFilterUserIds } = await import("./dashboard-routes.js");
-
       const roleToCheck = (req.user as any).activeRoleId || req.user.roleId || "";
       const normalizedRole = normalizeRole(roleToCheck);
 
@@ -586,17 +619,20 @@ export function registerGmPoolRoutes(app: Express) {
       const isManager = isManagerialRole(normalizedRole);
 
       if (!isSuperUser) {
-        if (isManager) {
-          const allowedUserIds = await getDepartmentFilterUserIds(req);
-          if (allowedUserIds && allowedUserIds.length > 0) {
-            params.push(allowedUserIds);
-            whereParts.push(`created_by::uuid = ANY($${params.length}::uuid[])`);
-            console.log(`[gm-pool] SECURE FILTER APPLIED for manager ${req.user.userId} acting as ${normalizedRole}. Allowed Users: ${allowedUserIds.length}`);
-          } else {
-            params.push((req.user as any).userId);
-            whereParts.push(`created_by::text = $${params.length}::text`);
-          }
+        if (isManager && normalizedRole !== ROLES.SALES_MANAGER) {
+          // Self + reporting-line team (never org-wide — see
+          // resolveGmListScopeUserIds's doc comment for why this list view
+          // intentionally differs from the approval-scope fallback).
+          const allowedUserIds = await resolveGmListScopeUserIds(req);
+          params.push(allowedUserIds);
+          whereParts.push(`created_by::uuid = ANY($${params.length}::uuid[])`);
+          console.log(`[gm-pool] SECURE FILTER APPLIED for manager ${req.user.userId} acting as ${normalizedRole}. Allowed Users: ${allowedUserIds.length}`);
         } else {
+          // Sales Manager is deliberately excluded from the team-scope
+          // branch above (explicit product decision: a Sales Manager only
+          // ever sees GM entries they personally created, never their
+          // team's) and falls through to this self-only branch along with
+          // every non-manager role.
           params.push((req.user as any).userId);
           whereParts.push(`created_by::text = $${params.length}::text`);
           console.log(`[gm-pool] SECURE FILTER APPLIED for user ${req.user.userId} acting as ${normalizedRole}`);

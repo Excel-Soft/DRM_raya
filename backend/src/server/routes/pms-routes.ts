@@ -287,15 +287,11 @@ function getPeriodRange(periodRaw: string) {
       } else if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole === "sales_manager") {
-          const allowedIds = await getDepartmentFilterUserIds(req);
-          if (allowedIds === null) {
-              // Global admin, do nothing (keep undefined)
-          } else if (allowedIds && allowedIds.length > 0) {
-              const idsStr = allowedIds.map(id => `'${id}'`).join(',');
-              roleFilter = `AND p.owner_user_id = ANY(ARRAY[${idsStr}]::uuid[])`;
-          } else {
-              roleFilter = `AND 1=0`;
-          }
+          // Self-only — never team/org data (explicit product decision).
+          // getDepartmentFilterUserIds is a stub that always returns null,
+          // which this branch used to misread as "global admin" and fall
+          // through to unfiltered/org-wide for every Sales Manager.
+          roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       }
 
       const { rows } = await pool.query(`
@@ -374,15 +370,11 @@ function getPeriodRange(periodRaw: string) {
       } else if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole === "sales_manager") {
-          const allowedIds = await getDepartmentFilterUserIds(req);
-          if (allowedIds === null) {
-              // Global admin, do nothing (keep undefined)
-          } else if (allowedIds && allowedIds.length > 0) {
-              const idsStr = allowedIds.map(id => `'${id}'`).join(',');
-              roleFilter = `AND p.owner_user_id = ANY(ARRAY[${idsStr}]::uuid[])`;
-          } else {
-              roleFilter = `AND 1=0`;
-          }
+          // Self-only — never team/org data (explicit product decision).
+          // getDepartmentFilterUserIds is a stub that always returns null,
+          // which this branch used to misread as "global admin" and fall
+          // through to unfiltered/org-wide for every Sales Manager.
+          roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       }
 
       // Optional query filters wired from the client (Department / City / Status / Date range).
@@ -470,8 +462,16 @@ function getPeriodRange(periodRaw: string) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { projectId } = req.params;
+      // Sales Manager: self-only even inside a workspace they own — only
+      // tasks they personally created or are assigned to, never a
+      // teammate's row on the same project (explicit product decision).
+      const isSalesManagerRole = req.user.roleId === "sales_manager";
+      const selfScopeClause = isSalesManagerRole
+        ? "AND (t.owner_user_id = $2 OR t.assigned_to_user_id = $2)"
+        : "";
+      const queryParams = isSalesManagerRole ? [projectId, req.user.userId] : [projectId];
       const { rows } = await pool.query(`
-        SELECT 
+        SELECT
           t.id,
           t.title,
           t.description,
@@ -489,8 +489,9 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.users u ON u.id = t.assigned_to_user_id
         LEFT JOIN drm.projects p ON p.id = t.project_id
         WHERE t.project_id = $1
+        ${selfScopeClause}
         ORDER BY t.created_at DESC
-      `, [projectId]);
+      `, queryParams);
       res.json(rows);
     } catch (error) {
       console.error("Error fetching project tasks:", error);
@@ -809,14 +810,9 @@ function getPeriodRange(periodRaw: string) {
 
       let filterUserIds: string[] | undefined = undefined;
       if (req.user.roleId === "sales_manager") {
-          const allowedIds = await getDepartmentFilterUserIds(req);
-          if (allowedIds === null) {
-              // Global admin, do nothing (keep undefined)
-          } else if (allowedIds && allowedIds.length > 0) {
-              filterUserIds = allowedIds;
-          } else {
-              filterUserIds = ['00000000-0000-0000-0000-000000000000'];
-          }
+          // Self-only — never team/org data. Bypasses getDepartmentFilterUserIds
+          // (a stub that always returns null) entirely rather than relying on it.
+          filterUserIds = [req.user.userId];
       }
 
       const tasks = await tasksRepository.findBoard({
@@ -1297,14 +1293,9 @@ function getPeriodRange(periodRaw: string) {
 
       let filterUserIds: string[] | undefined = undefined;
       if (req.user.roleId === "sales_manager") {
-          const allowedIds = await getDepartmentFilterUserIds(req);
-          if (allowedIds === null) {
-              // Global admin, do nothing (keep undefined)
-          } else if (allowedIds && allowedIds.length > 0) {
-              filterUserIds = allowedIds;
-          } else {
-              filterUserIds = ['00000000-0000-0000-0000-000000000000'];
-          }
+          // Self-only — never team/org data. Bypasses getDepartmentFilterUserIds
+          // (a stub that always returns null) entirely rather than relying on it.
+          filterUserIds = [req.user.userId];
       }
 
       const financials = await projectFinancialsRepository.findWithFilters({
@@ -1393,14 +1384,9 @@ function getPeriodRange(periodRaw: string) {
 
       let filterUserIds: string[] | undefined = undefined;
       if (req.user.roleId === "sales_manager") {
-          const allowedIds = await getDepartmentFilterUserIds(req);
-          if (allowedIds === null) {
-              // Global admin, do nothing (keep undefined)
-          } else if (allowedIds && allowedIds.length > 0) {
-              filterUserIds = allowedIds;
-          } else {
-              filterUserIds = ['00000000-0000-0000-0000-000000000000'];
-          }
+          // Self-only — never team/org data. Bypasses getDepartmentFilterUserIds
+          // (a stub that always returns null) entirely rather than relying on it.
+          filterUserIds = [req.user.userId];
       }
 
       const summary = await projectFinancialsRepository.getSummary({
@@ -1905,11 +1891,18 @@ function getPeriodRange(periodRaw: string) {
       const search = (req.query.search as string) || "";
       const offset = (page - 1) * pageSize;
 
+      // Sales Manager: workspaces limited to projects they personally own —
+      // never a project they're merely a member/participant on (which would
+      // surface a teammate's/manager's project). Every other role keeps the
+      // existing membership-based "projects I'm assigned to" scope.
+      const isSalesManagerRole = req.user.roleId === "sales_manager";
+      const myProjectsClause = isSalesManagerRole
+        ? `select distinct p2.id as project_id from projects p2 where p2.owner_user_id = $1`
+        : `select distinct pa.project_id from project_assignments pa where pa.user_id = $1`;
+
       const assignmentsSql = `
         with my_projects as (
-          select distinct pa.project_id
-          from project_assignments pa
-          where pa.user_id = $1
+          ${myProjectsClause}
         ),
         filtered_projects as (
           select p.*
@@ -2245,7 +2238,13 @@ function getPeriodRange(periodRaw: string) {
       const filters: any = {
         limit: limit ? parseInt(limit as string) : 50,
       };
-      if (userId) filters.userId = userId as string;
+      // Default to the caller's own id when the page doesn't explicitly ask
+      // for someone else's history — matches the sibling /task-history/summary
+      // and /task-history/status-changes endpoints below, which already do
+      // this. Without the default, findRecent()'s "only filter if userId is
+      // set" guard never fired, so every non-admin role saw the full org-wide
+      // feed regardless of role.
+      filters.userId = (userId as string) || req.user.userId;
       filters.roleId = req.user.roleId;
       if (dateFrom) filters.dateFrom = new Date(dateFrom as string);
       if (dateTo) filters.dateTo = new Date(dateTo as string);
