@@ -935,10 +935,13 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                         <TableCell colSpan={3} className="text-center py-8 text-[13px] font-medium text-slate-500 border-b-0 dark:text-zinc-400">No contact history recorded.</TableCell>
                                     </TableRow>
                                 ) : (
-                                    contactHistory.map((item: any) => (
+                                    contactHistory.map((item: any) => {
+                                        const dateVal = item.createdAt || item.created_at;
+                                        const noteVal = item.note || item.notes || item.serviceType || item.method || "-";
+                                        return (
                                         <TableRow key={item.id}>
-                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{item.created_at ? new Date(item.created_at).toLocaleString() : "-"}</TableCell>
-                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{item.notes || item.method || "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{dateVal ? new Date(dateVal).toLocaleString() : "-"}</TableCell>
+                                            <TableCell className="text-[12px] py-3 text-slate-600 dark:text-zinc-300">{noteVal}</TableCell>
                                             <TableCell className="py-3">
                                                 <button
                                                     onClick={() => setActiveCardModal('followup')}
@@ -948,7 +951,8 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                                 </button>
                                             </TableCell>
                                         </TableRow>
-                                    ))
+                                        );
+                                    })
                                 )}
                             </TableBody>
                         </Table>
@@ -1317,6 +1321,15 @@ function QuotationTemplateModal({ open, onClose }: { open: boolean; onClose: () 
 
 
 export function AttributeActionModal({ type, onClose, customerId, companyName }: { type: string | null; onClose: () => void; customerId?: string; companyName?: string }) {
+    const { data: gmHistory = [] } = useQuery<any[]>({
+        queryKey: ["/api/sales/customers", customerId, "gm-entries"],
+        enabled: !!customerId && (type === 'gmdoc' || type === 'gmbv'),
+    });
+
+    const latestGm = gmHistory[0] || null;
+    const packageValue = latestGm ? latestGm.package || 'No package selected' : 'No package selected';
+    const statusValue = latestGm ? latestGm.status || '-' : '-';
+
     if (!type) return null;
 
     if (type === 'followup') return <FollowupModal open={true} onClose={onClose} customerId={customerId} companyName={companyName} />;
@@ -1351,11 +1364,11 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
                     <div className="pt-2 pb-2 flex flex-col gap-4 font-sans px-1">
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Packge</label>
-                            <input type="text" className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800" />
+                            <input type="text" readOnly value={packageValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Status</label>
-                            <input type="text" className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800" />
+                            <input type="text" readOnly value={statusValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">User GM BV Submit Date</label>
@@ -1382,11 +1395,11 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
                     <div className="pt-2 pb-2 flex flex-col gap-4 font-sans px-1 h-auto max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Packge</label>
-                            <input type="text" className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800" />
+                            <input type="text" readOnly value={packageValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Status</label>
-                            <input type="text" className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800" />
+                            <input type="text" readOnly value={statusValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">GM Date</label>

@@ -29,6 +29,7 @@ type QuotationRow = {
   created_by: string;
   created_at: string;
   updated_at: string;
+  dollar_rate: number;
 };
 
 type QuotationItemRow = {
@@ -86,6 +87,7 @@ const quotationBaseSchema = z
     amount: z.coerce.number().min(0).optional().nullable(),
     pkrDiscountType: discountEnum.optional().nullable(),
     pkrDiscountValue: z.coerce.number().min(0).optional().nullable(),
+    dollarRate: z.coerce.number().min(0).default(280),
     items: z.array(itemSchema).min(1, "At least one item is required"),
   });
 
@@ -120,6 +122,7 @@ async function ensureQuotationTables() {
           save_status text null,
           note text null,
           amount numeric(12,2) null,
+          dollar_rate numeric(12,2) not null default 280,
           created_by text not null,
           created_at timestamptz not null default now(),
           updated_at timestamptz not null default now()
@@ -167,7 +170,7 @@ async function ensureQuotationTables() {
         `create index if not exists idx_quotations_customer on quotations(customer_id);`,
       );
       await client.query(
-        `alter table quotations add column if not exists lead_id text;`,
+        `alter table quotations add column if not exists dollar_rate numeric(12,2) not null default 280;`,
       );
       await client.query(
         `create index if not exists idx_quotations_lead on quotations(lead_id);`,
@@ -200,23 +203,35 @@ function computeTotals(parsed: ParsedQuotation) {
   const gstAmount = subAmount * (Number(parsed.gstPercent) / 100);
   const totalAmount = subAmount + gstAmount;
 
+  const paymentTermPercent = Number(parsed.paymentTermPercent ?? 0);
+  // If amount is provided by user it overrides the percentage calculation
+  const calculatedAmount = totalAmount * (paymentTermPercent / 100);
+  const amount = parsed.amount !== undefined && parsed.amount !== null ? Number(parsed.amount) : calculatedAmount;
+  
+  const grandTotal = amount;
+
+  const dollarRate = Number(parsed.dollarRate || 280);
+  const pkrTotalRaw = grandTotal * dollarRate;
+
   const discountType = parsed.pkrDiscountType || parsed.discountType || "AMOUNT";
   const discountValue = Number(parsed.pkrDiscountValue ?? parsed.discountValue ?? 0);
   const discount =
     discountType === "PERCENT" || discountType === "PERCENTAGE"
-      ? totalAmount * (discountValue / 100)
+      ? pkrTotalRaw * (discountValue / 100)
       : discountValue;
-  const afterDiscount = Math.max(totalAmount - discount, 0);
-  const grandTotal = afterDiscount;
+      
+  const pkrTotal = Math.max(pkrTotalRaw - discount, 0);
 
   return {
     itemsWithTotal,
     subAmount,
     gstAmount,
     totalAmount,
+    amount,
     discount,
     grandTotal,
-    pkrTotal: afterDiscount,
+    pkrTotal,
+    dollarRate
   };
 }
 
@@ -242,6 +257,7 @@ function mapQuotationRow(row: QuotationRow) {
     saveStatus: row.save_status,
     note: row.note,
     amount: row.amount !== null ? Number(row.amount) : null,
+    dollarRate: Number(row.dollar_rate ?? 280),
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -273,9 +289,9 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
       insert into quotations (
         customer_id, lead_id, account_holder, company, email, contact, delivery_time,
         gst_percent, discount_type, discount_value, sub_amount, gst_amount, total_amount,
-        grand_total, pkr_total, payment_term_percent, save_status, note, amount, created_by, updated_at
+        grand_total, pkr_total, payment_term_percent, save_status, note, amount, dollar_rate, created_by, updated_at
     )
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now())
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now())
     returning *
   `,
     [
@@ -297,7 +313,8 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
       payload.paymentTermPercent ?? 0,
       payload.saveStatus ?? "pending_hod",
       payload.note ?? null,
-      payload.amount ?? totalAmount,
+      amount,
+      payload.dollarRate ?? 280,
       userId,
     ],
   );
@@ -356,8 +373,9 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
              save_status = $17,
              note = $18,
              amount = $19,
+             dollar_rate = $20,
              updated_at = now()
-       where id = $20
+       where id = $21
      returning *
     `,
     [
@@ -379,7 +397,8 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
       payload.paymentTermPercent ?? 0,
       payload.saveStatus ?? null,
       payload.note ?? null,
-      payload.amount ?? totalAmount,
+      amount,
+      payload.dollarRate ?? 280,
       id,
     ],
   );
@@ -454,7 +473,7 @@ export function registerQuotationRoutes(app: Express) {
       const listSql = `
         select id, customer_id, lead_id, account_holder, company, email, contact, delivery_time,
                gst_percent, discount_type, discount_value, sub_amount, gst_amount, total_amount,
-               grand_total, pkr_total, payment_term_percent, save_status, note, amount,
+               grand_total, pkr_total, payment_term_percent, save_status, note, amount, dollar_rate,
                created_by, created_at, updated_at
           from quotations
           ${where.length ? `where ${where.join(" and ")}` : ""}

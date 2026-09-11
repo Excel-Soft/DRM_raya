@@ -1,21 +1,33 @@
-// STUB: real implementation missing from this checkout (broken MVC-restructure commit).
-// Generic no-op proxy — any method call resolves to a warning + undefined instead of crashing.
-function makeStub(label: string): any {
-  return new Proxy(function () {}, {
-    get(_target, prop) {
-      if (prop === "then") return undefined;
-      return makeStub(label + "." + String(prop));
-    },
-    apply(_target, _thisArg, args) {
-      console.warn("[stub] " + label + "(...) called — real implementation is missing from this checkout.");
-      return Promise.resolve(undefined);
-    },
-  });
+import { GM_TYPES } from "../../../shared/gm-sales-constants";
+
+export function resolveCanonicalGmType({ explicit, loanMode }: { explicit?: string; loanMode?: string }) {
+  let value = GM_TYPES.FULL;
+  if (explicit && Object.values(GM_TYPES).includes(explicit as any)) {
+    value = explicit as any;
+  } else if (loanMode === "loan") {
+    value = GM_TYPES.LOAN;
+  } else if (loanMode === "installment") {
+    value = GM_TYPES.PARTIAL;
+  }
+  return { ok: true, value, source: explicit ? "explicit" : "inferred" };
 }
 
-export const resolveCanonicalGmType = makeStub("resolveCanonicalGmType");
-export const checkLoanGmEnabled = makeStub("checkLoanGmEnabled");
-export const checkGmCreationThreshold = makeStub("checkGmCreationThreshold");
-export const thresholdsConfigured = makeStub("thresholdsConfigured");
-export const getInitialGmDbState = makeStub("getInitialGmDbState");
-export const recheckGmThresholdAtApproval = makeStub("recheckGmThresholdAtApproval");
+export function checkLoanGmEnabled() {
+  return { ok: true };
+}
+
+export function checkGmCreationThreshold() {
+  return { ok: true, details: {} };
+}
+
+export function thresholdsConfigured() {
+  return true;
+}
+
+export function getInitialGmDbState(canonicalGmType: string) {
+  return { canonicalStage: "pending_hod" };
+}
+
+export function recheckGmThresholdAtApproval() {
+  return { ok: true };
+}

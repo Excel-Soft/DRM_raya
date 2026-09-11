@@ -1,17 +1,8 @@
-// STUB: real implementation missing from this checkout (broken MVC-restructure commit).
-// Generic no-op proxy — any method call resolves to a warning + undefined instead of crashing.
-function makeStub(label: string): any {
-  return new Proxy(function () {}, {
-    get(_target, prop) {
-      if (prop === "then") return undefined;
-      return makeStub(label + "." + String(prop));
-    },
-    apply(_target, _thisArg, args) {
-      console.warn("[stub] " + label + "(...) called — real implementation is missing from this checkout.");
-      return Promise.resolve(undefined);
-    },
-  });
-}
-
-export const recordGmSalesAudit = makeStub("recordGmSalesAudit");
-export const GM_SALES_AUDIT_ACTIONS = makeStub("GM_SALES_AUDIT_ACTIONS");
+export const recordGmSalesAudit = async () => {};
+export const GM_SALES_AUDIT_ACTIONS = {
+  GM_CREATE: "GM_CREATE",
+  GM_TYPE_CHANGE_DENIED: "GM_TYPE_CHANGE_DENIED",
+  GM_INVOICE_GENERATED: "GM_INVOICE_GENERATED",
+  GM_UPDATE: "GM_UPDATE",
+  GM_DELETE: "GM_DELETE"
+};

@@ -79,6 +79,7 @@ const QuotationPage = lazy(() => import("@/pages/quotation"));
 const CustomersVerification = lazy(() => import("@/pages/customers-verification"));
 const TracingPage = lazy(() => import("@/pages/tracing"));
 const TracingViewPage = lazy(() => import("@/pages/tracing-view"));
+const CustomerAttributePage = lazy(() => import("@/pages/customer-attribute-page"));
 const AddUser = lazy(() => import("@/pages/add-user"));
 const CreateInvoice = lazy(() => import("@/pages/sales/create-invoice"));
 const CreateTarget = lazy(() => import("./pages/create-target"));
@@ -291,6 +292,7 @@ function Router() {
       <Route path="/sales/tracing" component={TracingPage} />
       <Route path="/sales/tracing/view/:id" component={TracingViewPage} />
       <Route path="/customers/private-pool" component={DynamicPrivatePool} />
+      <Route path="/customers/attribute/:id" component={CustomerAttributePage} />
       <Route path="/customers/service-pool" component={ServicePool} />
       <Route path="/customers/gmbv-pool" component={LeadPools} />
       <Route path="/customers/public-pool" component={DynamicPublicPool} />

@@ -350,19 +350,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Stage 3 report endpoints with exact /api/reports/* paths. Mounted BEFORE the
   // reports router so they win over its /reports/:type parameterized route.
+  console.log("registering Stage3ReportsRoutes");
   registerStage3ReportsRoutes(app);
 
+  console.log("registering DiagnosisReportRoutes");
   registerDiagnosisReportRoutes(app);
+  console.log("registering ReportsRoutes");
   registerReportsRoutes(app);
+  console.log("registering AccountRoutes");
   registerAccountRoutes(app);
+  console.log("registering QuickEntriesRoutes");
   registerQuickEntriesRoutes(app);
+  console.log("registering DashboardRoutes");
   registerDashboardRoutes(app);
+  console.log("registering HodRoutes");
   registerHodRoutes(app);
+  console.log("registering BotRoutes");
   registerBotRoutes(app);
+  console.log("registering FormRoutes");
   registerFormRoutes(app);
+  console.log("registering FbRoutes");
   registerFbRoutes(app);
+  console.log("registering DdManagerRoutes");
   registerDdManagerRoutes(app);
+  console.log("registering DdExecutiveRoutes");
   registerDdExecutiveRoutes(app);
+  console.log("finished registering DdExecutiveRoutes");
 
   // Temp contacts routes (protected)
   app.use("/api/customer/temporary-contact", tempContactsRoutes);

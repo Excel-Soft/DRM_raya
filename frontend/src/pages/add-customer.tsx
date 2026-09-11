@@ -384,7 +384,17 @@ export default function AddCustomer() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers/stats"] });
-      setLocation(fromTempContactId ? "/customers/private-pool" : "/sales/customers");
+      if (fromTempContactId) {
+        setLocation("/customers/private-pool");
+      } else {
+        // Reset the form to stay on the page and allow adding another customer
+        form.reset({
+          companyName: "", country: "", city: "", address: "", crmId: "", crmDate: "", phone: "", companyType: "", title: "", personName: "", accountName: "", cnic: "", ntn: "", website: "", email: "", emails: [], mobile: "", mobiles: [], designation: "", comment: "", rcLink: "", source: "", grade: "", status: "New", serviceTypes: [], businessLine: "", abType: "", region: "",
+        });
+        setEmailsList([""]);
+        setMobilesList([""]);
+        setSelectedServices([]);
+      }
     },
     onError: (error: Error) => {
       toast({

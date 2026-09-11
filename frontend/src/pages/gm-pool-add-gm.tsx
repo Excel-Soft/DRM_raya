@@ -747,7 +747,6 @@ export default function GmPoolAddGm() {
       resetAddGmForm();
       queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
       queryClient.invalidateQueries({ queryKey: ["/api/gm-bv-pool"] });
-      setLocation("/customers/gmbv-pool");
     },
     onError: (err: any) => {
       const message = err?.message || "Failed to create GM entry";

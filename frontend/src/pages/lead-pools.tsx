@@ -1036,28 +1036,7 @@ export default function LeadPools() {
   const handleView = async (lead: PoolCustomer) => {
     const targetId = await ensureCustomerId(lead, "view profile");
     if (!targetId) return;
-    setViewLead({ ...lead, id: targetId });
-    setProfileData(null); // Clear previous profile data to avoid flashing stale info
-    try {
-      const res = await apiRequest("GET", `/api/sales/leads/${targetId}/profile`);
-      const data = await res.json();
-      setProfileData(data);
-      // Pull history for contact tab at the same time
-      try {
-        setHistoryLoading(true);
-        const historyRes = await apiRequest("GET", `/api/sales/customers/${targetId}/followups`);
-        const historyData = await historyRes.json();
-        const rows = Array.isArray(historyData) ? historyData : Array.isArray(historyData?.data) ? historyData.data : [];
-        setHistoryItems(rows);
-      } catch (err) {
-        console.warn("Failed to load history for profile", err);
-      } finally {
-        setHistoryLoading(false);
-      }
-      await fetchQuotationHistory(targetId);
-    } catch (err) {
-      toast({ title: "Failed to load profile", variant: "destructive" });
-    }
+    setLocation(`/customers/attribute/${targetId}`);
     await logLeadAction(targetId, "view");
   };
 
@@ -2000,7 +1979,7 @@ export default function LeadPools() {
                                   key={customer.id}
                                   data-testid={`row-customer-${customer.id}`}
                                   className="group cursor-pointer hover:bg-muted/50 transition-colors border-b border-border/50 last:border-0"
-                                  onClick={() => handleFollowupOpen(customer)}
+                                  onClick={() => handleView(customer)}
                                 >
                                   <TableCell onClick={(e) => e.stopPropagation()} className="py-3">
                                     <Checkbox
@@ -2014,11 +1993,11 @@ export default function LeadPools() {
                                   </TableCell>
                                   <TableCell className="py-2 font-bold text-[11px] text-foreground truncate">{companyName}</TableCell>
                                   <TableCell className="py-2 text-[11px] text-muted-foreground truncate">{(customer as any).salesPersonName || "—"}</TableCell>
-                                  <TableCell className="py-2 text-[11px] text-muted-foreground truncate">{accountName}</TableCell>
-                                  <TableCell className="py-2 text-[11px] text-muted-foreground truncate">
+                                  <TableCell className="py-2 text-[11px] text-muted-foreground truncate blur-sm hover:blur-none transition-all duration-300 cursor-help">{accountName}</TableCell>
+                                  <TableCell className="py-2 text-[11px] text-muted-foreground truncate blur-sm hover:blur-none transition-all duration-300 cursor-help">
                                     {email || "-"}
                                   </TableCell>
-                                  <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap">
+                                  <TableCell className="py-2 text-[11px] text-muted-foreground whitespace-nowrap blur-sm hover:blur-none transition-all duration-300 cursor-help">
                                     {phone || "-"}
                                   </TableCell>
                                   <TableCell className="py-2 font-mono text-[10px] text-muted-foreground whitespace-nowrap text-center">

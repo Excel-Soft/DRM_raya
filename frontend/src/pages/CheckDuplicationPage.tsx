@@ -53,15 +53,21 @@ export default function CheckDuplicationPage() {
     visibleRows.length > 0 && visibleRows.some((r) => selectedRowIds.has(r.id));
 
   useEffect(() => {
-    const visibleIds = new Set(visibleRows.map((r) => r.id));
+    const currentVisibleRows = apiRows ?? [];
+    const visibleIds = new Set(currentVisibleRows.map((r) => r.id));
     setSelectedRowIds((prev) => {
       const next = new Set<string>();
+      let changed = false;
       prev.forEach((id) => {
-        if (visibleIds.has(id)) next.add(id);
+        if (visibleIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
       });
-      return next;
+      return changed ? next : prev;
     });
-  }, [visibleRows]);
+  }, [apiRows]);
 
   useEffect(() => {
     if (!hasSearch) {

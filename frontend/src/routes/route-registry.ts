@@ -138,6 +138,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/customers/public-pool", component: "DynamicPublicPool", title: "Public Pool", module: "Customer", sidebarVisible: true, sidebarGroup: "Customer", permissionKey: "Customer", allowedRoles: ALL_STAFF, notes: "Role-aware: service roles → ServicePublicPool, else LeadPools." },
   { path: "/sales/tracing", component: "TracingPage", title: "Tracking", module: "Customer", sidebarVisible: true, sidebarGroup: "Customer", permissionKey: "Customer", allowedRoles: ALL_STAFF },
   { path: "/sales/tracing/view/:id", component: "TracingViewPage", title: "Tracking Detail", module: "Customer", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF },
+  { path: "/customers/attribute/:id", component: "CustomerAttributePage", title: "Customer Attribute", module: "Customer", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/invoice-pool", component: "InvoicePool", title: "Invoice Pool", module: "Customer", sidebarVisible: true, sidebarGroup: "Customer", permissionKey: "Customer", allowedRoles: ALL_STAFF },
   { path: "/sales/appointments", component: "AppointmentsPage", title: "Appointments", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/targets", component: "SalesTargets", title: "Sales Targets", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },

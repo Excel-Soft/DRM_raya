@@ -137,8 +137,7 @@ app.use(loggerMiddleware);
       host,
       ipv6Only: false,
     };
-    // reusePort is not supported on Windows; enable only where available
-    if (process.platform !== "win32") {
+    if (process.platform === "linux") {
       listenOptions.reusePort = true;
     }
     return listenOptions;
@@ -167,7 +166,7 @@ app.use(loggerMiddleware);
     // Some sandboxes/hosts don't support IPv6 binding (EAFNOSUPPORT) or the
     // address isn't available (EADDRNOTAVAIL). Fall back to IPv4 so the server
     // still serves on the only non-firewalled port.
-    if (err?.code === "EAFNOSUPPORT" || err?.code === "EADDRNOTAVAIL") {
+    if (err?.code === "EAFNOSUPPORT" || err?.code === "EADDRNOTAVAIL" || err?.code === "ENOTSUP") {
       log(`IPv6 bind failed (${err.code}); retrying on 0.0.0.0`);
       await tryListen(requestedPort, "0.0.0.0");
     } else {

@@ -212,6 +212,10 @@ export const servicesRepository = {
         s.code,
         s.name,
         ${hasDesc ? "s.description" : "null as description"},
+        s.price,
+        s.discount,
+        s.min_day,
+        s.max_day,
         s.is_active,
         s.created_at,
         coalesce(
@@ -235,7 +239,7 @@ export const servicesRepository = {
       from drm.services s
       left join drm.service_subservices ss on ss.service_id = s.id and ss.is_active = true
       where s.is_active = true
-      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.is_active, s.created_at
+      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at
       order by s.name
     `);
     return res.rows.map((row: any) => ({
@@ -244,6 +248,9 @@ export const servicesRepository = {
       name: row.name,
       description: row.description,
       price: row.price,
+      discount: row.discount,
+      minDay: row.min_day,
+      maxDay: row.max_day,
       isActive: row.is_active,
       createdAt: row.created_at,
       subServices: row.sub_services || [],

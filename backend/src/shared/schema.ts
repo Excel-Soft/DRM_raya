@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, uniqueIndex, serial } from "drizzle-orm/pg-core";
+import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, numeric, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, uniqueIndex, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -368,6 +368,11 @@ export const services = drmSchema.table("services", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
+  description: text("description"),
+  price: numeric("price"),
+  discount: numeric("discount"),
+  minDay: integer("min_day"),
+  maxDay: integer("max_day"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -385,6 +390,11 @@ export const serviceSubservices = drmSchema.table("service_subservices", {
   serviceId: varchar("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
   code: text("code").notNull().unique(),
   name: text("name").notNull(),
+  description: text("description"),
+  price: numeric("price"),
+  discount: numeric("discount"),
+  minDay: integer("min_day"),
+  maxDay: integer("max_day"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

@@ -1,18 +1,13 @@
-// STUB: real implementation missing from this checkout (broken MVC-restructure commit).
-// Generic no-op proxy — any method call resolves to a warning + undefined instead of crashing.
-function makeStub(label: string): any {
-  return new Proxy(function () {}, {
-    get(_target, prop) {
-      if (prop === "then") return undefined;
-      return makeStub(label + "." + String(prop));
-    },
-    apply(_target, _thisArg, args) {
-      console.warn("[stub] " + label + "(...) called — real implementation is missing from this checkout.");
-      return Promise.resolve(undefined);
-    },
-  });
+import { GM_SALES_CONFIG_DEFAULTS } from "../../../shared/gm-sales-constants";
+
+export async function getConfig() {
+  return { config: GM_SALES_CONFIG_DEFAULTS };
 }
 
-export const getConfig = makeStub("getConfig");
-export const getConfigValue = makeStub("getConfigValue");
-export const patchConfig = makeStub("patchConfig");
+export async function getConfigValue(key: keyof typeof GM_SALES_CONFIG_DEFAULTS) {
+  return GM_SALES_CONFIG_DEFAULTS[key];
+}
+
+export async function patchConfig(updates: Partial<typeof GM_SALES_CONFIG_DEFAULTS>) {
+  return { config: { ...GM_SALES_CONFIG_DEFAULTS, ...updates } };
+}

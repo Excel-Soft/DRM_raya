@@ -43,6 +43,7 @@ type QuotationFormState = {
   note?: string;
   saveStatus?: string;
   amount?: number;
+  dollarRate: number;
   items: QuotationItemForm[];
   subAmount?: number;
   gstAmount?: number;
@@ -124,6 +125,7 @@ export default function QuotationPage() {
     saveStatus: "Saved",
     note: "",
     amount: 0,
+    dollarRate: 280,
     pkrTotal: 0,
     createdAt: new Date().toISOString(),
     items: [
@@ -159,6 +161,18 @@ export default function QuotationPage() {
     }
     return list;
   }, [products]);
+
+  const isDomainHostingSSL = (productId: string) => {
+    if (!productId) return false;
+    const product = flatProducts.find((p: any) => p.id === productId);
+    if (!product) return false;
+    const name = (product.name || "").toLowerCase();
+    const parentName = (product.parentName || "").toLowerCase();
+    return name.includes("domain") || name.includes("hosting") || name.includes("ssl") || 
+           parentName.includes("domain") || parentName.includes("hosting") || parentName.includes("ssl");
+  };
+
+  const hasDomainHostingSSLProduct = form.items.some(item => isDomainHostingSSL(item.productId));
 
   useEffect(() => {
     async function loadLeadProfile(id: string) {
@@ -222,6 +236,7 @@ export default function QuotationPage() {
           note: q.note ?? "",
           saveStatus: q.saveStatus ?? "Saved",
           amount: q.amount ?? 0,
+          dollarRate: q.dollarRate ?? 280,
           createdAt: q.createdAt || new Date().toISOString(),
           items: items.map((it: any) => ({
             id: it.id,
@@ -258,10 +273,24 @@ export default function QuotationPage() {
     }, 0);
     const gstAmount = subAmount * (Number(form.gstPercent || 0) / 100);
     const totalAmount = subAmount + gstAmount;
-    const discount = form.discountType === "PERCENT" ? totalAmount * (Number(form.discountValue || 0) / 100) : Number(form.discountValue || 0);
-    const grandTotal = Math.max(totalAmount - discount, 0);
-    return { subAmount, gstAmount, totalAmount, grandTotal };
-  }, [form]);
+    
+    // Amount is derived from Payment Term %, or user override if we wanted to
+    const paymentTermPercent = Number(form.paymentTermPercent || 0);
+    const amount = totalAmount * (paymentTermPercent / 100);
+    
+    const grandTotal = amount;
+
+    const pkrTotalRaw = grandTotal * Number(form.dollarRate || 280);
+    const discount = form.discountType === "PERCENT" ? pkrTotalRaw * (Number(form.discountValue || 0) / 100) : Number(form.discountValue || 0);
+    const pkrTotal = Math.max(pkrTotalRaw - discount, 0);
+
+    return { subAmount, gstAmount, totalAmount, grandTotal, pkrTotal, calculatedAmount: amount };
+  }, [form, flatProducts]);
+
+  useEffect(() => {
+    // If payment term changes, update form.amount if we want it strictly linked
+    setForm(prev => ({ ...prev, amount: computed.calculatedAmount }));
+  }, [computed.calculatedAmount]);
 
   const updateItem = (idx: number, patch: Partial<QuotationItemForm>) => {
     setForm((prev) => {
@@ -315,7 +344,8 @@ export default function QuotationPage() {
         paymentTermPercent: form.paymentTermPercent,
         saveStatus: form.saveStatus,
         note: form.note,
-        amount: computed.totalAmount,
+        amount: computed.calculatedAmount,
+        dollarRate: form.dollarRate,
         subAmount: computed.subAmount,
         totalAmount: computed.totalAmount,
         grandTotal: computed.grandTotal,
@@ -407,14 +437,14 @@ export default function QuotationPage() {
               <tr>
                 <th className="px-3 py-3">Product <span className="text-red-500">*</span></th>
                 <th className="px-3 py-3">Detail <span className="text-red-500">*</span></th>
-                <th className="px-3 py-3">Min Time <span className="text-red-500">*</span></th>
-                <th className="px-3 py-3">Max Time <span className="text-red-500">*</span></th>
-                <th className="px-3 py-3">Unit Price <span className="text-red-500">*</span></th>
+                {hasDomainHostingSSLProduct && <th className="px-3 py-3">Min Time <span className="text-red-500">*</span></th>}
+                {hasDomainHostingSSLProduct && <th className="px-3 py-3">Max Time <span className="text-red-500">*</span></th>}
+                <th className="px-3 py-3">Unit Price $ <span className="text-red-500">*</span></th>
                 <th className="px-3 py-3">Quantity <span className="text-red-500">*</span></th>
-                <th className="px-3 py-3">Total Pkr</th>
-                <th className="px-3 py-3">Start Year</th>
-                <th className="px-3 py-3">End Year <span className="text-red-500">*</span></th>
-                <th className="px-3 py-3">Domain URL <span className="text-red-500">*</span></th>
+                <th className="px-3 py-3">Total $</th>
+                {hasDomainHostingSSLProduct && <th className="px-3 py-3">Start Year</th>}
+                {hasDomainHostingSSLProduct && <th className="px-3 py-3">End Year <span className="text-red-500">*</span></th>}
+                {hasDomainHostingSSLProduct && <th className="px-3 py-3">Domain URL <span className="text-red-500">*</span></th>}
                 <th className="px-3 py-3">Action</th>
               </tr>
             </thead>
@@ -430,8 +460,10 @@ export default function QuotationPage() {
                         updateItem(idx, { 
                           productId, 
                           detail: selectedProduct ? (selectedProduct.description !== null && selectedProduct.description !== undefined ? selectedProduct.description : "") : item.detail,
-                          quantity: selectedProduct ? Number(selectedProduct.price || 0) : (item.quantity > 0 ? item.quantity : 1),
-                          unitPrice: 1
+                          quantity: 1,
+                          unitPrice: selectedProduct ? Number(selectedProduct.price || 0) : 0,
+                          minTime: selectedProduct ? selectedProduct.minDay ?? selectedProduct.minTime : undefined,
+                          maxTime: selectedProduct ? selectedProduct.maxDay ?? selectedProduct.maxTime : undefined
                         });
                       }} 
                     />
@@ -443,22 +475,30 @@ export default function QuotationPage() {
                       onChange={(e) => updateItem(idx, { detail: e.target.value })} 
                     />
                   </td>
-                  <td className="px-2 py-2 min-w-[100px]">
-                    <Input 
-                      type="number" 
-                      className="h-10" 
-                      value={item.minTime ?? ""} 
-                      onChange={(e) => updateItem(idx, { minTime: e.target.value ? Number(e.target.value) : undefined })} 
-                    />
-                  </td>
-                  <td className="px-2 py-2 min-w-[100px]">
-                    <Input 
-                      type="number" 
-                      className="h-10" 
-                      value={item.maxTime ?? ""} 
-                      onChange={(e) => updateItem(idx, { maxTime: e.target.value ? Number(e.target.value) : undefined })} 
-                    />
-                  </td>
+                  {hasDomainHostingSSLProduct && (
+                    <td className="px-2 py-2 min-w-[100px]">
+                      {isDomainHostingSSL(item.productId) && (
+                        <Input 
+                          type="number" 
+                          className="h-10" 
+                          value={item.minTime ?? ""} 
+                          onChange={(e) => updateItem(idx, { minTime: e.target.value ? Number(e.target.value) : undefined })} 
+                        />
+                      )}
+                    </td>
+                  )}
+                  {hasDomainHostingSSLProduct && (
+                    <td className="px-2 py-2 min-w-[100px]">
+                      {isDomainHostingSSL(item.productId) && (
+                        <Input 
+                          type="number" 
+                          className="h-10" 
+                          value={item.maxTime ?? ""} 
+                          onChange={(e) => updateItem(idx, { maxTime: e.target.value ? Number(e.target.value) : undefined })} 
+                        />
+                      )}
+                    </td>
+                  )}
                   <td className="px-2 py-2 min-w-[120px]">
                     <Input 
                       type="number" 
@@ -482,36 +522,48 @@ export default function QuotationPage() {
                       value={(() => {
                         const isXlserp = flatProducts.find((p: any) => p.id === item.productId)?.name === 'Xlserp - Free Website';
                         const itemUsd = isXlserp ? (Number(item.quantity) / 90) * (25600 / 280) : Number(item.unitPrice || 0) * Number(item.quantity || 0);
-                        return Math.round(itemUsd * 280);
+                        return itemUsd.toFixed(2);
                       })()} 
                     />
                   </td>
-                  <td className="px-2 py-2 min-w-[120px]">
-                    <Input 
-                      type="number" 
-                      className="h-10" 
-                      placeholder="Select Year"
-                      value={item.startYear} 
-                      onChange={(e) => updateItem(idx, { startYear: Number(e.target.value) })} 
-                    />
-                  </td>
-                  <td className="px-2 py-2 min-w-[120px]">
-                    <Input 
-                      type="number" 
-                      className="h-10" 
-                      placeholder="Select Year"
-                      value={item.endYear} 
-                      onChange={(e) => updateItem(idx, { endYear: Number(e.target.value) })} 
-                    />
-                  </td>
-                  <td className="px-2 py-2 min-w-[180px]">
-                    <Input 
-                      placeholder="Enter domain"
-                      className="h-10" 
-                      value={item.domainUrl ?? ""} 
-                      onChange={(e) => updateItem(idx, { domainUrl: e.target.value })} 
-                    />
-                  </td>
+                  {hasDomainHostingSSLProduct && (
+                    <td className="px-2 py-2 min-w-[120px]">
+                      {isDomainHostingSSL(item.productId) && (
+                        <Input 
+                          type="number" 
+                          className="h-10" 
+                          placeholder="Select Year"
+                          value={item.startYear} 
+                          onChange={(e) => updateItem(idx, { startYear: Number(e.target.value) })} 
+                        />
+                      )}
+                    </td>
+                  )}
+                  {hasDomainHostingSSLProduct && (
+                    <td className="px-2 py-2 min-w-[120px]">
+                      {isDomainHostingSSL(item.productId) && (
+                        <Input 
+                          type="number" 
+                          className="h-10" 
+                          placeholder="Select Year"
+                          value={item.endYear} 
+                          onChange={(e) => updateItem(idx, { endYear: Number(e.target.value) })} 
+                        />
+                      )}
+                    </td>
+                  )}
+                  {hasDomainHostingSSLProduct && (
+                    <td className="px-2 py-2 min-w-[180px]">
+                      {isDomainHostingSSL(item.productId) && (
+                        <Input 
+                          placeholder="Enter domain"
+                          className="h-10" 
+                          value={item.domainUrl ?? ""} 
+                          onChange={(e) => updateItem(idx, { domainUrl: e.target.value })} 
+                        />
+                      )}
+                    </td>
+                  )}
                   <td className="px-2 py-2 text-center">
                     <Button 
                       size="sm" 
@@ -535,7 +587,10 @@ export default function QuotationPage() {
 
         {/* Bottom Totals & Settings */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          {/* Row 1 */}
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-slate-600">Dollar Rate <span className="text-red-500">*</span></label>
+            <Input type="number" value={form.dollarRate} onChange={e => setForm({...form, dollarRate: Number(e.target.value)})} />
+          </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Sub Amount <span className="text-red-500">*</span></label>
             <Input readOnly className="bg-slate-50" value={computed.subAmount.toFixed(2)} />
@@ -552,6 +607,8 @@ export default function QuotationPage() {
             <label className="text-sm font-medium text-slate-600">GST % <span className="text-red-500">*</span></label>
             <Input type="number" value={form.gstPercent} onChange={e => setForm({...form, gstPercent: Number(e.target.value)})} />
           </div>
+
+          {/* Row 2 */}
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Payment Term % <span className="text-red-500">*</span></label>
             <Select value={form.paymentTermPercent ? String(form.paymentTermPercent) : ""} onValueChange={v => setForm({...form, paymentTermPercent: Number(v)})}>
@@ -568,14 +625,13 @@ export default function QuotationPage() {
             </Select>
           </div>
 
-          {/* Row 2 */}
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Total Amount <span className="text-red-500">*</span></label>
             <Input readOnly className="bg-slate-50" value={computed.totalAmount.toFixed(2)} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Amount <span className="text-red-500">*</span></label>
-            <Input type="number" value={form.amount} onChange={e => setForm({...form, amount: Number(e.target.value)})} />
+            <Input readOnly className="bg-slate-50" value={computed.calculatedAmount.toFixed(2)} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Pkr Discount <span className="text-red-500">*</span></label>
@@ -602,10 +658,10 @@ export default function QuotationPage() {
             <Input readOnly className="bg-slate-50" value={computed.grandTotal.toFixed(2)} />
           </div>
 
-          {/* Row 3 */}
+          {/* Row 4 */}
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Pkr Total</label>
-            <Input readOnly className="bg-slate-50" value={Math.round(computed.grandTotal * 280)} />
+            <Input readOnly className="bg-slate-50" value={Math.round(computed.pkrTotal)} />
           </div>
           <div className="space-y-1">
             <label className="text-sm font-medium text-slate-600">Save <span className="text-red-500">*</span></label>
