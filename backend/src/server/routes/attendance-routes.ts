@@ -46,7 +46,11 @@ export function registerAttendanceRoutes(app: Express) {
          startDateRaw.setDate(startDateRaw.getDate() - 15);
          const { start, end } = normalizeDateRange(startDateRaw, endDateRaw);
 
-         const targetUserId = (isManagerialRole(req.user.roleId) && req.query.userId) ? (req.query.userId as string) : req.user.userId;
+         // Sales Manager never gets the ?userId override — self-only, even
+      // though they're otherwise a managerial role.
+      const effectiveAttendanceRole = (req.user as any).activeRoleId || req.user.roleId;
+      const canOverrideAttendanceUser = isManagerialRole(effectiveAttendanceRole) && effectiveAttendanceRole !== "sales_manager";
+      const targetUserId = (canOverrideAttendanceUser && req.query.userId) ? (req.query.userId as string) : req.user.userId;
          const records = await attendanceRepository.findByUserIdAndDateRange(
           targetUserId,
           start,
@@ -69,7 +73,11 @@ export function registerAttendanceRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid date format" });
       }
 
-      const targetUserId = (isManagerialRole(req.user.roleId) && req.query.userId) ? (req.query.userId as string) : req.user.userId;
+      // Sales Manager never gets the ?userId override — self-only, even
+      // though they're otherwise a managerial role.
+      const effectiveAttendanceRole = (req.user as any).activeRoleId || req.user.roleId;
+      const canOverrideAttendanceUser = isManagerialRole(effectiveAttendanceRole) && effectiveAttendanceRole !== "sales_manager";
+      const targetUserId = (canOverrideAttendanceUser && req.query.userId) ? (req.query.userId as string) : req.user.userId;
       const records = await attendanceRepository.findByUserIdAndDateRange(
         targetUserId,
         startDate,
@@ -114,7 +122,11 @@ export function registerAttendanceRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid date format" });
       }
 
-      const targetUserId = (isManagerialRole(req.user.roleId) && req.query.userId) ? (req.query.userId as string) : req.user.userId;
+      // Sales Manager never gets the ?userId override — self-only, even
+      // though they're otherwise a managerial role.
+      const effectiveAttendanceRole = (req.user as any).activeRoleId || req.user.roleId;
+      const canOverrideAttendanceUser = isManagerialRole(effectiveAttendanceRole) && effectiveAttendanceRole !== "sales_manager";
+      const targetUserId = (canOverrideAttendanceUser && req.query.userId) ? (req.query.userId as string) : req.user.userId;
       const summary = await attendanceRepository.getMonthlySummary(
         targetUserId,
         startDate,
@@ -159,7 +171,11 @@ export function registerAttendanceRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid date format" });
       }
 
-      const targetUserId = (isManagerialRole(req.user.roleId) && req.query.userId) ? (req.query.userId as string) : req.user.userId;
+      // Sales Manager never gets the ?userId override — self-only, even
+      // though they're otherwise a managerial role.
+      const effectiveAttendanceRole = (req.user as any).activeRoleId || req.user.roleId;
+      const canOverrideAttendanceUser = isManagerialRole(effectiveAttendanceRole) && effectiveAttendanceRole !== "sales_manager";
+      const targetUserId = (canOverrideAttendanceUser && req.query.userId) ? (req.query.userId as string) : req.user.userId;
       
       const userRes = await pool.query('SELECT full_name, basic_salary FROM drm.users WHERE id = $1', [targetUserId]);
       const userData = userRes.rows[0] || {};

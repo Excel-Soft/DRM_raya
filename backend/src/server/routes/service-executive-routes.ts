@@ -22,6 +22,7 @@ import { startOfDay, endOfDay, startOfMonth, endOfMonth } from "date-fns";
 import { computeExpiryState } from "../utils/service-expiry";
 import { opportunitiesRepository } from "../repositories/opportunities.repository";
 import { appointmentsRepository } from "../repositories/appointments.repository";
+import { servicesRepository } from "../repositories/services.repository";
 import { bucketServiceKpis } from "../utils/service-kpi";
 import { getPeriodRange } from "./dashboard-routes";
 
@@ -336,11 +337,151 @@ export function registerServiceExecutiveRoutes(app: Express) {
     }
   });
 
+  // "Follow The Customer" — writes to the same drm.follow_ups (+
+  // followup_services/followup_subservices/followup_subservice_details)
+  // tables the Sales equivalent (POST /api/sales/followups) writes to, which
+  // is exactly what GET /api/dashboard/followups reads for the Service
+  // Executive dashboard's "Follow Up Details" table (confirmed: purpose/
+  // grade/method/notes/dueAt all round-trip through those same tables/
+  // columns). A dedicated endpoint (rather than reusing /api/sales/followups)
+  // is needed because that route's ownership check (assertCanEditCustomer)
+  // requires the caller to be the customer's Sales owner_user_id, which a
+  // service executive normally is not — it would 403. Ownership here is
+  // instead scoped to the executive's own drm.service_customers assignment.
+  const reservationCodes = new Set(["MOBILE", "W_CALL", "ON_SITE_APPOINTMENT", "E_MAIL", "VM_APPOINTMENT", "FAX", "NO_NEED"]);
+  // "Review" multi-select checklist added to the "Follow The Customer" form.
+  // No existing column on drm.followup_subservice_details fits (comment is a
+  // genuinely distinct field written by the Sales follow-up flow) so a new
+  // nullable `review` text column is added here, idempotently, the same way
+  // sales-routes.ts's ensureFollowupDetailsTables() evolves this table.
+  const FOLLOW_REVIEW_OPTIONS = new Set([
+    "Report", "Start Rating", "Up Selling", "Rfq", "Products", "Follow Rate",
+    "Sample", "Order", "Revenue", "Happay With Alibaba", "Happay With Webxl",
+  ]);
+  let ensuredFollowupReviewColumn = false;
+  async function ensureFollowupReviewColumn() {
+    if (ensuredFollowupReviewColumn) return;
+    await pool.query(`alter table drm.followup_subservice_details add column if not exists review text null`);
+    ensuredFollowupReviewColumn = true;
+  }
+  app.post("/api/service/executive/follow-ups", serviceExecutiveGate, async (req: Request, res: Response) => {
+    try {
+      const execId = req.user!.userId || (req.user as any)!.id;
+      const { customerId, purpose, grade, method, reservationType, note, nextDate, subServiceId, review } = req.body || {};
+
+      if (!Array.isArray(review) || review.length === 0 || !review.every((r: any) => FOLLOW_REVIEW_OPTIONS.has(r))) {
+        return res.status(400).json({ error: "review must be a non-empty array of valid options", allowed: Array.from(FOLLOW_REVIEW_OPTIONS) });
+      }
+
+      const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+      if (!customerId || !uuidPattern.test(String(customerId))) {
+        return res.status(400).json({ error: "Valid customerId (uuid) is required" });
+      }
+      if (!subServiceId || !uuidPattern.test(String(subServiceId))) {
+        return res.status(400).json({ error: "Valid subServiceId (uuid) is required" });
+      }
+      if (!purpose || !grade || !method || !reservationType || !note) {
+        return res.status(400).json({ error: "purpose, grade, method, reservationType and note are required" });
+      }
+      const reservationNormalized = String(reservationType).trim().toUpperCase().replace(/[\s-]+/g, "_");
+      if (!reservationCodes.has(reservationNormalized)) {
+        return res.status(400).json({ error: "Invalid reservationType", allowed: Array.from(reservationCodes) });
+      }
+
+      // Scope check: this executive must legitimately be connected to the
+      // target customer via one of the two (disjoint) service-assignment
+      // mechanisms in this codebase — either a drm.service_customers row
+      // assigned to them (the original/"in-service" picker path), OR a
+      // drm.service_pool_entries row where they are the assigned Service
+      // Person (the Service Pool page's separate assignment concept, set by
+      // servicePoolRepository.assign/transfer). Without the second check,
+      // follow-ups submitted for a customer clicked from the Service Pool
+      // page's ID column would always 403 here, since assign/transfer never
+      // touch drm.service_customers.
+      const ownedViaServiceCustomers = await db
+        .select({ id: serviceCustomers.id })
+        .from(serviceCustomers)
+        .where(and(eq(serviceCustomers.customerId, customerId), eq(serviceCustomers.assignedTo, execId)))
+        .limit(1);
+      let owned = ownedViaServiceCustomers.length > 0;
+      if (!owned) {
+        const ownedViaPool = await pool.query(
+          `select 1 from drm.service_pool_entries where customer_id = $1 and service_person_id = $2 limit 1`,
+          [customerId, execId],
+        );
+        owned = (ownedViaPool.rowCount ?? 0) > 0;
+      }
+      if (!owned) {
+        return res.status(403).json({ error: "This customer is not in your service pool" });
+      }
+
+      const subs = await servicesRepository.findSubservicesByIds([subServiceId]);
+      const sub = subs[0];
+      if (!sub) {
+        return res.status(400).json({ error: "Invalid subServiceId" });
+      }
+
+      const dueAt = nextDate && !Number.isNaN(Date.parse(nextDate)) ? new Date(nextDate) : new Date();
+
+      await ensureFollowupReviewColumn();
+      const reviewValue = (review as string[]).join(", ");
+
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const followupResult = await client.query(
+          `insert into drm.follow_ups (customer_id, assigned_to, created_by, due_at, status, notes, method, reservation_type, talk_time_seconds, date_time, created_at, updated_at, is_deleted)
+             values ($1, $2, $2, $3, 'Open', $4, $5, $6, 0, $3, now(), now(), false)
+             returning *`,
+          [customerId, execId, dueAt, note, method, reservationNormalized],
+        );
+        const followup = followupResult.rows[0];
+
+        await client.query(
+          `insert into drm.followup_services (followup_id, service_id) values ($1, $2) on conflict do nothing`,
+          [followup.id, sub.serviceId],
+        );
+        await client.query(
+          `insert into drm.followup_subservices (followup_id, subservice_id) values ($1, $2) on conflict do nothing`,
+          [followup.id, sub.id],
+        );
+        await client.query(
+          `insert into drm.followup_subservice_details
+            (followup_id, service_id, subservice_id, service_code, subservice_code, purpose, grade, method, comment, note, activity_at, review)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [followup.id, sub.serviceId, sub.id, sub.serviceCode, sub.code, purpose, grade, method, note, note, dueAt, reviewValue],
+        );
+
+        await client.query("update drm.customers set last_followup_date = $1 where id = $2", [dueAt, customerId]);
+
+        await client.query("commit");
+        res.status(201).json({ success: true, data: followup });
+      } catch (err) {
+        await client.query("rollback");
+        throw err;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Failed to create follow-up" });
+    }
+  });
+
   // Customer Queue Data (In-Service, Expiring)
   app.get("/api/service/executive/customers/:filter", serviceExecutiveGate, async (req: Request, res: Response) => {
     try {
       const execId = req.user!.userId || (req.user as any)!.id;
       const { filter } = req.params; // 'in-service', 'expiring', 'expired'
+      // Optional pool_type constraint (e.g. "Service"), mirroring
+      // buildLeadPoolList's "service" case in sales-routes.ts. Only applied
+      // when explicitly requested via ?poolType=, so existing consumers of
+      // this endpoint (In-Service modal, ImportantMetrics) that intentionally
+      // show every assigned service customer regardless of pool are untouched.
+      const poolType = typeof req.query.poolType === "string" ? req.query.poolType : undefined;
+
+      const whereConditions = [eq(serviceCustomers.assignedTo, execId)];
+      if (poolType) whereConditions.push(eq(customers.poolType, poolType));
 
       const results = await db.select({
         serviceCustomer: serviceCustomers,
@@ -350,7 +491,7 @@ export function registerServiceExecutiveRoutes(app: Express) {
       .from(serviceCustomers)
       .leftJoin(customers, eq(serviceCustomers.customerId, customers.id))
       .leftJoin(services, eq(serviceCustomers.packageId, services.id))
-      .where(eq(serviceCustomers.assignedTo, execId));
+      .where(and(...whereConditions));
 
       // Filter by dynamic expiry state in memory
       const filtered = results.filter(r => {

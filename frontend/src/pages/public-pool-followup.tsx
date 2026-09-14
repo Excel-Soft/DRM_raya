@@ -60,7 +60,7 @@ export default function PublicPoolFollowup() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 pb-24">
+    <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-zinc-950 p-4 md:p-6 pb-24">
       <Breadcrumb
         items={[
           { label: "Dashboard", href: "/" },
@@ -71,8 +71,8 @@ export default function PublicPoolFollowup() {
       
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 mt-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Public Pool (Follow up)</h1>
-          <p className="text-slate-500">View and follow-up with companies inactive for 60+ days.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-zinc-100">Public Pool (Follow up)</h1>
+          <p className="text-muted-foreground">View and follow-up with companies inactive for 60+ days.</p>
         </div>
       </div>
 
@@ -84,7 +84,7 @@ export default function PublicPoolFollowup() {
           </CardHeader>
           <CardContent>
             {isLoadingMain ? (
-              <div className="flex items-center justify-center p-6"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+              <div className="flex items-center justify-center p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
             ) : (
               <div className="flex flex-wrap gap-3">
                 {Object.entries(mainServiceNames).map(([id, name]) => {
@@ -121,7 +121,7 @@ export default function PublicPoolFollowup() {
             </CardHeader>
             <CardContent>
               {isLoadingSub ? (
-                <div className="flex items-center justify-center p-6"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+                <div className="flex items-center justify-center p-6"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
               ) : (
                 <div className="flex flex-wrap gap-3">
                   {subServices?.map((sub: any) => {
@@ -138,7 +138,7 @@ export default function PublicPoolFollowup() {
                         className="relative justify-between"
                       >
                         <span>{sub.name}</span>
-                        <Badge variant={isSelected ? "secondary" : "default"} className="ml-2 bg-slate-200 text-slate-700 hover:bg-slate-300">
+                        <Badge variant={isSelected ? "secondary" : "default"} className="ml-2 bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600">
                           {sub.count}
                         </Badge>
                       </Button>
@@ -158,13 +158,13 @@ export default function PublicPoolFollowup() {
             </CardHeader>
             <CardContent>
               {isLoadingCustomers ? (
-                <div className="flex items-center justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-slate-400" /></div>
+                <div className="flex items-center justify-center p-12"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>
               ) : (
                 <div className="space-y-4">
-                  <div className="rounded-md border bg-white">
+                  <div className="rounded-md border border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-slate-50">
+                        <TableRow className="bg-slate-50 dark:bg-zinc-800/50 dark:hover:bg-zinc-800/50">
                           <TableHead>Company ID</TableHead>
                           <TableHead>Co Name</TableHead>
                           <TableHead>Acc Holder</TableHead>
@@ -177,19 +177,19 @@ export default function PublicPoolFollowup() {
                       <TableBody>
                         {customersData?.data?.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                            <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                               No companies found matching the criteria.
                             </TableCell>
                           </TableRow>
                         ) : (
                           customersData?.data?.map((customer: any) => (
-                            <TableRow key={customer.id}>
-                              <TableCell className="font-medium text-blue-600">{customer.com_id || "-"}</TableCell>
+                            <TableRow key={customer.id} className="dark:hover:bg-zinc-800/50">
+                              <TableCell className="font-medium text-blue-600 dark:text-blue-400">{customer.com_id || "-"}</TableCell>
                               <TableCell>{customer.cname || "Unknown"}</TableCell>
                               <TableCell>{customer.account_name || "-"}</TableCell>
                               <TableCell>{customer.email || "-"}</TableCell>
                               <TableCell>{customer.phone || "-"}</TableCell>
-                              <TableCell>{customer.assigned_to || <Badge variant="outline" className="text-slate-500">Unassigned</Badge>}</TableCell>
+                              <TableCell>{customer.assigned_to || <Badge variant="outline" className="text-muted-foreground">Unassigned</Badge>}</TableCell>
                               <TableCell className="text-right space-x-2">
                                 <Button size="sm" variant="outline" onClick={() => setLocation(`/sales/customers/${customer.id}`)}>
                                   <Eye className="w-4 h-4 mr-1" /> View
@@ -219,7 +219,7 @@ export default function PublicPoolFollowup() {
                     >
                       Previous
                     </Button>
-                    <span className="text-sm text-slate-500">Page {page}</span>
+                    <span className="text-sm text-muted-foreground">Page {page}</span>
                     <Button
                       variant="outline"
                       size="sm"

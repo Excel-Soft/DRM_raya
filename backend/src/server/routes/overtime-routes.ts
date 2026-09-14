@@ -85,7 +85,12 @@ export function registerOvertimeRoutes(app: Express) {
         return res.status(403).json({ error: "You are not authorized to view all overtime records." });
       }
       const { pool } = await import("../db.js");
-      const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ORDER BY o.created_at DESC`);
+      // Sales Manager: self-only, never org-wide, even though this is
+      // otherwise a manager "view all" endpoint.
+      const isSalesManagerRole = normalizeRole(callerRole(req)) === ROLES.SALES_MANAGER;
+      const selfClause = isSalesManagerRole ? "WHERE o.user_id = $1" : "";
+      const overtimeQueryParams = isSalesManagerRole ? [req.user.userId] : [];
+      const { rows } = await pool.query(`SELECT o.id, o.user_id AS "userId", u.full_name AS "userName", o.date, o.hours AS "timeSpent", o.status, o.reason, COALESCE(o.task_title, o.reason, 'N/A') AS "taskTitle", COALESCE(o.task_details, '') AS "taskDetails", o.created_at AS "createdAt" FROM drm.overtime_records o LEFT JOIN drm.users u ON u.id = o.user_id ${selfClause} ORDER BY o.created_at DESC`, overtimeQueryParams);
       res.json(rows);
     } catch (error) { res.status(500).json({ error: "Failed" }); }
   });

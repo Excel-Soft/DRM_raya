@@ -259,7 +259,7 @@ const menuItems: MenuItem[] = [
       { title: "Employee Bonuses", url: "/reports/salary-bonuses", icon: FileText },
       { title: "Salary Report", url: "/reports/salary", icon: FileText },
       { title: "Attendance Report", url: "/reports/attendance", icon: FileText },
-      { title: "Vas Report", url: "/reports/vas", icon: List },
+      { title: "Vas Report", url: "/reports/vas", icon: List, permKey: "Reports Vas Report" },
       { title: "Gm Report", url: "/analytics/gm", icon: Star },
       { title: "Bv Report", url: "/reports/bv", icon: FileText },
       { title: "Bv Pending EC/NC Only", url: "/reports/bv-pending-ecnc", icon: FileText },
@@ -599,14 +599,19 @@ export function AppSidebar() {
     // when no DB rows exist for a given menu).
     const rolesToUse = isImpersonating ? [] : userAllRoles;
     const isAllowed = hasAccess(menuPermissions, item.permKey, userRoleName, rolesToUse);
-    if (item.title === "Reports" || item.title === "Customer") {
-      console.log(`DEBUG ${item.title} visibility:`, {
-         permKey: item.permKey,
-         userRoleName,
-         userAllRoles: rolesToUse,
-         isAllowed,
-         entry: menuPermissions.find(p => p.name.trim().toLowerCase() === item.permKey?.trim().toLowerCase())
-      });
+    // Child permKey override: if this role fails the parent group's own gate
+    // but a child item carries its own DB-backed permKey that this role IS
+    // granted (e.g. "Reports Vas Report" for service_manager), still render
+    // the parent group so that single child can surface. getVisibleSubItems
+    // below independently re-checks the parent gate and hides every
+    // permKey-less sibling in that case, so the rest of the "Reports" items
+    // (Salary Report, Employee Bonuses, etc.) stay hidden — only permKey-
+    // scoped children can appear this way.
+    if (!isAllowed && Array.isArray(item.items)) {
+      const hasChildOverrideAccess = item.items.some(
+        sub => sub.permKey && hasAccess(menuPermissions, sub.permKey, userRoleName, rolesToUse)
+      );
+      if (hasChildOverrideAccess) return true;
     }
     return isAllowed;
   });
@@ -617,9 +622,14 @@ export function AppSidebar() {
     return url;
   };
 
-  const renderSubItems = (items: MenuItem[], parentPermKey?: string) => {
+  // Shared filter used by both the expanded Collapsible (renderSubItems) and
+  // the collapsed-state HoverCard flyout, so a role that only reached this
+  // group via a child's own permKey override (see filteredItems above) never
+  // sees permKey-less siblings leak through either rendering path.
+  const getVisibleSubItems = (items: MenuItem[], parentPermKey?: string): MenuItem[] => {
     const rolesToUse = isImpersonating ? [] : userAllRoles;
-    const visibleItems = items.filter(subItem => {
+    const parentAccessGranted = hasAccess(menuPermissions, parentPermKey, userRoleName, rolesToUse);
+    return items.filter(subItem => {
       const currentUserRoles = [
          ...(userRoleName ? [userRoleName.toLowerCase().replace(/\s+/g, "_")] : []),
          ...rolesToUse.map(r => r.toLowerCase().replace(/\s+/g, "_"))
@@ -657,6 +667,13 @@ export function AppSidebar() {
       // contain "admin" for any reason, the item silently disappears even for
       // a real admin, unlike top-level items which never hit that code path.
       if (subItem.permKey && isRealAdmin) return true;
+
+      // If this role doesn't have blanket access to the parent group (see the
+      // "Child permKey override" note in filteredItems above), only children
+      // with their own explicit permKey can surface. This stops permKey-less
+      // siblings (Salary Report, Employee Bonuses, etc.) from leaking in just
+      // because one sibling opened the group via its own permission row.
+      if (!subItem.permKey && !parentAccessGranted && !isRealAdmin) return false;
 
       // If the parent menu or this subitem has a specific permKey, we check the DB
       // Check standard permKey logic
@@ -725,7 +742,10 @@ export function AppSidebar() {
 
       return hasStandardAccess;
     });
+  };
 
+  const renderSubItems = (items: MenuItem[], parentPermKey?: string) => {
+    const visibleItems = getVisibleSubItems(items, parentPermKey);
     return visibleItems.map((subItem) => {
       const isSubActive = location === subItem.url;
       if (subItem.items) {
@@ -808,7 +828,7 @@ export function AppSidebar() {
                               <span className="font-medium">{item.title}</span>
                             </div>
                             <div className="bg-[#00a65a] py-2 flex flex-col">
-                              {item.items.map((subItem) => (
+                              {getVisibleSubItems(item.items, item.permKey).map((subItem) => (
                                 <Link key={subItem.title} href={getDynamicUrl(subItem.url)!}
                                   className={`flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-white dark:bg-zinc-900/10 transition-colors ${location === subItem.url ? "bg-white dark:bg-zinc-900/20 font-medium" : ""}`}>
                                   <subItem.icon className="w-4 h-4 opacity-90" />

@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ChevronRight, FileSearch, Database, Clock, CheckCircle } from "lucide-react";
+import { ChevronRight, FileSearch, Database, Clock, CheckCircle, ShieldAlert } from "lucide-react";
 import { Link } from "wouter";
 
 const quickActions = [
@@ -11,6 +11,7 @@ const quickActions = [
     { label: "Over Time", icon: Clock, href: "/hr/overtime" },
     { label: "Public Pool", icon: Database, href: "/service/public-pool" },
     { label: "New In Service", icon: CheckCircle, href: "/reports/vas" }, // Assuming new in service routes to VAS report or similar, typical in service
+    { label: "My Penalties", icon: ShieldAlert, href: "/service/my-penalties" },
 ];
 
 export function ServiceQuickEntriesCard() {

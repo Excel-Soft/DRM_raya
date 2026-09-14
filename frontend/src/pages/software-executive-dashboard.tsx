@@ -287,7 +287,7 @@ export default function SoftwareExecutiveDashboard() {
           </button>
         </div>
         <div className="-mt-4">
-          <ServicePrivatePool />
+          <ServicePrivatePool legacyActions />
         </div>
       </div>
     );

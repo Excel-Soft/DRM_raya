@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
-import { User, Mail, MessageCircle, Eye, Edit2, ArrowRight, ArrowLeft, FileText, Search, Phone, Clock, Printer, Archive } from "lucide-react";
+import { User, Mail, MessageCircle, Eye, Edit2, ArrowRight, ArrowLeft, FileText, Search, Archive, Globe, Link2, Clock, Phone, Printer } from "lucide-react";
 import { useServiceExecutiveCreateGates } from "@/hooks/use-ui-workflow-config";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -15,7 +15,7 @@ import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
 
 const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
 
-export default function ServicePrivatePool() {
+export default function ServicePrivatePool({ legacyActions = false }: { legacyActions?: boolean }) {
     const { toast } = useToast();
     const [, setLocation] = useLocation();
     const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
@@ -28,7 +28,7 @@ export default function ServicePrivatePool() {
     const [activeTracingTab, setActiveTracingTab] = useState<string | null>(null);
     const [editCompanyId, setEditCompanyId] = useState<string | null>(null);
     const [isDuplicateModalOpen, setDuplicateModalOpen] = useState(false);
-    const [quickFollowupCustomer, setQuickFollowupCustomer] = useState<{ id: string; companyName: string } | null>(null);
+    const [quickFollowupCustomer, setQuickFollowupCustomer] = useState<{ id: string; companyName?: string } | null>(null);
 
     const logCustomerAction = async (customerId: string, action: string, meta?: Record<string, any>) => {
         try {
@@ -228,26 +228,76 @@ export default function ServicePrivatePool() {
                             ) : displayData.map((row: any) => (
                                 <TableRow
                                     key={row.id}
-                                    onClick={() => setQuickFollowupCustomer({ id: row.id, companyName: row.companyName })}
-                                    className="border-b-0 hover:bg-slate-50/50 cursor-pointer dark:hover:bg-zinc-800/50"
+                                    onClick={legacyActions ? () => setQuickFollowupCustomer({ id: row.id, companyName: row.companyName }) : undefined}
+                                    className={`border-b-0 hover:bg-slate-50/50 dark:hover:bg-zinc-800/50 ${legacyActions ? "cursor-pointer" : ""}`}
                                 >
                                     <TableCell onClick={(e) => e.stopPropagation()} className="pl-4 py-3"><input type="checkbox" className="rounded border-slate-300 dark:border-zinc-800" /></TableCell>
                                     <TableCell className="text-[12px] font-semibold text-emerald-600 py-3 dark:text-emerald-400">{row.drmId || row.id.substring(0, 8)}</TableCell>
                                     <TableCell className="text-[12px] font-semibold text-slate-600 py-3 dark:text-zinc-300">{row.companyName}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.salesPersonName || "—"}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.accountName || <div className="w-24 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.email || <div className="w-16 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
-                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.phone || <div className="w-20 h-5 bg-[#34d399]/30 rounded"></div>}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.accountName ? <span className="blur-sm hover:blur-none transition-[filter] cursor-default">{row.accountName}</span> : <div className="w-24 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.email ? <span className="blur-sm hover:blur-none transition-[filter] cursor-default">{row.email}</span> : <div className="w-16 h-4 bg-slate-100 rounded blur-[2px] dark:bg-zinc-900"></div>}</TableCell>
+                                    <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.phone ? <span className="blur-sm hover:blur-none transition-[filter] cursor-default">{row.phone}</span> : <div className="w-20 h-5 bg-[#34d399]/30 rounded"></div>}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.ntn || "—"}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-500 py-3 dark:text-zinc-400">{row.cnic || "—"}</TableCell>
                                     <TableCell className="text-[12px] font-medium text-slate-600 py-3 dark:text-zinc-300">{new Date(row.createdAt).toLocaleDateString()}</TableCell>
                                     <TableCell onClick={(e) => e.stopPropagation()} className="py-3">
+                                        {legacyActions ? (
                                         <div className="flex items-center gap-1.5 flex-nowrap py-0.5">
                                             <div title="User Profile" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shrink-0"><User className="w-3.5 h-3.5" /></div>
                                             <div title="View" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Eye className="w-3.5 h-3.5" /></div>
                                             <div title="Follow up" onClick={() => setQuickFollowupCustomer({ id: row.id, companyName: row.companyName })} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Clock className="w-3.5 h-3.5" /></div>
                                             <div
                                                 title="Email"
+                                                onClick={async () => {
+                                                    if (!row.email) { toast({ title: "No email available", variant: "destructive" }); return; }
+                                                    await logCustomerAction(row.id, "email", { email: row.email });
+                                                    window.location.href = `mailto:${row.email}`;
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Mail className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="WhatsApp"
+                                                onClick={async () => {
+                                                    const phone = (row.phone || "").replace(/\D+/g, "");
+                                                    if (!phone) { toast({ title: "No phone available", variant: "destructive" }); return; }
+                                                    await logCustomerAction(row.id, "whatsapp", { phone });
+                                                    window.open(`https://wa.me/${phone}`, "_blank");
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><MessageCircle className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Call"
+                                                onClick={async () => {
+                                                    if (!row.phone) { toast({ title: "No phone available", variant: "destructive" }); return; }
+                                                    await logCustomerAction(row.id, "call", { phone: row.phone });
+                                                    window.location.href = `tel:${row.phone}`;
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Phone className="w-3.5 h-3.5" /></div>
+                                            <button
+                                                title={canCreateManualInvoice ? "Create Invoice" : "Access Denied"}
+                                                onClick={() => {
+                                                    if (!canCreateManualInvoice) { toast({ title: "Access Denied", description: "You are not authorized to create invoices.", variant: "destructive" }); return; }
+                                                    setLocation(`/sales/create-invoice/${row.id}`);
+                                                }}
+                                                className={`h-6 px-2 rounded-[4px] text-white text-[10px] font-bold uppercase transition-colors flex items-center gap-1 shrink-0 ${canCreateManualInvoice ? "bg-[#059669] hover:bg-emerald-700 cursor-pointer" : "bg-slate-400 opacity-60 cursor-not-allowed"}`}
+                                            ><FileText className="w-3 h-3" />Invoice</button>
+                                            <div title="Edit" onClick={() => setEditCompanyId(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Edit2 className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Print"
+                                                onClick={async () => {
+                                                    await logCustomerAction(row.id, "print", { companyName: row.companyName });
+                                                    window.print();
+                                                }}
+                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
+                                            ><Printer className="w-3.5 h-3.5" /></div>
+                                        </div>
+                                        ) : (
+                                        <div className="flex items-center gap-1.5 flex-nowrap py-0.5">
+                                            <div title="User Profile" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shrink-0"><User className="w-3.5 h-3.5" /></div>
+                                            <div
+                                                title="Mail"
                                                 onClick={async () => {
                                                     if (!row.email) {
                                                         toast({ title: "No email available", variant: "destructive" });
@@ -271,39 +321,12 @@ export default function ServicePrivatePool() {
                                                 }}
                                                 className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
                                             ><MessageCircle className="w-3.5 h-3.5" /></div>
-                                            <div
-                                                title="Call"
-                                                onClick={async () => {
-                                                    if (!row.phone) {
-                                                        toast({ title: "No phone available", variant: "destructive" });
-                                                        return;
-                                                    }
-                                                    await logCustomerAction(row.id, "call", { phone: row.phone });
-                                                    window.location.href = `tel:${row.phone}`;
-                                                }}
-                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
-                                            ><Phone className="w-3.5 h-3.5" /></div>
-                                            <button
-                                                title={canCreateManualInvoice ? "Create Invoice" : "Access Denied"}
-                                                onClick={() => {
-                                                    if (!canCreateManualInvoice) {
-                                                        toast({ title: "Access Denied", description: "You are not authorized to create invoices.", variant: "destructive" });
-                                                        return;
-                                                    }
-                                                    setLocation(`/sales/create-invoice/${row.id}`);
-                                                }}
-                                                className={`h-6 px-2 rounded-[4px] text-white text-[10px] font-bold uppercase transition-colors flex items-center gap-1 shrink-0 ${canCreateManualInvoice ? "bg-[#059669] hover:bg-emerald-700 cursor-pointer" : "bg-slate-400 opacity-60 cursor-not-allowed"}`}
-                                            ><FileText className="w-3 h-3" />Invoice</button>
+                                            <div title="Quotation" onClick={() => setLocation(`/sales/quotation?leadId=${row.id}`)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><FileText className="w-3.5 h-3.5" /></div>
+                                            <div title="Domain Hosting" onClick={() => setActiveCustomerAction(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Globe className="w-3.5 h-3.5" /></div>
+                                            <div title="Link" onClick={() => setLocation("/drm/related-customer")} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Link2 className="w-3.5 h-3.5" /></div>
                                             <div title="Edit" onClick={() => setEditCompanyId(row.id)} className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"><Edit2 className="w-3.5 h-3.5" /></div>
-                                            <div
-                                                title="Print"
-                                                onClick={async () => {
-                                                    await logCustomerAction(row.id, "print", { companyName: row.companyName });
-                                                    window.print();
-                                                }}
-                                                className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 transition-colors shadow-sm shrink-0"
-                                            ><Printer className="w-3.5 h-3.5" /></div>
                                         </div>
+                                        )}
                                     </TableCell>
                                 </TableRow>
                             ))}
@@ -314,12 +337,14 @@ export default function ServicePrivatePool() {
 
             <EditCompanyModal customerId={editCompanyId} onClose={() => setEditCompanyId(null)} />
             <DuplicateCompaniesModal open={isDuplicateModalOpen} onClose={() => setDuplicateModalOpen(false)} />
-            <FollowupModal
-                open={!!quickFollowupCustomer}
-                onClose={() => setQuickFollowupCustomer(null)}
-                customerId={quickFollowupCustomer?.id}
-                companyName={quickFollowupCustomer?.companyName}
-            />
+            {legacyActions && (
+                <FollowupModal
+                    open={!!quickFollowupCustomer}
+                    onClose={() => setQuickFollowupCustomer(null)}
+                    customerId={quickFollowupCustomer?.id}
+                    companyName={quickFollowupCustomer?.companyName}
+                />
+            )}
             {/* Template Modals */}
             <Dialog open={!!modalType} onOpenChange={(open) => !open && setModalType(null)}>
                 <DialogContent className="max-w-4xl p-0 overflow-hidden bg-white gap-0 border-slate-100 dark:bg-zinc-900 dark:border-zinc-800">

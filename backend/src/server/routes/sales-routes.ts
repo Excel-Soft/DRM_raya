@@ -464,7 +464,15 @@ async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<Le
     : null;
   const params: any[] = [];
   let scopeClause = "coalesce(c.is_deleted, false) = false";
-  if (!manager || isSalesManagerRole) {
+  if (isSalesManagerRole) {
+    params.push(userId);
+    // Sales Manager: self-only scope, matching buildLeadPoolList's "public" case —
+    // no org-wide Public pool catch-all here (that's only for plain executives below).
+    scopeClause += ` and (
+      c.owner_user_id = $${params.length}
+      or (c.owner_user_id IS NULL AND c.created_by = $${params.length})
+    )`;
+  } else if (!manager) {
     params.push(userId);
     // Include: customers owned by this user, OR (not owned by anyone AND created by this user), plus Public pool
     scopeClause += ` and (

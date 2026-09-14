@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
+import { Search, Loader2, ChevronLeft, ChevronRight, ArrowRightCircle, Eye } from "lucide-react";
 import { getAuthHeader, apiRequestJson } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { ServiceAppointmentModal } from "@/components/service-appointment-modal";
 
 type ServicePoolSummary = {
     allInService: number;
@@ -22,6 +24,7 @@ type ServicePoolSummary = {
 
 type ServicePoolEntry = {
     id: string;
+    customerId: string;
     drmId: string | null;
     companyName: string;
     salesPersonName: string | null;
@@ -219,7 +222,9 @@ function ManagePoolDialog({
 }
 
 export default function ServicePool() {
+    const [, setLocation] = useLocation();
     const [selectedEntry, setSelectedEntry] = useState<ServicePoolEntry | null>(null);
+    const [followupEntry, setFollowupEntry] = useState<ServicePoolEntry | null>(null);
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState("");
     const [activeFilter, setActiveFilter] = useState<string>("allInService");
@@ -356,7 +361,16 @@ export default function ServicePool() {
                                 ) : (
                                     listData?.items.map((row) => (
                                         <TableRow key={row.id}>
-                                            <TableCell className="font-mono text-xs">{row.drmId || "-"}</TableCell>
+                                            <TableCell className="font-mono text-xs">
+                                                <button
+                                                    type="button"
+                                                    title="Follow The Customer"
+                                                    className="cursor-pointer text-[#059669] hover:underline hover:text-emerald-700 dark:text-emerald-400"
+                                                    onClick={() => setFollowupEntry(row)}
+                                                >
+                                                    {row.drmId || "-"}
+                                                </button>
+                                            </TableCell>
                                             <TableCell className="font-medium">{row.companyName}</TableCell>
                                             <TableCell>{row.salesPersonName || "-"}</TableCell>
                                             <TableCell>{row.servicePersonName || "-"}</TableCell>
@@ -364,12 +378,21 @@ export default function ServicePool() {
                                             <TableCell>{row.accountHolder || "-"}</TableCell>
                                             <TableCell>{row.contactNo || "-"}</TableCell>
                                             <TableCell>
-                                                <div
-                                                    title="Manage"
-                                                    className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 shadow-sm transition-colors"
-                                                    onClick={() => setSelectedEntry(row)}
-                                                >
-                                                    <ArrowRightCircle className="w-3.5 h-3.5" />
+                                                <div className="flex items-center gap-2">
+                                                    <div
+                                                        title="View Attribute"
+                                                        className="w-6 h-6 rounded-full bg-slate-500 flex items-center justify-center text-white cursor-pointer hover:bg-slate-600 shadow-sm transition-colors"
+                                                        onClick={() => setLocation(`/customers/attribute/${row.customerId}`)}
+                                                    >
+                                                        <Eye className="w-3.5 h-3.5" />
+                                                    </div>
+                                                    <div
+                                                        title="Manage"
+                                                        className="w-6 h-6 rounded-full bg-[#059669] flex items-center justify-center text-white cursor-pointer hover:bg-emerald-700 shadow-sm transition-colors"
+                                                        onClick={() => setSelectedEntry(row)}
+                                                    >
+                                                        <ArrowRightCircle className="w-3.5 h-3.5" />
+                                                    </div>
                                                 </div>
                                             </TableCell>
                                         </TableRow>
@@ -411,6 +434,13 @@ export default function ServicePool() {
                 isOpen={!!selectedEntry}
                 onClose={() => setSelectedEntry(null)}
                 entry={selectedEntry}
+            />
+
+            <ServiceAppointmentModal
+                open={!!followupEntry}
+                onClose={() => setFollowupEntry(null)}
+                initialCustomerId={followupEntry?.customerId}
+                initialCustomerName={followupEntry?.companyName}
             />
         </div>
     );

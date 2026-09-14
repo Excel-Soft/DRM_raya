@@ -89,8 +89,17 @@ export default function ServiceExecutiveDashboard() {
         setAppliedEndDate(followEndDate);
     };
 
+    // Follow Up Details section is scoped to only these two services per
+    // service_executive requirements; "All" here means "all of just these
+    // two", not all 5 canonical services. Do not reuse this outside this
+    // section — other dashboards/pages keep all 5 services.
+    const followUpKeptServices = ["Alibaba Membership", "Alibaba Services"];
+    const followUpKeptServicesLower = followUpKeptServices.map((s) => s.toLowerCase());
+
     const getCount = (serviceName: string) => {
-        if (serviceName === "All") return followupsData.length;
+        if (serviceName === "All") {
+            return followupsData.filter((r: any) => followUpKeptServicesLower.includes((r.serviceType || "Alibaba Membership").toLowerCase())).length;
+        }
         return followupsData.filter((r: any) => {
             const sType = r.serviceType || "";
             return sType.toLowerCase() === serviceName.toLowerCase();
@@ -99,8 +108,11 @@ export default function ServiceExecutiveDashboard() {
 
     const filteredByServiceAndDate = followupsData.filter((row: any) => {
         let match = true;
-        if (activeFollowService && activeFollowService !== "All") {
-            const sType = row.serviceType || "Alibaba Membership";
+        const sType = row.serviceType || "Alibaba Membership";
+        if (!followUpKeptServicesLower.includes(sType.toLowerCase())) {
+            match = false;
+        }
+        if (match && activeFollowService && activeFollowService !== "All") {
             if (sType.toLowerCase() !== activeFollowService.toLowerCase()) {
                 match = false;
             }
@@ -177,9 +189,10 @@ export default function ServiceExecutiveDashboard() {
         setFollowPage(1);
     };
 
-    const uniqueServices = Array.from(new Set(followupsData.map((r: any) => r.serviceType || "Alibaba Membership"))).filter(Boolean) as string[];
-    const standardServices = ["Alibaba Membership", "Alibaba Services", "Design Development", "Domain Hosting"];
-    const allTabServices = Array.from(new Set([...standardServices, ...uniqueServices]));
+    // Only the first two canonical services are shown as buttons in this
+    // section (per requirements) — Design Development, Domain Hosting, and
+    // AI Services are intentionally excluded here.
+    const allTabServices = followUpKeptServices;
 
     const commonQueryOptions = {
         staleTime: 5 * 60 * 1000,
@@ -283,7 +296,6 @@ export default function ServiceExecutiveDashboard() {
                     <div className="lg:col-span-2 space-y-4">
                         <ActivitiesTargetWidget />
                         <ChartDataWidget period={period !== "choose" ? period : "TD"} />
-                        <CustomerMonthlyWidget />
                     </div>
                     <div className="lg:col-span-1 space-y-4">
                         <TodayAppointment
@@ -318,8 +330,8 @@ export default function ServiceExecutiveDashboard() {
                         </div>
                     </div>
                     <div className="p-5">
-                        <div className="flex flex-wrap gap-2 mb-5">
-                            <div onClick={() => handleTabClick("All")} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${activeFollowService === "All" ? "bg-slate-700 dark:bg-slate-600" : "bg-slate-500 hover:bg-slate-600 dark:bg-slate-700"}`}>All {getCount("All")}</div>
+                        <div className="flex gap-2 mb-5">
+                            <div onClick={() => handleTabClick("All")} className={`flex-1 text-center px-4 py-3 rounded-[4px] cursor-pointer transition-colors text-white text-[14px] font-bold shadow-sm ${activeFollowService === "All" ? "bg-slate-700 dark:bg-slate-600" : "bg-slate-500 hover:bg-slate-600 dark:bg-slate-700"}`}>All {getCount("All")}</div>
                             {allTabServices.map((svc) => {
                                 const isActive = activeFollowService === svc;
                                 let colorClass = "bg-blue-500 hover:bg-blue-600";
@@ -332,7 +344,7 @@ export default function ServiceExecutiveDashboard() {
                                 else if (svc === "Digital Marketing") { colorClass = "bg-purple-500/80 hover:bg-purple-500"; activeColorClass = "bg-purple-600"; }
 
                                 return (
-                                    <div key={svc} onClick={() => handleTabClick(svc)} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${isActive ? activeColorClass : colorClass}`}>
+                                    <div key={svc} onClick={() => handleTabClick(svc)} className={`flex-1 text-center px-4 py-3 rounded-[4px] cursor-pointer transition-colors text-white text-[14px] font-bold shadow-sm ${isActive ? activeColorClass : colorClass}`}>
                                         {svc} {getCount(svc)}
                                     </div>
                                 );
@@ -480,6 +492,10 @@ export default function ServiceExecutiveDashboard() {
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <div className="mt-6">
+                    <CustomerMonthlyWidget />
                 </div>
             </div>
         </div>

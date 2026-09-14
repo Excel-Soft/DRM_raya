@@ -186,6 +186,7 @@ const DailyAddedGmReport = lazy(() => import("@/pages/daily-added-gm-report"));
 const PublicPoolFollowup = lazy(() => import("@/pages/public-pool-followup"));
 const ServicePoolDashboard = lazy(() => import("@/pages/service-pool-dashboard"));
 const ServiceBvChecking = lazy(() => import("@/pages/service-bv-checking"));
+const ServiceMyPenalties = lazy(() => import("@/pages/service-my-penalties"));
 const ServicePublicPool = lazy(() => import("@/pages/service-public-pool"));
 const ServiceACustomer = lazy(() => import("@/pages/service-a-customer"));
 const ServiceBPlusCustomer = lazy(() => import("@/pages/service-b-plus-customer"));
@@ -340,6 +341,7 @@ function Router() {
       <Route path="/pms/team-workspace" component={PmsTeamWorkspace} />
       <Route path="/service/pool" component={ServicePoolDashboard} />
       <Route path="/service/bv-checking" component={ServiceBvChecking} />
+      <Route path="/service/my-penalties" component={ServiceMyPenalties} />
       <Route path="/service/public-pool" component={ServicePublicPool} />
       <Route path="/office/trial-balance-report" component={OfficeTrialBalance} />
       <Route path="/office/old-account-head">{() => <Redirect to="/office/chart-of-accounts" />}</Route>

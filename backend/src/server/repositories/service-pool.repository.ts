@@ -104,8 +104,9 @@ export class ServicePoolRepository {
     const finalWhereSql = whereParts.join(" and ");
 
     const query = `
-      SELECT 
+      SELECT
         spe.id,
+        c.id AS "customerId",
         c.drm_id AS "drmId",
         c.company_name AS "companyName",
         u_sales.name AS "salesPersonName",

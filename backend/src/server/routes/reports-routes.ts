@@ -1,6 +1,6 @@
 import { Router, type Express } from "express";
 import { getDepartmentFilterUserIds } from "./dashboard-routes";
-import { normalizeRole } from "../utils/role-utils";
+import { normalizeRole, ROLES } from "../utils/role-utils";
 import { db, pool } from "../db";
 import { mapToCanonical } from "../utils/gm-bv-state-machine";
 import { resolveStoredOrDerivedGmType } from "../../shared/gm-sales-constants";
@@ -286,6 +286,9 @@ function isBvApprover(req: any): boolean {
  */
 async function resolveBvScope(req: any): Promise<string[] | null> {
   const user = req.user;
+  // Sales Manager: self-only, never team/org-wide (explicit product decision).
+  const effectiveBvRole = (req.user as any)?.activeRoleId || user.roleId;
+  if (normalizeRole(effectiveBvRole) === ROLES.SALES_MANAGER) return [user.userId];
   const isPrivileged = isManagerialRole(user.roleId);
   const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
   const queryUserId =
@@ -1345,9 +1348,14 @@ router.get("/reports/:type", async (req, res, next) => {
     const isPrivileged = isManagerialRole(user.roleId);
     const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
     const queryUserId = typeof req.query.userId === "string" && req.query.userId !== "all" ? req.query.userId : null;
-    
+    // Sales Manager: self-only, never team/org-wide (explicit product decision).
+    const effectiveReportRole = (req.user as any)?.activeRoleId || user.roleId;
+    const isSalesManagerReportRole = normalizeRole(effectiveReportRole) === ROLES.SALES_MANAGER;
+
     let filterUserIds: string[] | null = null;
-    if (!isPrivileged) {
+    if (isSalesManagerReportRole) {
+      filterUserIds = [user.userId];
+    } else if (!isPrivileged) {
       filterUserIds = [user.userId];
     } else if (isGlobalAdmin) {
       filterUserIds = queryUserId ? [queryUserId] : null;
