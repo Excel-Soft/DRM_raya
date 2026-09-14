@@ -57,6 +57,7 @@ export class AppointmentsRepository {
     const whereSql = `where ${clauses.join(" and ")}`;
     const sql = `
       select a.id as appointment_id, a.customer_id, a.starts_at, a.ends_at, a.notes, a.location,
+             a.manager_status as managerstatus, a.manager_comment as managercomment,
              c.*
       from drm.appointments a
       left join drm.customers c on c.id = a.customer_id
@@ -72,6 +73,8 @@ export class AppointmentsRepository {
       endsAt: row.ends_at,
       notes: row.notes ?? row.location ?? "Meeting",
       location: row.location,
+      managerStatus: row.managerstatus,
+      managerComment: row.managercomment,
       createdAt: row.created_at ?? row.starts_at,
       isDeleted: row.is_deleted ?? false,
       customer: row.id ? row : ({} as any),

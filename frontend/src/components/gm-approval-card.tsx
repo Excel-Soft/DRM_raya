@@ -161,7 +161,7 @@ export function GmApprovalCard({ role, viewOnly = false }: GmApprovalCardProps) 
     // Delete mutation - soft delete via account API
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            const res = await apiRequest("DELETE", `/api/account/gm-entries/${id}`);
+            const res = await apiRequest("DELETE", `/api/sale/commission-verification/${id}`);
             return res.json();
         },
         onSuccess: () => {

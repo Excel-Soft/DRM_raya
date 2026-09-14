@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { pool, checkDbHealth, getDbUnavailableReason, isNetworkOrDnsError, markDbUnavailable } from "./db";
+import gradeSystemRoutes from "./routes/grade-system-routes";
+import bvSystemRoutes from "./routes/bv-system-routes";
 import { storage } from "./storage";
 import aiRoutes from "./routes/ai-routes";
 import authRoutes from "./routes/auth.routes";
@@ -82,6 +84,7 @@ import { registerPenaltyRoutes } from "./routes/penalty-routes";
 import { registerPromotionRoutes } from "./routes/promotion-routes";
 import { registerTodayPostRoutes } from "./routes/today-post-routes";
 import { registerCommissionVerificationRoutes } from "./routes/commission-verification-routes";
+import { registerVasCommFinalRoutes } from "./routes/vas-comm-final-routes";
 import { registerSocialAccountsRoutes } from "./routes/social-accounts-routes";
 import { registerSocialMediaRoutes } from "./routes/social-media-routes";
 import { registerLateComingRoutes } from "./routes/late-coming-routes";
@@ -357,6 +360,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   console.log("registering DiagnosisReportRoutes");
   registerDiagnosisReportRoutes(app);
+  
+  // Custom Reports (Grade System) - Must be before registerReportsRoutes
+  app.use("/api/reports/grade-system", gradeSystemRoutes);
+  app.use("/api/reports/bv-system", bvSystemRoutes);
+
   console.log("registering ReportsRoutes");
   registerReportsRoutes(app);
   console.log("registering AccountRoutes");
@@ -420,6 +428,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/projects", projectDocRouter);
   app.use("/api/tasks", taskExecutionRouter);
   app.use("/api/notifications", notificationRouter);
+  app.use("/api/sales/reconciliation", workflowReconciliationRouter);
+
+  app.use("/api/communications", communicationRouter);
   app.use("/api/product-posting", productPostingWorkflowRouter);
   app.use("/api/commission", teamCommissionRouter);
   app.use("/api/software", softwareWorkflowRouter);
@@ -465,6 +476,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   await registerPromotionRoutes(app);
   await registerTodayPostRoutes(app);
   await registerCommissionVerificationRoutes(app);
+  registerVasCommFinalRoutes(app);
   await registerSocialAccountsRoutes(app);
   // Patch 4 Stage 5 — Social Media Posting lifecycle (posts) + accounts alias.
   // Registered AFTER social accounts so its FK target table already exists.

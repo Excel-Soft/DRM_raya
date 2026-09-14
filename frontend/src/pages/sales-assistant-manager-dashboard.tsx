@@ -442,7 +442,7 @@ export default function SalesAssistantManagerDashboard() {
                   { lbl: "Duplication Check", to: "/sales/duplicate-checker" }, 
                   { lbl: "Private Pool", to: "/sales/lead-pools?pool=Private" },
                   { lbl: "Services Pool", to: "/sales/lead-pools?pool=Service" }, 
-                  { lbl: "BV Checking", to: "/sales/lead-pools?pool=GMBV" },
+                  { lbl: "BV Checking", to: "/reports/bv-system" },
                   { lbl: "Over Time", to: "/hr/overtime" }, 
                   { lbl: "Public Pool", to: "/sales/lead-pools?pool=Public" }
                 ].map((item, i) => (

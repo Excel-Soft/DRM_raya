@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
+import { getPerformanceEvaluation } from "./performance-evaluation";
 import { authMiddleware } from "../middleware/auth.middleware";
 import { opportunitiesRepository } from "../repositories/opportunities.repository";
 import { activitiesRepository } from "../repositories/activities.repository";
@@ -1874,6 +1875,8 @@ export function registerSalesRoutes(app: Express) {
           company: apt.customer?.companyName || (apt.customer as any)?.company_name || "Unknown",
           purpose: apt.notes || "Meeting",
           time,
+          managerStatus: (apt as any).managerStatus || "Pending",
+          managerComment: (apt as any).managerComment || "",
         };
       });
 
@@ -1915,6 +1918,8 @@ export function registerSalesRoutes(app: Express) {
           company: row.company_name ?? "Follow-up",
           purpose: row.purpose ?? "Follow-up",
           time,
+          managerStatus: "Pending", // Follow-ups don't have manager status in the same way, but provide defaults
+          managerComment: "",
         };
       });
 
@@ -1954,6 +1959,8 @@ export function registerSalesRoutes(app: Express) {
         endsAt: (apt as any).endsAt ? new Date((apt as any).endsAt).toISOString() : null,
         manager: (apt.customer as any)?.manager_name || (apt.customer as any)?.managerName || "System", // Or whichever way to get manager
         meetingBy: (req.user as any).username || "Self",
+        managerStatus: (apt as any).managerStatus || "Pending",
+        managerComment: (apt as any).managerComment || "",
       }));
 
       res.json({ data: formatted, meta: { date: dateParam, total: formatted.length } });
@@ -1987,6 +1994,31 @@ export function registerSalesRoutes(app: Express) {
     } catch (error) {
       console.error("Error creating appointment", error);
       res.status(500).json({ error: "Failed to create appointment" });
+    }
+  });
+
+  // PATCH /api/sales/appointments/:id/manager-status - Update appointment manager status
+  app.patch("/api/sales/appointments/:id/manager-status", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { managerStatus, managerComment } = req.body;
+
+      if (!["Approved", "Cancel"].includes(managerStatus)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const sqlQuery = `update drm.appointments set manager_status = $1, manager_comment = $2 where id = $3 returning *`;
+      const result = await pool.query(sqlQuery, [managerStatus, managerComment || "", id]);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Appointment not found" });
+      }
+
+      res.json(result.rows[0]);
+    } catch (error) {
+      console.error("Error updating appointment manager status:", error);
+      res.status(500).json({ error: "Failed to update appointment manager status" });
     }
   });
 
@@ -4827,6 +4859,8 @@ export function registerSalesRoutes(app: Express) {
   });
 
   // Debug schema (dev only, admin only)
+  app.get("/api/sales/performance-evaluation", getPerformanceEvaluation);
+  
   app.get("/api/sales/targets/debug/schema", async (req: any, res) => {
     if (process.env.NODE_ENV === "production") return res.status(404).end();
     const user = req.user;

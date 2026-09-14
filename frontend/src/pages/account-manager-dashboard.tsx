@@ -342,7 +342,7 @@ export default function AccountManagerDashboard() {
     const gmStatsQuery = useQuery({
         queryKey: ["account-gm-stats"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/account/gm-entries/stats");
+            const res = await apiRequest("GET", "/api/sale/commission-verification/stats");
             if (!res.ok) throw new Error("Failed to fetch stats");
             return res.json();
         },
@@ -361,7 +361,7 @@ export default function AccountManagerDashboard() {
         queryKey: ["account-gm-entries-recent", filterType],
         queryFn: async () => {
             const { start, end } = getDateRange();
-            let url = `/api/account/gm-entries?dateFrom=${start}&dateTo=${end}`;
+            let url = `/api/sale/commission-verification?dateFrom=${start}&dateTo=${end}`;
 
             // Add specific filter parameters if we had backend support
             // For now, we reuse the date range logic and client-side assumption
@@ -1026,7 +1026,7 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Salary Report" href="#" />
                                 <QuickLink label="Attendance" href="/hr/attendance" />
                                 <QuickLink label="Vas Report" href="/reports/vas/new" />
-                                <QuickLink label="Gm Checking" href="/account/gm-entries" />
+                                <QuickLink label="Gm Checking" href="/sale/commission-verification" />
                                 <QuickLink label="BV Checking" href="/reports/bv/new" />
                                 <QuickLink label="Add Penalty" href="#" />
                                 <QuickLink label="Over Time" href="/hr/overtime" />
@@ -1062,11 +1062,11 @@ export default function AccountManagerDashboard() {
                         <div className="space-y-4">
                             {[
                                 { label: "Dollar Rate", value: recentGMsQuery.data?.find((g: any) => g.dollarRate)?.dollarRate || '-', icon: DollarSign, bg: "bg-emerald-100", text: "text-emerald-600", href: "#" },
-                                { label: "Monthly Gm", value: recentGMsQuery.data?.length || 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/account/gm-entries" },
-                                { label: "Total Gm", value: gmStatsQuery.data?.totalCount || 0, icon: Clock, bg: "bg-slate-100", text: "text-slate-600 dark:text-slate-300", href: "/account/gm-entries" },
-                                { label: "Pending GM", value: gmStatsQuery.data?.pendingCount || 0, icon: TrendingUp, bg: "bg-violet-100", text: "text-violet-600", href: "/account/gm-entries" },
-                                { label: "Loans", value: gmStatsQuery.data?.loanCount || 0, icon: Calendar, bg: "bg-rose-100", text: "text-rose-600", href: "/account/gm-entries" },
-                                { label: "Partial Pay", value: gmStatsQuery.data?.partialPaymentCount || 0, icon: AlertCircle, bg: "bg-red-100", text: "text-red-600", href: "/account/gm-entries" },
+                                { label: "Monthly Gm", value: recentGMsQuery.data?.length || 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/sale/commission-verification" },
+                                { label: "Total Gm", value: gmStatsQuery.data?.totalCount || 0, icon: Clock, bg: "bg-slate-100", text: "text-slate-600 dark:text-slate-300", href: "/sale/commission-verification" },
+                                { label: "Pending GM", value: gmStatsQuery.data?.pendingCount || 0, icon: TrendingUp, bg: "bg-violet-100", text: "text-violet-600", href: "/sale/commission-verification" },
+                                { label: "Loans", value: gmStatsQuery.data?.loanCount || 0, icon: Calendar, bg: "bg-rose-100", text: "text-rose-600", href: "/sale/commission-verification" },
+                                { label: "Partial Pay", value: gmStatsQuery.data?.partialPaymentCount || 0, icon: AlertCircle, bg: "bg-red-100", text: "text-red-600", href: "/sale/commission-verification" },
                                 { label: "Invoices", value: invoiceStatsQuery.data?.totalCount || 0, icon: FileText, bg: "bg-orange-100", text: "text-orange-600", href: "/account/invoices" },
                                 { label: "Paid Inv", value: invoiceStatsQuery.data?.paidCount || 0, icon: Users, bg: "bg-indigo-100", text: "text-indigo-600", href: "/account/invoices" },
                             ].map((stat, rowIndex) => (

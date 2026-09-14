@@ -16,8 +16,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type Appointment = {
   id: string;
   company: string;
-  purpose: string;
   time: string;
+  managerStatus?: string;
+  managerComment?: string;
 };
 
 type CustomerOption = { id: string; companyName: string; accountName: string };
@@ -31,6 +32,18 @@ export default function AppointmentsPage() {
   });
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ customerId: "", purpose: "", time: "", location: "" });
+
+  const [managerModalOpen, setManagerModalOpen] = useState(false);
+  const [managerForm, setManagerForm] = useState({ id: "", company: "", status: "Pending", comment: "" });
+
+  // Get current user to check role
+  const { data: user } = useQuery({
+    queryKey: ["/api/auth/me"],
+    queryFn: () => apiRequest("GET", "/api/auth/me").then((res) => res.json()),
+  });
+
+  const roleName = String(user?.activeRoleId || user?.roleId || user?.role || "").toLowerCase().replace(/\s+/g, "_");
+  const isManager = ["sales_manager", "account_manager", "hod", "super_hod", "admin"].includes(roleName);
 
   const { data, isLoading, refetch, isRefetching } = useQuery<Appointment[]>({
     queryKey: ["/api/sales/appointments", date],
@@ -61,6 +74,25 @@ export default function AppointmentsPage() {
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err?.message || "Failed to create appointment", variant: "destructive" });
+    },
+  });
+
+  const managerMutation = useMutation({
+    mutationFn: async () => {
+      if (!managerForm.id) throw new Error("Appointment ID required");
+      const res = await apiRequest("PATCH", `/api/sales/appointments/${managerForm.id}/manager-status`, {
+        managerStatus: managerForm.status,
+        managerComment: managerForm.comment,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Manager status updated" });
+      setManagerModalOpen(false);
+      refetch();
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err?.message || "Failed to update status", variant: "destructive" });
     },
   });
 
@@ -164,6 +196,49 @@ export default function AppointmentsPage() {
             </DialogContent>
           </Dialog>
         </div>
+        <Dialog open={managerModalOpen} onOpenChange={setManagerModalOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Update Manager Status</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label>Company / Person</Label>
+                <Input value={managerForm.company} readOnly disabled />
+              </div>
+              <div className="space-y-1">
+                <Label>Status</Label>
+                <Select
+                  value={managerForm.status}
+                  onValueChange={(val) => setManagerForm((f) => ({ ...f, status: val }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Approved">Approved</SelectItem>
+                    <SelectItem value="Cancel">Cancel</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Note / Comment</Label>
+                <Input
+                  value={managerForm.comment}
+                  onChange={(e) => setManagerForm((f) => ({ ...f, comment: e.target.value }))}
+                  placeholder="Manager note..."
+                />
+              </div>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" onClick={() => setManagerModalOpen(false)}>Close</Button>
+              <Button onClick={() => managerMutation.mutate()} disabled={managerMutation.isPending}>
+                {managerMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Card>
@@ -193,14 +268,52 @@ export default function AppointmentsPage() {
                   <TableHead>Company</TableHead>
                   <TableHead>Purpose</TableHead>
                   <TableHead>Time</TableHead>
+                  <TableHead>Manager Note</TableHead>
+                  {isManager && <TableHead className="w-[100px] text-center">Action</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((apt) => (
                   <TableRow key={apt.id}>
-                    <TableCell>{apt.company}</TableCell>
-                    <TableCell>{apt.purpose}</TableCell>
+                    <TableCell>
+                      {apt.company}
+                      {apt.managerStatus && apt.managerStatus !== "Pending" && (
+                        <div className={`text-xs mt-1 font-medium ${apt.managerStatus === "Approved" ? "text-green-600" : "text-red-600"}`}>
+                          {apt.managerStatus}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {apt.purpose}
+                    </TableCell>
                     <TableCell>{apt.time ? format(parseISO(apt.time), "hh:mm a") : "-"}</TableCell>
+                    <TableCell>
+                      {apt.managerComment ? (
+                        <span className="text-sm">{apt.managerComment}</span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    {isManager && (
+                      <TableCell className="text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={apt.managerStatus === "Approved"}
+                          onClick={() => {
+                            setManagerForm({
+                              id: apt.id,
+                              company: apt.company,
+                              status: apt.managerStatus || "Pending",
+                              comment: apt.managerComment || "",
+                            });
+                            setManagerModalOpen(true);
+                          }}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

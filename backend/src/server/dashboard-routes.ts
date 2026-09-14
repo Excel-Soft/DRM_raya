@@ -9,6 +9,7 @@ router.get("/chart-data", authMiddleware, DashboardController.getChartData);
 router.get("/current-month-trend", authMiddleware, DashboardController.getCurrentMonthTrend);
 router.get("/daily-team-meeting", authMiddleware, DashboardController.getDailyTeamMeeting);
 router.get("/followups", authMiddleware, DashboardController.getFollowups);
+router.get("/team-queue-performance", authMiddleware, DashboardController.getTeamQueuePerformance);
 router.get("/team-work-performance", authMiddleware, DashboardController.getTeamWorkPerformance);
 router.get("/team-meetings/active", authMiddleware, DashboardController.getActiveTeamMeetings);
 router.post("/team-meetings/:userId/start", authMiddleware, DashboardController.startTeamMeeting);

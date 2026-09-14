@@ -431,6 +431,8 @@ export const appointments = drmSchema.table("appointments", {
   customerId: uuid("customer_id").notNull().references(() => customers.id),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   notes: text("notes"),
+  managerStatus: text("manager_status").default("Pending"),
+  managerComment: text("manager_comment"),
   isDeleted: boolean("is_deleted").default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -3668,3 +3670,23 @@ export const insertDiagnosisReportSchema = createInsertSchema(diagnosisReports).
 
 export type DiagnosisReport = typeof diagnosisReports.$inferSelect;
 export type InsertDiagnosisReport = z.infer<typeof insertDiagnosisReportSchema>;
+
+export const webxlVasCommFinal = drmSchema.table("webxl_vas_comm_final", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  managerApprove: varchar("manager_approve", { length: 50 }).default("Pending"),
+  hodStatus: varchar("hod_status", { length: 50 }).default("Pending"),
+  userStatus: varchar("user_status", { length: 50 }).default("Pending"),
+  accountPayStatus: varchar("account_pay_status", { length: 50 }).default("Pending"),
+  accountPayDate: timestamp("account_pay_date"),
+  commYear: varchar("comm_year", { length: 10 }),
+  commMonth: varchar("comm_month", { length: 10 }),
+  commType: varchar("comm_type", { length: 50 }),
+  per: varchar("per", { length: 20 }),
+  comm: decimal("comm", { precision: 10, scale: 2 }),
+  reward: decimal("reward", { precision: 10, scale: 2 }),
+  teamReward: decimal("team_reward", { precision: 10, scale: 2 }),
+  finalPayAmount: decimal("final_pay_amount", { precision: 10, scale: 2 }),
+  managerApproveDate: timestamp("manager_approve_date"),
+  hodStatusDate: timestamp("hod_satatus_date"),
+});
