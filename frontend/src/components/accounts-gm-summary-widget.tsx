@@ -48,7 +48,7 @@ import { format } from "date-fns";
  * Consumes GET /api/accounts/dashboard/gm-summary for Full/Partial/Loan totals,
  * partial received/pending, loan due-soon/overdue and a recent-GM table enriched
  * with linked invoice statuses + payment confirmation. Clicking a row opens the
- * GM detail dialog backed by GET /api/account/gm-entries/:id/invoices.
+ * GM detail dialog backed by GET /api/sale/commission-verification/:id/invoices.
  */
 
 interface GmSummaryTotals {
@@ -283,7 +283,7 @@ export function AccountsGmSummaryWidget({ onCreateProject }: { onCreateProject?:
         queryKey: ["accounts-gm-invoice-detail", detailGmId],
         enabled: !!detailGmId,
         queryFn: async () => {
-            const res = await apiRequest("GET", `/api/account/gm-entries/${detailGmId}/invoices`);
+            const res = await apiRequest("GET", `/api/sale/commission-verification/${detailGmId}/invoices`);
             if (!res.ok) throw new Error("Failed to load GM invoices");
             const body = await res.json();
             return body.data as GmInvoiceDetail;

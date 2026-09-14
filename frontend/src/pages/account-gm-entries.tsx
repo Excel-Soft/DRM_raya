@@ -199,8 +199,8 @@ export default function AccountGmEntries() {
   }, [orderIdInput, acctGmDupCheck?.orderIdExists]);
 
   // ── Queries ───────────────────────────────────────────────────────────────
-  const { data: stats } = useQuery<GmStats>({ queryKey: ["/api/account/gm-entries/stats"] });
-  const { data: entries, isLoading } = useQuery<GmEntry[]>({ queryKey: ["/api/account/gm-entries"] });
+  const { data: stats } = useQuery<GmStats>({ queryKey: ["/api/sale/commission-verification/stats"] });
+  const { data: entries, isLoading } = useQuery<GmEntry[]>({ queryKey: ["/api/sale/commission-verification"] });
   const { data: allUsers } = useQuery<{ users: User[] }>({ queryKey: ["/api/users"] });
 
   const { data: teamMembersData, refetch: refetchTeam } = useQuery({
@@ -220,10 +220,10 @@ export default function AccountGmEntries() {
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: async (data: FormValues) => mutationRequest("POST", "/api/account/gm-entries", data),
+    mutationFn: async (data: FormValues) => mutationRequest("POST", "/api/sale/commission-verification", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification/stats"] });
       setDialogOpen(false); form.reset();
       toast({ title: "Success", description: "GM Entry created successfully" });
     },
@@ -231,19 +231,19 @@ export default function AccountGmEntries() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/account/gm-entries/${id}`, undefined),
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/sale/commission-verification/${id}`, undefined),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification/stats"] });
       toast({ title: "Deleted", description: "GM Entry has been deleted" });
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: FormValues) =>
-      apiRequest("PATCH", `/api/account/gm-entries/${selectedEntry?.id}`, data),
+      apiRequest("PATCH", `/api/sale/commission-verification/${selectedEntry?.id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
       setEditDialogOpen(false);
       toast({ title: "Updated", description: "GM Entry updated successfully" });
     },
@@ -281,20 +281,20 @@ export default function AccountGmEntries() {
 
   // ── Approve / Reject mutations (Account Manager action on HOD-approved entries) ──
   const approveMutation = useMutation({
-    mutationFn: async (id: string) => mutationRequest("PATCH", `/api/account/gm-entries/${id}/approve`, {}),
+    mutationFn: async (id: string) => mutationRequest("PATCH", `/api/sale/commission-verification/${id}/approve`, {}),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification/stats"] });
       toast({ title: "✅ Approved", description: "GM Entry approved successfully" });
     },
     onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to approve entry", variant: "destructive" }),
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("PATCH", `/api/account/gm-entries/${id}/reject`, { reason: "Rejected by Account Manager" }),
+    mutationFn: (id: string) => apiRequest("PATCH", `/api/sale/commission-verification/${id}/reject`, { reason: "Rejected by Account Manager" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification/stats"] });
       toast({ title: "❌ Rejected", description: "GM Entry rejected", variant: "destructive" });
     },
     onError: () => toast({ title: "Error", description: "Failed to reject entry", variant: "destructive" }),

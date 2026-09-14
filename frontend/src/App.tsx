@@ -58,12 +58,13 @@ const ItDomains = lazy(() => import("@/pages/it-domains"));
 const ItBackup = lazy(() => import("@/pages/it-backup"));
 const ItSystemReport = lazy(() => import("@/pages/it-system-report"));
 const AccountGmEntries = lazy(() => import("@/pages/account-gm-entries"));
+const CommissionVerification = lazy(() => import("@/pages/commission-verification"));
 const AccountTempGm = lazy(() => import("@/pages/account-temp-gm"));
 const AccountRefundGm = lazy(() => import("@/pages/account-refund-gm"));
 const AccountDonations = lazy(() => import("@/pages/account-donations"));
 const AppointmentsPage = lazy(() => import("@/pages/appointments"));
 const AttendanceTodo = lazy(() => import("@/pages/attendance-todo"));
-const SalesTargets = lazy(() => import("@/pages/sales-targets"));
+const PerformanceEvaluation = lazy(() => import("@/pages/performance-evaluation"));
 const AccountInvoices = lazy(() => import("@/pages/account-invoices"));
 const AccountLedger = lazy(() => import("@/pages/account-ledger"));
 const OfficeExpenses = lazy(() => import("@/pages/office-expenses"));
@@ -172,6 +173,8 @@ const VasReportNew = lazy(() => import("@/pages/vas-report-new"));
 const GmReportNew = lazy(() => import("@/pages/gm-report-new"));
 const LoanReportEdit = lazy(() => import("@/pages/loan-report-edit"));
 const SalaryCreate = lazy(() => import("@/pages/salary-create"));
+const GradeSystem = lazy(() => import("@/pages/grade-system"));
+const BvSystem = lazy(() => import("@/pages/bv-system"));
 const SalaryReport = lazy(() => import("@/pages/salary-report"));
 const SalaryBonuses = lazy(() => import("@/pages/salary-bonuses"));
 const AbReport = lazy(() => import("@/pages/ab-report"));
@@ -303,7 +306,7 @@ function Router() {
       <Route path="/drm/attributes" component={AttributesPage} />
       <Route path="/gm-pool/add-gm" component={GmPoolAddGm} />
       <Route path="/sales/appointments" component={AppointmentsPage} />
-      <Route path="/sales/targets" component={SalesTargets} />
+      <Route path="/sales/performance-evaluation" component={PerformanceEvaluation} />
       <Route path="/hr/attendance" component={AttendanceManagement} />
       <Route path="/hr/attendance/todo" component={AttendanceTodo} />
       <Route path="/hr/leave-request" component={LeaveRequest} />
@@ -364,6 +367,7 @@ function Router() {
       <Route path="/drm/online-form" component={isOnlineFormEnabled() ? OnlineForm : OnlineFormInactive} />
       <Route path="/drm/fb-post" component={isFbPostEnabled() ? FbPost : FbPostInactive} />
       <Route path="/account/gm-entries" component={AccountGmEntries} />
+      <Route path="/sale/commission-verification" component={CommissionVerification} />
       <Route path="/support/tickets" component={isSupportModuleEnabled() ? SupportTickets : SupportInactive} />
       <Route path="/support/tickets/:id" component={isSupportModuleEnabled() ? SupportTicketDetail : SupportInactive} />
       <Route path="/support/complaints" component={isSupportModuleEnabled() ? ComplaintsPage : SupportInactive} />
@@ -381,6 +385,8 @@ function Router() {
       <Route path="/reports/raw-attendance" component={ReportsRawAttendance} />
       <Route path="/reports/salary-create" component={SalaryCreate} />
       <Route path="/reports/salary-bonuses" component={SalaryBonuses} />
+      <Route path="/reports/grade-system" component={GradeSystem} />
+      <Route path="/reports/bv-system" component={BvSystem} />
       <Route path="/reports/salary" component={SalaryReport} />
       <Route path="/reports/reception" component={ReceptionReport} />
       <Route path="/reports/event" component={EventReport} />

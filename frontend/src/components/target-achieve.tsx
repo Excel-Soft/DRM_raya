@@ -134,7 +134,7 @@ export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
                   <ChevronRight className="w-3 h-3 ml-1" />
                 </Button>
               ) : (
-                <Link href="/sales/targets?type=vas&period=thisMonth">
+                <Link href="/sales/performance-evaluation?type=vas&period=thisMonth">
                   <Button variant="ghost" size="sm" className="h-8 text-[11px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-50 transition-colors">
                     View More
                     <ChevronRight className="w-3 h-3 ml-1" />

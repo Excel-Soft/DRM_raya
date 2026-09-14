@@ -142,7 +142,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/customers/attribute/:id", component: "CustomerAttributePage", title: "Customer Attribute", module: "Customer", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/invoice-pool", component: "InvoicePool", title: "Invoice Pool", module: "Customer", sidebarVisible: true, sidebarGroup: "Customer", permissionKey: "Customer", allowedRoles: ALL_STAFF },
   { path: "/sales/appointments", component: "AppointmentsPage", title: "Appointments", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
-  { path: "/sales/targets", component: "SalesTargets", title: "Sales Targets", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
+  { path: "/sales/performance-evaluation", component: "PerformanceEvaluation", title: "Performance Evaluation", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/customers/a-minus", component: "AMinusCustomersPage", title: "A- Customers", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/quotation", component: "QuotationPage", title: "Quotation", module: "Customer", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/sales/create-invoice/:customerId", component: "CreateInvoice", title: "Create Invoice", module: "Customer", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF, notes: "Dynamic: validates customerId; loading / not-found states." },
@@ -215,6 +215,7 @@ export const routeRegistry: RouteEntry[] = [
 
   // ── Accounts ──────────────────────────────────────────────────────────
   { path: "/account/gm-entries", component: "AccountGmEntries", title: "Create GM", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF, notes: "Canonical GM entries route." },
+  { path: "/sale/commission-verification", component: "CommissionVerification", title: "Commission Verification", module: "Sales", sidebarVisible: true, sidebarGroup: "Sales", permissionKey: "Sales", allowedRoles: ["admin", "super_hod", "hod", "account_manager"], notes: "Old Commission Verification flow." },
   { path: "/account/temp-gm", component: "AccountTempGm", title: "Add Temp GM", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
   { path: "/account/refund-gm", component: "AccountRefundGm", title: "Add Refund GM", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
   { path: "/account/donations", component: "AccountDonations", title: "Donations", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
@@ -238,6 +239,8 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/reports", component: "UserReports", title: "Reports", module: "Reports", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
   { path: "/reports/:type", component: "UserReports", title: "Report", module: "Reports", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF, notes: "Catch-all; resolves sidebar shortcuts /reports/{loan,vas,gm,bv}." },
   { path: "/reports/raw-attendance", component: "ReportsRawAttendance", title: "Raw Attendance", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
+  { path: "/reports/grade-system", component: "GradeSystem", title: "Grade System", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
+  { path: "/reports/bv-system", component: "BvSystem", title: "BV System", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/bv-pending-rc", component: "ReportsBvPendingRc", title: "BV Pending RC Only", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/salary-create", component: "SalaryCreate", title: "Salary Create", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/salary-bonuses", component: "SalaryBonuses", title: "Employee Bonuses", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },

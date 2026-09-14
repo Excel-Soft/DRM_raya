@@ -105,19 +105,19 @@ const projectOverviewLinks: Record<string, Array<{ label: string; icon: any; hre
     ],
     Performance: [
         { label: "Loan Application", icon: Briefcase, href: "/hr/loan" },
-        { label: "Performance", icon: Award, href: "/sales/targets" },
+        { label: "Performance", icon: Award, href: "/sales/performance-evaluation" },
     ],
     "Performance ": [
         { label: "Over Time", icon: Clock, href: "/hr/overtime" },
         { label: "Loan Application", icon: Briefcase, href: "/hr/loan" },
         { label: "Increment", icon: Award, href: "/hr/overtime" },
         { label: "Project List", icon: ClipboardList, href: "/pms/running-projects" },
-        { label: "Commission Verification", icon: DollarSign, href: "/account/gm-entries" },
+        { label: "Commission Verification", icon: DollarSign, href: "/sale/commission-verification" },
     ],
     Other: [
         { label: "Project List", icon: ClipboardList, href: "/pms/running-projects" },
         { label: "Add Penalty", icon: AlertCircle, href: "/hr/attendance" },
-        { label: "Commission Verification", icon: DollarSign, href: "/account/gm-entries" },
+        { label: "Commission Verification", icon: DollarSign, href: "/sale/commission-verification" },
         { label: "Overall Report", icon: FileText, href: "/reports" },
         { label: "Complete Project D&D P&P", icon: Briefcase, href: "/pms/task-history", highlight: true },
     ],
@@ -755,8 +755,8 @@ export default function ProductPostingDashboard() {
             { label: "In Progress", value: (h.inProgress || 0).toString(), icon: Play, color: "#f59e0b", href: "/pms/running-projects" },
             { label: "Completed", value: (h.completed || 0).toString(), icon: CheckCircle2, color: "#10b981", href: "/pms/status" },
             { label: "Delay Projects", value: (h.delayProjects || 0).toString(), icon: AlertCircle, color: "#ef4444", href: "/pms/status" },
-            { label: "K Kwa", value: target.kwa || "0", icon: TrendingUp, color: "#64748b", href: "/sales/targets" },
-            { label: "Target", value: target.priceTarget || "$0", icon: Target, color: "#6366f1", href: "/sales/targets" },
+            { label: "K Kwa", value: target.kwa || "0", icon: TrendingUp, color: "#64748b", href: "/sales/performance-evaluation" },
+            { label: "Target", value: target.priceTarget || "$0", icon: Target, color: "#6366f1", href: "/sales/performance-evaluation" },
             { label: "Leave Application", value: (h.leaveApplication || 0).toString(), icon: Users, color: "#a855f7", href: "/hr/leave" },
         ];
     }, [hodImportantStats, targetsData]);

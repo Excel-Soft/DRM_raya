@@ -60,7 +60,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: key });
-    queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
   };
 
   const addReceipt = useMutation({

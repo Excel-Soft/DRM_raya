@@ -226,14 +226,14 @@ const quickEntries = [
     { label: "Duplication Check", to: "/sales/duplicate-checker" },
     { label: "Private Pool", to: "/sales/lead-pools?pool=Private" },
     { label: "Services Pool", to: "/sales/lead-pools?pool=Service" },
-    { label: "Performance", to: "/sales/targets" },
+    { label: "Performance", to: "/sales/performance-evaluation" },
     { label: "Leave Application", to: "/hr/leave-request" },
     { label: "Loan Application", to: "/hr/loan" },
-    { label: "BV Checking", to: "/sales/lead-pools?pool=GMBV" },
+    { label: "BV Checking", to: "/reports/bv-system" },
     { label: "Over Time", to: "/hr/overtime" },
     { label: "Attendance", to: "/hr/attendance" },
-    { label: "Grade List", to: "/sales/lead-pools?grade=all" },
-    { label: "Commission Verification", to: "/account/gm-entries" },
+    { label: "Grade List", to: "/reports/grade-system" },
+    { label: "Commission Verification", to: "/sale/commission-verification" },
     { label: "Appointment Request", to: "/sales/appointments" },
 ];
 

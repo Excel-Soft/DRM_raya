@@ -77,7 +77,7 @@ export function LoanTermsDialog({ gmId, companyName, open, onOpenChange }: Props
     queryClient.invalidateQueries({ queryKey: key });
     queryClient.invalidateQueries({ queryKey: ["/api/gm-pool/loan-admin-queue"] });
     queryClient.invalidateQueries({ queryKey: ["/api/gm-pool/loan-return-report"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
   };
 
   const saveTerms = useMutation({

@@ -9,7 +9,7 @@ const quickActions = [
   { label: "Services Pool", icon: Database, href: "/sales/lead-pools?pool=Service" },
   { label: "Over Time", icon: Clock, href: "/hr/overtime" },
   { label: "Private Pool", icon: Database, href: "/sales/lead-pools?pool=Private" },
-  { label: "BV Checking", icon: CheckCircle, href: "/sales/lead-pools?pool=GMBV" },
+  { label: "BV Checking", icon: CheckCircle, href: "/reports/bv-system" },
   { label: "Public Pool", icon: Database, href: "/sales/lead-pools?pool=Public" },
 ];
 

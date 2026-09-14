@@ -54,9 +54,9 @@ export default function AccountInvoices() {
   });
 
   const { data: gmEntries = [], isLoading } = useQuery<GmEntry[]>({
-    queryKey: ["/api/account/gm-entries"],
+    queryKey: ["/api/sale/commission-verification"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/account/gm-entries");
+      const res = await apiRequest("GET", "/api/sale/commission-verification");
       if (!res.ok) throw new Error("Failed to fetch GM entries");
       return res.json();
     }
@@ -64,10 +64,10 @@ export default function AccountInvoices() {
 
   const markPaidMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest("PATCH", `/api/account/gm-entries/${id}/approve`, {});
+      return apiRequest("PATCH", `/api/sale/commission-verification/${id}/approve`, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sale/commission-verification"] });
       setSelectedEntry(null);
       toast({
         title: "Invoice Created",
