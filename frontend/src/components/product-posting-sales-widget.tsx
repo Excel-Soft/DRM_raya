@@ -75,9 +75,9 @@ export function ProductPostingSalesWidget() {
     const [docUrl, setDocUrl] = useState("");
 
     const { data: invoicesData } = useQuery({
-        queryKey: ["/api/account/invoices"],
+        queryKey: ["/api/product-posting"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/account/invoices");
+            const res = await apiRequest("GET", "/api/product-posting");
             return res.json();
         }
     });
@@ -93,11 +93,11 @@ export function ProductPostingSalesWidget() {
 
     const createInvoiceMutation = useMutation({
         mutationFn: async (data: { amount: string, invoiceType: InvoiceType, companyName: string, customerId: string, paymentMethod?: string }) => {
-            const res = await apiRequest("POST", "/api/account/invoices", data);
+            const res = await apiRequest("POST", "/api/product-posting", data);
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
             setIsOpen(false);
             setAmount("");
             setIsFree(false);
@@ -113,11 +113,11 @@ export function ProductPostingSalesWidget() {
 
     const resubmitMutation = useMutation({
         mutationFn: async (id: string) => {
-            const res = await apiRequest("POST", `/api/account/invoices/${id}/resubmit`, {});
+            const res = await apiRequest("POST", `/api/product-posting/${id}/resubmit`, {});
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
             toast({ title: "Resubmitted", description: "Sent back to HOD for approval." });
         },
         onError: (err) => {

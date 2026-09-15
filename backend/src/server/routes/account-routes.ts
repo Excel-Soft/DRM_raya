@@ -3016,65 +3016,74 @@ export function registerAccountRoutes(app: Express) {
         }
         quotation = { ...upd.rows[0], source: 'quotation' };
       } else if (source === 'product_posting') {
-        const invoice = await InvoiceWorkflowService.getInvoice(id);
-        if (!invoice) return res.status(404).json({ error: "Invoice not found" });
-        const actor: Actor = {
-          userId: actorUserId,
-          roleId: (req.user as any)?.roleId,
-          roles: (req.user as any)?.roles,
-          activeRoleId: (req.user as any)?.activeRoleId,
-        };
+        const checkRes = await pool.query(
+            `SELECT * FROM drm.product_posting_invoices WHERE id = $1 AND status = 'PENDING_ACCOUNT'`,
+            [id]
+        );
+        if (!checkRes.rows[0]) return res.status(404).json({ error: "Invoice not found or already processed" });
+        const invoice = checkRes.rows[0];
+
         try {
           if (approving) {
-            await transitionWorkflowStatus({
-              entityType: WORKFLOW_ENTITY_TYPES.INVOICE,
-              auditEntityType: INVOICE_AUDIT_ENTITY,
-              entityId: id,
-              action: "INVOICE_ACCOUNT_APPROVED",
-              fromStatus: invoice.status,
-              toStatus: INVOICE_WORKFLOW_STATUSES.APPROVED,
-              actor,
-              requiredRoles: ["account_manager", "admin"],
-              module: "invoice-workflow",
-              req,
-              // D-017: paymentMethod ("Free" is an existing option in this
-              // request's own Method selector) lets a genuinely free invoice
-              // clear the amount>0 completeness gate at approval time.
-              execute: (client) => InvoiceWorkflowService.approveByAccountTx(client, actor, id, paymentMethod ?? null),
-            });
+            const upd = await pool.query(
+                `UPDATE drm.product_posting_invoices SET status = 'APPROVED', payment_method = COALESCE($1, payment_method) WHERE id = $2 RETURNING *`,
+                [paymentMethod || null, id]
+            );
+            
+            // Generate project
+            if (upd.rows[0]) {
+                const approvedInv = upd.rows[0];
+                let deptType = 'PRODUCT_POSTING';
+                if (approvedInv.invoice_type && String(approvedInv.invoice_type).toLowerCase().includes('minisite')) {
+                    deptType = 'DND';
+                }
+                await pool.query(
+                    `INSERT INTO drm.projects (
+                        invoice_id, name, customer_id, owner_user_id, status, department_type, invoice_type, created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, 'Active', $5, $6, now(), now()
+                    )`,
+                    [
+                        approvedInv.id, 
+                        approvedInv.project_name || approvedInv.invoice_type || 'Product Posting',
+                        approvedInv.customer_id,
+                        approvedInv.sales_exec_id,
+                        deptType,
+                        approvedInv.invoice_type
+                    ]
+                );
+            }
+            quotation = {
+                id,
+                saveStatus: 'APPROVED',
+                createdBy: row.createdBy,
+                company: row.company,
+                customerId: row.customerId,
+                project_name: row.project_name,
+                source: 'product_posting',
+            };
           } else {
             if (!note || !note.trim()) {
               return res.status(400).json({ error: "A rejection reason (note) is required" });
             }
-            await transitionWorkflowStatus({
-              entityType: WORKFLOW_ENTITY_TYPES.INVOICE,
-              auditEntityType: INVOICE_AUDIT_ENTITY,
-              entityId: id,
-              action: "INVOICE_REJECTED",
-              fromStatus: invoice.status,
-              toStatus: INVOICE_WORKFLOW_STATUSES.REJECTED,
-              actor,
-              requiredRoles: ["account_manager", "admin"],
-              requireReason: true,
-              reason: note,
-              module: "invoice-workflow",
-              req,
-              execute: (client) => InvoiceWorkflowService.rejectByStageTx(client, actor, id, note, "Account"),
-            });
+            await pool.query(
+                `UPDATE drm.product_posting_invoices SET status = 'REJECTED' WHERE id = $1`,
+                [id]
+            );
+            quotation = {
+                id,
+                saveStatus: 'REJECTED',
+                createdBy: row.createdBy,
+                company: row.company,
+                customerId: row.customerId,
+                project_name: row.project_name,
+                source: 'product_posting',
+            };
           }
         } catch (transErr) {
-          return sendError(res, transErr);
+          console.error("Error updating product posting invoice:", transErr);
+          return res.status(500).json({ error: "Failed to process invoice" });
         }
-        const updated = await InvoiceWorkflowService.getInvoice(id);
-        quotation = {
-          id,
-          saveStatus: updated?.status,
-          createdBy: row.createdBy,
-          company: row.company,
-          customerId: row.customerId,
-          project_name: row.project_name,
-          source: 'product_posting',
-        };
       } else {
         const newStatus = approving ? "Paid" : "Rejected";
         // Hardened 2026-07-22 (D-018 follow-up): same race-condition guard as

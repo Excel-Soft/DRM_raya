@@ -13,5 +13,5 @@ function makeStub(label: string): any {
   });
 }
 
-export const generateDefaultInvoicesForGm = makeStub("generateDefaultInvoicesForGm");
+export { generateDefaultInvoicesForGm } from "../routes/services/gm-invoice-generation.service";
 export const generateInvoicesAfterFinalGmApproval = makeStub("generateInvoicesAfterFinalGmApproval");

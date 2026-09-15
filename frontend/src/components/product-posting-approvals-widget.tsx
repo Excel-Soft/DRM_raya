@@ -131,11 +131,13 @@ export function ProductPostingApprovalsWidget({
     const [previewId, setPreviewId] = useState<string | null>(null);
     const [actionModalId, setActionModalId] = useState<string | null>(null);
     const [actionForm, setActionForm] = useState({ amount: "", method: "", status: "approved" });
+    const [hodActionModalId, setHodActionModalId] = useState<string | null>(null);
+    const [hodActionForm, setHodActionForm] = useState({ status: "", detail: "" });
 
     const { data: invoicesData, isLoading } = useQuery({
-        queryKey: ["/api/account/invoices"],
+        queryKey: ["/api/product-posting"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/account/invoices");
+            const res = await apiRequest("GET", "/api/product-posting");
             return res.json();
         }
     });
@@ -156,7 +158,7 @@ export function ProductPostingApprovalsWidget({
     }
 
     const { data: historyData, isLoading: historyLoading } = useQuery({
-        queryKey: ["/api/account/invoices", historyId, "history"],
+        queryKey: ["/api/product-posting", historyId, "history"],
         enabled: !!historyId,
         queryFn: async () => {
             const res = await apiRequest("GET", `/api/account/invoices/${historyId}/history`);
@@ -165,17 +167,18 @@ export function ProductPostingApprovalsWidget({
     });
 
     const approveMutation = useMutation({
-        mutationFn: async ({ id, action, reason }: { id: string, action: "APPROVE" | "REJECT", reason?: string }) => {
+        mutationFn: async ({ id, action, reason }: { id: string; action: "APPROVE" | "REJECT"; reason?: string }) => {
             const stage = role === "HOD" ? "hod" : "account";
             const verb = action === "APPROVE" ? "approve" : "reject";
-            const res = await apiRequest("POST", `/api/account/invoices/${id}/${stage}-${verb}`, action === "REJECT" ? { reason } : {});
+            const res = await apiRequest("POST", `/api/product-posting/${id}/${stage}-${verb}`, action === "REJECT" ? { reason } : {});
             await throwIfResNotOk(res);
         },
-        onSuccess: (_data, variables) => {
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+        onSuccess: (_, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
             setRejectId(null);
             setRejectReason("");
             setActionModalId((cur) => (cur === variables.id ? null : cur));
+            setHodActionModalId(null);
             toast({
                 title: variables.action === "APPROVE" ? "Invoice approved" : "Invoice rejected",
                 description: variables.action === "APPROVE"
@@ -191,12 +194,12 @@ export function ProductPostingApprovalsWidget({
     // Mark a $0 invoice Free so it can clear the amount check at this stage
     // (mirrors the Account Manager's existing "Free" payment-method option).
     const markFreeMutation = useMutation({
-        mutationFn: async (id: string) => {
-            const res = await apiRequest("PATCH", `/api/account/invoices/${id}`, { paymentMethod: "free" });
+        mutationFn: async ({ id }: { id: string }) => {
+            const res = await apiRequest("POST", `/api/product-posting/${id}/mark-free`, {});
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
             toast({ title: "Marked as Free" });
         },
         onError: (err) => {
@@ -210,11 +213,11 @@ export function ProductPostingApprovalsWidget({
     // rest of this widget already uses for Mark Free.
     const patchInvoiceMutation = useMutation({
         mutationFn: async ({ id, body }: { id: string; body: Record<string, unknown> }) => {
-            const res = await apiRequest("PATCH", `/api/account/invoices/${id}`, body);
+            const res = await apiRequest("PATCH", `/api/product-posting/${id}`, body);
             await throwIfResNotOk(res);
         },
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
         },
         onError: (err) => {
             toast({ title: "Could not save invoice details", description: readApiError(err), variant: "destructive" });
@@ -227,7 +230,7 @@ export function ProductPostingApprovalsWidget({
     const [generated, setGenerated] = useState<Record<string, { status: string | null; held: boolean }>>({});
     const generateMutation = useMutation({
         mutationFn: async ({ id }: { id: string }) => {
-            const res = await apiRequest("POST", `/api/account/invoices/${id}/generate-project`, {});
+            const res = await apiRequest("POST", `/api/product-posting/${id}/generate-project`, {});
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
                 throw new Error(body?.error?.message || body?.error || "Could not generate project");
@@ -237,7 +240,7 @@ export function ProductPostingApprovalsWidget({
         onSuccess: (body, variables) => {
             const result = body?.data || {};
             setGenerated((m) => ({ ...m, [variables.id]: { status: result.status ?? null, held: !!result.held } }));
-            queryClient.invalidateQueries({ queryKey: ["/api/account/invoices"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting"] });
             const already = !!result.linked && !result.created;
             toast({
                 title: already ? "Project already generated" : "Project generated",
@@ -291,6 +294,7 @@ export function ProductPostingApprovalsWidget({
                             <TableHeader className="bg-[#f8fafc] dark:bg-zinc-900">
                                 <TableRow>
                                     <TableHead className="font-bold text-slate-700 dark:text-zinc-400">No</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Type</TableHead>
                                     <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Company</TableHead>
                                     <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Person</TableHead>
                                     <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Detail</TableHead>
@@ -302,7 +306,7 @@ export function ProductPostingApprovalsWidget({
                             <TableBody>
                                 {pagedInvoices.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center text-muted-foreground py-6">
+                                        <TableCell colSpan={8} className="text-center text-muted-foreground py-6">
                                             No pending invoices at this stage.
                                         </TableCell>
                                     </TableRow>
@@ -312,6 +316,9 @@ export function ProductPostingApprovalsWidget({
                                         <TableCell className="font-bold text-gray-700 dark:text-zinc-400">
                                             {(page - 1) * ITEMS_PER_PAGE + idx + 1}
                                         </TableCell>
+                                        <TableCell className="text-sm text-gray-500 dark:text-zinc-400">
+                                            {invoiceTypeLabel(inv)}
+                                        </TableCell>
                                         <TableCell className="font-medium">
                                             <span className="font-bold text-gray-800 tracking-tight dark:text-zinc-100">
                                                 {inv.companyName || "-"}
@@ -320,8 +327,8 @@ export function ProductPostingApprovalsWidget({
                                         <TableCell className="text-gray-600 dark:text-zinc-300">
                                             {salesExecNameById[inv.salesExecId] || "-"}
                                         </TableCell>
-                                        <TableCell className="text-sm text-gray-500 max-w-[240px] dark:text-zinc-400">
-                                            {invoiceTypeLabel(inv)}
+                                        <TableCell className="text-sm text-gray-500 dark:text-zinc-400">
+                                            {invoiceReceiptItemDetail(inv)}
                                         </TableCell>
                                         <TableCell>
                                             <Button
@@ -336,24 +343,51 @@ export function ProductPostingApprovalsWidget({
                                         </TableCell>
                                         <TableCell>
                                             <Badge className="bg-gray-200/50 text-gray-500 font-normal px-4 py-1.5 rounded-full border-0 shadow-none hover:bg-gray-200/70 dark:text-zinc-400">
-                                                Waiting
+                                                {inv.status || "Waiting"}
                                             </Badge>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <div className="flex justify-end pr-2">
+                                            <div className="flex justify-end pr-2 gap-2">
+                                                {Number(inv.amount) === 0 && !isMarkedFree(inv) && role === "HOD" && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 text-xs text-amber-600 border-amber-200 hover:bg-amber-50"
+                                                        onClick={() => markFreeMutation.mutate({ id: inv.id })}
+                                                        disabled={markFreeMutation.isPending}
+                                                    >
+                                                        Mark Free
+                                                    </Button>
+                                                )}
+                                                {role === "Account Manager" && inv.status === "APPROVED" && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-8 text-xs"
+                                                        onClick={() => generateMutation.mutate({ id: inv.id })}
+                                                        disabled={generateMutation.isPending}
+                                                    >
+                                                        {generateMutation.isPending ? "Generating..." : "Generate Project"}
+                                                    </Button>
+                                                )}
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
                                                     className="text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full h-9 w-9"
                                                     onClick={() => {
-                                                        setActionModalId(inv.id);
-                                                        setActionForm({
-                                                            amount: Number(inv.amount) > 0 ? String(inv.amount) : "",
-                                                            method: isMarkedFree(inv) ? "free" : "",
-                                                            status: "approved",
-                                                        });
+                                                        if (role === "HOD") {
+                                                            setHodActionModalId(inv.id);
+                                                            setHodActionForm({ status: "", detail: "" });
+                                                        } else {
+                                                            setActionModalId(inv.id);
+                                                            setActionForm({
+                                                                amount: Number(inv.amount) > 0 ? String(inv.amount) : "",
+                                                                method: isMarkedFree(inv) ? "free" : "",
+                                                                status: "approved",
+                                                            });
+                                                        }
                                                     }}
-                                                    title="Approve"
+                                                    title={role === "HOD" ? "Action" : "Approve"}
                                                 >
                                                     <ShieldCheck className="h-6 w-6" />
                                                 </Button>
@@ -599,6 +633,79 @@ export function ProductPostingApprovalsWidget({
                     </DialogContent>
                 </Dialog>
 
+                {/* HOD Action Modal (Approved Data) */}
+                <Dialog open={!!hodActionModalId} onOpenChange={(open) => !open && setHodActionModalId(null)}>
+                    <DialogContent className="max-w-[500px]">
+                        <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                            <DialogTitle className="text-base font-semibold">
+                                Approved Data <span className="text-emerald-500 text-sm ml-1">{format(new Date(), "dd-MM-yyyy hh:mm a")}</span>
+                            </DialogTitle>
+                        </DialogHeader>
+                        
+                        {(() => {
+                            const currentInv = pagedInvoices.find((i: any) => i.id === hodActionModalId);
+                            if (!currentInv) return null;
+                            
+                            return (
+                                <div className="space-y-4 py-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <label className="text-sm text-slate-500">Company</label>
+                                            <Input
+                                                value={currentInv.companyName || ""}
+                                                readOnly
+                                                className="bg-slate-50 cursor-not-allowed"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-sm text-slate-500">Status</label>
+                                            <Select
+                                                value={hodActionForm.status}
+                                                onValueChange={(v) => setHodActionForm(p => ({ ...p, status: v }))}
+                                            >
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder="Choose..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="APPROVED">Approved</SelectItem>
+                                                    <SelectItem value="REJECTED">Rejected</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="space-y-2">
+                                        <label className="text-sm text-slate-500">Detail</label>
+                                        <Textarea
+                                            placeholder="Add detail"
+                                            className="min-h-[100px] resize-none"
+                                            value={hodActionForm.detail}
+                                            onChange={(e) => setHodActionForm(p => ({ ...p, detail: e.target.value }))}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                        
+                        <DialogFooter className="gap-2">
+                            <Button variant="outline" onClick={() => setHodActionModalId(null)}>Close</Button>
+                            <Button
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                disabled={!hodActionForm.status || approveMutation.isPending}
+                                onClick={() => {
+                                    if (hodActionForm.status === "APPROVED") {
+                                        approveMutation.mutate({ id: hodActionModalId!, action: "APPROVE", reason: hodActionForm.detail });
+                                    } else {
+                                        approveMutation.mutate({ id: hodActionModalId!, action: "REJECT", reason: hodActionForm.detail });
+                                    }
+                                }}
+                            >
+                                {approveMutation.isPending ? "Saving..." : "Save"}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
                 {/* Audit history dialog (shared markup with the feed variant) */}
                 <Dialog open={!!historyId} onOpenChange={(open) => !open && setHistoryId(null)}>
                     <DialogContent>
@@ -697,7 +804,7 @@ export function ProductPostingApprovalsWidget({
                                         {Number(inv.amount) === 0 && !isMarkedFree(inv) && (
                                             <Button
                                                 variant="outline" size="sm" className="h-7 text-xs text-amber-600 border-amber-200 hover:bg-amber-50"
-                                                onClick={() => markFreeMutation.mutate(inv.id)}
+                                                onClick={() => markFreeMutation.mutate({ id: inv.id })}
                                                 disabled={markFreeMutation.isPending}
                                             >
                                                 Mark Free

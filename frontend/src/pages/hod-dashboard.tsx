@@ -172,7 +172,7 @@ export default function HodDashboard() {
   });
 
   // Verification tabs state
-  const [verificationTab, setVerificationTab] = useState<"waiting" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("waiting");
+  const [verificationTab, setVerificationTab] = useState<"waiting" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
 
   // Same queryKey as ProductPostingApprovalsWidget's own /api/invoices fetch
   // (the widget that actually renders this tab) — shares its cache, so this
@@ -180,9 +180,9 @@ export default function HodDashboard() {
   // invalidation after approve/reject/create, instead of the mismatched
   // paginated /api/hod/approvals list this badge used to read from.
   const invoicesQuery = useQuery<{ data?: any[] }>({
-    queryKey: ["/api/account/invoices"],
+    queryKey: ["/api/product-posting"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/account/invoices");
+      const res = await apiRequest("GET", "/api/product-posting");
       return res.json();
     },
   });
@@ -463,21 +463,19 @@ export default function HodDashboard() {
   });
 
   const leaveRequestsQuery = useQuery<{ success: boolean; data: any[] }>({
-    queryKey: ["hod-verification-leaves", verificationTab],
+    queryKey: ["hod-verification-leaves"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/hod/verification/leave-requests");
       return res.json();
-    },
-    enabled: verificationTab === "leave-form",
+    }
   });
 
   const waitingProjectsQuery = useQuery<{ success: boolean; data: any[] }>({
-    queryKey: ["hod-verification-waiting", verificationTab],
+    queryKey: ["hod-verification-waiting"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/hod/verification/waiting");
       return res.json();
-    },
-    enabled: verificationTab === "waiting",
+    }
   });
 
   const updateRequestsQuery = useQuery<{ success: boolean; data: any[] }>({
@@ -1060,27 +1058,46 @@ export default function HodDashboard() {
             >
               <Card className="rounded-xl shadow-md" data-testid="card-verification-table" ref={verificationCardRef}>
                 <CardHeader>
-                  <CardTitle className="text-sm font-medium mb-4">Verification Of Project</CardTitle>
+                  <CardTitle className="text-sm font-medium mb-4">Hod Quick Approvals</CardTitle>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
-                      onClick={() => setVerificationTab("waiting")}
-                      className={`h-8 text-xs ${verificationTab === "waiting"
+                      onClick={() => setVerificationTab("invoice")}
+                      className={`h-8 text-xs relative ${verificationTab === "invoice"
                         ? "bg-green-600 hover:bg-green-700 text-white"
                         : "bg-gray-200 hover:bg-gray-300 text-gray-700"
                         }`}
                     >
-                      Waiting
+                      Pending Invoice
+                      <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-green-600 rounded-full border border-white">
+                        {invoicesCount}
+                      </span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => setVerificationTab("waiting")}
+                      className={`h-8 text-xs relative ${verificationTab === "waiting"
+                        ? "bg-green-600 hover:bg-green-700 text-white"
+                        : "bg-gray-200 hover:bg-gray-300 text-gray-700"
+                        }`}
+                    >
+                      Pending Quotation
+                      <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-blue-600 rounded-full border border-white">
+                        {waitingProjectsQuery.data?.data?.length || 0}
+                      </span>
                     </Button>
                     <Button
                       size="sm"
                       onClick={() => setVerificationTab("leave-form")}
-                      className={`h-8 text-xs ${verificationTab === "leave-form"
+                      className={`h-8 text-xs relative ${verificationTab === "leave-form"
                         ? "bg-green-600 hover:bg-green-700 text-white"
                         : "bg-gray-200 hover:bg-gray-300 text-gray-700"
                         }`}
                     >
                       Leave Form
+                      <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-purple-600 rounded-full border border-white">
+                        {leaveRequestsQuery.data?.data?.length || 0}
+                      </span>
                     </Button>
                     <Button
                       size="sm"
@@ -1119,19 +1136,6 @@ export default function HodDashboard() {
                       GM Withdrawal
                       <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-orange-600 rounded-full border border-white">
                         {withdrawalsQuery.data?.data?.length || 0}
-                      </span>
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => setVerificationTab("invoice")}
-                      className={`h-8 text-xs relative ${verificationTab === "invoice"
-                        ? "bg-green-600 hover:bg-green-700 text-white"
-                        : "bg-gray-200 hover:bg-gray-300 text-gray-700"
-                        }`}
-                    >
-                      Invoice
-                      <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-green-600 rounded-full border border-white">
-                        {invoicesCount}
                       </span>
                     </Button>
                   </div>
@@ -1225,14 +1229,14 @@ export default function HodDashboard() {
                       <TableBody>
                         {verificationTab === "waiting" && (
                           <>
-                            {approvals.length === 0 && (
+                            {approvals.filter(item => item.type === "Quotation" || item.type === "GM Entry").length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                  {approvalsQuery.isLoading ? "Loading..." : "No pending approvals"}
+                                  {approvalsQuery.isLoading ? "Loading..." : "No pending quotations"}
                                 </TableCell>
                               </TableRow>
                             )}
-                            {approvals.map((item) => (
+                            {approvals.filter(item => item.type === "Quotation" || item.type === "GM Entry").map((item) => (
                               <TableRow key={item.id} data-testid={`row-approval-${item.id}`}>
                                 <TableCell>{getTypeBadge(item.type)}</TableCell>
                                 <TableCell>
