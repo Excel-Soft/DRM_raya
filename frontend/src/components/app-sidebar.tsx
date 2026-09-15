@@ -159,11 +159,10 @@ const menuItems: MenuItem[] = [
   {
     title: "PMS", icon: ClipboardList, permKey: "PMS",
     items: [
-      { title: "Task Templates", url: "/pms/task-templates", icon: FileText },
       { title: "Task Creation", url: "/pms/tasks", icon: CheckSquare },
       { title: "Project Status", url: "/pms/status", icon: BarChart3 },
       { title: "Running Projects", url: "/pms/running-projects", icon: DollarSign },
-      { title: "Pending Approvals", url: "/pms/approvals", icon: UserCheck },
+      { title: "Pending Project", url: "/pms/approvals", icon: UserCheck },
       { title: "Task History", url: "/pms/task-history", icon: History },
       { title: "Team Workspace", url: "/pms/team-workspace", icon: Users },
       { title: "Project Report", url: "/pms/project-report", icon: FileText },

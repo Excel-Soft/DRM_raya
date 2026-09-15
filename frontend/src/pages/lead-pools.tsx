@@ -3423,6 +3423,7 @@ export default function LeadPools() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       {/* Transfer Lead Dialog */}
       <Dialog open={!!transferLead} onOpenChange={(open) => !open && setTransferLead(null)}>
         <DialogContent>

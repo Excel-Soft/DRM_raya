@@ -30,6 +30,7 @@ type GmPoolRow = {
   memberId?: string;
   orderId?: string;
   company?: string;
+  createdBy?: string;
   customerName?: string;
   salesPersonName?: string;
   package?: string;
@@ -1746,8 +1747,6 @@ export default function GmPoolAddGm() {
                                   finalStatus === "approved" ||
                                   !!row.hodApprovedAt;
 
-                                const isPending = !status || status === "pending" || status === "pending_hod";
-
                                 const isRejected =
                                   gmStatus.includes("rejected") ||
                                   status.includes("rejected") ||
@@ -1803,8 +1802,11 @@ export default function GmPoolAddGm() {
                                       />
                                     )}
 
-                                    {/* Delete or Update Request: Only allowed BEFORE HOD Approval */}
-                                    {!isHodApproved && (isPending || row.updateRequestStatus === "super_hod_approved") ? (
+                                    {/* Delete or Update Request: hidden while still awaiting the HOD's
+                                        first decision (plain "HOD Pending") — only reappears once the
+                                        HOD has rejected the entry (or via the withdrawn-reset / update-
+                                        request-approved flows, which already carried this behavior). */}
+                                    {!isHodApproved && (isRejected || isWithdrawnReset || row.updateRequestStatus === "super_hod_approved") ? (
                                       <ActionIcon
                                         icon={Trash2}
                                         label="Delete Entry"

@@ -678,6 +678,7 @@ export function registerGmPoolRoutes(app: Express) {
           order_id as "orderId",
           customer_id as "customerId",
           company_name as company,
+          created_by as "createdBy",
           sales_person_name as "salesPersonName",
           package_type as package,
           entry_type as type,

@@ -438,6 +438,8 @@ export default function AddCustomer() {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sales/customers/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/list"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/lead-pools/summary"], exact: false });
       if (fromTempContactId || editCustomerId) {
         setLocation("/customers/private-pool");
       } else {

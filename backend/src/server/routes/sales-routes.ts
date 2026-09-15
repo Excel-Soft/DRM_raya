@@ -818,10 +818,13 @@ async function syncPublicPool() {
               updated_at = now()
         where pool_type = 'Private'
           and (
-            -- either NO activity exists
-            not exists (
-              select 1 from drm.lead_activities ca 
-              where ca.customer_id = c.id
+            -- no activity AND old enough to be abandoned, not just newly created
+            (
+              not exists (
+                select 1 from drm.lead_activities ca
+                where ca.customer_id = c.id
+              )
+              and c.created_at < now() - interval '90 days'
             )
             -- OR the most recent activity is older than 90 days
             or (
