@@ -835,10 +835,10 @@ export default function SuperHODDashboard() {
                                 <CardHeader className="pb-0 pt-4 px-6 bg-white dark:bg-zinc-900">
                                     <Tabs defaultValue="gm-approval" className="w-full">
                                         <div className="flex items-center justify-between mb-4">
-                                            <CardTitle className="text-base font-bold text-slate-800 dark:text-zinc-100">Verification Of Project</CardTitle>
+                                            <CardTitle className="text-base font-bold text-slate-800 dark:text-zinc-100">Hod Quick Approvals</CardTitle>
                                             <TabsList className="bg-transparent h-auto p-0 gap-4">
                                                 {[
-                                                    { label: 'Waiting', key: 'waiting', count: waitingProjects?.length || 0 },
+                                                    { label: 'Pending Quotation', key: 'waiting', count: waitingProjects?.length || 0 },
                                                     { label: 'Leave Form', key: 'leave-form', count: leaveRequests?.length || 0 },
                                                     { label: 'Gm Approval', key: 'gm-approval', count: gmApprovals?.length || 0 },
                                                     { label: 'Update Request', key: 'update-request', count: updateRequests?.length || 0 },

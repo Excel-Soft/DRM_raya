@@ -334,7 +334,7 @@ function getPeriodRange(periodRaw: string) {
         AND ($1::uuid IS NULL OR p.owner_user_id = $1::uuid)
         ${roleFilter}
         AND coalesce(p.is_deleted, false) = false
-        ORDER BY p.project_number::int ASC
+        ORDER BY p.project_number
       `, [scopeUserId]);
       
       // Add sentToManager flag for client display
