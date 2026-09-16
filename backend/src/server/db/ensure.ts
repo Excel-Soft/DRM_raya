@@ -614,14 +614,27 @@ async function ensureInvoiceNumberSchema(client: {
        FROM ordered
        WHERE p.id = ordered.id`,
   );
-  // Keep the sequence ahead of whatever the backfill just assigned so the
-  // next real INSERT's DEFAULT can't collide with a backfilled number.
-  // Non-numeric values (e.g. "AUTO-1002" from the manual/auto invoice-number
-  // distinction elsewhere) are excluded from the cast instead of crashing it.
+  // Keep the sequence ahead of whatever the backfill (or any prior real
+  // INSERT) already assigned, in EITHER format this column has ever held:
+  // plain digits (old backfill) or "AUTO-1234" (generateDefaultInvoicesForGm's
+  // 'AUTO-' || nextval(...) pattern) — considering only the plain-digit form
+  // here meant this setval fell back to 1000 on every restart once real rows
+  // were all "AUTO-"-prefixed, silently re-colliding the sequence with
+  // existing numbers on every subsequent nextval() until it happened to climb
+  // back past the true max through repeated failed-insert attempts.
   await client.query(
     `SELECT setval(
        'drm.product_posting_invoice_number_seq',
-       GREATEST(1001, (SELECT COALESCE(MAX(invoice_number::int) FILTER (WHERE invoice_number ~ '^[0-9]+$'), 1000) FROM drm.product_posting_invoices))
+       GREATEST(1001, (
+         SELECT COALESCE(MAX(
+           CASE
+             WHEN invoice_number ~ '^[0-9]+$' THEN invoice_number::int
+             WHEN invoice_number ~ '^AUTO-[0-9]+$' THEN substring(invoice_number from 'AUTO-([0-9]+)')::int
+             ELSE NULL
+           END
+         ), 1000)
+         FROM drm.product_posting_invoices
+       ))
      )`,
   );
   await client.query(

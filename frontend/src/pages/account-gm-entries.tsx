@@ -300,12 +300,13 @@ export default function AccountGmEntries() {
   });
 
   const rejectMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("POST", `/api/gm-pool/${id}/account-manager-reject`, { reason: "Rejected by Account Manager" }),
+    mutationFn: (id: string) => mutationRequest("POST", `/api/gm-pool/${id}/account-manager-reject`, { comment: "Rejected by Account Manager" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
+      closeApproveModal();
       toast({ title: "❌ Rejected", description: "GM Entry rejected", variant: "destructive" });
     },
-    onError: () => toast({ title: "Error", description: "Failed to reject entry", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to reject entry", variant: "destructive" }),
   });
 
 
@@ -1065,14 +1066,20 @@ export default function AccountGmEntries() {
           </div>
           <DialogFooter className="flex justify-end gap-2">
             <Button variant="outline" onClick={closeApproveModal}>Close</Button>
-            <Button 
-              className="bg-green-600 hover:bg-green-700 text-white" 
-              onClick={() => approveMutation.mutate({ 
-                id: approveModalEntry!.id, 
-                paymentStatus, 
-                alibabaStatus 
-              })}
-              disabled={approveMutation.isPending}
+            <Button
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => {
+                if (alibabaStatus === "Rejected") {
+                  rejectMutation.mutate(approveModalEntry!.id);
+                } else {
+                  approveMutation.mutate({
+                    id: approveModalEntry!.id,
+                    paymentStatus,
+                    alibabaStatus
+                  });
+                }
+              }}
+              disabled={approveMutation.isPending || rejectMutation.isPending}
             >
               Save
             </Button>

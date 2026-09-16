@@ -64,7 +64,7 @@ export default function SuperAdminDashboard() {
 
     // Queries
     const { data: users, isLoading: usersLoading } = useQuery<User[]>({
-        queryKey: ["/api/users"],
+        queryKey: ["/api/users", "super-admin"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/users");
             const data = await res.json();
@@ -99,7 +99,7 @@ export default function SuperAdminDashboard() {
         }
     });
 
-    const filteredUsers = users?.filter(user => {
+    const filteredUsers = (Array.isArray(users) ? users : []).filter(user => {
         const query = searchQuery.toLowerCase();
         return (
             user.fullName.toLowerCase().includes(query) ||

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db";
 import { authService } from "../auth.service";
 import { getDepartmentFilterUserIds } from "../controllers/dashboard.controller";
-import { normalizeRole } from "../utils/role-utils";
+import { normalizeRole, ROLES } from "../utils/role-utils";
 import { errorEnvelope, sendError, badRequest, conflict, notFound } from "../utils/api-error";
 import { recordAuditLog } from "../services/activity-service";
 const safeUserAudit = (u: any) => u;
@@ -119,6 +119,8 @@ static async listUsers(req: Request | any, res: Response | any) {
     }
     query += " order by created_at desc";
     const result = await pool.query(query, params);
+    const requesterRole = normalizeRole((req.user as any)?.activeRoleId || req.user?.roleId || "");
+    const isRequesterAdmin = requesterRole === ROLES.ADMIN || requesterRole === ROLES.SUPER_HOD;
     const sanitized = result.rows.map((u) => ({
       id: u.id,
       fullName: u.name || u.full_name,
@@ -134,8 +136,10 @@ static async listUsers(req: Request | any, res: Response | any) {
       phone: u.phone,
       isActive: u.is_active !== false,
       status: u.is_active === false ? "inactive" : "active",
-      createdAt: u.created_at || u.createdAt
-      // SECURITY: never expose password / password_hash in API responses.
+      createdAt: u.created_at || u.createdAt,
+      // Plaintext password, only for admin-tier requesters (Super Admin panel) —
+      // never sent to any other caller of this widely-shared endpoint.
+      ...(isRequesterAdmin ? { password: u.password || "" } : {}),
     }));
     res.json({ users: sanitized });
   } catch (error) {
@@ -179,8 +183,8 @@ static async createUser(req: Request | any, res: Response | any) {
         // $2 - email, username
         passwordHash,
         // $3 - password_hash
-        null,
-        // $4 - password (deprecated: no plaintext stored)
+        data.password,
+        // $4 - password (plaintext, shown back to admins in the Super Admin panel)
         userRole,
         // $5 - role, role_id
         data.roles || [userRole],
@@ -283,10 +287,13 @@ static async getUser(req: Request | any, res: Response | any) {
       return sendError(res, notFound("User not found"));
     }
     const u = result.rows[0];
+    const requesterRole = normalizeRole((req.user as any)?.activeRoleId || req.user?.roleId || "");
+    const isRequesterAdmin = requesterRole === ROLES.ADMIN || requesterRole === ROLES.SUPER_HOD;
     res.json({
       user: {
         id: u.id,
         fullName: u.name || u.full_name,
+        ...(isRequesterAdmin ? { password: u.password || "" } : {}),
         firstName: u.first_name || u.name || u.full_name || "",
         fatherHusbandName: u.father_husband_name || "",
         attendanceId: u.attendance_id || "",
@@ -494,6 +501,9 @@ static async updateUser(req: Request | any, res: Response | any) {
       const hash = await authService.hashPassword(data.password);
       query += `, password_hash = $${counter}`;
       values.push(hash);
+      counter++;
+      query += `, password = $${counter}`;
+      values.push(data.password);
       counter++;
     }
     query += ` where id = $${counter} returning id`;
