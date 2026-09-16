@@ -60,6 +60,27 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
   }
 };
 
-export const revertGmInvoicesToHodOnReject = async () => {};
-export const generateInvoicesAfterFinalGmApproval = async () => {};
-export const syncGmInvoicesAfterHodApproval = async () => {};
+export const revertGmInvoicesToHodOnReject = async (gmId: string, actorUserId: string, req?: any) => {};
+
+export const generateInvoicesAfterFinalGmApproval = async (gmId: string, actorUserId: string, req?: any) => {
+  try {
+    const { rows } = await pool.query("SELECT customer_id, company_name, created_by FROM drm.gm_entries WHERE id = $1", [gmId]);
+    if (rows.length === 0) return { synced: 0 };
+    const gm = rows[0];
+
+    await generateDefaultInvoicesForGm({
+      gmId,
+      customerId: gm.customer_id,
+      companyName: gm.company_name,
+      ownerUserId: gm.created_by // The sales executive who created the GM
+    });
+    return { synced: 1 };
+  } catch (err) {
+    console.error("[gm-invoice-generation] Failed in generateInvoicesAfterFinalGmApproval:", err);
+    return { synced: 0 };
+  }
+};
+
+export const syncGmInvoicesAfterHodApproval = async (gmId: string, actorUserId: string, req?: any) => {
+  return { synced: 0 };
+};

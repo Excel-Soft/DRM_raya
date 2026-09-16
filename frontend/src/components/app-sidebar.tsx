@@ -224,7 +224,7 @@ const menuItems: MenuItem[] = [
   {
     title: "Account", icon: DollarSign, permKey: "Account",
     items: [
-      { title: "Create GM", url: "/sale/commission-verification", icon: Star },
+      { title: "Create GM", url: "/account/gm-entries", icon: Star },
       { title: "Add Temp GM", url: "/account/temp-gm", icon: Clock },
       { title: "Add Refund GM", url: "/account/refund-gm", icon: RotateCcw },
       { title: "Donations", url: "/account/donations", icon: Globe },

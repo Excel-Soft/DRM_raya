@@ -13,4 +13,4 @@ function makeStub(label: string): any {
   });
 }
 
-export const transitionWorkflowStatus = makeStub("transitionWorkflowStatus");
+export const transitionWorkflowStatus: <T = any>(args: any) => Promise<any> = makeStub("transitionWorkflowStatus");
