@@ -616,10 +616,12 @@ async function ensureInvoiceNumberSchema(client: {
   );
   // Keep the sequence ahead of whatever the backfill just assigned so the
   // next real INSERT's DEFAULT can't collide with a backfilled number.
+  // Non-numeric values (e.g. "AUTO-1002" from the manual/auto invoice-number
+  // distinction elsewhere) are excluded from the cast instead of crashing it.
   await client.query(
     `SELECT setval(
        'drm.product_posting_invoice_number_seq',
-       GREATEST(1001, (SELECT COALESCE(MAX(invoice_number::int), 1000) FROM drm.product_posting_invoices))
+       GREATEST(1001, (SELECT COALESCE(MAX(invoice_number::int) FILTER (WHERE invoice_number ~ '^[0-9]+$'), 1000) FROM drm.product_posting_invoices))
      )`,
   );
   await client.query(
