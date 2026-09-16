@@ -56,14 +56,8 @@ function invoiceReceiptItemName(inv: any): string {
     }
 }
 
-/** Item-description sub-line: fixed unit-count text per service type. */
 function invoiceReceiptItemDetail(inv: any): string {
-    switch (inv?.invoiceType) {
-        case "LISTING_PAGE": return "1";
-        case "MINIWEBSITE": return "1";
-        case "PRODUCT_POSTING": return "100";
-        default: return `${inv?.companyName || "Client"} Details`;
-    }
+    return `${inv?.companyName || "Client"} Details`;
 }
 
 /** Build the shape InvoiceReceipt expects (same fixed WebExcels "from" block and
