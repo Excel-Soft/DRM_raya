@@ -644,6 +644,11 @@ export default function HodDashboard() {
   // "Please fill this" errors only appear after a real attempt, not while
   // the form is still being read/filled in for the first time.
   const [gmSubmitAttempted, setGmSubmitAttempted] = useState(false);
+  // Tracks the raw apiRequest call below (not a useMutation, so it has no
+  // built-in isPending) — without this, the Approve & Save button never
+  // actually disables while a request is in flight, letting a double-click
+  // fire two hod-approve requests that race the same row's status guard.
+  const [gmActionSubmitting, setGmActionSubmitting] = useState(false);
 
   const GM_APPROVAL_REQUIRED_FIELDS: { key: string; label: string }[] = [
     { key: "drmId", label: "Company ID" },
@@ -2614,14 +2619,14 @@ export default function HodDashboard() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setGmDialogOpen(false)}>
+            <Button variant="outline" disabled={gmActionSubmitting} onClick={() => setGmDialogOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={!gmComment || !gmComment.trim() || approveMutation.isPending || rejectMutation.isPending}
+              disabled={!gmComment || !gmComment.trim() || gmActionSubmitting}
               className={gmApprovalStatus === "Rejected" ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"}
               onClick={() => {
-                if (!selectedGmEntry) return;
+                if (!selectedGmEntry || gmActionSubmitting) return;
 
                 if (!gmApprovalStatus || gmApprovalStatus === "Select Status" || gmApprovalStatus === "Pending") {
                   toast({
@@ -2704,6 +2709,7 @@ export default function HodDashboard() {
                 };
 
                 // We need to use a custom mutation or just fetch directly here since the existing mutation is rigid
+                setGmActionSubmitting(true);
                 apiRequest("POST", url, payload)
                   .then(async (res) => {
                     if (!res.ok) {
@@ -2724,6 +2730,9 @@ export default function HodDashboard() {
                   })
                   .catch((err) => {
                     toast({ title: "Error", description: err.message || "Failed to update", variant: "destructive" });
+                  })
+                  .finally(() => {
+                    setGmActionSubmitting(false);
                   });
               }}
             >
