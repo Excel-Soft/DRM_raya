@@ -2756,6 +2756,20 @@ export function registerSalesRoutes(app: Express) {
             console.error("Failed to auto-onboard new customer into service module:", scErr);
           }
         }
+        
+        // Log an initial activity so the customer isn't immediately swept into the Public Pool by syncPublicPool()
+        if (customer?.id) {
+          try {
+            await leadActivitiesRepository.log({
+              customerId: customer.id,
+              action: "edit", // Or a new "create" action if your schema supports it, "edit" is safe.
+              performedBy: req.user.userId,
+              note: "Customer created",
+            });
+          } catch (e) {
+            console.error("Failed to log initial activity for new customer:", e);
+          }
+        }
       }
 
       return res.status(201).json({
