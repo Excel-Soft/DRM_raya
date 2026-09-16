@@ -172,12 +172,10 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
-      // Auto-refresh: poll every 30s + refetch when user returns to tab
-      // Dynamic interval: stop polling if the last request failed (circuit breaker protection)
-      refetchInterval: (query: any) => (query.state.status === "error" ? false : 30_000),
-      refetchOnWindowFocus: true,       // re-fetch when user switches back to tab
-      refetchIntervalInBackground: false, // stop polling when tab is hidden (saves bandwidth)
-      staleTime: 0,                     // always treat cached data as stale → immediate refetch on mount
+      refetchInterval: false,           // disabled global polling to prevent network spam
+      refetchOnWindowFocus: false,      // disabled to prevent spamming when tabbing back and forth
+      refetchIntervalInBackground: false,
+      staleTime: 60 * 1000,             // cache data for 1 minute before refetching on mount
       gcTime: 5 * 60 * 1000,           // keep unused cache for 5 minutes
       // Exponential backoff for retries to avoid overwhelming backend/DB
       retry: 2,

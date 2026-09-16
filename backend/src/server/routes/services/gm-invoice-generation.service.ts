@@ -9,9 +9,9 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
   }
 
   const defaultServices = [
-    { projectName: "Alibaba Product Posting", invoiceType: "Product Posting" },
-    { projectName: "Alibaba Minisite", invoiceType: "Minisite" },
-    { projectName: "Listing Page", invoiceType: "Listing Page" },
+    { projectName: "Alibaba Product Posting", invoiceType: "PRODUCT_POSTING" },
+    { projectName: "Alibaba Minisite", invoiceType: "MINIWEBSITE" },
+    { projectName: "Listing Page", invoiceType: "LISTING_PAGE" },
   ];
 
   for (const svc of defaultServices) {

@@ -325,13 +325,10 @@ export default function AccountGmEntries() {
   const loanCount = allEntries.filter(e => e.isLoan).length;
   const partialCount = allEntries.filter(e => e.isPartialPayment).length;
 
-  const approvedCount = allEntries.filter(e => e.status === "Approved").length;
-  const hodApprovedCount = allEntries.filter(e => e.status === "HOD Approved").length;
-  const pendingCount = allEntries.filter(e => e.status === "Pending").length;
-  const hodRejectedCount = allEntries.filter(e => e.status === "HOD Rejected").length;
-  // Account Rejected = entries where account manager rejected (status='Rejected' or 'Account Rejected')
-  const acctRejectedCount = allEntries.filter(e => e.status === "Account Rejected" || e.status === "Rejected").length;
-  // Withdrawn = only entries that were explicitly withdrawn (not rejected by account manager)
+  const hodApprovedCount = allEntries.filter(e => e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending").length;
+  const pendingCount = allEntries.filter(e => e.approvalStatus === "pending_hod").length;
+  const hodRejectedCount = allEntries.filter(e => e.hodStatus === "rejected").length;
+  const acctRejectedCount = allEntries.filter(e => e.accountManagerStatus === "rejected").length;
   const withdrawnCount = allEntries.filter(e => e.status === "Withdrawn").length;
 
   const filteredEntries = useMemo(() => {
@@ -343,14 +340,16 @@ export default function AccountGmEntries() {
 
     // status filter
     if (statusFilter !== "all") {
-      if (statusFilter === "Withdrawn") {
-        // Withdrawn tab: only explicit withdrawals (not account-rejected)
-        f = f.filter(e => e.status === "Withdrawn");
+      if (statusFilter === "HOD Approved") {
+        f = f.filter(e => e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending");
+      } else if (statusFilter === "Pending") {
+        f = f.filter(e => e.approvalStatus === "pending_hod");
+      } else if (statusFilter === "HOD Rejected") {
+        f = f.filter(e => e.hodStatus === "rejected");
       } else if (statusFilter === "Account Rejected") {
-        // Account Rejected tab: both 'Rejected' and 'Account Rejected'
-        f = f.filter(e => e.status === "Rejected" || e.status === "Account Rejected");
-      } else {
-        f = f.filter(e => e.status === statusFilter);
+        f = f.filter(e => e.accountManagerStatus === "rejected");
+      } else if (statusFilter === "Withdrawn") {
+        f = f.filter(e => e.status === "Withdrawn");
       }
     }
 
@@ -463,7 +462,6 @@ export default function AccountGmEntries() {
         {([
           { key: "all", label: "All Entries", count: allEntries.length, color: "blue" },
           { key: "HOD Approved", label: "HOD Approved", count: hodApprovedCount, color: "indigo" },
-          { key: "Approved", label: "Approved", count: approvedCount, color: "green" },
           { key: "Pending", label: "Pending", count: pendingCount, color: "amber" },
           { key: "HOD Rejected", label: "HOD Rejected", count: hodRejectedCount, color: "red" },
           { key: "Account Rejected", label: "Account Rejected", count: acctRejectedCount, color: "orange" },
@@ -473,7 +471,6 @@ export default function AccountGmEntries() {
           const colorMap: Record<string, { active: string; badge: string }> = {
             blue: { active: "bg-blue-600 text-white", badge: isActive ? "bg-white text-blue-700" : "bg-blue-500 text-white" },
             indigo: { active: "bg-indigo-600 text-white", badge: isActive ? "bg-white text-indigo-700" : "bg-indigo-500 text-white" },
-            green: { active: "bg-green-600 text-white", badge: isActive ? "bg-white text-green-700" : "bg-green-500 text-white" },
             amber: { active: "bg-amber-500 text-white", badge: isActive ? "bg-white text-amber-700" : "bg-amber-500 text-white" },
             red: { active: "bg-red-600 text-white", badge: isActive ? "bg-white text-red-700" : "bg-red-500 text-white" },
             orange: { active: "bg-orange-600 text-white", badge: isActive ? "bg-white text-orange-700" : "bg-orange-500 text-white" },
