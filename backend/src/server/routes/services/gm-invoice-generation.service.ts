@@ -18,7 +18,6 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
     try {
       await pool.query(
         `INSERT INTO drm.product_posting_invoices (
-          invoice_number,
           amount,
           sales_exec_id,
           customer_id,
@@ -31,7 +30,6 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
           generated_by,
           generated_at
         ) VALUES (
-          'AUTO-' || nextval('drm.product_posting_invoice_number_seq'),
           0,
           $1,
           $2,
@@ -64,7 +62,15 @@ export const revertGmInvoicesToHodOnReject = async (gmId: string, actorUserId: s
 
 export const generateInvoicesAfterFinalGmApproval = async (gmId: string, actorUserId: string, req?: any) => {
   try {
-    const { rows } = await pool.query("SELECT customer_id, company_name, created_by FROM drm.gm_entries WHERE id = $1", [gmId]);
+    const { rows } = await pool.query(`
+      SELECT 
+        c.id as customer_id, 
+        gm.company_name, 
+        gm.created_by 
+      FROM drm.gm_entries gm 
+      LEFT JOIN drm.customers c ON gm.drm_id = c.drm_id 
+      WHERE gm.id = $1
+    `, [gmId]);
     if (rows.length === 0) return { synced: 0 };
     const gm = rows[0];
 
