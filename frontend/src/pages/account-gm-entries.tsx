@@ -10,6 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import { PartialReceiptsDialog } from "@/components/gm/PartialReceiptsDialog";
 import { LoanTermsDialog } from "@/components/gm/LoanTermsDialog";
+import { GmDetailInvoicesModal } from "@/components/gm-detail-invoices-modal";
+import { AccountApprovalModal } from "@/components/account-approval-modal";
 import {
   Plus, Eye, Pencil, Trash2, ChevronLeft, ChevronRight,
   Search, Monitor, UserCog, X, Users, CheckCircle, XCircle, Wallet, Landmark
@@ -115,7 +117,7 @@ export default function AccountGmEntries() {
 
   // ── Dialogs
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [detailGmId, setDetailGmId] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<GmEntry | null>(null);
 
@@ -123,13 +125,9 @@ export default function AccountGmEntries() {
   const [partialDialogOpen, setPartialDialogOpen] = useState(false);
   const [loanDialogOpen, setLoanDialogOpen] = useState(false);
   const [approveModalEntry, setApproveModalEntry] = useState<GmEntry | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<string>("Cash Received");
-  const [alibabaStatus, setAlibabaStatus] = useState<string>("Approved");
 
   const closeApproveModal = () => {
     setApproveModalEntry(null);
-    setPaymentStatus("Cash Received");
-    setAlibabaStatus("Approved");
   };
   const [stage3Entry, setStage3Entry] = useState<GmEntry | null>(null);
 
@@ -287,29 +285,6 @@ export default function AccountGmEntries() {
     onError: () => toast({ title: "Error", description: "Failed to remove member", variant: "destructive" }),
   });
 
-  // ── Approve / Reject mutations (Account Manager action on HOD-approved entries) ──
-  const approveMutation = useMutation({
-    mutationFn: async ({ id, paymentStatus, alibabaStatus }: { id: string, paymentStatus: string, alibabaStatus: string }) => 
-      mutationRequest("POST", `/api/gm-pool/${id}/account-manager-approve`, { paymentStatus, alibabaStatus }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
-      closeApproveModal();
-      toast({ title: "✅ Approved", description: "GM Entry approved successfully" });
-    },
-    onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to approve entry", variant: "destructive" }),
-  });
-
-  const rejectMutation = useMutation({
-    mutationFn: (id: string) => mutationRequest("POST", `/api/gm-pool/${id}/account-manager-reject`, { comment: "Rejected by Account Manager" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
-      closeApproveModal();
-      toast({ title: "❌ Rejected", description: "GM Entry rejected", variant: "destructive" });
-    },
-    onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to reject entry", variant: "destructive" }),
-  });
-
-
   // ── Filter logic ──────────────────────────────────────────────────────────
   const allEntries: GmEntry[] = (rawData?.data || []).map((e: any) => ({
     ...e,
@@ -381,7 +356,7 @@ export default function AccountGmEntries() {
       return (u.fullName || u.name || "").toLowerCase().includes(s) || u.email.toLowerCase().includes(s);
     });
 
-  const handleViewEntry = (entry: GmEntry) => { setSelectedEntry(entry); setViewDialogOpen(true); };
+  const handleViewEntry = (entry: GmEntry) => { setDetailGmId(entry.id); };
   const handleEditEntry = (entry: GmEntry) => {
     setSelectedEntry(entry);
     form.reset({
@@ -822,36 +797,7 @@ export default function AccountGmEntries() {
       </Dialog>
 
       {/* ════════════ View Dialog ════════════ */}
-      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>GM Entry Details</DialogTitle></DialogHeader>
-          {selectedEntry && (
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              {[
-                ["GM Type", selectedEntry.gmType], ["Status", selectedEntry.status],
-                ["DRM ID", selectedEntry.drmId], ["Member ID", selectedEntry.memberId || "—"],
-                ["Order ID", selectedEntry.orderId || "—"], ["Company", selectedEntry.companyName],
-                ["Sale Person", selectedEntry.salesPersonName || "—"], ["Added By", selectedEntry.addedByName || "—"],
-                ["Package", selectedEntry.packageType], ["Type", selectedEntry.entryType],
-                ["USD", fmtUsd(selectedEntry.amountUsd)], ["Customer $", fmtUsd(selectedEntry.customerDollar)],
-                ["$ Rate", selectedEntry.dollarRate || "—"], ["PKR", fmtPkr(selectedEntry.amountPkr)],
-              ].map(([l, v]) => (
-                <div key={l} className="bg-gray-50 rounded p-2 dark:bg-zinc-900">
-                  <p className="text-xs text-gray-500 dark:text-zinc-400">{l}</p>
-                  <p className="font-medium">{v}</p>
-                </div>
-              ))}
-              {selectedEntry.notes && (
-                <div className="col-span-2 bg-gray-50 rounded p-2 dark:bg-zinc-900">
-                  <p className="text-xs text-gray-500 dark:text-zinc-400">Notes</p>
-                  <p>{selectedEntry.notes}</p>
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter><Button variant="outline" onClick={() => setViewDialogOpen(false)}>Close</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <GmDetailInvoicesModal gmId={detailGmId} onClose={() => setDetailGmId(null)} />
 
       {/* ════════════ Edit Dialog ════════════ */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
@@ -1024,65 +970,24 @@ export default function AccountGmEntries() {
         onOpenChange={setLoanDialogOpen}
       />
 
-      {/* ── Accountant Approve Modal ── */}
-      <Dialog open={!!approveModalEntry} onOpenChange={(open) => !open && closeApproveModal()}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Accountant Approve</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-4 py-4">
-            <div>
-              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Name</label>
-              <Input value={approveModalEntry?.companyName || ""} readOnly className="mt-1 bg-gray-50" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Payment</label>
-                <select 
-                  className="w-full mt-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={paymentStatus}
-                  onChange={e => setPaymentStatus(e.target.value)}
-                >
-                  <option value="Cash Received">Cash Received</option>
-                  <option value="Online Paid">Online Paid</option>
-                  <option value="Customer Paid">Customer Paid</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Alibaba</label>
-                <select 
-                  className="w-full mt-1 border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  value={alibabaStatus}
-                  onChange={e => setAlibabaStatus(e.target.value)}
-                >
-                  <option value="Approved">Approved</option>
-                  <option value="Rejected">Rejected</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <DialogFooter className="flex justify-end gap-2">
-            <Button variant="outline" onClick={closeApproveModal}>Close</Button>
-            <Button
-              className="bg-green-600 hover:bg-green-700 text-white"
-              onClick={() => {
-                if (alibabaStatus === "Rejected") {
-                  rejectMutation.mutate(approveModalEntry!.id);
-                } else {
-                  approveMutation.mutate({
-                    id: approveModalEntry!.id,
-                    paymentStatus,
-                    alibabaStatus
-                  });
-                }
-              }}
-              disabled={approveMutation.isPending || rejectMutation.isPending}
-            >
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* ── Accountant Approve Modal (shared with the Account Manager dashboard's "+" action) ── */}
+      <AccountApprovalModal
+        open={!!approveModalEntry}
+        onOpenChange={(open) => !open && closeApproveModal()}
+        gmEntry={
+          approveModalEntry
+            ? {
+                ...approveModalEntry,
+                amountUsd: String(
+                  Math.max(
+                    0,
+                    Number(approveModalEntry.amountUsd || 0) - Number((approveModalEntry as any).abDiscount || 0)
+                  )
+                ),
+              }
+            : null
+        }
+      />
     </div>
   );
 }

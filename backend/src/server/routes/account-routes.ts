@@ -996,6 +996,13 @@ export function registerAccountRoutes(app: Express) {
       }));
 
       const derivePaymentStatus = (r: any): string => {
+        // Until the Account Manager has approved the GM itself, its pay status must
+        // read PENDING regardless of how far its individual invoices have progressed
+        // (an invoice can be HOD/Account approved on its own timeline before the GM
+        // as a whole is approved) — otherwise this badge misleadingly shows
+        // APPROVED/PAID for a GM that's still sitting at HOD or awaiting the
+        // Account Manager's own approve action.
+        if ((r.approval_status || "").toLowerCase() !== "approved") return "PENDING";
         if (r.any_paid) return "PAID";
         if (r.any_approved) return "APPROVED";
         if (r.any_pending) return "PENDING";
@@ -1098,13 +1105,21 @@ export function registerAccountRoutes(app: Express) {
       const id = String(req.params.id);
 
       const gmRes = await pool.query(
-        `SELECT id, gm_type, company_name, sales_person_name, package_type, status,
-                COALESCE(amount_usd,0)::numeric AS amount_usd,
-                COALESCE(alibaba_discount_usd,0)::numeric AS alibaba_discount_usd,
-                customer_dollar, created_at,
-                COALESCE(is_loan,false) AS is_loan, COALESCE(is_partial_payment,false) AS is_partial_payment
-         FROM drm.gm_entries
-         WHERE id::text = $1 AND COALESCE(is_deleted,false) = false`,
+        `SELECT g.id, g.gm_type, g.company_name, g.sales_person_name, g.package_type, g.status, g.approval_status,
+                g.drm_id, g.member_id, g.order_id, g.entry_type,
+                COALESCE(g.amount_usd,0)::numeric AS amount_usd,
+                COALESCE(g.alibaba_discount_usd,0)::numeric AS alibaba_discount_usd,
+                COALESCE(g.extra_discount_usd,0)::numeric AS extra_discount_usd,
+                COALESCE(g.extra_discount_pkr,0)::numeric AS extra_discount_pkr,
+                g.customer_dollar, g.dollar_rate,
+                COALESCE(g.amount_pkr,0)::numeric AS amount_pkr,
+                g.payment_status, g.notes, g.dropout, g.extension, g.installments,
+                g.payment_proof_url, g.created_at,
+                COALESCE(cu.full_name, cu.name, cu.username) AS added_by_name,
+                COALESCE(g.is_loan,false) AS is_loan, COALESCE(g.is_partial_payment,false) AS is_partial_payment
+         FROM drm.gm_entries g
+         LEFT JOIN drm.users cu ON cu.id::text = g.created_by::text
+         WHERE g.id::text = $1 AND COALESCE(g.is_deleted,false) = false`,
         [id],
       );
       if (gmRes.rows.length === 0) {
@@ -1233,15 +1248,19 @@ export function registerAccountRoutes(app: Express) {
       const anyPaid = invoices.some((i) => (i.paidAmount != null && Number(i.paidAmount) > 0) || i.paidDate != null);
       const anyApproved = invoices.some((i) => i.status === "APPROVED");
       const anyPending = invoices.some((i) => i.status === "PENDING_HOD" || i.status === "PENDING_ACCOUNT");
-      const paymentConfirmationStatus = anyPaid
-        ? "PAID"
-        : anyApproved
-          ? "APPROVED"
-          : anyPending
-            ? "PENDING"
-            : invoices.length > 0
-              ? "OTHER"
-              : "NONE";
+      // Same gate as /api/accounts/dashboard/gm-summary's derivePaymentStatus: the
+      // GM's own Account Manager approval always wins over individual invoice progress.
+      const paymentConfirmationStatus = (g.approval_status || "").toLowerCase() !== "approved"
+        ? "PENDING"
+        : anyPaid
+          ? "PAID"
+          : anyApproved
+            ? "APPROVED"
+            : anyPending
+              ? "PENDING"
+              : invoices.length > 0
+                ? "OTHER"
+                : "NONE";
 
       return sendSuccess(res, {
         gm: {
@@ -1254,6 +1273,24 @@ export function registerAccountRoutes(app: Express) {
           amountUsd: String(orderDollar),
           customerDollar: g.customer_dollar != null ? String(g.customer_dollar) : null,
           createdAt: g.created_at,
+          // Full original Add-GM-form entry, for the detail modal's "GM Details" section.
+          drmId: g.drm_id || null,
+          memberId: g.member_id || null,
+          orderId: g.order_id || null,
+          entryType: g.entry_type || null,
+          packagePriceUsd: String(g.amount_usd ?? "0"),
+          alibabaDiscountUsd: String(g.alibaba_discount_usd ?? "0"),
+          extraDiscountUsd: String(g.extra_discount_usd ?? "0"),
+          extraDiscountPkr: String(g.extra_discount_pkr ?? "0"),
+          dollarRate: g.dollar_rate != null ? String(g.dollar_rate) : null,
+          amountPkr: String(g.amount_pkr ?? "0"),
+          paymentStatus: g.payment_status || null,
+          notes: g.notes || null,
+          dropout: g.dropout || null,
+          extension: g.extension || null,
+          installments: g.installments || null,
+          paymentProofUrl: g.payment_proof_url || null,
+          addedByName: g.added_by_name || null,
         },
         invoices,
         partialReceipts,

@@ -720,6 +720,11 @@ export function registerGmPoolRoutes(app: Express) {
       return res.json({
         data: dataResult.rows.map((row: any) => ({
           ...row,
+          // `status` below is overwritten with paymentStatus (almost always set),
+          // so the raw lifecycle status ("Withdrawn"/"Pending"/"Rejected") is kept
+          // under its own key for anything that needs the real value (e.g. telling
+          // a withdrawn-and-reset entry apart from one already fixed & resubmitted).
+          rawStatus: row.status ?? null,
           status: row.paymentStatus || row.status || null,
           bvDate: null,
           accountant: null,
@@ -2083,19 +2088,30 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
-  // 2. HOD approves withdrawal → entry becomes Withdrawn
+  // 2. HOD approves withdrawal → entry treated exactly like a real HOD rejection
+  // (approval_status = 'rejected_by_hod', not 'pending_hod'): it must NOT sit in
+  // HOD's normal pending-approval queue as if freshly submitted, it must show
+  // "HOD Rejected" to the sales exec, and Edit already becomes "Resubmit to HOD"
+  // for that status with zero extra frontend logic needed. Any invoices already
+  // generated for this GM are hard-deleted in the same transaction so a later
+  // resubmit-and-reapprove cycle regenerates a clean set instead of duplicating
+  // them (generateDefaultInvoicesForGm has no gm_id conflict guard).
   router.post("/gm-pool/:id/withdraw-approve", requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_APPROVE_HOD, { auditUnauthorizedAttempt: true }), async (req, res) => {
+    const client = await pool.connect();
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
       const withdrawApproveParams: any[] = [id, req.user.userId];
       const withdrawApproveScope = await gmApprovalScopeClause(req, withdrawApproveParams);
-      const result = await pool.query(
+
+      await client.query("BEGIN");
+      const result = await client.query(
         `UPDATE drm.gm_entries
          SET withdrawal_status = 'approved',
              status = 'Withdrawn',
-             approval_status = 'pending_hod',
-             hod_status = 'Pending',
+             approval_status = 'rejected_by_hod',
+             hod_status = 'Rejected',
+             final_status = 'rejected',
              account_manager_status = 'pending',
              super_hod_status = NULL,
              hod_approved_at = NULL,
@@ -2109,11 +2125,26 @@ export function registerGmPoolRoutes(app: Express) {
          RETURNING id`,
         withdrawApproveParams
       );
-      if (!result.rowCount) return res.status(404).json({ error: "No pending withdrawal request found" });
-      return res.json({ success: true, message: "Withdrawal approved. Entry marked as Withdrawn." });
+      if (!result.rowCount) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "No pending withdrawal request found" });
+      }
+      const invoicesDeleted = await client.query(
+        `DELETE FROM drm.product_posting_invoices WHERE gm_id = $1 RETURNING id`,
+        [id]
+      );
+      await client.query("COMMIT");
+      return res.json({
+        success: true,
+        message: "Withdrawal approved. Entry marked as Withdrawn and returned to Sales as HOD Rejected.",
+        invoicesDeleted: invoicesDeleted.rowCount,
+      });
     } catch (err) {
+      try { await client.query("ROLLBACK"); } catch {}
       console.error("[gm-pool] withdraw-approve error:", err);
       return res.status(500).json({ error: "Failed to approve withdrawal" });
+    } finally {
+      client.release();
     }
   });
 

@@ -761,9 +761,6 @@ export default function AccountManagerDashboard() {
                                                     </TableCell>
                                                     <TableCell className="font-medium text-slate-700 dark:text-zinc-400">
                                                         {isInvoice ? item.company : item.companyName}
-                                                        {(isInvoice || (item.status === "HOD Approved")) && (
-                                                            <Badge variant="outline" className="ml-2 text-[10px] bg-amber-100 border-amber-200 text-amber-700">HOD Approved</Badge>
-                                                        )}
                                                     </TableCell>
                                                     <TableCell className="text-slate-600 dark:text-zinc-300">
                                                         {item.salesPersonName || item.submittedByName || "-"}

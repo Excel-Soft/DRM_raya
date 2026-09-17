@@ -38,6 +38,14 @@ interface PendingProject {
     sentToManager?: boolean;
     hodApprovedAt?: string | null;
     accountsApprovedAt?: string | null;
+    departmentType?: string | null;
+}
+
+function departmentLabel(departmentType?: string | null): string {
+    const normalized = (departmentType || "").toUpperCase();
+    if (normalized === "PRODUCT_POSTING") return "P&P";
+    if (normalized === "DND") return "D&D";
+    return "Manager";
 }
 
 export default function PmsPendingApprovals() {
@@ -272,7 +280,7 @@ export default function PmsPendingApprovals() {
                                                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                                                             <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
                                                         </span>
-                                                        Sent to Manager
+                                                        Sent to {departmentLabel(row.departmentType)}
                                                     </span>
                                                 ) : showRejection ? (
                                                     <span className="inline-flex text-[11px] px-3 py-1 rounded-full font-medium shadow-sm border bg-red-100 text-red-700 border-red-200">
@@ -327,7 +335,7 @@ export default function PmsPendingApprovals() {
                                                 {row.sentToManager ? (
                                                     <div className="flex flex-col gap-1">
                                                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-[3px] text-[12px] font-semibold">
-                                                            ✓ Documents Sent {row.rejectionReason ? 'Again ' : ''}to Manager
+                                                            ✓ Documents Sent {row.rejectionReason ? 'Again ' : ''}to {departmentLabel(row.departmentType)}
                                                         </span>
                                                         <button
                                                             onClick={() => handleUploadClick(row.id)}

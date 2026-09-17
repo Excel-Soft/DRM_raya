@@ -45,6 +45,7 @@ type GmPoolRow = {
   drmId?: string;
   dropout?: string;
   status?: string;
+  rawStatus?: string;
   paymentStatus?: string;
   hodStatus?: string;
   accountantStatus?: string;
@@ -1129,11 +1130,11 @@ export default function GmPoolAddGm() {
                 <p className="text-[11px] text-muted-foreground">What the customer actually pays (PKR ÷ Dollar Rate).</p>
               </div>
               <div className="space-y-1">
-                <Label>AB Dollar</Label>
+                <Label>AB Discount</Label>
                 <Input
                   type="number"
                   min={0}
-                  placeholder="AB Dollar"
+                  placeholder="AB Discount"
                   value={form.alibabaDiscount}
                   onChange={(e) => updateField("alibabaDiscount", e.target.value)}
                 />
@@ -1155,7 +1156,7 @@ export default function GmPoolAddGm() {
                       : ""
                   }
                 />
-                <p className="text-[11px] text-muted-foreground">Package price minus AB Dollar — what the order should cost, not a PKR conversion.</p>
+                <p className="text-[11px] text-muted-foreground">Package price minus AB Discount — what the order should cost, not a PKR conversion.</p>
               </div>
             </div>
 
@@ -1791,14 +1792,19 @@ export default function GmPoolAddGm() {
                                 // re-enters the normal HOD queue — but the main `status` column is
                                 // left as "Withdrawn" until that edit happens. Recognize that state
                                 // so Edit isn't stuck hidden with only Delete available.
-                                // The `gmStatus === "withdrawn"` check matters: `withdrawal_status`
-                                // itself is never cleared once a withdrawal is ever approved, so
-                                // without it this would stay true forever, on every future pending_hod
-                                // cycle — even long after the entry was already fixed and resubmitted
-                                // once (`gmStatus` moves to "pending" on resubmit; only "withdrawn"
-                                // means genuinely not-yet-fixed).
+                                // Uses `rawStatus` (the true, un-overwritten status column), NOT
+                                // `gmStatus`/`row.status` — the list endpoint overwrites `status`
+                                // with paymentStatus whenever it's set (almost always), so `gmStatus`
+                                // can never actually equal "withdrawn" and this check would silently
+                                // never fire. The rawStatus check matters: `withdrawal_status` itself
+                                // is never cleared once a withdrawal is ever approved, so without it
+                                // this would stay true forever, on every future pending_hod cycle —
+                                // even long after the entry was already fixed and resubmitted once
+                                // (rawStatus moves to "pending" on resubmit; only "withdrawn" means
+                                // genuinely not-yet-fixed).
+                                const rawStatus = (row.rawStatus || "").toLowerCase().trim();
                                 const isWithdrawnReset =
-                                  row.withdrawalStatus === "approved" && status === "pending_hod" && gmStatus === "withdrawn";
+                                  row.withdrawalStatus === "approved" && status === "pending_hod" && rawStatus === "withdrawn";
 
                                 // Business Rule (applies to every role, including Admin/Super HOD):
                                 // Once a GM is submitted, Edit is hidden automatically. It ONLY

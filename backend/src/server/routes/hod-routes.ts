@@ -910,16 +910,25 @@ router.get("/verification/withdrawals", async (req, res) => {
   }
 });
 
-// HOD approves withdrawal request
+// HOD approves withdrawal request. Treated exactly like a real HOD rejection
+// (approval_status = 'rejected_by_hod', not 'pending_hod'): must not reappear
+// in HOD's normal pending-approval queue, must show "HOD Rejected" to Sales,
+// and Edit already becomes "Resubmit to HOD" for that status with zero extra
+// frontend logic. Invoices already generated for this GM are hard-deleted in
+// the same transaction so a later resubmit-and-reapprove cycle regenerates a
+// clean set instead of duplicating them.
 router.post("/verification/withdrawals/:id/approve", async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id } = req.params;
-    const result = await pool.query(
+    await client.query("BEGIN");
+    const result = await client.query(
       `UPDATE drm.gm_entries
        SET withdrawal_status = 'approved',
            status = 'Withdrawn',
-           approval_status = 'pending_hod',
-           hod_status = 'Pending',
+           approval_status = 'rejected_by_hod',
+           hod_status = 'Rejected',
+           final_status = 'rejected',
            account_manager_status = 'pending',
            super_hod_status = NULL,
            hod_approved_at = NULL,
@@ -933,13 +942,28 @@ router.post("/verification/withdrawals/:id/approve", async (req, res) => {
        RETURNING id`,
       [id, req.user!.userId]
     );
-    if (!result.rowCount) return res.status(404).json({ success: false, message: "No pending withdrawal request found" });
-    const response = { success: true, message: "Withdrawal approved. Entry marked as Withdrawn." };
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ success: false, message: "No pending withdrawal request found" });
+    }
+    const invoicesDeleted = await client.query(
+      `DELETE FROM drm.product_posting_invoices WHERE gm_id = $1 RETURNING id`,
+      [id]
+    );
+    await client.query("COMMIT");
+    const response = {
+      success: true,
+      message: "Withdrawal approved. Entry marked as Withdrawn and returned to Sales as HOD Rejected.",
+      invoicesDeleted: invoicesDeleted.rowCount,
+    };
     logApi(req, 200, response);
     return res.json(response);
   } catch (error) {
+    try { await client.query("ROLLBACK"); } catch {}
     console.error("HOD withdraw approve error:", error);
     return res.status(500).json({ success: false, message: "Failed to approve withdrawal" });
+  } finally {
+    client.release();
   }
 });
 

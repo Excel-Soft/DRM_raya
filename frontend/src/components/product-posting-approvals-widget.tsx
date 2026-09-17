@@ -33,11 +33,14 @@ function isMarkedFree(inv: any): boolean {
 
 /** Mirror of the backend `assertApprovalReadiness` rule so the UI can disable
  *  Approve for invoices the server would reject as INCOMPLETE_INVOICE. */
-function incompleteReasons(inv: any): string[] {
+function incompleteReasons(inv: any, role?: "HOD" | "Account Manager"): string[] {
     const missing: string[] = [];
     if (!inv?.customerId) missing.push("customer");
     if (!isMarkedFree(inv) && !(Number(inv?.amount) > 0)) missing.push("amount (or mark Free)");
     if (!inv?.invoiceType && !inv?.serviceType && !inv?.projectName) missing.push("type");
+    if (role === "Account Manager" && inv?.gmId && inv?.gmApprovalStatus !== "approved") {
+        missing.push("GM not yet approved");
+    }
     return missing;
 }
 
@@ -490,7 +493,7 @@ export function ProductPostingApprovalsWidget({
                                 amount: actionForm.method === "free" ? actionInv.amount : (actionForm.amount || actionInv.amount),
                                 paymentMethod: actionForm.method === "free" ? "free" : actionInv.paymentMethod,
                             };
-                            const gateReasons = incompleteReasons(previewInvForGate);
+                            const gateReasons = incompleteReasons(previewInvForGate, role);
                             return (
                                 <>
                                     <div className="p-6 space-y-5">
@@ -764,9 +767,9 @@ export function ProductPostingApprovalsWidget({
                                     <span>Type: <span className="text-foreground">{invoiceTypeLabel(inv)}</span></span>
                                     {inv.companyName && <span>Company: <span className="text-foreground">{inv.companyName}</span></span>}
                                 </div>
-                                {incompleteReasons(inv).length > 0 && (
+                                {incompleteReasons(inv, role).length > 0 && (
                                     <div className="text-[11px] text-amber-600 mb-2">
-                                        Cannot approve — missing: {incompleteReasons(inv).join(", ")}.
+                                        Cannot approve — missing: {incompleteReasons(inv, role).join(", ")}.
                                     </div>
                                 )}
 
@@ -814,7 +817,7 @@ export function ProductPostingApprovalsWidget({
                                         <Button
                                             variant="default" size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700"
                                             onClick={() => approveMutation.mutate({ id: inv.id, action: "APPROVE" })}
-                                            disabled={approveMutation.isPending || incompleteReasons(inv).length > 0}
+                                            disabled={approveMutation.isPending || incompleteReasons(inv, role).length > 0}
                                         >
                                             <Check className="h-3 w-3 mr-1" /> Approve
                                         </Button>
