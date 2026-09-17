@@ -78,6 +78,8 @@ type ActivitiesResponse = {
             methods: Record<
                 | "mobile"
                 | "whatsapp"
+                | "whCall"
+                | "inMeeting"
                 | "onsite"
                 | "email"
                 | "seminar"
@@ -86,7 +88,7 @@ type ActivitiesResponse = {
                 | "meeting"
                 | "aMinus"
                 | "bPlus",
-                { done: number; target: number }
+                { done: number; target: number; minutes?: number }
             >;
             totals: { activities: number; timeMinutes: number };
         }>;
@@ -468,20 +470,28 @@ export default function SalesManagerDashboard() {
         ...commonQueryOptions,
     });
     const assignedUsers = Array.isArray(assignedUsersRaw) ? assignedUsersRaw : (assignedUsersRaw?.users || []);
+    // The Activities team matrix is direct-reports-only — /api/users?assigned=true
+    // (like the backend's own activities query) always folds the requesting manager
+    // into "assigned" for other, broader use cases, so it must be filtered back out
+    // here or it reappears as a synthetic empty row below.
+    const nonManagerAssignedUsers = useMemo(
+        () => assignedUsers.filter((u: any) => !/manager|admin|hod|head|supervisor/i.test(String(u.role || u.rawRole || ""))),
+        [assignedUsers],
+    );
 
     const summary = summaryRes?.data || emptySummary.data;
     const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes?.data?.rows ?? [];
-    
+
     const availableActivityUsers = useMemo(() => {
-        const assignedNames = assignedUsers.map((u: any) => u.name || u.fullName);
+        const assignedNames = nonManagerAssignedUsers.map((u: any) => u.name || u.fullName);
         // Also include names from activities in case they are not in the assigned users list (e.g. self)
         const activityNames = activityRows.map(r => r.name);
         return ["All Users", ...Array.from(new Set([...assignedNames, ...activityNames]))];
-    }, [activityRows, assignedUsers]);
+    }, [activityRows, nonManagerAssignedUsers]);
 
     const filteredActivityRows = useMemo(() => {
         const userNamesWithActivities = new Set(activityRows.map(r => r.name?.toLowerCase()));
-        const emptyRows = assignedUsers
+        const emptyRows = nonManagerAssignedUsers
             .filter((u: any) => {
                 const n = (u.name || u.fullName || "").toLowerCase();
                 return !userNamesWithActivities.has(n);
@@ -492,15 +502,15 @@ export default function SalesManagerDashboard() {
                 methods: {} as any,
                 totals: { activities: 0, timeMinutes: 0 }
             }));
-            
+
         const allRows = [...activityRows, ...emptyRows];
-        
+
         // Deduplicate by name to be absolutely sure
         const uniqueRows = Array.from(new Map(allRows.map(r => [r.name?.toLowerCase(), r])).values());
-        
+
         if (activityUser === "All Users") return uniqueRows;
         return uniqueRows.filter((row) => row.name === activityUser);
-    }, [activityRows, activityUser, assignedUsers]);
+    }, [activityRows, activityUser, nonManagerAssignedUsers]);
 
     const queueItems: QueuePerformanceResponse["data"]["items"] = queueRes?.data?.items ?? [];
     const followUpItems: FollowUpsResponse["data"]["items"] = followUpsRes?.data?.items ?? [];
@@ -725,30 +735,6 @@ export default function SalesManagerDashboard() {
                                                 </tr>
                                             ) : (
                                                 <>
-                                                    <tr className="bg-slate-50 dark:bg-zinc-800/50 border-b border-slate-200 dark:border-zinc-700">
-                                                        <td className="px-3 py-2 font-bold text-slate-800 dark:text-zinc-200 whitespace-nowrap text-[11px]">Total</td>
-                                                        {activityColumns.map((col) => {
-                                                            const doneTotal = filteredActivityRows.reduce((acc, row) => acc + (row.methods[col.key as keyof typeof row.methods]?.done || 0), 0);
-                                                            const targetTotal = filteredActivityRows.reduce((acc, row) => acc + (row.methods[col.key as keyof typeof row.methods]?.target || 0), 0);
-                                                            const isGrade = col.key === "aMinus" || col.key === "bPlus";
-                                                            let val = "-";
-                                                            if (isGrade) val = String(doneTotal);
-                                                            else val = `${doneTotal}/${targetTotal}=${percent(doneTotal, targetTotal)}`;
-                                                            return (
-                                                                <td key={col.key} className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">
-                                                                    {val}
-                                                                </td>
-                                                            );
-                                                        })}
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">{filteredActivityRows.reduce((acc, row) => acc + row.totals.timeMinutes, 0)} M</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
-                                                    </tr>
                                                     {filteredActivityRows.slice((activityPage - 1) * 10, activityPage * 10).map((row) => (
                                                     <tr key={row.userId} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 border-b border-slate-100 dark:border-zinc-800 last:border-0">
                                                         <td className="px-3 py-2 font-semibold text-slate-700 dark:text-zinc-400 whitespace-nowrap text-[11px]">{row.name}</td>
@@ -762,9 +748,13 @@ export default function SalesManagerDashboard() {
                                                             } else {
                                                                 val = isGrade ? "0" : `0/${col.label.match(/\((\d+)\)/)?.[1] || "0"}=0%`;
                                                             }
+                                                            const minutes = entry?.minutes ?? 0;
                                                             return (
                                                                 <td key={col.key} className="px-3 py-2 text-center whitespace-nowrap text-slate-600 dark:text-zinc-300 text-[11px]">
-                                                                    {val}
+                                                                    <div>{val}</div>
+                                                                    {minutes > 0 && (
+                                                                        <div className="text-[10px] text-emerald-600 font-medium">{minutes} min</div>
+                                                                    )}
                                                                 </td>
                                                             );
                                                         })}
@@ -806,6 +796,34 @@ export default function SalesManagerDashboard() {
                                                     </tr>
 
                                                 ))}
+                                                    <tr className="bg-slate-50 dark:bg-zinc-800/50 border-t border-slate-200 dark:border-zinc-700">
+                                                        <td className="px-3 py-2 font-bold text-slate-800 dark:text-zinc-200 whitespace-nowrap text-[11px]">Total</td>
+                                                        {activityColumns.map((col) => {
+                                                            const doneTotal = filteredActivityRows.reduce((acc, row) => acc + (row.methods[col.key as keyof typeof row.methods]?.done || 0), 0);
+                                                            const targetTotal = filteredActivityRows.reduce((acc, row) => acc + (row.methods[col.key as keyof typeof row.methods]?.target || 0), 0);
+                                                            const isGrade = col.key === "aMinus" || col.key === "bPlus";
+                                                            let val = "-";
+                                                            if (isGrade) val = String(doneTotal);
+                                                            else val = `${doneTotal}/${targetTotal}=${percent(doneTotal, targetTotal)}`;
+                                                            const minutesTotal = filteredActivityRows.reduce((acc, row) => acc + (row.methods[col.key as keyof typeof row.methods]?.minutes || 0), 0);
+                                                            return (
+                                                                <td key={col.key} className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">
+                                                                    <div>{val}</div>
+                                                                    {minutesTotal > 0 && (
+                                                                        <div className="text-[10px] text-emerald-600 font-medium">{minutesTotal} min</div>
+                                                                    )}
+                                                                </td>
+                                                            );
+                                                        })}
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">{filteredActivityRows.reduce((acc, row) => acc + row.totals.timeMinutes, 0)} M</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                        <td className="px-3 py-2 text-center whitespace-nowrap text-slate-700 dark:text-zinc-200 text-[11px] font-medium">-</td>
+                                                    </tr>
                                                 </>
                                             )}
                                         </tbody>

@@ -527,28 +527,42 @@ export class DashboardController {
       const activityParams: any[] = [from, to];
       let activityFilter = "";
       if (!isManager) {
-        activityFilter = ` and a.created_by = $${activityParams.length + 1}::uuid`;
+        activityFilter = ` and f.assigned_to = $${activityParams.length + 1}::uuid`;
         activityParams.push(userId);
       } else if (allowedUserIds) {
-        activityFilter = ` and a.created_by = ANY($${activityParams.length + 1}::uuid[])`;
+        activityFilter = ` and f.assigned_to = ANY($${activityParams.length + 1}::uuid[])`;
         activityParams.push(allowedUserIds);
       }
       const activityRows = await pool.query(
         `
-          select a.created_by as user_id,
+          select f.assigned_to as user_id,
                  coalesce(u.full_name, u.name, u.username) as name,
-                 count(*) filter (where lower(a.type::text)='mobile')::int as mobile,
-                 count(*) filter (where lower(a.type::text)='whatsapp')::int as whatsapp,
-                 count(*) filter (where lower(a.type::text)='onsite')::int as onsite,
-                 count(*) filter (where lower(a.type::text)='email')::int as email,
-                 count(*) filter (where lower(a.type::text)='seminar')::int as seminar,
-                 count(*) filter (where lower(a.type::text)='webinar')::int as webinar,
+                 count(*) filter (where upper(fsd.method)='MOBILE')::int as mobile,
+                 count(*) filter (where upper(fsd.method)='WHATSAPP')::int as whatsapp,
+                 count(*) filter (where upper(fsd.method)='WH_CALL')::int as wh_call,
+                 count(*) filter (where upper(fsd.method)='IN_MEETING')::int as in_meeting,
+                 count(*) filter (where upper(fsd.method)='OUT_MEETING')::int as onsite,
+                 count(*) filter (where upper(fsd.method)='E_MAIL')::int as email,
+                 count(*) filter (where upper(fsd.method)='SEMINAR')::int as seminar,
+                 count(*) filter (where upper(fsd.method)='OL_MEETING')::int as webinar,
+                 count(*) filter (where upper(fsd.method)='APPOINTMENT')::int as appointment_method,
+                 coalesce(sum(fsd.talk_time_minutes),0)::float as talk_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='MOBILE'),0)::float as mobile_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WHATSAPP'),0)::float as whatsapp_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WH_CALL'),0)::float as wh_call_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='IN_MEETING'),0)::float as in_meeting_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OUT_MEETING'),0)::float as onsite_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='E_MAIL'),0)::float as email_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='SEMINAR'),0)::float as seminar_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OL_MEETING'),0)::float as webinar_minutes,
+                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='APPOINTMENT'),0)::float as appointment_minutes,
                  count(*)::int as total
-            from drm.activities a
-            left join drm.users u on u.id = a.created_by
-           where coalesce(a.activity_date, a.created_at) between $1 and $2
+            from drm.followup_subservice_details fsd
+            join drm.follow_ups f on f.id = fsd.followup_id
+            left join drm.users u on u.id = f.assigned_to
+           where coalesce(fsd.created_at, f.created_at) between $1 and $2
              ${activityFilter}
-           group by a.created_by, u.full_name, u.name, u.username
+           group by f.assigned_to, u.full_name, u.name, u.username
            order by name nulls last
         `,
         activityParams,
@@ -614,6 +628,8 @@ export class DashboardController {
       const defaultTargets = {
         mobile: 50,
         whatsapp: 20,
+        whCall: 5,
+        inMeeting: 2,
         onsite: 1,
         email: 50,
         seminar: 1,
@@ -646,7 +662,15 @@ export class DashboardController {
       // We need a way to look up roles for each user
       let displayUsers: any[] = [];
       if (isManager && allowedUserIds) {
-          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role FROM drm.users WHERE id = ANY($1::uuid[])`, [allowedUserIds]);
+          // The manager's own id is always folded into allowedUserIds (for scoping the
+          // activity/appointment/grade queries above), but the manager doesn't log their
+          // own follow-ups here — this team matrix should only list direct reports, not
+          // the manager's own (always-empty) row.
+          const teamOnlyIds = allowedUserIds.filter((id) => id !== userId);
+          const uRes = await pool.query(
+            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role FROM drm.users WHERE id = ANY($1::uuid[])`,
+            [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"]],
+          );
           displayUsers = uRes.rows;
       } else {
           const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role FROM drm.users WHERE id = $1::uuid`, [userId]);
@@ -746,6 +770,8 @@ export class DashboardController {
                 const targetVal = Number(t.target) || 0;
                 if (normMethod.includes('mobile')) userTargets.mobile = targetVal;
                 if (normMethod.includes('whatsapp')) userTargets.whatsapp = targetVal;
+                if (normMethod.includes('wh_call')) userTargets.whCall = targetVal;
+                if (normMethod.includes('in_meeting')) userTargets.inMeeting = targetVal;
                 if (normMethod.includes('email')) userTargets.email = targetVal;
                 if (normMethod.includes('seminar')) userTargets.seminar = targetVal;
                 if (normMethod.includes('webinar')) userTargets.webinar = targetVal;
@@ -760,16 +786,19 @@ export class DashboardController {
         }
 
         const isProductPosting = userRole.includes("posting") || userRole.includes("product posting");
-        const userTimeMinutes = isProductPosting ? taskTimeMinutes : appt.totalMinutes;
+        const talkMinutes = Number(row.talk_minutes ?? 0);
+        const userTimeMinutes = isProductPosting ? taskTimeMinutes : (appt.totalMinutes + talkMinutes);
 
         const methods: any = {
-          mobile: { done: Number(row.mobile ?? 0), target: userTargets.mobile },
-          whatsapp: { done: Number(row.whatsapp ?? 0), target: userTargets.whatsapp },
-          onsite: { done: Number(row.onsite ?? 0), target: userTargets.onsite },
-          email: { done: Number(row.email ?? 0), target: userTargets.email },
-          seminar: { done: Number(row.seminar ?? 0), target: userTargets.seminar },
-          webinar: { done: Number(row.webinar ?? 0), target: userTargets.webinar },
-          appointment: { done: appt.appointments, target: userTargets.appointment },
+          mobile: { done: Number(row.mobile ?? 0), target: userTargets.mobile, minutes: Number(row.mobile_minutes ?? 0) },
+          whatsapp: { done: Number(row.whatsapp ?? 0), target: userTargets.whatsapp, minutes: Number(row.whatsapp_minutes ?? 0) },
+          whCall: { done: Number(row.wh_call ?? 0), target: userTargets.whCall, minutes: Number(row.wh_call_minutes ?? 0) },
+          inMeeting: { done: Number(row.in_meeting ?? 0), target: userTargets.inMeeting, minutes: Number(row.in_meeting_minutes ?? 0) },
+          onsite: { done: Number(row.onsite ?? 0), target: userTargets.onsite, minutes: Number(row.onsite_minutes ?? 0) },
+          email: { done: Number(row.email ?? 0), target: userTargets.email, minutes: Number(row.email_minutes ?? 0) },
+          seminar: { done: Number(row.seminar ?? 0), target: userTargets.seminar, minutes: Number(row.seminar_minutes ?? 0) },
+          webinar: { done: Number(row.webinar ?? 0), target: userTargets.webinar, minutes: Number(row.webinar_minutes ?? 0) },
+          appointment: { done: appt.appointments + Number(row.appointment_method ?? 0), target: userTargets.appointment, minutes: Number(row.appointment_minutes ?? 0) },
           meeting: { done: appt.appointments, target: userTargets.meeting },
           aMinus: { done: grades.aMinus, target: userTargets.aMinus },
           bPlus: { done: grades.bPlus, target: userTargets.bPlus },
