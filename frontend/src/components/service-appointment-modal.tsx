@@ -23,6 +23,41 @@ const FOLLOW_PURPOSE_OPTIONS = ["New Sell", "Inform", "Payment Recovery", "Ab Pa
 // Grade per the confirmed screenshot layout. Options verbatim per user
 // screenshot spelling (including "Happay").
 const FOLLOW_REVIEW_OPTIONS = ["Report", "Start Rating", "Up Selling", "Rfq", "Products", "Follow Rate", "Sample", "Order", "Revenue", "Happay With Alibaba", "Happay With Webxl"];
+// Every Review option opens an extra detail popup right under its checkbox
+// once checked (per confirmed reference screenshots) — the exact popup
+// contents differ by option, see renderReviewPopup below.
+const REVIEW_OPTIONS_WITH_POPUP = new Set(FOLLOW_REVIEW_OPTIONS);
+// Yes/No only, no extra count.
+const REVIEW_YES_NO_ONLY = new Set(["Report", "Follow Rate", "Happay With Alibaba", "Happay With Webxl"]);
+// Yes/No plus a single bare counter underneath.
+const REVIEW_YES_NO_WITH_COUNT = new Set(["Sample", "Order", "Revenue"]);
+
+function ReviewStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+    return (
+        <div className="flex items-center gap-2">
+            <button
+                type="button"
+                onClick={() => onChange(Math.max(0, value - 1))}
+                className="w-7 h-7 flex items-center justify-center bg-[#059669] hover:bg-[#047857] text-white rounded-[4px] text-sm font-bold shrink-0"
+            >
+                -
+            </button>
+            <input
+                type="text"
+                value={value}
+                readOnly
+                className="w-14 h-7 text-center border border-slate-200 rounded-[4px] text-sm dark:border-zinc-700 dark:bg-zinc-900"
+            />
+            <button
+                type="button"
+                onClick={() => onChange(value + 1)}
+                className="w-7 h-7 flex items-center justify-center bg-[#059669] hover:bg-[#047857] text-white rounded-[4px] text-sm font-bold shrink-0"
+            >
+                +
+            </button>
+        </div>
+    );
+}
 const FOLLOW_GRADE_OPTIONS = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
 const FOLLOW_METHOD_OPTIONS = ["Mobile", "Whatsapp", "WH-Call", "In-meeting", "Out-meeting", "E-mail", "Appointment", "Seminar", "OL-Meeting"];
 const FOLLOW_RESERVATION_OPTIONS = [
@@ -77,7 +112,27 @@ export function ServiceAppointmentModal({
     const [followServiceId, setFollowServiceId] = useState("");
     const [followPurpose, setFollowPurpose] = useState("");
     const [followReview, setFollowReview] = useState<string[]>([]);
-    const toggleFollowReview = (r: string) => setFollowReview((prev) => prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r]);
+    // Only one Review popup is ever shown at a time — checking a new option
+    // makes it the active one and closes whichever popup was open before
+    // (the checked-state of earlier options is untouched, just their popup).
+    const [activeReviewPopup, setActiveReviewPopup] = useState<string | null>(null);
+    const toggleFollowReview = (r: string) => {
+        setFollowReview((prev) => {
+            if (prev.includes(r)) {
+                setActiveReviewPopup((active) => (active === r ? null : active));
+                return prev.filter((x) => x !== r);
+            }
+            setActiveReviewPopup(r);
+            return [...prev, r];
+        });
+    };
+    // Per-option extra detail captured by the popup that opens under each
+    // Review option once checked (see REVIEW_OPTIONS_WITH_POPUP) — shape
+    // varies by option (Yes/No, old/new counts, free text, per-tier counts,
+    // or a single bare count), kept keyed by option name.
+    const [reviewDetails, setReviewDetails] = useState<Record<string, any>>({});
+    const updateReviewDetail = (option: string, patch: Record<string, any>) =>
+        setReviewDetails((prev) => ({ ...prev, [option]: { ...prev[option], ...patch } }));
     const [followGrade, setFollowGrade] = useState("");
     const [followMethod, setFollowMethod] = useState("");
     const [followReservation, setFollowReservation] = useState("");
@@ -162,6 +217,8 @@ export function ServiceAppointmentModal({
             setFollowServiceId("");
             setFollowPurpose("");
             setFollowReview([]);
+            setReviewDetails({});
+            setActiveReviewPopup(null);
             setFollowGrade("");
             setFollowMethod("");
             setFollowReservation("");
@@ -203,6 +260,105 @@ export function ServiceAppointmentModal({
             note: followNote,
             nextDate: followNextDate,
         });
+    };
+
+    const renderReviewPopup = (option: string) => {
+        const detail = reviewDetails[option] || {};
+        if (REVIEW_YES_NO_ONLY.has(option)) {
+            return (
+                <div className="flex items-center gap-4">
+                    {["Yes", "No"].map((v) => (
+                        <label key={v} className="flex items-center gap-1.5 cursor-pointer text-[13px]">
+                            <input
+                                type="radio"
+                                name={`review-${option}-yn`}
+                                className="accent-[#059669]"
+                                checked={detail.value === v}
+                                onChange={() => updateReviewDetail(option, { value: v })}
+                            />
+                            {v}
+                        </label>
+                    ))}
+                </div>
+            );
+        }
+        if (REVIEW_YES_NO_WITH_COUNT.has(option)) {
+            return (
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-4">
+                        {["Yes", "No"].map((v) => (
+                            <label key={v} className="flex items-center gap-1.5 cursor-pointer text-[13px]">
+                                <input
+                                    type="radio"
+                                    name={`review-${option}-yn`}
+                                    className="accent-[#059669]"
+                                    checked={detail.value === v}
+                                    onChange={() => updateReviewDetail(option, { value: v })}
+                                />
+                                {v}
+                            </label>
+                        ))}
+                    </div>
+                    <ReviewStepper value={detail.count ?? 0} onChange={(v) => updateReviewDetail(option, { count: v })} />
+                </div>
+            );
+        }
+        if (option === "Start Rating" || option === "Rfq") {
+            return (
+                <div className="flex flex-col gap-3">
+                    <div>
+                        <div className="text-[13px] font-medium text-slate-600 dark:text-zinc-300 mb-1">Old</div>
+                        <ReviewStepper value={detail.old ?? 0} onChange={(v) => updateReviewDetail(option, { old: v })} />
+                    </div>
+                    <div>
+                        <div className="text-[13px] font-medium text-slate-600 dark:text-zinc-300 mb-1">New</div>
+                        <ReviewStepper value={detail.new ?? 0} onChange={(v) => updateReviewDetail(option, { new: v })} />
+                    </div>
+                </div>
+            );
+        }
+        if (option === "Up Selling") {
+            return (
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-4">
+                        {["Yes", "No"].map((v) => (
+                            <label key={v} className="flex items-center gap-1.5 cursor-pointer text-[13px]">
+                                <input
+                                    type="radio"
+                                    name="review-upselling-yn"
+                                    className="accent-[#059669]"
+                                    checked={detail.value === v}
+                                    onChange={() => updateReviewDetail(option, { value: v })}
+                                />
+                                {v}
+                            </label>
+                        ))}
+                    </div>
+                    <textarea
+                        placeholder="type..."
+                        value={detail.text ?? ""}
+                        onChange={(e) => updateReviewDetail(option, { text: e.target.value })}
+                        className="w-40 h-16 border border-slate-200 rounded-[4px] p-1.5 text-[13px] resize-y dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                </div>
+            );
+        }
+        if (option === "Products") {
+            return (
+                <div className="flex flex-col gap-3">
+                    {["Basic", "Potential", "Top", "Super"].map((tier) => {
+                        const tierKey = tier.toLowerCase();
+                        return (
+                            <div key={tier}>
+                                <div className="text-[13px] font-medium text-slate-600 dark:text-zinc-300 mb-1">{tier}</div>
+                                <ReviewStepper value={detail[tierKey] ?? 0} onChange={(v) => updateReviewDetail(option, { [tierKey]: v })} />
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+        return null;
     };
 
     return (
@@ -276,15 +432,22 @@ export function ServiceAppointmentModal({
                             <span className="text-[#059669] font-bold w-28 shrink-0 dark:text-zinc-400">Review *</span>
                             <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300">
                                 {FOLLOW_REVIEW_OPTIONS.map((r) => (
-                                    <label key={r} className="flex items-center gap-1.5 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            className="accent-[#059669]"
-                                            checked={followReview.includes(r)}
-                                            onChange={() => toggleFollowReview(r)}
-                                        />
-                                        {r}
-                                    </label>
+                                    <div key={r} className="relative">
+                                        <label className="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="accent-[#059669]"
+                                                checked={followReview.includes(r)}
+                                                onChange={() => toggleFollowReview(r)}
+                                            />
+                                            {r}
+                                        </label>
+                                        {REVIEW_OPTIONS_WITH_POPUP.has(r) && followReview.includes(r) && activeReviewPopup === r && (
+                                            <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-slate-200 rounded-[6px] shadow-lg p-3 dark:bg-zinc-800 dark:border-zinc-700 min-w-[160px]">
+                                                {renderReviewPopup(r)}
+                                            </div>
+                                        )}
+                                    </div>
                                 ))}
                             </div>
                         </div>
