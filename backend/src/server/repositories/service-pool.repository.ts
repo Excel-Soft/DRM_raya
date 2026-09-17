@@ -97,41 +97,51 @@ export class ServicePoolRepository {
     const whereSql = whereParts.join(" and ");
 
     if (userIds && userIds.length > 0) {
-      whereParts.push(`spe.sales_person_id = ANY($${p++})`);
+      whereParts.push(`(spe.sales_person_id = ANY($${p}) OR spe.service_person_id = ANY($${p}))`);
       params.push(userIds);
+      p++;
     }
 
     const finalWhereSql = whereParts.join(" and ");
 
     const query = `
-      SELECT
-        spe.id,
-        c.id AS "customerId",
-        c.drm_id AS "drmId",
-        c.company_name AS "companyName",
-        u_sales.name AS "salesPersonName",
-        u_service.name AS "servicePersonName",
-        u_ta.name AS "taPersonName",
-        c.account_name AS "accountHolder",
-        c.phone AS "contactNo",
-        spe.status,
-        spe.dropout_category AS "dropoutCategory",
-        spe.started_at AS "startedAt",
-        spe.updated_at AS "updatedAt"
-      FROM drm.service_pool_entries spe
-      JOIN drm.customers c ON c.id = spe.customer_id
-      LEFT JOIN drm.users u_sales ON u_sales.id = spe.sales_person_id
-      LEFT JOIN drm.users u_service ON u_service.id = spe.service_person_id
-      LEFT JOIN drm.users u_ta ON u_ta.id = spe.ta_person_id
-      WHERE ${finalWhereSql}
-      ORDER BY spe.updated_at DESC
+      WITH RankedEntries AS (
+        SELECT DISTINCT ON (spe.customer_id)
+          spe.id,
+          c.id AS "customerId",
+          c.drm_id AS "drmId",
+          c.company_name AS "companyName",
+          spe.service_code AS "serviceCode",
+          spe.subservice_code AS "subserviceCode",
+          u_sales.name AS "salesPersonName",
+          u_service.name AS "servicePersonName",
+          spe.service_person_id AS "servicePersonId",
+          u_ta.name AS "taPersonName",
+          c.account_name AS "accountHolder",
+          c.phone AS "contactNo",
+          (SELECT MAX(rc.bv_date) FROM related_customers rc WHERE rc.customer_name = c.company_name) AS "bvDate",
+          spe.status,
+          spe.dropout_category AS "dropoutCategory",
+          spe.started_at AS "startedAt",
+          spe.updated_at AS "updatedAt"
+        FROM drm.service_pool_entries spe
+        JOIN drm.customers c ON c.id = spe.customer_id
+        LEFT JOIN drm.users u_sales ON u_sales.id = spe.sales_person_id
+        LEFT JOIN drm.users u_service ON u_service.id = spe.service_person_id
+        LEFT JOIN drm.users u_ta ON u_ta.id = spe.ta_person_id
+        WHERE ${finalWhereSql}
+        ORDER BY spe.customer_id, spe.updated_at DESC
+      )
+      SELECT *
+      FROM RankedEntries
+      ORDER BY "updatedAt" DESC
       LIMIT $${p++} OFFSET $${p++}
     `;
 
     params.push(pageSize, offset);
 
     const countQuery = `
-      SELECT COUNT(*)::int AS total
+      SELECT COUNT(DISTINCT spe.customer_id)::int AS total
       FROM drm.service_pool_entries spe
       JOIN drm.customers c ON c.id = spe.customer_id
       WHERE ${finalWhereSql}
@@ -152,23 +162,26 @@ export class ServicePoolRepository {
     let whereClause = "";
     const params: any[] = [];
     if (userIds && userIds.length > 0) {
-      whereClause = "WHERE sales_person_id = ANY($1)";
+      whereClause = "WHERE (spe.sales_person_id = ANY($1) OR spe.service_person_id = ANY($1))";
       params.push(userIds);
     }
     const query = `
       SELECT 
-        COUNT(*) FILTER (WHERE status = 'active') AS "allInService",
-        COUNT(*) FILTER (WHERE dropout_category = 'dropout_in_1_year') AS "dropoutIn1Year",
-        COUNT(*) FILTER (WHERE dropout_category = 'dropout_more_than_1_year') AS "dropoutMoreThan1Year",
-        COUNT(*) FILTER (WHERE started_at >= date_trunc('quarter', now())) AS "currentQ",
+        COUNT(*) FILTER (WHERE spe.status = 'active') AS "allInService",
+        COUNT(*) FILTER (WHERE spe.dropout_category = 'dropout_in_1_year') AS "dropoutIn1Year",
+        COUNT(*) FILTER (WHERE spe.dropout_category = 'dropout_more_than_1_year') AS "dropoutMoreThan1Year",
+        COUNT(*) FILTER (WHERE spe.started_at >= date_trunc('quarter', now())) AS "currentQ",
         (
           SELECT COUNT(*) FROM (
-            SELECT customer_id FROM drm.service_pool_entries
-            GROUP BY customer_id
+            SELECT spe2.customer_id FROM drm.service_pool_entries spe2
+            JOIN drm.customers c2 ON c2.id = spe2.customer_id
+            ${userIds && userIds.length > 0 ? "WHERE (spe2.sales_person_id = ANY($1) OR spe2.service_person_id = ANY($1))" : ""}
+            GROUP BY spe2.customer_id
             HAVING COUNT(*) > 1
           ) sub
         ) AS "duplicateData"
-      FROM drm.service_pool_entries
+      FROM drm.service_pool_entries spe
+      JOIN drm.customers c ON c.id = spe.customer_id
       ${whereClause}
     `;
     const res = await pool.query(query, params);
