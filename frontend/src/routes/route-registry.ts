@@ -300,10 +300,10 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/allowed-ip/drm-ip-list", component: "AllowedIpList", title: "DRM IP List", module: "Settings", sidebarVisible: true, sidebarGroup: "Allowed IP", permissionKey: "Allowed IP", allowedRoles: ADMIN_ONLY },
 
   // ── IT / Domain Hosting ───────────────────────────────────────────────
-  { path: "/it/servers", component: "ItServers", title: "Servers", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "developer"] },
-  { path: "/it/domains", component: "ItDomains", title: "Domains", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "developer"] },
-  { path: "/it/backup", component: "ItBackup", title: "Backup", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "developer"] },
-  { path: "/it/system-report", component: "ItSystemReport", title: "System Report", module: "IT/Domain", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "it_manager", "developer"] },
+  { path: "/it/servers", component: "ItServers", title: "Servers", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "it_executive", "developer"] },
+  { path: "/it/domains", component: "ItDomains", title: "Domains", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "it_executive", "developer"] },
+  { path: "/it/backup", component: "ItBackup", title: "Backup", module: "IT/Domain", sidebarVisible: true, sidebarGroup: "Domain Hosting", permissionKey: "Domain Hosting", allowedRoles: ["admin", "it_manager", "it_executive", "developer"] },
+  { path: "/it/system-report", component: "ItSystemReport", title: "System Report", module: "IT/Domain", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "it_manager", "it_executive", "developer"] },
 
   // ── Posting Data ──────────────────────────────────────────────────────
   { path: "/posting-data", component: "PostingData", title: "Posting Data", module: "Product Posting", sidebarVisible: false, isInternal: true, allowedRoles: POSTING },

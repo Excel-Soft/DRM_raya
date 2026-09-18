@@ -945,6 +945,11 @@ export default function HodDashboard() {
   };
 
   const approvals = approvalsQuery.data?.data ?? [];
+  // The "Pending Quotation" tab's badge count reads waitingProjectsQuery — the
+  // table body must read the same source, not `approvals` (a different,
+  // separately-paginated /api/hod/approvals list that has no "Quotation"
+  // rows at all), or the badge and the table permanently disagree.
+  const waitingItems = waitingProjectsQuery.data?.data ?? [];
   // approvals is just the current page (capped at `limit`) — the query is
   // already server-filtered to status=Pending, so the real pending count is
   // meta.total, not the length of this one page's rows.
@@ -1234,34 +1239,27 @@ export default function HodDashboard() {
                       <TableBody>
                         {verificationTab === "waiting" && (
                           <>
-                            {approvals.filter(item => item.type === "Quotation" || item.type === "GM Entry").length === 0 && (
+                            {waitingItems.length === 0 && (
                               <TableRow>
                                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                  {approvalsQuery.isLoading ? "Loading..." : "No pending quotations"}
+                                  {waitingProjectsQuery.isLoading ? "Loading..." : "No pending quotations"}
                                 </TableCell>
                               </TableRow>
                             )}
-                            {approvals.filter(item => item.type === "Quotation" || item.type === "GM Entry").map((item) => (
+                            {waitingItems.map((item: any) => (
                               <TableRow key={item.id} data-testid={`row-approval-${item.id}`}>
-                                <TableCell>{getTypeBadge(item.type)}</TableCell>
+                                <TableCell>{getTypeBadge("GM Entry")}</TableCell>
                                 <TableCell>
-                                  {item.referenceId ? (
+                                  {item.drmId ? (
                                     <span className="inline-block whitespace-nowrap rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-600 dark:bg-zinc-900 dark:text-zinc-300">
-                                      REF-{item.referenceId.slice(0, 8).toUpperCase()}
+                                      {item.drmId}
                                     </span>
                                   ) : "-"}
                                 </TableCell>
-                                <TableCell>{item.submittedByName ?? "-"}</TableCell>
+                                <TableCell>{item.createdByName ?? "-"}</TableCell>
                                 <TableCell>{item.createdAt ? format(new Date(item.createdAt), "dd MMM yyyy") : "-"}</TableCell>
                                 <TableCell>{getStatusBadge(item.status)}</TableCell>
                                 <TableCell className="text-right">
-                                  {/* Every row in this list is, by construction, still
-                                      pending — the union query only pulls rows whose
-                                      underlying status means "waiting on HOD" (the exact
-                                      spelling varies: pending, pending_hod, waiting). A
-                                      strict === "pending" check here previously hid the
-                                      Approve/Reject buttons for GM/Invoice/Quotation rows
-                                      and showed a misleading "Completed" instead. */}
                                   <div className="flex justify-end gap-2">
                                     <Button
                                       size="sm"

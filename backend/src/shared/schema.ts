@@ -2059,6 +2059,77 @@ export const itBackups = drmSchema.table("it_backups", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ---------------------------------------------------------------------------
+// Branches (Offices) — dynamic, admin-manageable company branch/office list.
+// Single source of truth for "Office" everywhere; consumed by the Physical
+// Asset Inventory below via physicalAssets.branchId. Unrelated to the
+// it_servers/it_domains "IT Assets Tables" block above (that block models
+// domain/hosting infrastructure, not a physical location).
+// ---------------------------------------------------------------------------
+export const branches = drmSchema.table("branches", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  code: text("code").unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdBy: uuid("created_by").references(() => users.id),
+  updatedBy: uuid("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+// ---------------------------------------------------------------------------
+// Physical IT Asset Inventory (laptops, mobiles, LEDs, desktops, tablets…).
+// Deliberately named `physical_assets` (NOT `it_asset_inventory` / `it_*`) so
+// it is never confused with the it_servers/it_domains block above, which
+// models domain/hosting infrastructure, not physical hardware.
+// ---------------------------------------------------------------------------
+export const ASSET_TYPES = ["Laptop", "Mobile", "LED", "Desktop", "Tablet", "Other"] as const;
+export const ASSET_CONDITIONS = ["In Use", "In Custody", "Damaged"] as const;
+
+export const PROJECT_TYPES = ["New Project", "Renewal"] as const;
+
+export const physicalAssets = drmSchema.table("physical_assets", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  assetType: text("asset_type").notNull(), // Laptop | Mobile | LED | Desktop | Tablet | Other
+  projectType: text("project_type"), // New Project | Renewal
+  makeModel: text("make_model"),
+  colour: text("colour"),
+  purchaseDate: date("purchase_date"),
+  warranty: text("warranty"),
+  warrantyPeriod: text("warranty_period"),
+  purchasedCondition: text("purchased_condition"),
+  currentCondition: text("current_condition").notNull().default("In Custody"), // In Use | In Custody | Damaged
+  empCode: text("emp_code"),
+  issuedStatus: text("issued_status"),
+  employeeName: text("employee_name"),
+  branchId: uuid("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  specification: text("specification"),
+  assetOwnedBy: text("asset_owned_by"),
+  mobilePhone: text("mobile_phone"),
+  itManagerRemarks: text("it_manager_remarks"),
+  createdBy: uuid("created_by").references(() => users.id),
+  updatedBy: uuid("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const insertBranchSchema = createInsertSchema(branches).omit({
+  id: true, createdAt: true, updatedAt: true, deletedAt: true, createdBy: true, updatedBy: true,
+});
+export type Branch = typeof branches.$inferSelect;
+export type InsertBranch = z.infer<typeof insertBranchSchema>;
+
+export const insertPhysicalAssetSchema = createInsertSchema(physicalAssets).omit({
+  id: true, createdAt: true, updatedAt: true, deletedAt: true, createdBy: true, updatedBy: true,
+}).extend({
+  purchaseDate: z.coerce.date().optional().nullable(),
+});
+export type PhysicalAsset = typeof physicalAssets.$inferSelect;
+export type InsertPhysicalAsset = z.infer<typeof insertPhysicalAssetSchema>;
+
 // IT Asset Zod Schemas
 export const insertItServerSchema = createInsertSchema(itServers).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertItRegistrySchema = createInsertSchema(itRegistries).omit({ id: true, createdAt: true });

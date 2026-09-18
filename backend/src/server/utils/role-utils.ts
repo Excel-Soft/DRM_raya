@@ -25,7 +25,10 @@ export function normalizeRole(role: string): RoleKey {
   if (normalized === "service_executive") return ROLES.SERVICE_EXECUTIVE;
   if (normalized === "service_manager" || normalized === "service") return ROLES.SERVICE_MANAGER;
   if (normalized === "service_executive" || normalized.includes("service") && normalized.includes("exec")) return ROLES.SERVICE_EXECUTIVE;
-  if (normalized.includes("seo") || normalized.includes("smm")) return ROLES.SEO_SMM_MANAGER;
+  if (normalized.includes("seo") || normalized.includes("smm")) {
+    if (normalized.includes("exec")) return ROLES.SEO_SMM_EXECUTIVE;
+    return ROLES.SEO_SMM_MANAGER;
+  }
 
   if (normalized.includes("sales") && normalized.includes("manager") && !normalized.includes("assistant")) return ROLES.SALES_MANAGER;
   if (normalized === "manager") return ROLES.SALES_MANAGER; // Map generic manager to sales manager

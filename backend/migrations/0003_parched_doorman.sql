@@ -1,0 +1,1 @@
+ALTER TABLE "drm"."physical_assets" ADD COLUMN "project_type" text;

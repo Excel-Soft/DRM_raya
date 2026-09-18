@@ -397,7 +397,7 @@ export default function AdminDashboard() {
                                                                 name={`role_${r.name}`} 
                                                                 value="on"
                                                             />
-                                                            <Label htmlFor={`create_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name === 'seo_smm_manager' ? 'SEO/SMM MANAGER' : r.name.replace(/_/g, ' ')}</Label>
+                                                            <Label htmlFor={`create_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name === 'seo_smm_manager' ? 'SEO/SMM MANAGER' : r.name === 'seo_smm_executive' ? 'SEO/SMM EXECUTIVE' : r.name.replace(/_/g, ' ')}</Label>
                                                         </div>
                                                     ))}
                                             </div>
@@ -564,7 +564,7 @@ export default function AdminDashboard() {
                                                         value="on"
                                                         defaultChecked={editingUser.roles?.includes(r.name) || editingUser.role === r.name} 
                                                     />
-                                                    <Label htmlFor={`edit_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name === 'seo_smm_manager' ? 'SEO/SMM MANAGER' : r.name.replace(/_/g, ' ')}</Label>
+                                                    <Label htmlFor={`edit_role_${r.name}`} className="text-[11px] font-normal cursor-pointer uppercase">{r.name === 'seo_smm_manager' ? 'SEO/SMM MANAGER' : r.name === 'seo_smm_executive' ? 'SEO/SMM EXECUTIVE' : r.name.replace(/_/g, ' ')}</Label>
                                                 </div>
                                             ))}
                                     </div>

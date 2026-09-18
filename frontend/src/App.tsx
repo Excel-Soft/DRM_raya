@@ -92,6 +92,7 @@ const KwaHistory = lazy(() => import("./pages/kwa-history"));
 const UserList = lazy(() => import("@/pages/user-list"));
 const UserGroups = lazy(() => import("@/pages/user-groups"));
 const AttributesPage = lazy(() => import("@/pages/drm/attributes"));
+const BranchesPage = lazy(() => import("@/pages/drm/branches"));
 const PermissionPage = lazy(() => import("@/pages/drm/permission"));
 const DelayProjectPage = lazy(() => import("@/pages/drm/delay-project"));
 const PromotionPage = lazy(() => import("@/pages/drm/promotion"));
@@ -134,6 +135,8 @@ const DDManagerDashboard = lazy(() => import("@/pages/dd-manager-dashboard"));
 const DDExecutiveDashboard = lazy(() => import("@/pages/dd-executive-dashboard"));
 const DeveloperDashboard = lazy(() => import("@/pages/developer-dashboard"));
 const ItManagerDashboard = lazy(() => import("@/pages/it-manager-dashboard"));
+const ItExecutiveDashboard = lazy(() => import("@/pages/it-executive-dashboard"));
+const SeoSmmExecutiveDashboard = lazy(() => import("@/pages/seo-smm-executive-dashboard"));
 const ServiceManagerDashboard = lazy(() => import("@/pages/service-manager-dashboard"));
 const ServiceAssistantManagerDashboard = lazy(() => import("@/pages/service-assistant-manager-dashboard"));
 const ServiceExecutiveDashboard = lazy(() => import("@/pages/service-executive-dashboard"));
@@ -265,6 +268,8 @@ function Router() {
       <Route path="/dashboard/sales-executive" component={SalesExecutiveDashboard} />
       <Route path="/dashboard/dd-manager" component={DDManagerDashboard} />
       <Route path="/dashboard/it-manager" component={ItManagerDashboard} />
+      <Route path="/dashboard/it-executive" component={ItExecutiveDashboard} />
+      <Route path="/dashboard/seo-smm-executive" component={SeoSmmExecutiveDashboard} />
       <Route path="/dashboard/service-manager" component={ServiceManagerDashboard} />
       <Route path="/dashboard/service-assistant-manager" component={ServiceAssistantManagerDashboard} />
       <Route path="/dashboard/service-executive" component={ServiceExecutiveDashboard} />
@@ -305,6 +310,7 @@ function Router() {
       <Route path="/sales/lead-pools" component={LeadPools} />
       <Route path="/sales/invoice-pool" component={InvoicePool} />
       <Route path="/drm/attributes" component={AttributesPage} />
+      <Route path="/drm/branches" component={BranchesPage} />
       <Route path="/gm-pool/add-gm" component={GmPoolAddGm} />
       <Route path="/sales/appointments" component={AppointmentsPage} />
       <Route path="/sales/performance-evaluation" component={PerformanceEvaluation} />

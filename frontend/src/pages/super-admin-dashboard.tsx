@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, extractApiError } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,7 +114,7 @@ export default function SuperAdminDashboard() {
         mutationFn: async (newUser: any) => {
             const res = await apiRequest("POST", "/api/users", newUser);
             const data = await res.json();
-            if (!res.ok) throw new Error(data.error || "Failed to create user");
+            if (!res.ok) throw new Error(extractApiError(data, res.status));
             return data;
         },
         onSuccess: () => {

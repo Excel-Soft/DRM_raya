@@ -725,7 +725,7 @@ router.get("/verification/waiting", async (req, res) => {
     const client = await pool.connect();
     try {
       const result = await client.query(`
-        SELECT 
+        SELECT
           ge.id,
           ge.company_name as "companyName",
           ge.drm_id as "drmId",
@@ -734,7 +734,7 @@ router.get("/verification/waiting", async (req, res) => {
           u.username as "createdByName"
         FROM drm.gm_entries ge
         LEFT JOIN drm.users u ON ge.created_by = u.id
-        WHERE ge.status IN ('Pending', 'Waiting', 'In Review')
+        WHERE ge.approval_status IS NULL OR LOWER(ge.approval_status) IN ('pending', 'pending_hod')
         ORDER BY ge.created_at DESC
         LIMIT 100
       `);

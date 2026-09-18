@@ -56,6 +56,7 @@ const IT_READ_ROLES = [
   "super_admin",
   "super_hod",
   "it_manager",
+  "it_executive", // view-only — see IT_WRITE_ROLES below, deliberately excluded there
   "it_admin",
   "domain_manager",
   "developer",

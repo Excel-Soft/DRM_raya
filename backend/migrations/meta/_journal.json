@@ -15,6 +15,20 @@
       "when": 1789131565673,
       "tag": "0001_wide_titania",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789722831997,
+      "tag": "0002_gigantic_brood",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789728027226,
+      "tag": "0003_parched_doorman",
+      "breakpoints": true
     }
   ]
 }
