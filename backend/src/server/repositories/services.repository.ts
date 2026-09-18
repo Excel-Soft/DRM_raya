@@ -2,6 +2,36 @@ import { db, pool } from "../db";
 import { services, followupServices, type Service } from "@shared/schema";
 import { asc, eq, inArray } from "drizzle-orm";
 
+export interface ServiceInput {
+  name: string;
+  description?: string | null;
+  price?: number | null;
+  discount?: number | null;
+  minDay?: number | null;
+  maxDay?: number | null;
+  depId?: number | null;
+  routeDepartments?: string[] | null;
+}
+
+export interface ServiceNode {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  discount: number | null;
+  minDay: number | null;
+  maxDay: number | null;
+  depId: number | null;
+  routeDepartments: string[] | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface ServiceWithChildren extends ServiceNode {
+  subServices: Array<ServiceNode & { subSubservices: ServiceNode[] }>;
+}
+
 let ensured = false;
 
 export async function ensureServicesSchema() {
@@ -189,15 +219,15 @@ export const servicesRepository = {
       .orderBy(asc(services.name));
   },
 
-  async listActiveWithSubservices(): Promise<Array<Service & { subServices: Array<{ id: string; code: string; name: string }> }>> {
-    // The service_subservices table has historically gained optional columns
-    // (price, discount, min_day, max_day, dep_id, legacy_id, legacy_main_id,
-    // order_index) in some deployments but not others. Detect which exist so the
-    // query never fails on a missing column. The base columns id/code/name/
-    // is_active/created_at/description are always present.
+  async listActiveWithSubservices(): Promise<ServiceWithChildren[]> {
+    // service_subservices has historically gained optional columns (price,
+    // discount, min_day, max_day, dep_id, route_departments, legacy_id,
+    // legacy_main_id, order_index) in some deployments but not others. Detect
+    // which exist so the query never fails on a missing column. The base
+    // columns id/code/name/is_active/created_at/description are always present.
     const colRes = await pool.query<{ column_name: string }>(
       `select column_name from information_schema.columns
-        where table_name = 'service_subservices'`,
+        where table_schema = 'drm' and table_name = 'service_subservices'`,
     );
     const cols = new Set(colRes.rows.map((r) => r.column_name));
     const opt = (name: string) => (cols.has(name) ? `ss.${name}` : "null");
@@ -206,8 +236,18 @@ export const servicesRepository = {
       ? "ss.order_index ASC NULLS LAST, ss.created_at ASC, ss.id ASC"
       : "ss.created_at ASC, ss.id ASC";
 
+    // services itself may also predate dep_id/route_departments in some
+    // deployments — probe the same way rather than assuming this migration
+    // has landed everywhere.
+    const svcColRes = await pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_schema = 'drm' and table_name = 'services'`,
+    );
+    const svcCols = new Set(svcColRes.rows.map((r) => r.column_name));
+    const svcOpt = (name: string) => (svcCols.has(name) ? `s.${name}` : "null");
+
     const res = await pool.query(`
-      select 
+      select
         s.id,
         s.code,
         s.name,
@@ -216,6 +256,8 @@ export const servicesRepository = {
         s.discount,
         s.min_day,
         s.max_day,
+        ${svcOpt("dep_id")} as dep_id,
+        ${svcOpt("route_departments")} as route_departments,
         s.is_active,
         s.created_at,
         coalesce(
@@ -230,8 +272,29 @@ export const servicesRepository = {
               'min_day', ${opt("min_day")},
               'max_day', ${opt("max_day")},
               'dep_id', ${opt("dep_id")},
-              'legacy_id', ${opt("legacy_id")},
-              'legacy_main_id', ${opt("legacy_main_id")}
+              'route_departments', ${opt("route_departments")},
+              'is_active', ss.is_active,
+              'created_at', ss.created_at,
+              'sub_subservices', (
+                select coalesce(json_agg(
+                  json_build_object(
+                    'id', sss.id,
+                    'code', sss.code,
+                    'name', sss.name,
+                    'description', sss.description,
+                    'price', sss.price,
+                    'discount', sss.discount,
+                    'min_day', sss.min_day,
+                    'max_day', sss.max_day,
+                    'dep_id', sss.dep_id,
+                    'route_departments', sss.route_departments,
+                    'is_active', sss.is_active,
+                    'created_at', sss.created_at
+                  ) order by sss.created_at asc, sss.id asc
+                ), '[]')
+                from drm.service_sub_subservices sss
+                where sss.subservice_id = ss.id and sss.is_active = true
+              )
             ) order by ${orderInner}
           ) filter (where ss.id is not null),
           '[]'
@@ -239,7 +302,7 @@ export const servicesRepository = {
       from drm.services s
       left join drm.service_subservices ss on ss.service_id = s.id and ss.is_active = true
       where s.is_active = true
-      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at
+      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at${svcCols.has("dep_id") ? ", s.dep_id" : ""}${svcCols.has("route_departments") ? ", s.route_departments" : ""}
       order by s.name
     `);
     return res.rows.map((row: any) => ({
@@ -251,9 +314,38 @@ export const servicesRepository = {
       discount: row.discount,
       minDay: row.min_day,
       maxDay: row.max_day,
+      depId: row.dep_id,
+      routeDepartments: row.route_departments,
       isActive: row.is_active,
       createdAt: row.created_at,
-      subServices: row.sub_services || [],
+      subServices: (row.sub_services || []).map((sub: any) => ({
+        id: sub.id,
+        code: sub.code,
+        name: sub.name,
+        description: sub.description,
+        price: sub.price,
+        discount: sub.discount,
+        minDay: sub.min_day,
+        maxDay: sub.max_day,
+        depId: sub.dep_id,
+        routeDepartments: sub.route_departments,
+        isActive: sub.is_active,
+        createdAt: sub.created_at,
+        subSubservices: (sub.sub_subservices || []).map((leaf: any) => ({
+          id: leaf.id,
+          code: leaf.code,
+          name: leaf.name,
+          description: leaf.description,
+          price: leaf.price,
+          discount: leaf.discount,
+          minDay: leaf.min_day,
+          maxDay: leaf.max_day,
+          depId: leaf.dep_id,
+          routeDepartments: leaf.route_departments,
+          isActive: leaf.is_active,
+          createdAt: leaf.created_at,
+        })),
+      })),
     }));
   },
 
@@ -315,4 +407,182 @@ export const servicesRepository = {
       serviceCode: r.service_code,
     }));
   },
+
+  // ── Write methods (level 1: services) ──────────────────────────────────
+  async createService(data: ServiceInput): Promise<ServiceNode> {
+    const code = codeFromName(data.name);
+    const res = await pool.query(
+      `insert into drm.services (code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      [
+        code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+      ],
+    );
+    return mapServiceRow(res.rows[0]);
+  },
+
+  async updateService(id: string, data: Partial<ServiceInput>): Promise<ServiceNode | null> {
+    const { setClause, params } = buildSetClause(data);
+    if (!setClause) return this.findServiceRowById(id);
+    params.push(id);
+    const res = await pool.query(
+      `update drm.services set ${setClause} where id = $${params.length} and is_active = true
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      params,
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
+
+  async softDeleteService(id: string): Promise<boolean> {
+    const res = await pool.query(`update drm.services set is_active = false where id = $1 and is_active = true`, [id]);
+    return (res.rowCount ?? 0) > 0;
+  },
+
+  async findServiceRowById(id: string): Promise<ServiceNode | null> {
+    const res = await pool.query(
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+       from drm.services where id = $1 and is_active = true`,
+      [id],
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
+
+  // ── Write methods (level 2: sub-services) ──────────────────────────────
+  async createSubservice(serviceId: string, data: ServiceInput): Promise<ServiceNode> {
+    const code = codeFromName(data.name);
+    const res = await pool.query(
+      `insert into drm.service_subservices (service_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      [
+        serviceId, code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+      ],
+    );
+    return mapServiceRow(res.rows[0]);
+  },
+
+  async updateSubservice(id: string, data: Partial<ServiceInput>): Promise<ServiceNode | null> {
+    const { setClause, params } = buildSetClause(data);
+    if (!setClause) return this.findSubserviceRowById(id);
+    params.push(id);
+    const res = await pool.query(
+      `update drm.service_subservices set ${setClause} where id = $${params.length} and is_active = true
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      params,
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
+
+  async softDeleteSubservice(id: string): Promise<boolean> {
+    const res = await pool.query(`update drm.service_subservices set is_active = false where id = $1 and is_active = true`, [id]);
+    return (res.rowCount ?? 0) > 0;
+  },
+
+  async findSubserviceRowById(id: string): Promise<ServiceNode | null> {
+    const res = await pool.query(
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+       from drm.service_subservices where id = $1 and is_active = true`,
+      [id],
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
+
+  // ── Write methods (level 3: sub-sub-services) ──────────────────────────
+  async createSubSubservice(subserviceId: string, data: ServiceInput): Promise<ServiceNode> {
+    const code = codeFromName(data.name);
+    const res = await pool.query(
+      `insert into drm.service_sub_subservices (subservice_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      [
+        subserviceId, code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+      ],
+    );
+    return mapServiceRow(res.rows[0]);
+  },
+
+  async updateSubSubservice(id: string, data: Partial<ServiceInput>): Promise<ServiceNode | null> {
+    const { setClause, params } = buildSetClause(data);
+    if (!setClause) return this.findSubSubserviceRowById(id);
+    params.push(id);
+    const res = await pool.query(
+      `update drm.service_sub_subservices set ${setClause} where id = $${params.length} and is_active = true
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      params,
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
+
+  async softDeleteSubSubservice(id: string): Promise<boolean> {
+    const res = await pool.query(`update drm.service_sub_subservices set is_active = false where id = $1 and is_active = true`, [id]);
+    return (res.rowCount ?? 0) > 0;
+  },
+
+  async findSubSubserviceRowById(id: string): Promise<ServiceNode | null> {
+    const res = await pool.query(
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+       from drm.service_sub_subservices where id = $1 and is_active = true`,
+      [id],
+    );
+    return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
+  },
 };
+
+function mapServiceRow(row: any): ServiceNode {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description,
+    price: row.price,
+    discount: row.discount,
+    minDay: row.min_day,
+    maxDay: row.max_day,
+    depId: row.dep_id,
+    routeDepartments: row.route_departments,
+    isActive: row.is_active,
+    createdAt: row.created_at,
+  };
+}
+
+// Slug-ish unique code derived from the name plus a short random suffix so two
+// services/sub-services with the same display name never collide on the
+// unique `code` column.
+function codeFromName(name: string): string {
+  const base = name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 60);
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${base || "SERVICE"}_${suffix}`;
+}
+
+const COLUMN_MAP: Record<string, string> = {
+  name: "name",
+  description: "description",
+  price: "price",
+  discount: "discount",
+  minDay: "min_day",
+  maxDay: "max_day",
+  depId: "dep_id",
+  routeDepartments: "route_departments",
+};
+
+function buildSetClause(data: Partial<ServiceInput>): { setClause: string; params: any[] } {
+  const fields: string[] = [];
+  const params: any[] = [];
+  let i = 1;
+  for (const [key, col] of Object.entries(COLUMN_MAP)) {
+    if ((data as any)[key] !== undefined) {
+      fields.push(`${col} = $${i++}`);
+      params.push((data as any)[key]);
+    }
+  }
+  return { setClause: fields.join(", "), params };
+}

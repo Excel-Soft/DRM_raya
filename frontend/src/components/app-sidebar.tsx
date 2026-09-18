@@ -582,6 +582,9 @@ export function AppSidebar() {
     // Support module is deactivated for the current phase. Reversible via the
     // VITE_SUPPORT_MODULE_ENABLED flag.
     if (item.permKey === "Support" && !isSupportModuleEnabled()) return false;
+    // Temporarily hidden for everyone, including real admins — remove this
+    // line to bring the "Lead" section (Lead Pool / GM BV Pool) back.
+    if (item.permKey === "LEAD") return false;
     // Modify Dashboard URL based on role
     if (item.title === "Dashboard") {
       const activeRoleKey = (userRoleName || "").toLowerCase().replace(/\s+/g, "_");

@@ -373,6 +373,15 @@ export const services = drmSchema.table("services", {
   discount: numeric("discount"),
   minDay: integer("min_day"),
   maxDay: integer("max_day"),
+  // Legacy numeric department id (no FK — carried over from the old MySQL
+  // system's own department table, which was never migrated here).
+  depId: integer("dep_id"),
+  // Which department(s) a project should be created in once an invoice line
+  // for this service is approved — plain department-code strings, matching
+  // how projects.departmentType already stores free-text department codes
+  // elsewhere in this schema. Not yet wired into invoice-approval project
+  // creation (that pipeline is a stub today — see invoice-to-project.service.ts).
+  routeDepartments: text("route_departments").array(),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -395,6 +404,31 @@ export const serviceSubservices = drmSchema.table("service_subservices", {
   discount: numeric("discount"),
   minDay: integer("min_day"),
   maxDay: integer("max_day"),
+  depId: integer("dep_id"),
+  routeDepartments: text("route_departments").array(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Third hierarchy level, one below service_subservices. Expected to be used
+// far less often than the first two levels (most services stop at the
+// sub-service level) but supported the same way for the rare case that needs it.
+export const serviceSubSubservices = drmSchema.table("service_sub_subservices", {
+  // service_subservices.id is a live `uuid` column (Drizzle declares it as
+  // varchar for historical reasons, but the actual DB column was converted to
+  // uuid by ensureServicesSchema()'s ALTER) — this FK column has to match that
+  // real type, not the Drizzle declaration, or the constraint can't be added.
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  subserviceId: uuid("subservice_id").notNull().references(() => serviceSubservices.id, { onDelete: "cascade" }),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  price: numeric("price"),
+  discount: numeric("discount"),
+  minDay: integer("min_day"),
+  maxDay: integer("max_day"),
+  depId: integer("dep_id"),
+  routeDepartments: text("route_departments").array(),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -1680,6 +1714,8 @@ export type FollowupService = typeof followupServices.$inferSelect;
 export type InsertFollowupService = typeof followupServices.$inferInsert;
 export type ServiceSubservice = typeof serviceSubservices.$inferSelect;
 export type InsertServiceSubservice = typeof serviceSubservices.$inferInsert;
+export type ServiceSubSubservice = typeof serviceSubSubservices.$inferSelect;
+export type InsertServiceSubSubservice = typeof serviceSubSubservices.$inferInsert;
 export type FollowupSubservice = typeof followupSubservices.$inferSelect;
 export type InsertFollowupSubservice = typeof followupSubservices.$inferInsert;
 

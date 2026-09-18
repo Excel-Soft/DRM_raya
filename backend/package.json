@@ -13,6 +13,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/server/scripts/seed.ts",
+    "db:seed:services": "tsx src/server/scripts/seed-services-hierarchy.ts",
     "db:setup": "npm run db:push && npm run db:seed"
   },
   "dependencies": {
