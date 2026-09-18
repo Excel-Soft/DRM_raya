@@ -217,39 +217,48 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-10">
-      <div className={cardClass}>
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-zinc-400">
-                {renderSubtitle()}
-              </p>
-              <h1 className="text-2xl font-semibold text-foreground">
-                {renderTitle()}
-              </h1>
-            </div>
-            {(mode === "login" || mode === "signup") && (
+    <div 
+      className="flex min-h-screen w-full items-center justify-center bg-cover bg-center bg-no-repeat px-4 py-10 font-['Poppins']"
+      style={{ backgroundImage: `url('/images/bg.jpg')` }}
+    >
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"></div>
+      
+      <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-white/10 p-8 shadow-2xl backdrop-blur-md">
+        <div className="mb-8">
+          <div className="text-center mb-6">
+            <h1 className="text-3xl font-bold text-white tracking-tight">
+              {renderTitle()}
+            </h1>
+            <p className="mt-2 text-xs font-medium uppercase tracking-widest text-emerald-400">
+              {renderSubtitle()}
+            </p>
+          </div>
+          
+          {(mode === "login" || mode === "signup") && (
+            <div className="flex justify-center mt-2">
+              <span className="text-xs text-slate-300 mr-2">
+                {mode === "login" ? "Don't have an account?" : "Already have an account?"}
+              </span>
               <button
                 type="button"
-                className="text-sm font-semibold text-blue-600 underline-offset-4 hover:underline"
+                className="text-xs font-semibold text-white hover:text-emerald-400 transition-colors"
                 onClick={() => setMode(mode === "login" ? "signup" : "login")}
               >
-                {mode === "login" ? "Create account" : "Sign in"}
+                {mode === "login" ? "Create one" : "Sign in instead"}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           {mode === "signup" && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">Full Name</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
               <input
-                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="Talha Ahmed"
+                placeholder="John Doe"
                 required
               />
             </div>
@@ -257,44 +266,55 @@ export default function AuthPage() {
 
           {(mode === "login" || mode === "signup" || mode.startsWith("forgot-")) && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">Email</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Email Address</label>
               <input
                 type="email"
-                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@example.com"
+                placeholder="name@company.com"
                 required
-                disabled={mode === "forgot-reset"} // Lock email during flow
+                disabled={mode === "forgot-reset"}
               />
             </div>
           )}
 
-
           {mode === "forgot-reset" && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">Reset Token</label>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Reset Token</label>
               <input
                 type="text"
-                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder="Paste token from console"
+                placeholder="Paste token here"
                 required
               />
-              <p className="text-xs text-gray-500 mt-1 dark:text-zinc-400">Check the server console/terminal for your reset link</p>
+              <p className="text-[10px] text-slate-400 mt-1">Check the server console for your reset link</p>
             </div>
           )}
 
           {(mode === "login" || mode === "signup" || mode === "forgot-reset") && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">
-                {mode === "forgot-reset" ? "New Password" : "Password"}
-              </label>
-              <div className="relative mt-1">
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-slate-300">
+                  {mode === "forgot-reset" ? "New Password" : "Password"}
+                </label>
+                {mode === "login" && (
+                  <button
+                    type="button"
+                    className="text-[11px] text-slate-400 hover:text-white transition-colors"
+                    onClick={() => { setMode("forgot-request"); setError(""); }}
+                  >
+                    Forgot password?
+                  </button>
+                )}
+              </div>
+              
+              <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2 pr-10 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 pr-10 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
@@ -304,7 +324,7 @@ export default function AuthPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                   tabIndex={-1}
                 >
@@ -316,11 +336,11 @@ export default function AuthPage() {
 
           {mode === "forgot-reset" && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 dark:text-zinc-300">Confirm Password</label>
-              <div className="relative mt-1">
+              <label className="block text-xs font-medium text-slate-300 mb-1">Confirm Password</label>
+              <div className="relative">
                 <input
                   type={showConfirmPassword ? "text" : "password"}
-                  className="w-full rounded-xl border border-border bg-card px-3 py-2 pr-10 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full rounded-lg border border-white/20 bg-black/20 px-4 py-2.5 pr-10 text-sm text-white placeholder-slate-400 shadow-sm backdrop-blur-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition-all"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
@@ -330,7 +350,7 @@ export default function AuthPage() {
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-zinc-200"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors"
                   aria-label={showConfirmPassword ? "Hide password" : "Show password"}
                   tabIndex={-1}
                 >
@@ -341,40 +361,35 @@ export default function AuthPage() {
           )}
 
           {error && (
-            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
+            <div className="rounded-lg bg-red-500/20 border border-red-500/50 p-3 text-xs text-red-200">
               {error}
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-            {mode === "login" && "Sign In"}
-            {mode === "signup" && "Create Account"}
-            {mode === "forgot-request" && "Get Reset Link"}
-            {mode === "forgot-reset" && "Reset Password"}
-          </button>
-
-          {mode === "login" && (
+          <div className="pt-2">
             <button
-              type="button"
-              className="w-full text-center text-sm font-semibold text-blue-600 underline-offset-4 hover:underline"
-              onClick={() => { setMode("forgot-request"); setError(""); }}
+              type="submit"
+              disabled={loading}
+              className="group relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-900/20 transition-all hover:bg-emerald-500 hover:shadow-emerald-900/40 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              Forgot password? Reset
+              <div className="absolute inset-0 flex h-full w-full justify-center [transform:skew(-12deg)_translateX(-100%)] group-hover:duration-1000 group-hover:[transform:skew(-12deg)_translateX(100%)]">
+                <div className="relative h-full w-8 bg-white/20" />
+              </div>
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              {mode === "login" && "Sign In"}
+              {mode === "signup" && "Create Account"}
+              {mode === "forgot-request" && "Get Reset Link"}
+              {mode === "forgot-reset" && "Reset Password"}
             </button>
-          )}
+          </div>
 
           {(mode.startsWith("forgot-")) && (
             <button
               type="button"
-              className="flex w-full items-center justify-center gap-2 text-sm text-slate-500 hover:text-foreground dark:text-zinc-400"
+              className="flex w-full items-center justify-center gap-2 text-xs text-slate-400 hover:text-white transition-colors mt-4"
               onClick={() => { setMode("login"); setError(""); }}
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="h-3 w-3" />
               Back to sign in
             </button>
           )}

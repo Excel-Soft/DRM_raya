@@ -77,23 +77,23 @@ export function ActivitiesGrid() {
 
   return (
     <Card className="border-0 shadow-sm" data-testid="card-activities-grid">
-      <div className="flex flex-row items-center justify-between gap-2 p-4 pb-2">
-        <h3 className="text-lg font-bold text-slate-700 dark:text-zinc-400">Activities</h3>
-        <div className="flex items-center">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 pb-2">
+        <h3 className="text-lg font-bold text-slate-700 dark:text-zinc-400 tracking-tight">Activities</h3>
+        <div className="flex flex-wrap items-center gap-2">
           <Input
             type="date"
-            className="w-[140px] rounded-none border-r-0 h-9"
+            className="w-[140px] rounded-md h-8 text-xs border-slate-200 shadow-sm focus:ring-emerald-500 focus:border-emerald-500 transition-all dark:bg-zinc-900 dark:border-zinc-800"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
           />
           <Input
             type="date"
-            className="w-[140px] rounded-none h-9"
+            className="w-[140px] rounded-md h-8 text-xs border-slate-200 shadow-sm focus:ring-emerald-500 focus:border-emerald-500 transition-all dark:bg-zinc-900 dark:border-zinc-800"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
           />
-          <Button variant="default" className="bg-[#008c5a] hover:bg-[#007a4e] rounded-none h-9 px-4" onClick={handleGo}>Go</Button>
-          <Button variant="secondary" className="bg-[#6b7280] hover:bg-[#4b5563] text-white rounded-none h-9 px-4" onClick={handleReset}>Reset</Button>
+          <Button variant="default" className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-md h-8 px-4 text-xs font-medium shadow-sm transition-all focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1" onClick={handleGo}>Go</Button>
+          <Button variant="secondary" className="bg-slate-600 hover:bg-slate-700 text-white rounded-md h-8 px-4 text-xs font-medium shadow-sm transition-all focus:ring-2 focus:ring-slate-500 focus:ring-offset-1" onClick={handleReset}>Reset</Button>
         </div>
       </div>
       <div className="p-4 pt-2">

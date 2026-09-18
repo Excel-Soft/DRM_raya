@@ -215,8 +215,8 @@ export default function SalesExecutiveDashboard() {
   ];
 
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="wide-page p-2 sm:p-3 lg:px-4 space-y-3">
+    <div className="flex-1 overflow-auto font-['Poppins'] bg-slate-50/50 dark:bg-zinc-950">
+      <div className="wide-page p-4 md:p-6 lg:p-8 space-y-6">
         <Breadcrumb
           items={[
             { label: "DASHBOARD" },
@@ -225,8 +225,8 @@ export default function SalesExecutiveDashboard() {
           ]}
         />
 
-        <div className="flex items-end justify-between gap-4">
-          <h1 className="text-2xl font-bold">Sales Executive Dashboard</h1>
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-slate-100">Sales Executive Dashboard</h1>
 
           <div className="flex items-end gap-2">
             <Label htmlFor="period-select" className="text-sm text-muted-foreground">
@@ -247,7 +247,7 @@ export default function SalesExecutiveDashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-4">
           {kpiCards.map(({ key, title, icon, color, iconBg }) => {
             const kpiData = (salesData ?? emptySalesData)[key as keyof SalesOverviewData];
             return (
@@ -265,7 +265,7 @@ export default function SalesExecutiveDashboard() {
           })}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <ActivitiesGrid />
             <PipelineSummary period={period} />
@@ -284,44 +284,57 @@ export default function SalesExecutiveDashboard() {
         </div>
 
         {/* Row 4: Follow Up Details */}
-        <div className="bg-white shadow-sm border border-slate-200 rounded-[8px] mt-6 dark:bg-zinc-900 dark:border-zinc-800">
-          <div className="px-5 py-4 flex justify-between items-center border-b border-slate-100 dark:border-zinc-800">
-            <h2 className="text-[16px] font-bold text-slate-700 dark:text-zinc-400">Follow Up Details</h2>
-            <div className="flex gap-2 items-center">
+        <div className="bg-white shadow-sm border border-slate-200 rounded-xl mt-8 dark:bg-zinc-900/50 dark:border-zinc-800/50 overflow-hidden">
+          <div className="px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 dark:border-zinc-800/50">
+            <h2 className="text-base font-semibold tracking-tight text-slate-800 dark:text-zinc-100">Follow Up Details</h2>
+            <div className="flex flex-wrap gap-2 items-center">
               <input 
                 type="date" 
                 value={followStartDate}
                 onChange={(e) => setFollowStartDate(e.target.value)}
-                className="border border-slate-300 bg-transparent rounded-[4px] px-2 h-8 text-[13px] w-[130px] focus:outline-none focus:border-[#00a65a] dark:border-zinc-800" 
+                className="border border-slate-200 bg-white rounded-md px-3 h-9 text-sm w-[140px] focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300" 
               />
-              <span className="mx-0.5 text-slate-400">-</span>
+              <span className="text-slate-400 text-sm">-</span>
               <input 
                 type="date" 
                 value={followEndDate}
                 onChange={(e) => setFollowEndDate(e.target.value)}
-                className="border border-slate-300 bg-transparent rounded-[4px] px-2 h-8 text-[13px] w-[130px] focus:outline-none focus:border-[#00a65a] dark:border-zinc-800" 
+                className="border border-slate-200 bg-white rounded-md px-3 h-9 text-sm w-[140px] focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300" 
               />
-              <button onClick={handleFollowFilter} className="bg-[#00a65a] text-white text-[13px] px-5 h-8 rounded-[4px] font-bold hover:bg-[#008d4c] transition-colors shadow-sm ml-1">Filter</button>
+              <button 
+                onClick={handleFollowFilter} 
+                className="bg-emerald-600 text-white text-sm px-4 h-9 rounded-md font-medium hover:bg-emerald-700 transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+              >
+                Filter
+              </button>
             </div>
           </div>
-          <div className="p-5">
-            <div className="flex flex-wrap gap-2 mb-5">
-              <div onClick={() => handleTabClick("All")} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${activeFollowService === "All" ? "bg-slate-700 dark:bg-slate-600" : "bg-slate-500 hover:bg-slate-600 dark:bg-slate-700"}`}>All {getCount("All")}</div>
+          <div className="p-6">
+            <div className="flex flex-wrap gap-2 mb-6">
+              <div 
+                onClick={() => handleTabClick("All")} 
+                className={`px-4 py-2 rounded-md cursor-pointer transition-all text-sm font-medium shadow-sm border ${
+                  activeFollowService === "All" 
+                    ? "bg-slate-800 text-white border-slate-800 dark:bg-slate-700 dark:border-slate-700" 
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                }`}
+              >
+                All <span className="ml-1 opacity-70">({getCount("All")})</span>
+              </div>
               {allTabServices.map((svc) => {
                 const isActive = activeFollowService === svc;
-                // Generate a consistent color based on service name or use default colors for standard ones
-                let colorClass = "bg-blue-500 hover:bg-blue-600";
-                let activeColorClass = "bg-blue-600";
-                
-                if (svc === "Alibaba Membership") { colorClass = "bg-[#38c172]/80 hover:bg-[#38c172]"; activeColorClass = "bg-[#38c172]"; }
-                else if (svc === "Alibaba Services") { colorClass = "bg-[#e3342f]/80 hover:bg-[#e3342f]"; activeColorClass = "bg-[#e3342f]"; }
-                else if (svc === "Design Development") { colorClass = "bg-[#3490dc]/80 hover:bg-[#3490dc]"; activeColorClass = "bg-[#3490dc]"; }
-                else if (svc === "Domain Hosting") { colorClass = "bg-[#343a40]/80 hover:bg-[#343a40]"; activeColorClass = "bg-[#343a40]"; }
-                else if (svc === "Digital Marketing") { colorClass = "bg-purple-500/80 hover:bg-purple-500"; activeColorClass = "bg-purple-600"; }
-                
+                // Use a consistent modern pill style
                 return (
-                  <div key={svc} onClick={() => handleTabClick(svc)} className={`px-4 py-2 rounded-[4px] cursor-pointer transition-colors text-white text-[13px] font-bold shadow-sm ${isActive ? activeColorClass : colorClass}`}>
-                    {svc} {getCount(svc)}
+                  <div 
+                    key={svc} 
+                    onClick={() => handleTabClick(svc)} 
+                    className={`px-4 py-2 rounded-md cursor-pointer transition-all text-sm font-medium shadow-sm border ${
+                      isActive 
+                        ? "bg-blue-600 text-white border-blue-600" 
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    {svc} <span className="ml-1 opacity-70">({getCount(svc)})</span>
                   </div>
                 );
               })}
@@ -330,8 +343,8 @@ export default function SalesExecutiveDashboard() {
             <div className="flex flex-col md:flex-row gap-4 mb-5">
               {/* Service Type Summary */}
               {uniqueSubtypes.length > 0 && (
-                <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-4 dark:bg-zinc-900 dark:border-zinc-800">
-                    <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Service Type Summary</h3>
+                <div className="flex-1 bg-slate-50/50 rounded-xl border border-slate-100 p-5 dark:bg-zinc-900/30 dark:border-zinc-800/50">
+                    <h3 className="text-sm font-semibold tracking-tight text-slate-700 mb-3 dark:text-zinc-200">Service Type Summary</h3>
                     <div className="flex flex-wrap gap-2">
                         {["All", ...uniqueSubtypes].map(sub => {
                           const count = getSubtypeCount(sub);
@@ -341,7 +354,11 @@ export default function SalesExecutiveDashboard() {
                             <span 
                                 key={sub}
                                 onClick={() => setActiveFollowSubtype(sub)}
-                                className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#059669] text-white border border-[#059669]" : "bg-white border border-[#059669] text-[#059669] dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"}`}
+                                className={`px-3 py-1 text-xs font-medium rounded-full cursor-pointer transition-colors border ${
+                                  isActive 
+                                    ? "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:border-emerald-800/50" 
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                                }`}
                             >
                                 {sub} ({count})
                             </span>
@@ -353,8 +370,8 @@ export default function SalesExecutiveDashboard() {
 
               {/* Grade Summary */}
               {uniqueGrades.length > 0 && (
-                <div className="flex-1 bg-white rounded-[10px] shadow-sm border border-slate-50 p-4 dark:bg-zinc-900 dark:border-zinc-800">
-                    <h3 className="text-[14px] font-bold text-slate-600 mb-3 dark:text-zinc-300">Grade Summary</h3>
+                <div className="flex-1 bg-slate-50/50 rounded-xl border border-slate-100 p-5 dark:bg-zinc-900/30 dark:border-zinc-800/50">
+                    <h3 className="text-sm font-semibold tracking-tight text-slate-700 mb-3 dark:text-zinc-200">Grade Summary</h3>
                     <div className="flex flex-wrap gap-2">
                         {["All", ...uniqueGrades].map(grade => {
                           const count = getGradeCount(grade);
@@ -364,7 +381,11 @@ export default function SalesExecutiveDashboard() {
                             <span 
                                 key={grade}
                                 onClick={() => setActiveFollowGrade(grade)}
-                                className={`px-3 py-1 text-[12px] font-medium rounded cursor-pointer transition-colors ${isActive ? "bg-[#1e293b] text-white border border-[#1e293b]" : "bg-white border border-slate-300 text-slate-600 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800"}`}
+                                className={`px-3 py-1 text-xs font-medium rounded-full cursor-pointer transition-colors border ${
+                                  isActive 
+                                    ? "bg-slate-800 text-white border-slate-800 dark:bg-slate-700 dark:border-slate-600" 
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700 dark:hover:bg-zinc-700"
+                                }`}
                             >
                                 {grade} ({count})
                             </span>
@@ -375,62 +396,69 @@ export default function SalesExecutiveDashboard() {
               )}
             </div>
 
-            <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-2 text-[13px] text-slate-600 font-medium dark:text-zinc-300">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+              <div className="flex items-center gap-2 text-sm text-slate-600 font-medium dark:text-zinc-300">
                 Show 
-                <select className="border border-slate-300 bg-transparent rounded-[4px] px-2 py-1 outline-none focus:border-[#00a65a] dark:border-zinc-800" disabled>
+                <select className="border border-slate-200 bg-white rounded-md px-2 py-1.5 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 shadow-sm transition-all dark:bg-zinc-900 dark:border-zinc-700" disabled>
                   <option value="10">10</option>
                 </select> 
                 entries
               </div>
-              <div className="flex items-center gap-2 text-[13px] text-slate-600 font-medium dark:text-zinc-300">
+              <div className="flex items-center gap-2 text-sm text-slate-600 font-medium dark:text-zinc-300">
                 Search:
-                <input type="text" className="border border-slate-300 bg-transparent rounded-[4px] px-3 py-1.5 w-[200px] focus:outline-none focus:border-[#00a65a] dark:border-zinc-800" />
+                <input type="text" placeholder="Search entries..." className="border border-slate-200 bg-white rounded-md px-3 py-1.5 w-full sm:w-[250px] shadow-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all dark:bg-zinc-900 dark:border-zinc-700" />
               </div>
             </div>
 
-            <div className="overflow-x-auto border border-slate-200 rounded-[6px] dark:border-zinc-800">
-              <table className="w-full text-[13px] text-left">
-                <thead className="bg-[#fbfcfd] border-b border-slate-200 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm dark:border-zinc-800">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 border-b border-slate-200 dark:border-zinc-800 dark:bg-zinc-900/50">
                   <tr>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">#</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Company</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Main Service</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Sub Type</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Grade</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Purpose</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Method</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Comment</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Sale Person</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Followup Note</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">Next Date</th>
-                    <th className="py-3.5 px-4 font-bold text-slate-600 dark:text-zinc-300">Created Date</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">#</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Company</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Main Service</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Sub Type</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Grade</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Purpose</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Method</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Comment</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Sale Person</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Followup Note</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Next Date</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 dark:text-zinc-200 whitespace-nowrap">Created Date</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
                   {filteredFollowups.length > 0 ? (
                     filteredFollowups
                       .slice((followPage - 1) * followPageSize, followPage * followPageSize)
                       .map((row: any, i: number) => (
-                      <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800 dark:border-zinc-800">
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.id}</td>
-                        <td className="py-3 px-4 text-slate-700 font-bold border-r border-slate-100 dark:border-zinc-800 dark:text-zinc-400">{row.company}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.service}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.subtype}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.grade}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.purpose}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.method}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.comment}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.person}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.note}</td>
-                        <td className="py-3 px-4 text-slate-600 border-r border-slate-100 dark:text-zinc-300 dark:border-zinc-800">{row.next}</td>
+                      <tr key={i} className="hover:bg-slate-50/80 transition-colors bg-white dark:bg-transparent dark:hover:bg-zinc-800/50">
+                        <td className="py-3 px-4 text-slate-500 dark:text-zinc-400">{row.id}</td>
+                        <td className="py-3 px-4 text-slate-800 font-medium dark:text-zinc-200">{row.company}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.service}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.subtype}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-300">
+                            {row.grade}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.purpose}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.method}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.comment}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.person}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.note}</td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.next}</td>
                         <td className="py-3 px-4 text-slate-600 dark:text-zinc-300">{row.created}</td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={12} className="py-8 px-4 text-slate-500 text-center font-medium bg-slate-50/50 dark:bg-zinc-900 dark:text-zinc-400">
-                        No Data Found for {activeFollowService}
+                      <td colSpan={12} className="py-12 px-4 text-slate-500 text-center font-medium bg-white dark:bg-transparent dark:text-zinc-400">
+                        <div className="flex flex-col items-center justify-center">
+                          <FileText className="h-8 w-8 text-slate-300 mb-2 dark:text-zinc-600" />
+                          No Data Found for {activeFollowService}
+                        </div>
                       </td>
                     </tr>
                   )}
@@ -438,7 +466,7 @@ export default function SalesExecutiveDashboard() {
               </table>
             </div>
 
-            <div className="mt-4 flex justify-between items-center text-[13px] text-slate-500 font-medium dark:text-zinc-400">
+            <div className="mt-5 flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-slate-500 font-medium dark:text-zinc-400">
               <div>
                 Showing {filteredFollowups.length > 0 ? (followPage - 1) * followPageSize + 1 : 0} to {Math.min(followPage * followPageSize, filteredFollowups.length)} of {filteredFollowups.length} entries
               </div>
@@ -446,7 +474,7 @@ export default function SalesExecutiveDashboard() {
                 <button
                   onClick={() => setFollowPage(p => Math.max(1, p - 1))}
                   disabled={followPage === 1}
-                  className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+                  className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-xs font-medium shadow-sm"
                 >
                   Previous
                 </button>
@@ -464,10 +492,10 @@ export default function SalesExecutiveDashboard() {
                       <button
                         key={p}
                         onClick={() => setFollowPage(p as number)}
-                        className={`w-8 h-8 rounded-[4px] border text-[12px] font-medium transition-colors ${
+                        className={`w-8 h-8 rounded-md border text-xs font-medium transition-colors shadow-sm ${
                           followPage === p
-                            ? 'bg-[#00a65a] text-white border-[#00a65a]'
-                            : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800'
                         }`}
                       >
                         {p}
@@ -478,7 +506,7 @@ export default function SalesExecutiveDashboard() {
                 <button
                   onClick={() => setFollowPage(p => Math.min(Math.ceil(filteredFollowups.length / followPageSize), p + 1))}
                   disabled={followPage >= Math.ceil(filteredFollowups.length / followPageSize)}
-                  className="px-3 py-1.5 rounded-[4px] border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-[12px] font-medium"
+                  className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors text-xs font-medium shadow-sm"
                 >
                   Next
                 </button>
