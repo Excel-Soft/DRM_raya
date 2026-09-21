@@ -6,10 +6,13 @@ import { requireRole } from "../middleware/auth.middleware";
 // "Service for Quotation" catalogue — the 3-level Service -> Sub-Service ->
 // Sub-Sub-Service hierarchy shown on /drm/attributes. Reads are open to any
 // authenticated user (the invoice/quotation product picker at
-// /api/sales/services already relies on this data being broadly readable);
-// writes are restricted the same way the rest of the DRM-Setting "Attributes"
-// page's categories already are (attributes.create/delete: admin + super_hod).
-const SERVICE_WRITE_ROLES = ["admin", "super_hod"];
+// /api/sales/services already relies on this data being broadly readable).
+// Writes: admin/super_hod/hod — every other Attributes category is actually
+// unguarded today (their requireActionPermission() middleware is a stub that
+// always passes through), so restricting this one category to less than hod
+// would make it the odd one out rather than "consistent with the rest of
+// the page".
+const SERVICE_WRITE_ROLES = ["admin", "super_hod", "hod"];
 
 // Department codes are free text (matching projects.departmentType elsewhere
 // in this schema) — not an enum, so any string is accepted here and the
