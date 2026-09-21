@@ -11,6 +11,7 @@ export interface ServiceInput {
   maxDay?: number | null;
   depId?: number | null;
   routeDepartments?: string[] | null;
+  projectDepartment?: string | null;
 }
 
 export interface ServiceNode {
@@ -24,6 +25,7 @@ export interface ServiceNode {
   maxDay: number | null;
   depId: number | null;
   routeDepartments: string[] | null;
+  projectDepartment: string | null;
   isActive: boolean;
   createdAt: string;
 }
@@ -258,6 +260,7 @@ export const servicesRepository = {
         s.max_day,
         ${svcOpt("dep_id")} as dep_id,
         ${svcOpt("route_departments")} as route_departments,
+        ${svcOpt("project_department")} as project_department,
         s.is_active,
         s.created_at,
         coalesce(
@@ -273,6 +276,7 @@ export const servicesRepository = {
               'max_day', ${opt("max_day")},
               'dep_id', ${opt("dep_id")},
               'route_departments', ${opt("route_departments")},
+              'project_department', ${opt("project_department")},
               'is_active', ss.is_active,
               'created_at', ss.created_at,
               'sub_subservices', (
@@ -288,6 +292,7 @@ export const servicesRepository = {
                     'max_day', sss.max_day,
                     'dep_id', sss.dep_id,
                     'route_departments', sss.route_departments,
+                    'project_department', sss.project_department,
                     'is_active', sss.is_active,
                     'created_at', sss.created_at
                   ) order by sss.created_at asc, sss.id asc
@@ -302,8 +307,8 @@ export const servicesRepository = {
       from drm.services s
       left join drm.service_subservices ss on ss.service_id = s.id and ss.is_active = true
       where s.is_active = true
-      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at${svcCols.has("dep_id") ? ", s.dep_id" : ""}${svcCols.has("route_departments") ? ", s.route_departments" : ""}
-      order by s.name
+      group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at${svcCols.has("dep_id") ? ", s.dep_id" : ""}${svcCols.has("route_departments") ? ", s.route_departments" : ""}${svcCols.has("project_department") ? ", s.project_department" : ""}
+      order by s.created_at asc, s.id asc
     `);
     return res.rows.map((row: any) => ({
       id: row.id,
@@ -316,6 +321,7 @@ export const servicesRepository = {
       maxDay: row.max_day,
       depId: row.dep_id,
       routeDepartments: row.route_departments,
+      projectDepartment: row.project_department,
       isActive: row.is_active,
       createdAt: row.created_at,
       subServices: (row.sub_services || []).map((sub: any) => ({
@@ -329,6 +335,7 @@ export const servicesRepository = {
         maxDay: sub.max_day,
         depId: sub.dep_id,
         routeDepartments: sub.route_departments,
+        projectDepartment: sub.project_department,
         isActive: sub.is_active,
         createdAt: sub.created_at,
         subSubservices: (sub.sub_subservices || []).map((leaf: any) => ({
@@ -342,6 +349,7 @@ export const servicesRepository = {
           maxDay: leaf.max_day,
           depId: leaf.dep_id,
           routeDepartments: leaf.route_departments,
+          projectDepartment: leaf.project_department,
           isActive: leaf.is_active,
           createdAt: leaf.created_at,
         })),
@@ -412,12 +420,12 @@ export const servicesRepository = {
   async createService(data: ServiceInput): Promise<ServiceNode> {
     const code = codeFromName(data.name);
     const res = await pool.query(
-      `insert into drm.services (code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      `insert into drm.services (code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       [
         code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
-        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null, data.projectDepartment ?? null,
       ],
     );
     return mapServiceRow(res.rows[0]);
@@ -429,7 +437,7 @@ export const servicesRepository = {
     params.push(id);
     const res = await pool.query(
       `update drm.services set ${setClause} where id = $${params.length} and is_active = true
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       params,
     );
     return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
@@ -442,7 +450,7 @@ export const servicesRepository = {
 
   async findServiceRowById(id: string): Promise<ServiceNode | null> {
     const res = await pool.query(
-      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at
        from drm.services where id = $1 and is_active = true`,
       [id],
     );
@@ -453,12 +461,12 @@ export const servicesRepository = {
   async createSubservice(serviceId: string, data: ServiceInput): Promise<ServiceNode> {
     const code = codeFromName(data.name);
     const res = await pool.query(
-      `insert into drm.service_subservices (service_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      `insert into drm.service_subservices (service_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       [
         serviceId, code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
-        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null, data.projectDepartment ?? null,
       ],
     );
     return mapServiceRow(res.rows[0]);
@@ -470,7 +478,7 @@ export const servicesRepository = {
     params.push(id);
     const res = await pool.query(
       `update drm.service_subservices set ${setClause} where id = $${params.length} and is_active = true
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       params,
     );
     return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
@@ -483,7 +491,7 @@ export const servicesRepository = {
 
   async findSubserviceRowById(id: string): Promise<ServiceNode | null> {
     const res = await pool.query(
-      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at
        from drm.service_subservices where id = $1 and is_active = true`,
       [id],
     );
@@ -494,12 +502,12 @@ export const servicesRepository = {
   async createSubSubservice(subserviceId: string, data: ServiceInput): Promise<ServiceNode> {
     const code = codeFromName(data.name);
     const res = await pool.query(
-      `insert into drm.service_sub_subservices (subservice_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+      `insert into drm.service_sub_subservices (subservice_id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       [
         subserviceId, code, data.name, data.description ?? null, data.price ?? null, data.discount ?? null,
-        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null,
+        data.minDay ?? null, data.maxDay ?? null, data.depId ?? null, data.routeDepartments ?? null, data.projectDepartment ?? null,
       ],
     );
     return mapServiceRow(res.rows[0]);
@@ -511,7 +519,7 @@ export const servicesRepository = {
     params.push(id);
     const res = await pool.query(
       `update drm.service_sub_subservices set ${setClause} where id = $${params.length} and is_active = true
-       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at`,
+       returning id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at`,
       params,
     );
     return res.rows[0] ? mapServiceRow(res.rows[0]) : null;
@@ -524,7 +532,7 @@ export const servicesRepository = {
 
   async findSubSubserviceRowById(id: string): Promise<ServiceNode | null> {
     const res = await pool.query(
-      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, is_active, created_at
+      `select id, code, name, description, price, discount, min_day, max_day, dep_id, route_departments, project_department, is_active, created_at
        from drm.service_sub_subservices where id = $1 and is_active = true`,
       [id],
     );
@@ -544,6 +552,7 @@ function mapServiceRow(row: any): ServiceNode {
     maxDay: row.max_day,
     depId: row.dep_id,
     routeDepartments: row.route_departments,
+    projectDepartment: row.project_department,
     isActive: row.is_active,
     createdAt: row.created_at,
   };
@@ -572,6 +581,7 @@ const COLUMN_MAP: Record<string, string> = {
   maxDay: "max_day",
   depId: "dep_id",
   routeDepartments: "route_departments",
+  projectDepartment: "project_department",
 };
 
 function buildSetClause(data: Partial<ServiceInput>): { setClause: string; params: any[] } {

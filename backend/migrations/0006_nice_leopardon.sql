@@ -1,0 +1,1 @@
+ALTER TABLE "drm"."attributes" ADD COLUMN "amount" numeric(12, 2);

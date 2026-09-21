@@ -24,6 +24,10 @@ const serviceInputSchema = z
     maxDay: z.coerce.number().int().nullable().optional(),
     depId: z.coerce.number().int().nullable().optional(),
     routeDepartments: z.array(z.string().trim().min(1)).nullable().optional(),
+    // Single department a project routes to once an invoice for this line
+    // is approved — unlike routeDepartments (who may USE the service), this
+    // is exactly one value.
+    projectDepartment: z.string().trim().min(1).nullable().optional(),
   })
   .strict();
 
@@ -39,7 +43,18 @@ function toServiceInput(parsed: z.infer<typeof serviceInputSchema>): ServiceInpu
     maxDay: parsed.maxDay ?? null,
     depId: parsed.depId ?? null,
     routeDepartments: parsed.routeDepartments ?? null,
+    projectDepartment: parsed.projectDepartment ?? null,
   };
+}
+
+// PATCH bodies are partial (serviceUpdateSchema) — a field the caller didn't
+// send must stay untouched in the DB, not get coerced to null the way
+// toServiceInput() deliberately does for a full create. buildSetClause()
+// only writes keys that are !== undefined, so passing the parsed partial
+// through as-is (instead of defaulting every missing field to null) is what
+// makes a PATCH actually partial.
+function toServicePatch(parsed: z.infer<typeof serviceUpdateSchema>): Partial<ServiceInput> {
+  return parsed;
 }
 
 const router = Router();
@@ -73,7 +88,7 @@ router.post("/", requireRole(...SERVICE_WRITE_ROLES), async (req: Request, res: 
 router.patch("/:id", requireRole(...SERVICE_WRITE_ROLES), async (req: Request, res: Response) => {
   try {
     const parsed = serviceUpdateSchema.parse(req.body);
-    const updated = await servicesRepository.updateService(req.params.id, toServiceInput(parsed as any));
+    const updated = await servicesRepository.updateService(req.params.id, toServicePatch(parsed));
     if (!updated) return res.status(404).json({ error: "Service not found" });
     return res.json({ success: true, data: updated });
   } catch (error) {
@@ -116,7 +131,7 @@ router.post("/:serviceId/subservices", requireRole(...SERVICE_WRITE_ROLES), asyn
 router.patch("/subservices/:id", requireRole(...SERVICE_WRITE_ROLES), async (req: Request, res: Response) => {
   try {
     const parsed = serviceUpdateSchema.parse(req.body);
-    const updated = await servicesRepository.updateSubservice(req.params.id, toServiceInput(parsed as any));
+    const updated = await servicesRepository.updateSubservice(req.params.id, toServicePatch(parsed));
     if (!updated) return res.status(404).json({ error: "Sub-service not found" });
     return res.json({ success: true, data: updated });
   } catch (error) {
@@ -159,7 +174,7 @@ router.post("/subservices/:subserviceId/sub-subservices", requireRole(...SERVICE
 router.patch("/sub-subservices/:id", requireRole(...SERVICE_WRITE_ROLES), async (req: Request, res: Response) => {
   try {
     const parsed = serviceUpdateSchema.parse(req.body);
-    const updated = await servicesRepository.updateSubSubservice(req.params.id, toServiceInput(parsed as any));
+    const updated = await servicesRepository.updateSubSubservice(req.params.id, toServicePatch(parsed));
     if (!updated) return res.status(404).json({ error: "Sub-sub-service not found" });
     return res.json({ success: true, data: updated });
   } catch (error) {

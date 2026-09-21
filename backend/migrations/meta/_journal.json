@@ -36,6 +36,41 @@
       "when": 1789739133404,
       "tag": "0004_broken_guardsmen",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789981638590,
+      "tag": "0005_funny_alice",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789983983753,
+      "tag": "0006_nice_leopardon",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789984441745,
+      "tag": "0007_red_ben_grimm",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789985096520,
+      "tag": "0008_loud_magma",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789988683867,
+      "tag": "0009_simple_living_tribunal",
+      "breakpoints": true
     }
   ]
 }

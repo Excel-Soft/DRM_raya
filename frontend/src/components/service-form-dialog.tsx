@@ -5,18 +5,29 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 // Free-text department codes — same convention projects.departmentType
-// already uses elsewhere in this schema. Not an enum; this is just the
-// curated set offered in this one form.
-export const ROUTE_DEPARTMENT_OPTIONS = [
+// already uses elsewhere in this schema. Not an enum; sourced from the real
+// departments in drm.roles (grouped by role name), not guessed. Shared by
+// both the "Allowed Department(s)" multi-select and the single-value
+// "Project Department" select below.
+export const DEPARTMENT_OPTIONS = [
     { value: "SALES", label: "Sales" },
-    { value: "PRODUCT_POSTING", label: "Product Posting" },
-    { value: "DND", label: "D&D" },
-    { value: "SOFTWARE", label: "Software" },
-    { value: "SEO_SMM", label: "SEO/SMM" },
+    { value: "ACCOUNTS", label: "Accounts" },
     { value: "IT", label: "IT" },
+    { value: "SOFTWARE", label: "Software" },
+    { value: "DND", label: "D&D" },
+    { value: "PRODUCT_POSTING", label: "Product Posting" },
+    { value: "SEO_SMM", label: "SEO/SMM" },
     { value: "SERVICE", label: "Service" },
+    { value: "MARKETING", label: "Marketing" },
+    { value: "LEAD", label: "Lead" },
+    { value: "QA", label: "QA" },
+    { value: "RECEPTION", label: "Reception" },
+    { value: "VERIFICATION", label: "Verification" },
 ] as const;
 
 export interface ServiceFormValues {
@@ -28,10 +39,11 @@ export interface ServiceFormValues {
     maxDay: string;
     depId: string;
     routeDepartments: string[];
+    projectDepartment: string;
 }
 
 export const emptyServiceForm: ServiceFormValues = {
-    name: "", description: "", price: "", discount: "", minDay: "", maxDay: "", depId: "", routeDepartments: [],
+    name: "", description: "", price: "", discount: "", minDay: "", maxDay: "", depId: "", routeDepartments: [], projectDepartment: "",
 };
 
 interface ServiceFormDialogProps {
@@ -92,7 +104,7 @@ export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValue
                         <Input type="number" value={form.maxDay} onChange={(e) => setForm((f) => ({ ...f, maxDay: e.target.value }))} />
                     </div>
                     <div className="space-y-1.5 md:col-span-2">
-                        <Label>Allowed Department (legacy id)</Label>
+                        <Label>Legacy Department ID</Label>
                         <Input
                             type="number"
                             placeholder="Legacy numeric department id — no name mapping exists for these yet"
@@ -101,12 +113,12 @@ export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValue
                         />
                     </div>
                     <div className="space-y-1.5 md:col-span-2">
-                        <Label>Routes to Department(s) after invoice approval</Label>
+                        <Label>Allowed Department(s)</Label>
                         <p className="text-xs text-muted-foreground">
-                            Not yet wired into invoice-approval project creation — that pipeline needs a separate fix first.
+                            Which department(s) may use this service to build a quotation.
                         </p>
                         <div className="grid grid-cols-2 gap-2 mt-1">
-                            {ROUTE_DEPARTMENT_OPTIONS.map((opt) => (
+                            {DEPARTMENT_OPTIONS.map((opt) => (
                                 <label key={opt.value} className="flex items-center gap-2 text-sm cursor-pointer">
                                     <Checkbox
                                         checked={form.routeDepartments.includes(opt.value)}
@@ -116,6 +128,24 @@ export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValue
                                 </label>
                             ))}
                         </div>
+                    </div>
+                    <div className="space-y-1.5 md:col-span-2">
+                        <Label>Project Department</Label>
+                        <p className="text-xs text-muted-foreground">
+                            When an invoice for this service is approved, the project is routed here. Not wired into the live approval flow yet — a planned follow-up.
+                        </p>
+                        <Select
+                            value={form.projectDepartment || "__none__"}
+                            onValueChange={(v) => setForm((f) => ({ ...f, projectDepartment: v === "__none__" ? "" : v }))}
+                        >
+                            <SelectTrigger><SelectValue placeholder="Choose a department..." /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="__none__">None</SelectItem>
+                                {DEPARTMENT_OPTIONS.map((opt) => (
+                                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                     </div>
                 </div>
                 <Button

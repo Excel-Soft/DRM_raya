@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, numeric, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, uniqueIndex, serial } from "drizzle-orm/pg-core";
+import { pgTable, pgSchema, text, varchar, timestamp, integer, decimal, numeric, pgEnum, boolean, date, jsonb, primaryKey, uuid, index, uniqueIndex, serial, foreignKey } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -376,12 +376,18 @@ export const services = drmSchema.table("services", {
   // Legacy numeric department id (no FK — carried over from the old MySQL
   // system's own department table, which was never migrated here).
   depId: integer("dep_id"),
-  // Which department(s) a project should be created in once an invoice line
-  // for this service is approved — plain department-code strings, matching
-  // how projects.departmentType already stores free-text department codes
-  // elsewhere in this schema. Not yet wired into invoice-approval project
-  // creation (that pipeline is a stub today — see invoice-to-project.service.ts).
+  // Which department(s) are allowed to use this service to build a
+  // quotation — plain department-code strings (SALES/IT/DND/... — see
+  // service-form-dialog.tsx's DEPARTMENT_OPTIONS for the live list, sourced
+  // from drm.roles). Zero or more.
   routeDepartments: text("route_departments").array(),
+  // The single department a project is routed to once an invoice line for
+  // this service is approved — unlike routeDepartments (who may USE the
+  // service), this is exactly one value, matching how projects.departmentType
+  // already stores free-text department codes elsewhere in this schema. Not
+  // yet wired into invoice-approval project creation (that pipeline is a
+  // stub today — see invoice-to-project.service.ts) — a deliberate follow-up.
+  projectDepartment: text("project_department"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -406,6 +412,7 @@ export const serviceSubservices = drmSchema.table("service_subservices", {
   maxDay: integer("max_day"),
   depId: integer("dep_id"),
   routeDepartments: text("route_departments").array(),
+  projectDepartment: text("project_department"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -429,6 +436,7 @@ export const serviceSubSubservices = drmSchema.table("service_sub_subservices", 
   maxDay: integer("max_day"),
   depId: integer("dep_id"),
   routeDepartments: text("route_departments").array(),
+  projectDepartment: text("project_department"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -2563,9 +2571,35 @@ export const attributes = drmSchema.table("attributes", {
   id: uuid("id").primaryKey().defaultRandom(),
   category: varchar("category", { length: 100 }).notNull(),
   name: text("name").notNull(),
+  // Self-reference so one category (e.g. "Q & A") can model a simple
+  // 2-level tree — a top-level attribute (parentId null) with child
+  // attributes under it (e.g. a question's answers) — without needing a
+  // dedicated table for every category that turns out to need hierarchy.
+  parentId: uuid("parent_id"),
+  // Set only for categories that carry a default numeric value alongside
+  // the name (e.g. "Penalty Head" rows each have a standard deduction
+  // amount) — null for every category that's just a plain name list.
+  amount: decimal("amount", { precision: 12, scale: 2 }),
+  // Free-text date label alongside the name — "Govt Leave" uses "DD Mon"
+  // (a recurring annual date, no year), "Account Monthly Task" uses a bare
+  // day-of-month ("15") for its recurring billing due date. Deliberately
+  // text, not a real date column, since neither of those is an actual
+  // calendar date. Null for every other category.
+  dateLabel: text("date_label"),
+  // Set only for "Account Monthly Task", where each recurring bill/rent
+  // line belongs to one office branch (e.g. "Sialkot", "Lahore"). Null
+  // everywhere else.
+  branch: text("branch"),
+  // Set only for "Buyer Detail" child rows (a buyer reference/contact under
+  // a top-level buyer via parentId) — email/phone for that contact. Null
+  // everywhere else, including top-level Buyer Detail rows that have none.
+  email: text("email"),
+  phone: text("phone"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (t) => ({
+  parentFk: foreignKey({ columns: [t.parentId], foreignColumns: [t.id], name: "attributes_parent_id_fk" }).onDelete("cascade"),
+}));
 
 export const insertAttributeSchema = createInsertSchema(attributes);
 export const selectAttributeSchema = createSelectSchema(attributes);

@@ -29,6 +29,8 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { ServiceCatalogTree } from "@/components/service-catalog-tree";
+import { QaAttributeTree } from "@/components/qa-attribute-tree";
+import { BuyerDetailTree } from "@/components/buyer-detail-tree";
 
 const ATTRIBUTE_CATEGORIES = [
     "Company Detail",
@@ -50,14 +52,15 @@ const ATTRIBUTE_CATEGORIES = [
     "Buyer Detail",
     "Portfolio Categories",
     "Alibaba Packages",
-    "Others",
-    "Exporter & Manufacturer"
 ];
 
 export default function AttributesPage() {
     const [selectedCategory, setSelectedCategory] = useState(ATTRIBUTE_CATEGORIES[0]);
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [newItemName, setNewItemName] = useState("");
+    const [newItemAmount, setNewItemAmount] = useState("");
+    const [newItemDateLabel, setNewItemDateLabel] = useState("");
+    const [newItemBranch, setNewItemBranch] = useState("");
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -71,9 +74,26 @@ export default function AttributesPage() {
     // and its own tree UI — nothing about the generic single-field
     // attributes list/dialog applies here, so it renders entirely separately.
     const isServiceCategory = selectedCategory === "Service for Quotation";
+    // "Q & A" uses the same generic attributes table/endpoints as every other
+    // category, but with the new self-referencing parentId column to model
+    // question -> answer(s) — its own tree UI handles fetching/rendering.
+    const isQaCategory = selectedCategory === "Q & A";
+    // "Penalty Head" is still the plain generic attributes list, but each
+    // row also carries a default deduction amount — the only category that
+    // uses the attributes.amount column today.
+    const isPenaltyCategory = selectedCategory === "Penalty Head";
+    // "Govt Leave" rows carry a recurring "DD Mon" date alongside the name.
+    const isGovtLeaveCategory = selectedCategory === "Govt Leave";
+    // "Account Monthly Task" rows carry both a branch and a recurring
+    // day-of-month date alongside the name.
+    const isAccountTaskCategory = selectedCategory === "Account Monthly Task";
+    // "Buyer Detail" is a genuine 2-level tree (buyer -> reference contacts,
+    // each with optional email/phone) — its own tree UI handles fetching/rendering.
+    const isBuyerDetailCategory = selectedCategory === "Buyer Detail";
+    const extraColumnCount = (isPenaltyCategory ? 1 : 0) + (isGovtLeaveCategory ? 1 : 0) + (isAccountTaskCategory ? 2 : 0);
 
-    // Fetch attributes for selected category (Service for Quotation manages
-    // its own fetching entirely inside <ServiceCatalogTree />).
+    // Fetch attributes for selected category (Service for Quotation / Q & A /
+    // Buyer Detail manage their own fetching entirely inside their own tree components).
     const { data: attributes = [], isLoading } = useQuery({
         queryKey: isBranchCategory ? ["/api/drm/branches", "all"] : ["/api/attributes", selectedCategory],
         queryFn: async () => {
@@ -85,22 +105,28 @@ export default function AttributesPage() {
             const res = await apiRequest("GET", `/api/attributes/${encodeURIComponent(selectedCategory)}`);
             return res.json();
         },
-        enabled: !isServiceCategory,
+        enabled: !isServiceCategory && !isQaCategory && !isBuyerDetailCategory,
     });
 
     // Add mutation — mutationRequest throws on non-2xx so 401/403 messages
     // (e.g. "You are not authorized to manage attributes.") surface honestly.
     const addMutation = useMutation({
-        mutationFn: async (name: string) =>
+        mutationFn: async (input: { name: string; amount?: string; dateLabel?: string; branch?: string }) =>
             isBranchCategory
-                ? mutationRequest("POST", "/api/drm/branches", { name })
+                ? mutationRequest("POST", "/api/drm/branches", { name: input.name })
                 : mutationRequest("POST", "/api/attributes", {
                     category: selectedCategory,
-                    name,
+                    name: input.name,
+                    ...(isPenaltyCategory && input.amount ? { amount: input.amount } : {}),
+                    ...((isGovtLeaveCategory || isAccountTaskCategory) && input.dateLabel ? { dateLabel: input.dateLabel } : {}),
+                    ...(isAccountTaskCategory && input.branch ? { branch: input.branch } : {}),
                 }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: isBranchCategory ? ["/api/drm/branches"] : ["/api/attributes", selectedCategory] });
             setNewItemName("");
+            setNewItemAmount("");
+            setNewItemDateLabel("");
+            setNewItemBranch("");
             setIsAddOpen(false);
             toast({ title: "Success", description: "Item added successfully" });
         },
@@ -125,7 +151,12 @@ export default function AttributesPage() {
 
     const handleAdd = () => {
         if (!newItemName.trim()) return;
-        addMutation.mutate(newItemName);
+        addMutation.mutate({
+            name: newItemName,
+            amount: newItemAmount.trim(),
+            dateLabel: newItemDateLabel.trim(),
+            branch: newItemBranch.trim(),
+        });
     };
 
     return (
@@ -151,6 +182,10 @@ export default function AttributesPage() {
             <div className="flex-1 p-8">
                 {isServiceCategory ? (
                     <ServiceCatalogTree />
+                ) : isQaCategory ? (
+                    <QaAttributeTree />
+                ) : isBuyerDetailCategory ? (
+                    <BuyerDetailTree />
                 ) : (
                     <>
                         <div className="flex items-center justify-between mb-6">
@@ -175,6 +210,37 @@ export default function AttributesPage() {
                                                 onChange={(e) => setNewItemName(e.target.value)}
                                             />
                                         </div>
+                                        {isPenaltyCategory && (
+                                            <div className="space-y-2">
+                                                <Label>Amount</Label>
+                                                <Input
+                                                    type="number"
+                                                    placeholder="Enter amount..."
+                                                    value={newItemAmount}
+                                                    onChange={(e) => setNewItemAmount(e.target.value)}
+                                                />
+                                            </div>
+                                        )}
+                                        {isAccountTaskCategory && (
+                                            <div className="space-y-2">
+                                                <Label>Branch</Label>
+                                                <Input
+                                                    placeholder="Enter branch..."
+                                                    value={newItemBranch}
+                                                    onChange={(e) => setNewItemBranch(e.target.value)}
+                                                />
+                                            </div>
+                                        )}
+                                        {(isGovtLeaveCategory || isAccountTaskCategory) && (
+                                            <div className="space-y-2">
+                                                <Label>Date</Label>
+                                                <Input
+                                                    placeholder={isGovtLeaveCategory ? "e.g. 01 May" : "e.g. 15"}
+                                                    value={newItemDateLabel}
+                                                    onChange={(e) => setNewItemDateLabel(e.target.value)}
+                                                />
+                                            </div>
+                                        )}
                                         <Button
                                             onClick={handleAdd}
                                             className="w-full bg-[#008d4c] hover:bg-[#00733e]"
@@ -195,18 +261,29 @@ export default function AttributesPage() {
                                 <Table>
                                     <TableHeader className="bg-slate-50 dark:bg-zinc-900">
                                         <TableRow>
-                                            <TableHead className="font-semibold text-slate-700 w-full dark:text-zinc-400">Role Title</TableHead>
+                                            <TableHead className="font-semibold text-slate-700 w-full dark:text-zinc-400">
+                                                {isPenaltyCategory ? "Name" : "Role Title"}
+                                            </TableHead>
+                                            {isAccountTaskCategory && (
+                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Branch</TableHead>
+                                            )}
+                                            {(isGovtLeaveCategory || isAccountTaskCategory) && (
+                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Date</TableHead>
+                                            )}
+                                            {isPenaltyCategory && (
+                                                <TableHead className="font-semibold text-slate-700 dark:text-zinc-400">Amount</TableHead>
+                                            )}
                                             <TableHead className="font-semibold text-slate-700 w-20 text-center dark:text-zinc-400">Action</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {isLoading ? (
                                             <TableRow>
-                                                <TableCell colSpan={2} className="text-center py-8">Loading...</TableCell>
+                                                <TableCell colSpan={2 + extraColumnCount} className="text-center py-8">Loading...</TableCell>
                                             </TableRow>
                                         ) : attributes.length === 0 ? (
                                             <TableRow>
-                                                <TableCell colSpan={2} className="text-center py-8 text-muted-foreground">
+                                                <TableCell colSpan={2 + extraColumnCount} className="text-center py-8 text-muted-foreground">
                                                     No items found. Add one above.
                                                 </TableCell>
                                             </TableRow>
@@ -214,6 +291,15 @@ export default function AttributesPage() {
                                             attributes.map((item: any) => (
                                                 <TableRow key={item.id}>
                                                     <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{item.name}</TableCell>
+                                                    {isAccountTaskCategory && (
+                                                        <TableCell className="text-slate-600 dark:text-zinc-400">{item.branch ?? "-"}</TableCell>
+                                                    )}
+                                                    {(isGovtLeaveCategory || isAccountTaskCategory) && (
+                                                        <TableCell className="text-red-500 font-medium">{item.dateLabel ?? "-"}</TableCell>
+                                                    )}
+                                                    {isPenaltyCategory && (
+                                                        <TableCell className="text-red-500 font-medium">{item.amount ?? "-"}</TableCell>
+                                                    )}
                                                     <TableCell className="text-center">
                                                         <Button
                                                             variant="ghost"

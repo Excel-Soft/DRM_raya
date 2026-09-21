@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ChevronDown, Folder, Plus, Pencil, Trash2 } from "lucide-react";
-import { ServiceFormDialog, emptyServiceForm, type ServiceFormValues } from "@/components/service-form-dialog";
+import { ServiceFormDialog, emptyServiceForm, DEPARTMENT_OPTIONS, type ServiceFormValues } from "@/components/service-form-dialog";
 
 interface ServiceNode {
     id: string;
@@ -18,7 +18,12 @@ interface ServiceNode {
     maxDay: number | null;
     depId: number | null;
     routeDepartments: string[] | null;
+    projectDepartment: string | null;
     isActive: boolean;
+}
+
+function deptLabel(code: string): string {
+    return DEPARTMENT_OPTIONS.find((o) => o.value === code)?.label ?? code;
 }
 
 interface SubSubserviceNode extends ServiceNode {}
@@ -45,6 +50,7 @@ function toFormValues(node?: ServiceNode): ServiceFormValues {
         maxDay: node.maxDay != null ? String(node.maxDay) : "",
         depId: node.depId != null ? String(node.depId) : "",
         routeDepartments: node.routeDepartments || [],
+        projectDepartment: node.projectDepartment || "",
     };
 }
 
@@ -58,6 +64,7 @@ function toPayload(values: ServiceFormValues) {
         maxDay: values.maxDay.trim() === "" ? null : Number(values.maxDay),
         depId: values.depId.trim() === "" ? null : Number(values.depId),
         routeDepartments: values.routeDepartments.length ? values.routeDepartments : null,
+        projectDepartment: values.projectDepartment.trim() === "" ? null : values.projectDepartment.trim(),
     };
 }
 
@@ -73,6 +80,16 @@ function DaysBadges({ node }: { node: ServiceNode }) {
             {node.depId != null && (
                 <Badge variant="outline" className="text-[10px] bg-violet-50 text-violet-700 border-violet-200">
                     Dept #{node.depId}
+                </Badge>
+            )}
+            {(node.routeDepartments || []).map((code) => (
+                <Badge key={code} variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                    Allowed: {deptLabel(code)}
+                </Badge>
+            ))}
+            {node.projectDepartment && (
+                <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                    Project → {deptLabel(node.projectDepartment)}
                 </Badge>
             )}
         </>

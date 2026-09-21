@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
-import { isSupportModuleEnabled } from "@/lib/feature-flags";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -79,6 +78,22 @@ export default function SeoSmmExecutiveDashboard() {
     });
     const promotions: Promotion[] = promotionsRes?.data ?? [];
     const activeBanner = promotions[bannerIndex % Math.max(promotions.length, 1)];
+
+    // Real portfolio-design catalogue (the same data /portfolio-view lists) —
+    // the "Portfolio"/"Add Portfolio" Important tiles now link there instead
+    // of the customer-pool pages, so their counts come from here too rather
+    // than the unrelated customer-count value dd-executive's summary returns.
+    const { data: portfolioList } = useQuery<any[]>({
+        queryKey: ["/api/portfolio"],
+        queryFn: async () => apiRequestJson("GET", "/api/portfolio"),
+    });
+    const portfolios = Array.isArray(portfolioList) ? portfolioList : [];
+    const portfolioAddedToday = portfolios.filter((p) => {
+        const created = p?.createdAt ? new Date(p.createdAt) : null;
+        if (!created || Number.isNaN(created.getTime())) return false;
+        const now = new Date();
+        return created.getFullYear() === now.getFullYear() && created.getMonth() === now.getMonth() && created.getDate() === now.getDate();
+    }).length;
 
     const stats = [
         { label: "Total Task", value: (summaryStats as any)?.totalTasks || 0, icon: ClipboardList },
@@ -446,11 +461,15 @@ export default function SeoSmmExecutiveDashboard() {
                             <CardTitle className="text-[16px] font-bold text-slate-700 tracking-tight dark:text-zinc-400">Important</CardTitle>
                         </CardHeader>
                         <CardContent className="p-4 px-5 space-y-3">
-                            {isSupportModuleEnabled() && (
-                                <ImportantRow label="Notice" value={(summaryStats as any)?.important?.notice?.toString() || "0"} onClick={() => setLocation("/support/tickets")} />
-                            )}
-                            <ImportantRow label="Portfolio" value={(summaryStats as any)?.important?.portfolio || "0(0)"} isSubValue onClick={() => setLocation("/sales/customers")} />
-                            <ImportantRow label="Add Portfolio" value={(summaryStats as any)?.important?.addPortfolio?.toString() || "0"} onClick={() => setLocation("/sales/add-customer")} />
+                            {/* Real Notice Board unread count, links to the real notice board
+                                (not the unrelated customer-support ticket system this template's
+                                "Notice" tile originally pointed to). */}
+                            <ImportantRow label="Notice" value={(summaryStats as any)?.important?.notice?.toString() || "0"} onClick={() => setLocation("/notice-board")} />
+                            {/* Real portfolio-design catalogue counts (see the /api/portfolio
+                                query above) — not the customer-pool counts this template's
+                                "Portfolio"/"Add Portfolio" tiles originally showed. */}
+                            <ImportantRow label="Portfolio" value={String(portfolios.length)} isSubValue onClick={() => setLocation("/portfolio-view")} />
+                            <ImportantRow label="Add Portfolio" value={String(portfolioAddedToday)} onClick={() => setLocation("/portfolio-add")} />
                             <ImportantRow label="Login Time" value={(summaryStats as any)?.important?.loginTime || "--:--"} isTime onClick={() => setLocation("/hr/attendance")} />
                             <div
                                 onClick={() => setLocation("/hr/attendance/todo")}
