@@ -279,19 +279,21 @@ function getPeriodRange(periodRaw: string) {
       const scopeUserId = elevated ? undefined : req.user.userId;
       
       const userRole = req.user.roleId || (req.user as any).role || '';
+      const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
+      const userDept = userRes.rows[0]?.department || '';
+
       let roleFilter = "";
-      if (userRole === "dd_manager" || userRole === "d_d_manager" || userRole === "dd_executive" || userRole === "d_d_executive") {
-          roleFilter = "AND (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%product posting%')";
-      } else if (userRole === "software_manager" || userRole === "software_executive") {
-          roleFilter = "AND NOT (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini-site%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%mini-site%' OR i.project_name ILIKE '%mini site%' OR i.project_name ILIKE '%product posting%')";
-      } else if (userRole === "sales_executive") {
+      if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole === "sales_manager") {
           // Self-only — never team/org data (explicit product decision).
-          // getDepartmentFilterUserIds is a stub that always returns null,
-          // which this branch used to misread as "global admin" and fall
-          // through to unfiltered/org-wide for every Sales Manager.
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
+      } else if (userDept && !isManagerialRole(userRole)) {
+          // Dynamic department-based visibility check for executives
+          roleFilter = `AND (p.department_type = '${userDept}')`;
+      } else if (userDept && isManagerialRole(userRole)) {
+          // Dynamic department-based visibility check for managers
+          roleFilter = `AND (p.department_type = '${userDept}')`;
       }
 
       const { rows } = await pool.query(`
@@ -357,25 +359,21 @@ function getPeriodRange(periodRaw: string) {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       
       const userRole = req.user.roleId || (req.user as any).role || '';
+      const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
+      const userDept = userRes.rows[0]?.department || '';
+
       let roleFilter = "";
-      if (userRole === "dd_manager" || userRole === "d_d_manager") {
-          roleFilter = "AND (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%product posting%')";
-      } else if (userRole === "dd_executive" || userRole === "d_d_executive") {
-          roleFilter = `AND (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%product posting%') AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
-      } else if (userRole === "product_posting_executive" || userRole === "posting_executive" || userRole === "design_executive" || userRole === "developer_executive") {
-          roleFilter = `AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
-      } else if (userRole === "software_manager" || userRole === "qa_manager" || userRole === "verification_manager") {
-          roleFilter = "AND NOT (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini-site%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%mini-site%' OR i.project_name ILIKE '%mini site%' OR i.project_name ILIKE '%product posting%')";
-      } else if (userRole === "software_executive") {
-          roleFilter = `AND NOT (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%mini-site%' OR p.name ILIKE '%mini site%' OR p.name ILIKE '%product posting%' OR i.project_name ILIKE '%listing%' OR i.project_name ILIKE '%minisite%' OR i.project_name ILIKE '%mini-site%' OR i.project_name ILIKE '%mini site%' OR i.project_name ILIKE '%product posting%') AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
-      } else if (userRole === "sales_executive") {
+      if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole === "sales_manager") {
           // Self-only — never team/org data (explicit product decision).
-          // getDepartmentFilterUserIds is a stub that always returns null,
-          // which this branch used to misread as "global admin" and fall
-          // through to unfiltered/org-wide for every Sales Manager.
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
+      } else if (userRole.includes("executive")) {
+          // Dynamic check for executive assigned tasks
+          roleFilter = `AND p.department_type = '${userDept}' AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
+      } else if (userRole.includes("manager")) {
+          // Dynamic check for managers
+          roleFilter = `AND p.department_type = '${userDept}'`;
       }
 
       // Optional query filters wired from the client (Department / City / Status / Date range).

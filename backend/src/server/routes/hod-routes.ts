@@ -269,8 +269,10 @@ router.get("/approvals", async (req, res) => {
   try {
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10) || 20));
+    const type = typeof req.query.type === "string" ? req.query.type : undefined;
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
 
-    const { items, total } = await hodRepository.getPendingApprovals(page, limit);
+    const { items, total } = await hodRepository.getPendingApprovals(page, limit, type, search);
 
     const response = {
       success: true,

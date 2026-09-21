@@ -12,6 +12,30 @@ import { Loader2, Plus, Trash, ChevronsUpDown, Check } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import Swal from "sweetalert2";
+
+const isDepartmentAllowed = (userRole: string, allowedDeps: string[]) => {
+    const normalizedRole = (userRole || "").toLowerCase();
+    // Allow admin/manager overrides if needed
+    if (normalizedRole.includes('admin') || normalizedRole.includes('super_hod')) return true;
+    
+    if (!allowedDeps || allowedDeps.length === 0) return false;
+    
+    return allowedDeps.some((dep: string) => {
+        const d = dep.toLowerCase();
+        if (d === 'sales') return normalizedRole.includes('sales');
+        if (d === 'support') return normalizedRole.includes('support');
+        if (d === 'product posting') return normalizedRole.includes('product_posting');
+        if (d === 'dnd') return normalizedRole.includes('dnd');
+        if (d === 'marketing') return normalizedRole.includes('marketing');
+        if (d === 'accounts') return normalizedRole.includes('account');
+        if (d === 'qa') return normalizedRole.includes('qa');
+        if (d === 'manager') return normalizedRole.includes('manager');
+        if (d === 'human resource' || d === 'hr') return normalizedRole.includes('hr');
+        if (d === 'training') return normalizedRole.includes('training');
+        return normalizedRole.includes(d);
+    });
+};
 
 type QuotationItemForm = {
   id?: string;
@@ -89,6 +113,19 @@ function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { 
                                     key={product.id}
                                     value={product.name}
                                     onSelect={() => {
+                                        const allowedDeps = product.routeDepartments || [];
+                                        const role = typeof window !== "undefined" ? sessionStorage.getItem("userRole") || "sales_executive" : "sales_executive";
+                                        
+                                        if (!isDepartmentAllowed(role, allowedDeps)) {
+                                            Swal.fire({
+                                                icon: "error",
+                                                title: "Access Denied",
+                                                text: "You cannot create a Quotation or Invoice for this service. Please get this service allowed first."
+                                            });
+                                            setOpen(false);
+                                            return;
+                                        }
+
                                         updateItemProduct(product.id, product);
                                         setOpen(false);
                                     }}
@@ -145,6 +182,11 @@ export default function QuotationPage() {
   const leadId = query.leadId;
   const quotationId = query.id;
 
+  const { data: meData } = useQuery<{ data: any }>({
+      queryKey: ["/api/auth/me"],
+  });
+  const currentDepartment = meData?.data?.department;
+
   const { data: servicesData } = useQuery<any>({ queryKey: ["/api/sales/services"] });
   const products = useMemo(() => {
     return Array.isArray(servicesData) ? servicesData : (servicesData?.items || servicesData?.data || []);
@@ -155,8 +197,22 @@ export default function QuotationPage() {
     for (const p of products) {
         if (p.subServices && p.subServices.length > 0) {
             for (const sub of p.subServices) {
-                list.push({ ...sub, parentName: p.name, price: sub.price ?? p.price, description: sub.description !== null && sub.description !== undefined ? sub.description : (p.description !== null && p.description !== undefined ? p.description : sub.name) });
+                list.push({ 
+                    ...sub, 
+                    parentName: p.name, 
+                    price: sub.price ?? p.price, 
+                    description: sub.description !== null && sub.description !== undefined ? sub.description : (p.description !== null && p.description !== undefined ? p.description : sub.name),
+                    routeDepartments: sub.routeDepartments && sub.routeDepartments.length > 0 ? sub.routeDepartments : (p.routeDepartments || []),
+                    projectDepartment: sub.projectDepartment || p.projectDepartment
+                });
             }
+        } else {
+            list.push({
+                ...p,
+                parentName: p.name,
+                routeDepartments: p.routeDepartments || [],
+                projectDepartment: p.projectDepartment || null
+            });
         }
     }
     return list;
@@ -323,6 +379,30 @@ export default function QuotationPage() {
 
   const handleSave = async () => {
     try {
+      // Validate departments
+      for (const item of form.items) {
+          const product = flatProducts.find(p => p.id === item.productId);
+          if (product) {
+              const routeDepts = product.routeDepartments || [];
+              if (routeDepts.length === 0) {
+                  toast({
+                      title: "Target Department Not Found",
+                      description: `Target department not found for service "${product.name}". Please contact management to add a target department for this service.`,
+                      variant: "destructive"
+                  });
+                  return;
+              }
+              if (currentDepartment && !routeDepts.includes(currentDepartment)) {
+                  toast({
+                      title: "Department Not Allowed",
+                      description: `You cannot create a Quotation for service "${product.name}". Please get this service allowed for your department first.`,
+                      variant: "destructive"
+                  });
+                  return;
+              }
+          }
+      }
+
       setSaving(true);
       let deliveryTimeStr = "";
       if (form.deliveryTimeMin || form.deliveryTimeMax) {

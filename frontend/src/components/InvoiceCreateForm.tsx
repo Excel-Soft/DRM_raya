@@ -24,6 +24,7 @@ import { Trash2, Plus, RotateCcw, Save, Check, ChevronsUpDown } from "lucide-rea
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import Swal from "sweetalert2";
 
 
 interface InvoiceItem {
@@ -67,6 +68,41 @@ import {
 import { cn } from "@/lib/utils";
 
 export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCreateFormProps) {
+    const { data: currentUser } = useQuery<any>({
+        queryKey: ["/api/me/profile"],
+        queryFn: async () => {
+            const res = await fetch("/api/me/profile", { headers: getAuthHeader(), credentials: "include" });
+            if (!res.ok) return null;
+            return await res.json();
+        }
+    });
+
+    const isDepartmentAllowed = (userRole: string, allowedDeps: string[]) => {
+        const normalizedRole = (userRole || "").toLowerCase();
+        // Allow admin/manager overrides if needed, but for now strict check:
+        if (normalizedRole.includes('admin') || normalizedRole.includes('super_hod')) return true;
+        
+        if (!allowedDeps || allowedDeps.length === 0) return false;
+        
+        return allowedDeps.some(dep => {
+            const d = dep.toLowerCase();
+            if (d === 'sales') return normalizedRole.includes('sales');
+            if (d === 'accounts') return normalizedRole.includes('account');
+            if (d === 'it') return normalizedRole === 'it_manager' || normalizedRole.includes('it');
+            if (d === 'software') return normalizedRole.includes('software');
+            if (d === 'dnd') return normalizedRole.includes('dd') || normalizedRole.includes('dnd');
+            if (d === 'product_posting') return normalizedRole.includes('product_posting') || normalizedRole.includes('posting');
+            if (d === 'seo_smm') return normalizedRole.includes('seo') || normalizedRole.includes('smm');
+            if (d === 'service') return normalizedRole.includes('service');
+            if (d === 'marketing') return normalizedRole.includes('marketing');
+            if (d === 'lead') return normalizedRole.includes('lead');
+            if (d === 'qa') return normalizedRole.includes('qa');
+            if (d === 'reception') return normalizedRole.includes('reception');
+            if (d === 'verification') return normalizedRole.includes('verification');
+            return false;
+        });
+    };
+
     const [items, setItems] = useState<InvoiceItem[]>([
         { id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, discount: 0 }
     ]);
@@ -311,6 +347,18 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
                                                                 key={p.id || p.name}
                                                                 value={p.name}
                                                                 onSelect={(currentValue) => {
+                                                                    const allowedDeps = p.routeDepartments || [];
+                                                                    const role = currentUser?.roleId || "sales_executive";
+                                                                    if (!isDepartmentAllowed(role, allowedDeps)) {
+                                                                        Swal.fire({
+                                                                            icon: "error",
+                                                                            title: "Access Denied",
+                                                                            text: "You cannot create a Quotation or Invoice for this service. Please get this service allowed first."
+                                                                        });
+                                                                        setOpenCombobox(prev => ({ ...prev, [item.id]: false }));
+                                                                        return;
+                                                                    }
+                                                                    
                                                                     setItems(prev => prev.map(it => it.id === item.id ? {
                                                                         ...it,
                                                                         productId: p.name,

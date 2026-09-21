@@ -132,6 +132,38 @@ export default function AccountManagerDashboard() {
         }
         const amountUsd = Number(g?.amountUsd) || 0;
         const amountPkr = Number(g?.amountPkr) || 0;
+
+        let parsedItems: any[] = [];
+        if (g?.items) {
+            try {
+                const rawItems = typeof g.items === "string" ? JSON.parse(g.items) : g.items;
+                parsedItems = rawItems.map((ri: any) => {
+                    const qty = Number(ri.quantity) || 1;
+                    const price = Number(ri.price || ri.unitPrice) || 0;
+                    return {
+                        name: ri.name || ri.title || ri.productName || ri.productId || ri.description || "Service",
+                        detail: ri.detail || ri.description || "Details",
+                        price: price,
+                        quantity: qty,
+                        total: qty * price
+                    };
+                });
+            } catch (e) {
+                console.error("Failed to parse invoice items", e);
+            }
+        }
+
+        if (parsedItems.length === 0) {
+            parsedItems = [
+                {
+                    name: finalItemName,
+                    detail: finalDetail,
+                    price: amountUsd,
+                    quantity: finalQty,
+                    total: amountUsd,
+                }
+            ];
+        }
         return {
             invoiceNumber: g?.invoiceNumber || (g?.id ? g.id.toString().replace(/\D/g, "") : "9876"),
             date: g?.createdAt ? new Date(g.createdAt) : new Date(),
@@ -148,15 +180,7 @@ export default function AccountManagerDashboard() {
                 email: "-",
                 address: "Address:",
             },
-            items: [
-                {
-                    name: finalItemName,
-                    detail: finalDetail,
-                    price: amountUsd,
-                    quantity: finalQty,
-                    total: amountUsd,
-                },
-            ],
+            items: parsedItems,
             subTotalUsd: amountUsd,
             subTotalPkr: amountPkr,
             taxUsd: 0,
@@ -201,7 +225,8 @@ export default function AccountManagerDashboard() {
 
             const res = await apiRequest("PATCH", `/api/account/invoices/${data.invoice.id}`, {
                 status: data.status,
-                notes: newNotes
+                notes: newNotes,
+                paymentMethod: data.paymentMethod || "BankTransfer"
             });
             if (!res.ok) throw new Error("Failed to update invoice");
             return res.json();
@@ -342,7 +367,7 @@ export default function AccountManagerDashboard() {
     const gmStatsQuery = useQuery({
         queryKey: ["account-gm-stats"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/sale/commission-verification/stats");
+            const res = await apiRequest("GET", "/api/account/gm-entries/stats");
             if (!res.ok) throw new Error("Failed to fetch stats");
             return res.json();
         },
@@ -361,8 +386,11 @@ export default function AccountManagerDashboard() {
         queryKey: ["account-gm-entries-recent", filterType],
         queryFn: async () => {
             const { start, end } = getDateRange();
-            let url = `/api/sale/commission-verification?dateFrom=${start}&dateTo=${end}`;
-
+            let url = `/api/account/gm-entries?dateFrom=${start}&dateTo=${end}`;
+            if (filterType === "monthly") {
+                const now = new Date();
+                url = `/api/account/gm-entries?dateFrom=${new Date(now.getFullYear(), now.getMonth(), 1).toISOString()}&dateTo=${now.toISOString()}`;
+            }
             // Add specific filter parameters if we had backend support
             // For now, we reuse the date range logic and client-side assumption
             // if (filterType === 'monthly-task') { url += `&type=monthly`; }
@@ -596,7 +624,14 @@ export default function AccountManagerDashboard() {
     );
 
     // "Invoice" (Customer Monthly) section: paginate recent invoices
-    const invoiceItems = Array.isArray(recentInvoicesQuery.data) ? recentInvoicesQuery.data : [];
+    const invoiceItemsRaw = Array.isArray(recentInvoicesQuery.data) ? recentInvoicesQuery.data : [];
+    const invoiceItems = invoiceItemsRaw.filter((item: any) => {
+        if (filterType === 'all') return true;
+        const itemDate = new Date(item.createdAt || item.updatedAt);
+        if (filterType === 'today') return isToday(itemDate);
+        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(itemDate, new Date());
+        return true;
+    });
     const invoiceTotalPages = Math.max(1, Math.ceil(invoiceItems.length / DASHBOARD_PAGE_SIZE));
     const invoiceCurrentPage = Math.min(invoicePage, invoiceTotalPages);
     const invoicePagedItems = invoiceItems.slice(
@@ -1023,7 +1058,9 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Salary Report" href="#" />
                                 <QuickLink label="Attendance" href="/hr/attendance" />
                                 <QuickLink label="Vas Report" href="/reports/vas/new" />
-                                <QuickLink label="Gm Checking" href="/sale/commission-verification" />
+                                <QuickLink label="Gm Checking" href="/account/gm-entries" />
+                                <QuickLink label="Reports" href="/account/reports" />
+                                <QuickLink label="Settings" href="/account/settings" />
                                 <QuickLink label="BV Checking" href="/reports/bv/new" />
                                 <QuickLink label="Add Penalty" href="#" />
                                 <QuickLink label="Over Time" href="/hr/overtime" />
@@ -1054,16 +1091,22 @@ export default function AccountManagerDashboard() {
                         </CardContent>
                     </Card>
                     {/* Important Info Widget */}
-                    <div className="bg-white rounded-lg border shadow-sm p-4 text-left cursor-default dark:bg-zinc-900">
-                        <h2 className="text-[15px] font-bold text-gray-800 mb-4 dark:text-zinc-100">Important Metrics</h2>
-                        <div className="space-y-4">
-                            {[
+                    <Card className="shadow-none border-gray-100 dark:border-zinc-800">
+                        <CardHeader className="pb-3 border-b border-gray-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50">
+                            <CardTitle className="text-[13px] font-semibold text-slate-800 dark:text-zinc-100 flex items-center gap-2">
+                                <Activity className="h-4 w-4 text-emerald-500" />
+                                Statistics
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="pt-4 p-0">
+                            <div className="px-4 pb-2">
+                                {[
                                 { label: "Dollar Rate", value: recentGMsQuery.data?.find((g: any) => g.dollarRate)?.dollarRate || '-', icon: DollarSign, bg: "bg-emerald-100", text: "text-emerald-600", href: "#" },
-                                { label: "Monthly Gm", value: recentGMsQuery.data?.length || 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/sale/commission-verification" },
-                                { label: "Total Gm", value: gmStatsQuery.data?.totalCount || 0, icon: Clock, bg: "bg-slate-100", text: "text-slate-600 dark:text-slate-300", href: "/sale/commission-verification" },
-                                { label: "Pending GM", value: gmStatsQuery.data?.pendingCount || 0, icon: TrendingUp, bg: "bg-violet-100", text: "text-violet-600", href: "/sale/commission-verification" },
-                                { label: "Loans", value: gmStatsQuery.data?.loanCount || 0, icon: Calendar, bg: "bg-rose-100", text: "text-rose-600", href: "/sale/commission-verification" },
-                                { label: "Partial Pay", value: gmStatsQuery.data?.partialPaymentCount || 0, icon: AlertCircle, bg: "bg-red-100", text: "text-red-600", href: "/sale/commission-verification" },
+                                { label: "Monthly Gm", value: recentGMsQuery.data?.length || 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/account/gm-entries" },
+                                { label: "Total Gm", value: gmStatsQuery.data?.totalCount || 0, icon: Clock, bg: "bg-slate-100", text: "text-slate-600 dark:text-slate-300", href: "/account/gm-entries" },
+                                { label: "Pending GM", value: gmStatsQuery.data?.pendingCount || 0, icon: TrendingUp, bg: "bg-violet-100", text: "text-violet-600", href: "/account/gm-entries" },
+                                { label: "Loans", value: gmStatsQuery.data?.loanCount || 0, icon: Calendar, bg: "bg-rose-100", text: "text-rose-600", href: "/account/gm-entries" },
+                                { label: "Partial Pay", value: gmStatsQuery.data?.partialPaymentCount || 0, icon: AlertCircle, bg: "bg-red-100", text: "text-red-600", href: "/account/gm-entries" },
                                 { label: "Invoices", value: invoiceStatsQuery.data?.totalCount || 0, icon: FileText, bg: "bg-orange-100", text: "text-orange-600", href: "/account/invoices" },
                                 { label: "Paid Inv", value: invoiceStatsQuery.data?.paidCount || 0, icon: Users, bg: "bg-indigo-100", text: "text-indigo-600", href: "/account/invoices" },
                             ].map((stat, rowIndex) => (
@@ -1075,9 +1118,10 @@ export default function AccountManagerDashboard() {
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    </CardContent>
+                </Card>
 
-                    {/* Activities Widget */}
+                {/* Activities Widget */}
                     <Card className="border-none shadow-md bg-white dark:bg-zinc-900">
                         <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
                             <CardTitle>Activities</CardTitle>

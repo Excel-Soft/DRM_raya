@@ -107,7 +107,7 @@ const pendingApprovalsUnion = `
            created_at as "createdAt",
            status::text as status,
            'invoices'::text as source,
-           customer_name::text as "companyName",
+           COALESCE((SELECT COALESCE(NULLIF(company_name, ''), NULLIF(account_name, '')) FROM drm.customers WHERE id = customer_id), customer_name)::text as "companyName",
            NULL::text as "drmId",
            total::numeric as "orderDollar",
            invoice_number::text as "memberId",
@@ -240,19 +240,44 @@ export class HodRepository {
     }
   }
 
-  async getPendingApprovals(page: number, limit: number): Promise<{ items: ApprovalRecord[]; total: number }> {
+  async getPendingApprovals(page: number, limit: number, type?: string, search?: string): Promise<{ items: ApprovalRecord[]; total: number }> {
     const offset = (page - 1) * limit;
 
     try {
+      const listParams: any[] = [limit, offset];
+      const countParams: any[] = [];
+      let listTypeFilter = '';
+      let countTypeFilter = '';
+      
+      if (type) {
+        listTypeFilter = `WHERE p.type = $3`;
+        listParams.push(type);
+        
+        countTypeFilter = `WHERE p.type = $1`;
+        countParams.push(type);
+      }
+
+      if (search) {
+        const searchFilter = `(p."companyName" ILIKE $${listParams.length + 1} OR p."memberId" ILIKE $${listParams.length + 1})`;
+        listTypeFilter = listTypeFilter ? `${listTypeFilter} AND ${searchFilter}` : `WHERE ${searchFilter}`;
+        listParams.push(`%${search}%`);
+
+        const countSearchFilter = `(p."companyName" ILIKE $${countParams.length + 1} OR p."memberId" ILIKE $${countParams.length + 1})`;
+        countTypeFilter = countTypeFilter ? `${countTypeFilter} AND ${countSearchFilter}` : `WHERE ${countSearchFilter}`;
+        countParams.push(`%${search}%`);
+      }
+
       const listPromise = pool.query<ApprovalRecord>(
-        `${pendingApprovalsUnion}
+        `SELECT * FROM (${pendingApprovalsUnion}) as p
+         ${listTypeFilter}
          order by "createdAt" desc
          limit $1 offset $2`,
-        [limit, offset],
+        listParams,
       );
 
       const totalPromise = pool.query<{ count: number }>(
-        `select count(*)::int as count from (${pendingApprovalsUnion}) as p`,
+        `select count(*)::int as count from (${pendingApprovalsUnion}) as p ${countTypeFilter}`,
+        countParams
       );
 
       const [list, total] = await Promise.all([listPromise, totalPromise]);

@@ -554,7 +554,9 @@ export function registerLeadsImportRoutes(app: Express) {
             ${sel("price")},
             ${sel("max_price")},
             ${sel("tax")},
-            ${sel("stock")}
+            ${sel("stock")},
+            ss.route_departments,
+            ss.project_department
          from drm.service_subservices ss
          join drm.services s on s.id = ss.service_id
          where 1=1 ${where}
@@ -573,6 +575,8 @@ export function registerLeadsImportRoutes(app: Express) {
         maxPrice: r.max_price !== null && r.max_price !== undefined ? Number(r.max_price) : null,
         tax: r.tax !== null && r.tax !== undefined ? Number(r.tax) : null,
         stock: r.stock !== null && r.stock !== undefined ? Number(r.stock) : null,
+        routeDepartments: Array.isArray(r.route_departments) ? r.route_departments : [],
+        projectDepartment: r.project_department || null,
       }));
 
       return res.json({ success: true, items });

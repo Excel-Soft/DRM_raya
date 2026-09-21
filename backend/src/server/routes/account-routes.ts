@@ -2399,8 +2399,9 @@ export function registerAccountRoutes(app: Express) {
   // GET /api/account/invoices/next-number - Get next invoice number
   app.get("/api/account/invoices/next-number", async (_req, res) => {
     try {
-      const result = await db.select({ count: sql<number>`COUNT(*)` }).from(invoices);
-      const nextNumber = `INV-${String((result[0]?.count || 0) + 1).padStart(5, "0")}`;
+      const result = await pool.query(`SELECT MAX(CAST(NULLIF(regexp_replace(invoice_number, '\\D', '', 'g'), '') AS integer)) as max_num FROM drm.invoices`);
+      const maxNum = result.rows[0]?.max_num || 0;
+      const nextNumber = `INV-${String(Number(maxNum) + 1).padStart(5, "0")}`;
       res.json({ invoiceNumber: nextNumber });
     } catch (error) {
       console.error("Error generating invoice number:", error);
@@ -2504,6 +2505,28 @@ export function registerAccountRoutes(app: Express) {
 
       if (!invoice) {
         return res.status(404).json({ error: "Invoice not found" });
+      }
+
+      // If status transitioned to Paid, automatically generate the project
+      if (writable.status === 'Paid' && existing.status !== 'Paid') {
+        try {
+          const actorUserId = (req.user as any)?.userId ?? (req.user as any)?.id;
+          const ownerUserId = existing.createdByUserId;
+          const projectName = `Proj-${(existing.customerName || "").replace(/\s+/g, '-').substring(0, 15) || existing.id.substring(0, 8)}`;
+          
+          await createOrLinkProjectForLegacySource({
+            sourceId: existing.id,
+            customerId: existing.customerId,
+            ownerUserId,
+            name: projectName,
+            description: `Auto-created from standard invoice ${existing.id}`,
+            actorUserId,
+            req,
+          });
+        } catch (genErr) {
+          console.error("Error auto-creating project on invoice status update:", genErr);
+          // Non-fatal, allow the update to succeed
+        }
       }
 
       await AuditLogService.record({
@@ -2870,7 +2893,8 @@ export function registerAccountRoutes(app: Express) {
       const offset = (page - 1) * limit;
 
       const { rows } = await pool.query(`
-        SELECT
+        SELECT * FROM (
+          SELECT
           q.id::text,
           q.account_holder   AS "accountHolder",
           q.company,
@@ -2893,7 +2917,8 @@ export function registerAccountRoutes(app: Express) {
           u.email            AS "submittedByEmail",
           'quotation'        AS "source",
           NULL               AS "paymentProofUrl",
-          NULL               AS "invoiceNumber"
+          NULL               AS "invoiceNumber",
+          NULL               AS "items"
         FROM drm.quotations q
         LEFT JOIN drm.users u ON u.id::text = q.created_by::text
         WHERE q.save_status = 'pending_account_manager'
@@ -2923,7 +2948,8 @@ export function registerAccountRoutes(app: Express) {
           u.email            AS "submittedByEmail",
           'product_posting'  AS "source",
           NULL               AS "paymentProofUrl",
-          p.invoice_number   AS "invoiceNumber"
+          p.invoice_number   AS "invoiceNumber",
+          NULL               AS "items"
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
         WHERE p.status = 'PENDING_ACCOUNT'
@@ -2932,13 +2958,13 @@ export function registerAccountRoutes(app: Express) {
         
         SELECT
           i.id::text,
-          i.customer_name     AS "accountHolder",
-          i.customer_name     AS "company",
+          u.full_name         AS "accountHolder",
+          COALESCE((SELECT COALESCE(NULLIF(company_name, ''), NULLIF(account_name, '')) FROM drm.customers WHERE id = i.customer_id), i.customer_name) AS "company",
           i.customer_email    AS "email",
-          NULL               AS "contact",
-          0                  AS "gstPercent",
-          'AMOUNT'           AS "discountType",
-          0                  AS "discountValue",
+          i.customer_address  AS "contact",
+          0                   AS "gstPercent",
+          'None'              AS "discountType",
+          0                   AS "discountValue",
           i.subtotal::numeric AS "subAmount",
           i.tax::numeric      AS "gstAmount",
           i.total::numeric    AS "totalAmount",
@@ -2953,12 +2979,13 @@ export function registerAccountRoutes(app: Express) {
           u.email             AS "submittedByEmail",
           'standard_invoice'  AS "source",
           NULL                AS "paymentProofUrl",
-          i.invoice_number    AS "invoiceNumber"
+          i.invoice_number    AS "invoiceNumber",
+          i.items             AS "items"
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
         WHERE i.status = 'Sent'
-        
-        ORDER BY "updatedAt" DESC NULLS LAST
+        ) as combined_results
+        ORDER BY COALESCE(combined_results."updatedAt", combined_results."createdAt") DESC NULLS LAST
         LIMIT $1 OFFSET $2
       `, [limit, offset]);
 

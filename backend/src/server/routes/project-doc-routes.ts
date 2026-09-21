@@ -58,6 +58,27 @@ router.post("/:id/documents", async (req: any, res: any) => {
             ]);
         }
 
+        // --- Check Service Configuration for Routing ---
+        // We get the project's service_type, and then find its project_department in service_subservices
+        // We also check if the project already has a department_type assigned
+        const routingCheck = await pool.query(`
+            SELECT 
+                p.department_type, 
+                COALESCE(ss.project_department, s.project_department) AS project_department 
+            FROM drm.projects p
+            LEFT JOIN drm.service_subservices ss ON p.service_type = ss.name
+            LEFT JOIN drm.services s ON p.service_type = s.name
+            WHERE p.id = $1
+        `, [id]);
+        
+        const projDept = routingCheck.rows[0]?.project_department || routingCheck.rows[0]?.department_type;
+        if (!projDept) {
+            return res.status(400).json({ 
+                error: "Target department not found. Please contact management to add the Target department against this service." 
+            });
+        }
+        // ------------------------------------------------
+
         // Insert project_documents
         // We use documentUrl if available, else evidenceUrl, else a dummy string
         const docUrl = documentUrl || evidenceUrl || 'uploaded-document';
@@ -87,10 +108,10 @@ router.post("/:id/documents", async (req: any, res: any) => {
             `, [id]);
         }
 
-        // Change project status to Active if it was Documents Pending
+        // Change project status to Active if it was Documents Pending, and route to the correct department
         await pool.query(`
-            UPDATE drm.projects SET status = 'Active' WHERE id = $1 AND status = 'Documents Pending'
-        `, [id]);
+            UPDATE drm.projects SET status = 'Active', department_type = $2 WHERE id = $1 AND status = 'Documents Pending'
+        `, [id, projDept]);
 
         res.status(200).json({ success: true, message: "Document uploaded successfully" });
     } catch (error) {

@@ -143,13 +143,22 @@ export default function HodDashboard() {
     },
   });
 
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchInput), 500);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   const approvalsQuery = useQuery<ApprovalsResponse>({
-    queryKey: ["hod-approvals", page, limit],
+    queryKey: ["hod-approvals", page, limit, debouncedSearch],
     queryFn: async () => {
-      const res = await apiRequest(
-        "GET",
-        `/api/hod/approvals?status=Pending&page=${page}&limit=${limit}`
-      );
+      let url = `/api/hod/approvals?status=Pending&page=${page}&limit=${limit}&type=Invoice`;
+      if (debouncedSearch) {
+        url += `&search=${encodeURIComponent(debouncedSearch)}`;
+      }
+      const res = await apiRequest("GET", url);
       return res.json();
     },
   });
@@ -174,22 +183,8 @@ export default function HodDashboard() {
   // Verification tabs state
   const [verificationTab, setVerificationTab] = useState<"waiting" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
 
-  // Same queryKey as ProductPostingApprovalsWidget's own /api/invoices fetch
-  // (the widget that actually renders this tab) — shares its cache, so this
-  // count stays in sync with what's on screen and with the widget's own
-  // invalidation after approve/reject/create, instead of the mismatched
-  // paginated /api/hod/approvals list this badge used to read from.
-  const invoicesQuery = useQuery<{ data?: any[] }>({
-    queryKey: ["/api/product-posting"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/product-posting");
-      return res.json();
-    },
-  });
-
-  const invoicesCount = useMemo(() => {
-    return (invoicesQuery.data?.data ?? []).filter((inv: any) => inv.status === "PENDING_HOD").length;
-  }, [invoicesQuery.data?.data]);
+  const invoicesCount = approvalsQuery.data?.meta?.total ?? 0;
+  const approvals = approvalsQuery.data?.data ?? [];
 
   // Invoice preview state
   const [selectedInvoiceView, setSelectedInvoiceView] = useState<any>(null);
@@ -218,8 +213,11 @@ export default function HodDashboard() {
           const qty = Number(ri.quantity) || 1;
           const price = Number(ri.price || ri.unitPrice) || 0;
           calculatedSubTotal += (qty * price);
+          const itemName = (typeof ri.productId === 'object' && ri.productId?.name)
+              ? ri.productId.name
+              : ri.name || ri.title || ri.productName || ri.serviceTitle || (typeof ri.productId === 'string' && ri.productId.length < 36 ? ri.productId : "Service");
           return {
-            name: ri.productId || ri.description || "Service",
+            name: itemName,
             detail: ri.detail || ri.description || "Details",
             price: price,
             quantity: qty,
@@ -266,7 +264,7 @@ export default function HodDashboard() {
     }
 
     const invoiceData = {
-      invoiceNumber: item.referenceId || (item.id ? item.id.replace(/\D/g, "") : "9876"),
+      invoiceNumber: item.invoiceNumber || item.invoice_number || item.memberId || item.referenceId || (item.id ? item.id.replace(/\D/g, "").slice(0, 6) : "9876"),
       date: new Date(item.createdAt),
       from: {
         name: "Web Excels",
@@ -944,7 +942,6 @@ export default function HodDashboard() {
     return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Pending</Badge>;
   };
 
-  const approvals = approvalsQuery.data?.data ?? [];
   // The "Pending Quotation" tab's badge count reads waitingProjectsQuery — the
   // table body must read the same source, not `approvals` (a different,
   // separately-paginated /api/hod/approvals list that has no "Quotation"
@@ -1152,12 +1149,119 @@ export default function HodDashboard() {
                 </CardHeader>
                 <CardContent>
                   {verificationTab === "invoice" ? (
-                    // The old ad-hoc rows here bypassed InvoiceWorkflowService's
-                    // completeness gate, audit ledger, and dropped rejection
-                    // reasons entirely (see hod.repository.ts's raw-SQL
-                    // "product_posting_invoices" case). This is the real,
-                    // fully-audited approval surface instead.
-                    <ProductPostingApprovalsWidget role="HOD" variant="table" />
+                    <div className="space-y-8">
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-lg font-semibold">Pending Invoices</h2>
+                          <div className="w-[300px]">
+                            <Input
+                              placeholder="Search invoices..."
+                              value={searchInput}
+                              onChange={(e) => {
+                                setSearchInput(e.target.value);
+                                setPage(1);
+                              }}
+                              className="h-9"
+                            />
+                          </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader className="bg-[#f8fafc] dark:bg-zinc-900">
+                              <TableRow>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">No</TableHead>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Company</TableHead>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Person</TableHead>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Detail</TableHead>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Invoice</TableHead>
+                                <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
+                                <TableHead className="font-bold text-slate-700 text-right pr-4 dark:text-zinc-400">Action</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {approvals.length === 0 && (
+                                <TableRow>
+                                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                                    {approvalsQuery.isLoading ? "Loading..." : "No pending invoices"}
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {approvals.map((item: any, idx: number) => (
+                                <TableRow key={item.id} className="hover:bg-gray-50/50">
+                                  <TableCell className="font-bold text-gray-700 dark:text-zinc-400">{(page - 1) * limit + idx + 1}</TableCell>
+                                  <TableCell className="font-medium">
+                                    <div className="flex flex-col">
+                                      <span className="font-bold text-gray-800 tracking-tight dark:text-zinc-100">{item.companyName || "-"}</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-gray-600 dark:text-zinc-300">{item.submittedByName ?? "-"}</TableCell>
+                                  <TableCell className="text-sm text-gray-500 max-w-[400px] dark:text-zinc-400">
+                                    {item.packageName || item.memberId || (item.referenceId ? `Inv #${item.referenceId.slice(0, 8).toUpperCase()}` : "-")}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-full h-9 w-9"
+                                      onClick={() => openInvoicePreview(item)}
+                                    >
+                                      <Eye className="h-6 w-6" />
+                                    </Button>
+                                  </TableCell>
+                                  <TableCell>
+                                    {getStatusBadge(item.status)}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex justify-end gap-2 pr-2">
+                                      <Button
+                                        size="sm"
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs px-3"
+                                        onClick={() => handleApprove(item.id)}
+                                        disabled={approveMutation.isPending || rejectMutation.isPending}
+                                      >
+                                        <Check className="h-3 w-3 mr-1" /> Approve
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="text-red-600 border-red-200 hover:bg-red-50 h-7 text-xs px-3"
+                                        onClick={() => handleReject(item.id)}
+                                        disabled={approveMutation.isPending || rejectMutation.isPending}
+                                      >
+                                        <X className="h-3 w-3 mr-1" /> Reject
+                                      </Button>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
+                        <div>
+                          Page {page} of {totalPages}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                          >
+                            Prev
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                          >
+                            Next
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
                   ) : (
                   <>
                   <div className="overflow-x-auto">
