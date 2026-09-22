@@ -304,8 +304,21 @@ export const servicesRepository = {
           ) filter (where ss.id is not null),
           '[]'
         ) as sub_services
-      from drm.services s
-      left join drm.service_subservices ss on ss.service_id = s.id and ss.is_active = true
+      from (
+        -- Defensive dedup: this catalog has been reseeded onto itself more than
+        -- once historically, leaving duplicate-name rows behind. Collapse to one
+        -- row per name (earliest survives) here so a future accidental reseed
+        -- can never make duplicates visible again in the catalog tree or the
+        -- invoice/quotation product picker (both read through this function).
+        select distinct on (name) * from drm.services
+        where is_active = true
+        order by name, created_at asc, id asc
+      ) s
+      left join (
+        select distinct on (service_id, name) * from drm.service_subservices
+        where is_active = true
+        order by service_id, name, created_at asc, id asc
+      ) ss on ss.service_id = s.id
       where s.is_active = true
       group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at${svcCols.has("dep_id") ? ", s.dep_id" : ""}${svcCols.has("route_departments") ? ", s.route_departments" : ""}${svcCols.has("project_department") ? ", s.project_department" : ""}
       order by s.created_at asc, s.id asc

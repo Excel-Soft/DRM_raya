@@ -21,12 +21,14 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { DEPARTMENT_OPTIONS } from "@/components/service-form-dialog";
 
 interface PendingProject {
     id: string;
     projectNumber?: string;
     company: string;
     project: string;
+    serviceType?: string | null;
     status: string;
     person: string;
     date: string;
@@ -41,11 +43,19 @@ interface PendingProject {
     departmentType?: string | null;
 }
 
+// Every real department the document could be routed to (same source as the
+// Service for Quotation catalog's Project Department field) — previously
+// only PRODUCT_POSTING/DND had a real label and everything else (IT,
+// SEO/SMM, Sales, ...) silently fell back to a generic "Manager". Two older
+// code paths write slightly different spellings for the same department
+// (DESIGN_DEVELOPMENT / "SEO/SMM" with a slash) alongside the newer
+// DEPARTMENT_OPTIONS codes, so both are normalized before matching.
 function departmentLabel(departmentType?: string | null): string {
-    const normalized = (departmentType || "").toUpperCase();
+    const normalized = (departmentType || "").toUpperCase().replace(/[\s/]+/g, "_");
     if (normalized === "PRODUCT_POSTING") return "P&P";
-    if (normalized === "DND") return "D&D";
-    return "Manager";
+    if (normalized === "DND" || normalized === "DESIGN_DEVELOPMENT") return "D&D";
+    const match = DEPARTMENT_OPTIONS.find((opt) => opt.value === normalized);
+    return match?.label || "Manager";
 }
 
 export default function PmsPendingApprovals() {
@@ -270,7 +280,10 @@ export default function PmsPendingApprovals() {
                                                 #{row.projectNumber || "N/A"}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                <div className="font-bold text-[#333] dark:text-zinc-300 mb-1">{row.project}</div>
+                                                {/* Top: the product/service this project is for (falls back to the
+                                                    raw project name for older rows with no service_type set).
+                                                    Bottom: company. */}
+                                                <div className="font-bold text-[#333] dark:text-zinc-300 mb-1">{row.serviceType || row.project}</div>
                                                 <div className="text-[12px] text-blue-500 font-medium">{row.company}</div>
                                                 {showRejection && (
                                                     <div className="mt-2 text-[11px] bg-red-50 text-red-600 border border-red-100 p-1.5 rounded-sm dark:bg-red-900/20 dark:border-red-900/50">

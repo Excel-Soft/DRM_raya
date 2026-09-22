@@ -41,6 +41,26 @@ export async function createOrLinkProjectForLegacySource({
     const resolveDepartmentFromItems = async (items: any[]) => {
         if (!items || items.length === 0) return false;
         for (const item of items) {
+            // Match by productId first -- the exact catalog row the sales exec
+            // actually picked. Service/subservice names are not unique (the
+            // catalog has duplicate "SSL Certificate" rows, one fully configured
+            // and one blank), so a name-only lookup with no ORDER BY can silently
+            // resolve to the wrong, unconfigured duplicate. Name match is kept as
+            // a fallback for older items that predate productId being recorded.
+            if (item.productId) {
+                const ssById = await pool.query(`SELECT project_department FROM drm.service_subservices WHERE id = $1 LIMIT 1`, [item.productId]);
+                if (ssById.rows[0] && ssById.rows[0].project_department) {
+                    deptType = ssById.rows[0].project_department;
+                    serviceType = item.name;
+                    return true;
+                }
+                const sById = await pool.query(`SELECT project_department FROM drm.services WHERE id = $1 LIMIT 1`, [item.productId]);
+                if (sById.rows[0] && sById.rows[0].project_department) {
+                    deptType = sById.rows[0].project_department;
+                    serviceType = item.name;
+                    return true;
+                }
+            }
             // First check subservices
             const ssRes = await pool.query(`SELECT project_department FROM drm.service_subservices WHERE name = $1 LIMIT 1`, [item.name]);
             if (ssRes.rows[0] && ssRes.rows[0].project_department) {

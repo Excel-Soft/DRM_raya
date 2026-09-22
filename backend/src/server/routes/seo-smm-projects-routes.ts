@@ -4,11 +4,12 @@ import { requireRole } from "../middleware/auth.middleware";
 import { AuditLogService } from "./services/audit-log.service";
 
 // SEO/SMM manager's "Department Status Tracker" Pending/Approved tabs —
-// sales-uploaded project documents routed to the SEO/SMM department
-// (drm.projects.department_type = 'SEO_SMM'). Mirrors it-assets-routes.ts's
-// /api/it/projects + /api/it/documents/:id/verify (same underlying tables,
-// same reject -> rework-history -> sales-exec-reupload loop), scoped to this
-// department's own roles instead of IT's.
+// sales-uploaded project documents routed to the SEO/SMM department.
+// department_type is stored inconsistently in the wild — 'SEO_SMM' from some
+// write paths, 'SEO/SMM' (literal slash) from others — so both are matched.
+// Mirrors it-assets-routes.ts's /api/it/projects + /api/it/documents/:id/verify
+// (same underlying tables, same reject -> rework-history -> sales-exec-reupload
+// loop), scoped to this department's own roles instead of IT's.
 const router = Router();
 
 const SEO_SMM_ROLES = ["admin", "super_hod", "seo_smm_manager"];
@@ -47,7 +48,7 @@ router.get("/projects", requireRole(...SEO_SMM_ROLES), async (req: Request, res:
        ) pd on true
        left join drm.customers c on c.id = p.customer_id
        left join drm.project_details pdet on pdet.project_id = p.id
-       where p.department_type = 'SEO_SMM' and pd.status = $1
+       where p.department_type in ('SEO_SMM', 'SEO/SMM') and pd.status = $1
        order by pd.created_at desc`,
       [status],
     );

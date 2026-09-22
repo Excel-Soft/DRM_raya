@@ -301,14 +301,30 @@ function getPeriodRange(periodRaw: string) {
           p.id,
           p.project_number as "projectNumber",
           COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), i.project_name, p.name) as project,
-          COALESCE(c.company_name, i.company_name, 'Unknown') as company, 
+          COALESCE(
+            p.service_type,
+            i.service_type,
+            (
+              SELECT string_agg(item->>'name', ', ')
+              FROM jsonb_array_elements(NULLIF(gi.items, '')::jsonb) AS item
+            )
+          ) as "serviceType",
+          COALESCE(c.company_name, i.company_name, gi.customer_name, 'Unknown') as company,
           p.status,
           p.department_type as "departmentType",
           u.full_name as person,
           p.created_at as date,
           COALESCE(fin.total_amount, 0) as "amount",
-          COALESCE(i.hod_approved_at, CASE WHEN i.status IN ('PENDING_ACCOUNT', 'APPROVED', 'PAID') THEN i.updated_at END) as "hodApprovedAt",
-          COALESCE(i.accounts_approved_at, CASE WHEN i.status IN ('APPROVED', 'PAID') THEN i.updated_at END) as "accountsApprovedAt",
+          COALESCE(
+            i.hod_approved_at,
+            CASE WHEN i.status IN ('PENDING_ACCOUNT', 'APPROVED', 'PAID') THEN i.updated_at END,
+            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN gi.updated_at END
+          ) as "hodApprovedAt",
+          COALESCE(
+            i.accounts_approved_at,
+            CASE WHEN i.status IN ('APPROVED', 'PAID') THEN i.updated_at END,
+            CASE WHEN gi.status IN ('Paid', 'Overdue') THEN COALESCE(gi.paid_at, gi.updated_at) END
+          ) as "accountsApprovedAt",
           wf.data_verified_at as "verifiedAt",
           (SELECT remarks FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectionReason",
           (SELECT created_at FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectedAt",
@@ -324,6 +340,7 @@ function getPeriodRange(periodRaw: string) {
         FROM drm.projects p
         LEFT JOIN drm.customers c ON c.id = p.customer_id
         LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
+        LEFT JOIN drm.invoices gi ON gi.id = p.invoice_id
         LEFT JOIN drm.users u ON u.id = p.owner_user_id
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
         LEFT JOIN drm.project_payments pay ON pay.project_id = p.id
