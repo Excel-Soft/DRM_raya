@@ -689,4 +689,56 @@ router.patch("/documents/:id/verify", requireRole(...IT_WRITE_ROLES), async (req
   }
 });
 
+// GET /api/it/executives — assignable IT executives for the "Assign Task"
+// dropdown on an approved document. Role is stored inconsistently across
+// this app (role_id / role / roles[]), so all three are checked, matching
+// the pattern already used for dd_executive lookups in pms-routes.ts.
+router.get("/executives", requireRole(...IT_READ_ROLES), async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `select id, coalesce(full_name, name, username) as name, email
+       from drm.users
+       where is_active = true
+         and (role_id = 'it_executive' or role = 'it_executive' or 'it_executive' = any(roles))
+       order by coalesce(full_name, name, username)`,
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching IT executives:", error);
+    res.status(500).json({ error: "Failed to fetch executives" });
+  }
+});
+
+// PATCH /api/it/tasks/:id/status — { status: "ToDo" | "InProgress" | "Completed" }
+// Deliberately bypasses the generic PMS task-transition service
+// (pms-transition.service.ts's changeTaskStatus is a stub that throws on any
+// real use) with a direct, IT-scoped update instead. Only the task's own
+// assignee or an IT write-role may move it, so an executive can work their
+// own queue without needing manager-level task permissions.
+router.patch("/tasks/:id/status", async (req: Request, res: Response) => {
+  try {
+    if (!(req as any).user) return res.status(401).json({ error: "Not authenticated" });
+    const status = req.body?.status;
+    if (!["ToDo", "InProgress", "Completed"].includes(status)) {
+      return res.status(400).json({ error: "status must be ToDo, InProgress, or Completed" });
+    }
+
+    const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
+    if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+
+    const userId = actorId(req);
+    const isAssignee = taskRes.rows[0].assigned_to_user_id === userId;
+    const isWriteRole = IT_WRITE_ROLES.includes((req as any).user?.roleId) || ((req as any).user?.roles || []).some((r: string) => IT_WRITE_ROLES.includes(r));
+    if (!isAssignee && !isWriteRole) {
+      return res.status(403).json({ error: "Only the assigned executive or an IT manager can update this task." });
+    }
+
+    await pool.query(`update drm.tasks set status = $1, updated_at = now() where id = $2`, [status, req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error updating IT task status:", error);
+    res.status(500).json({ error: "Failed to update task status" });
+  }
+});
+
 export default router;

@@ -54,6 +54,9 @@ export default function ItManagerDashboard() {
     const { data: approvedItProjects = [] } = useQuery<any[]>({
         queryKey: ["/api/it/projects?status=approved"],
     });
+    const { data: itExecutives = [] } = useQuery<any[]>({
+        queryKey: ["/api/it/executives"],
+    });
 
     const [backupForm, setBackupForm] = useState({
         domainId: "",
@@ -143,6 +146,30 @@ export default function ItManagerDashboard() {
     // "Projects Overview & Verification" pattern already used on the Product
     // Posting manager dashboard, instead of a row of separate icon buttons.
     const [selectedItProject, setSelectedItProject] = useState<any>(null);
+
+    // Assign Task section shown in that same modal once a document is
+    // already Approved — reuses the existing, real /api/pms/tasks endpoint
+    // (not the broken product-posting-specific assign-task route found
+    // elsewhere in this app) so the task actually gets created.
+    const [assignTaskForm, setAssignTaskForm] = useState({ assigneeId: "", title: "" });
+    const assignTaskMutation = useMutation({
+        mutationFn: async ({ projectId, assigneeId, title }: { projectId: string; assigneeId: string; title: string }) => {
+            return apiRequestJson("POST", "/api/pms/tasks", {
+                projectId,
+                assignedToUserId: assigneeId,
+                title,
+                description: `IT task for ${selectedItProject?.project ?? "project"}`,
+            });
+        },
+        onSuccess: () => {
+            toast({ title: "Task assigned to executive" });
+            setAssignTaskForm({ assigneeId: "", title: "" });
+            setSelectedItProject(null);
+        },
+        onError: (err) => {
+            toast({ title: extractErrorMessage(err, "Failed to assign task"), variant: "destructive" });
+        }
+    });
 
     const [activeDomainTab, setActiveDomainTab] = useState("3-month");
     const [domainStatsScope, setDomainStatsScope] = useState<"ld" | "all">("ld");
@@ -3018,6 +3045,51 @@ export default function ItManagerDashboard() {
                                         <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => setSelectedItProject(null)}>
                                             Cancel
                                         </Button>
+                                    </div>
+                                )}
+
+                                {activeDomainTab === "approval" && (
+                                    <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
+                                        <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Assign Task to Executive</h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <Select
+                                                value={assignTaskForm.assigneeId}
+                                                onValueChange={(v) => setAssignTaskForm((f) => ({ ...f, assigneeId: v }))}
+                                            >
+                                                <SelectTrigger className="h-10 text-[13px]">
+                                                    <SelectValue placeholder="Choose an IT executive..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {itExecutives.length === 0 ? (
+                                                        <div className="px-3 py-2 text-[12px] text-slate-400">No IT executives found.</div>
+                                                    ) : itExecutives.map((ex: any) => (
+                                                        <SelectItem key={ex.id} value={ex.id}>{ex.name} ({ex.email})</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <Input
+                                                placeholder="Task title..."
+                                                value={assignTaskForm.title}
+                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, title: e.target.value }))}
+                                                className="h-10 text-[13px]"
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <Button
+                                                className="bg-[#059669] hover:bg-[#047857] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                                disabled={assignTaskMutation.isPending || !assignTaskForm.assigneeId || !assignTaskForm.title.trim()}
+                                                onClick={() => assignTaskMutation.mutate({
+                                                    projectId: selectedItProject.projectId,
+                                                    assigneeId: assignTaskForm.assigneeId,
+                                                    title: assignTaskForm.title.trim(),
+                                                })}
+                                            >
+                                                {assignTaskMutation.isPending ? "Assigning..." : "Assign"}
+                                            </Button>
+                                            <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => setSelectedItProject(null)}>
+                                                Cancel
+                                            </Button>
+                                        </div>
                                     </div>
                                 )}
                             </div>

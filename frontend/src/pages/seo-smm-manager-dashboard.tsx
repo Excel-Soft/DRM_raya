@@ -1,12 +1,18 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
 import { Breadcrumb } from "@/components/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+    AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import {
     Select,
@@ -38,6 +44,7 @@ import {
     AlertCircle,
     Target,
     Building2,
+    Download,
     ArrowLeftRight,
     ChevronLeft,
     Activity,
@@ -115,14 +122,48 @@ const NOTIFICATION_ICON: Record<string, { icon: typeof Activity; color: string }
 const STATUS_TRACKER_PAGE_SIZE = 10;
 
 export default function SeoSmmManagerDashboard() {
+    const { toast } = useToast();
     const [activeTab, setActiveTab] = useState<TabType>("waiting");
     const [statusTrackerPage, setStatusTrackerPage] = useState(1);
     const [activityPeriod, setActivityPeriod] = useState("TD");
     const [dailyReportPeriod, setDailyReportPeriod] = useState<string>("today");
     const [moveTaskModalOpen, setMoveTaskModalOpen] = useState(false);
     const [dailyReportMoveModalOpen, setDailyReportMoveModalOpen] = useState(false);
+    // "Projects Overview & Verification" modal for the Department Status
+    // Tracker's Pending/Approved tabs — these two states already existed
+    // here unused (dead leftover UI) before this; now actually wired up.
     const [selectedVerificationProject, setSelectedVerificationProject] = useState<any>(null);
     const [verificationModalOpen, setVerificationModalOpen] = useState(false);
+    const [seoSmmDocConfirm, setSeoSmmDocConfirm] = useState<{ documentId: string; project: string; status: "APPROVED" | "REJECTED" } | null>(null);
+    const [seoSmmRejectReason, setSeoSmmRejectReason] = useState("");
+
+    // Sales-uploaded project documents routed to the SEO/SMM department
+    // (drm.projects.department_type = 'SEO_SMM') — back the "Pending"
+    // ("waiting") and "Approved" tabs below. "Delayed" stays as-is (unrelated
+    // OnHold-project view).
+    const { data: pendingSeoSmmProjects = [] } = useQuery<any[]>({
+        queryKey: ["/api/seo-smm/projects?status=pending"],
+    });
+    const { data: approvedSeoSmmProjects = [] } = useQuery<any[]>({
+        queryKey: ["/api/seo-smm/projects?status=approved"],
+    });
+    const verifySeoSmmDocumentMutation = useMutation({
+        mutationFn: async ({ documentId, status, reason }: { documentId: string; status: "APPROVED" | "REJECTED"; reason?: string }) => {
+            return apiRequestJson("PATCH", `/api/seo-smm/documents/${documentId}/verify`, { status, reason });
+        },
+        onSuccess: (_data, variables) => {
+            toast({ title: variables.status === "APPROVED" ? "Document approved" : "Document rejected — sales exec can now re-upload" });
+            queryClient.invalidateQueries({ queryKey: ["/api/seo-smm/projects?status=pending"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/seo-smm/projects?status=approved"] });
+            setSeoSmmDocConfirm(null);
+            setSeoSmmRejectReason("");
+            setVerificationModalOpen(false);
+            setSelectedVerificationProject(null);
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to update document", variant: "destructive" });
+        },
+    });
 
     // ── Queries ──────────────────────────────────────────────────────────────
     const { data: projects = [] } = useQuery<Project[]>({
@@ -264,14 +305,15 @@ export default function SeoSmmManagerDashboard() {
 
     const dynamicTableData = useMemo(() => {
         const safeProjects = Array.isArray(projects) ? projects : (projects as any)?.data || [];
-        
-        const waiting = safeProjects.filter((p: any) => p.status === "Active").map((p: any, i: number) => ({
+
+        // "Pending" — sales-uploaded documents awaiting SEO/SMM review.
+        const waiting = pendingSeoSmmProjects.map((p: any, i: number) => ({
             no: `${i + 1}`,
-            id: p.id.slice(0, 5),
-            company: p.companyName || p.workSpace || "N/A",
-            project: p.name,
-            status: "In Progress",
-            time: p.startDate ? new Date(p.startDate).toLocaleDateString() : "N/A",
+            company: p.company,
+            project: p.project,
+            status: "Pending",
+            time: p.uploadedAt ? new Date(p.uploadedAt).toLocaleDateString() : "N/A",
+            raw: p,
         }));
 
         const delay = safeProjects.filter((p: any) => p.status === "OnHold").map((p: any, i: number) => ({
@@ -282,16 +324,18 @@ export default function SeoSmmManagerDashboard() {
             deadlines: p.endDate ? new Date(p.endDate).toLocaleDateString() : "Expired",
         }));
 
-        const approved = safeProjects.filter((p: any) => p.status === "Completed").map((p: any, i: number) => ({
+        // "Approved" — SEO/SMM-reviewed documents.
+        const approved = approvedSeoSmmProjects.map((p: any, i: number) => ({
             no: `${i + 1}`,
-            company: p.companyName || p.workSpace || "N/A",
-            project: p.name,
+            company: p.company,
+            project: p.project,
             status: "Approved",
-            time: p.endDate ? new Date(p.endDate).toLocaleDateString() : "N/A",
+            time: p.uploadedAt ? new Date(p.uploadedAt).toLocaleDateString() : "N/A",
+            raw: p,
         }));
 
         return { waiting, delay, approved };
-    }, [projects]);
+    }, [projects, pendingSeoSmmProjects, approvedSeoSmmProjects]);
 
     const currentTableRows = dynamicTableData[activeTab];
     const statusTrackerTotalPages = Math.max(1, Math.ceil(currentTableRows.length / STATUS_TRACKER_PAGE_SIZE));
@@ -442,7 +486,14 @@ export default function SeoSmmManagerDashboard() {
                                                             <Button
                                                                 variant="outline"
                                                                 size="sm"
-                                                                className="h-8 w-8 p-0 rounded-lg hover:bg-emerald-600 hover:text-white border-slate-200 transition-all dark:border-zinc-800"
+                                                                disabled={(activeTab === "waiting" || activeTab === "approved") && !row.raw}
+                                                                className="h-8 w-8 p-0 rounded-lg hover:bg-emerald-600 hover:text-white border-slate-200 transition-all dark:border-zinc-800 disabled:opacity-30"
+                                                                onClick={() => {
+                                                                    if (activeTab === "waiting" || activeTab === "approved") {
+                                                                        setSelectedVerificationProject(row.raw);
+                                                                        setVerificationModalOpen(true);
+                                                                    }
+                                                                }}
                                                             >
                                                                 <ArrowRight className="w-4 h-4" />
                                                             </Button>
@@ -767,6 +818,174 @@ export default function SeoSmmManagerDashboard() {
                     </div>
                 </div>
             </div>
+
+            {/* Projects Overview & Verification — same pattern used on the
+                Product Posting and IT manager dashboards: project details +
+                attached file + Approve/Reject for a Pending row, or a
+                read-only view for an already-Approved one. */}
+            <Dialog open={verificationModalOpen} onOpenChange={(open) => { if (!open) { setVerificationModalOpen(false); setSelectedVerificationProject(null); } }}>
+                <DialogContent className="max-w-[1100px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30 dark:bg-zinc-900 dark:border-zinc-800 flex-shrink-0">
+                        <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">Projects Overview &amp; Verification</DialogTitle>
+                    </div>
+
+                    {selectedVerificationProject && (
+                        <div className="p-8 pb-10 overflow-y-auto grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-12">
+                            {/* Left: Details */}
+                            <div className="space-y-6">
+                                <div className="flex items-start justify-between">
+                                    <div className="flex items-center gap-5">
+                                        <div className="w-14 h-14 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-100">
+                                            <div className="relative">
+                                                <Building2 className="w-9 h-9 text-white opacity-20 absolute -top-1 -left-1" />
+                                                <Briefcase className="w-7 h-7 text-white relative z-10" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-[22px] font-bold text-gray-900 leading-tight tracking-tight dark:text-zinc-100">{selectedVerificationProject.company}</h3>
+                                            <p className="text-[15px] text-gray-500 font-medium dark:text-zinc-400">{selectedVerificationProject.project}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-2 pt-1">
+                                        <Calendar className="h-5 w-5 text-[#059669] dark:text-zinc-400" />
+                                        <div className="text-right">
+                                            <p className="text-[13px] font-bold text-gray-700 dark:text-zinc-400">Upload Date</p>
+                                            <p className="text-[12px] text-gray-500 whitespace-nowrap dark:text-zinc-400">
+                                                {selectedVerificationProject.uploadedAt ? new Date(selectedVerificationProject.uploadedAt).toLocaleString("en-GB") : "N/A"}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 pt-2">
+                                    <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Project Details :</h4>
+                                    <div className="grid gap-2 pl-1">
+                                        {[
+                                            ["Company", selectedVerificationProject.company],
+                                            ["Package", selectedVerificationProject.packageName],
+                                            ["Web_url", selectedVerificationProject.minisiteUrl],
+                                            ["Phone", selectedVerificationProject.phone],
+                                            ["Mobile", selectedVerificationProject.mobile],
+                                            ["Address", selectedVerificationProject.address],
+                                            ["Referance_web", selectedVerificationProject.reference],
+                                            ["Categories", selectedVerificationProject.categories],
+                                            ["Detail", selectedVerificationProject.detailNotes],
+                                        ].map(([label, value]) => (
+                                            <div key={label} className="flex items-center gap-2 text-[13px]">
+                                                <span className="font-bold text-gray-700 min-w-[140px] dark:text-zinc-300">{label}</span>
+                                                <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
+                                                <span className="text-gray-500 dark:text-zinc-400">{value || "N/A"}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {activeTab === "waiting" && (
+                                    <div className="flex items-center gap-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
+                                        <Button
+                                            className="bg-[#059669] hover:bg-[#047857] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                            onClick={() => setSeoSmmDocConfirm({ documentId: selectedVerificationProject.documentId, project: selectedVerificationProject.project, status: "APPROVED" })}
+                                            disabled={verifySeoSmmDocumentMutation.isPending}
+                                        >
+                                            Approve
+                                        </Button>
+                                        <Button
+                                            className="bg-[#ef4444] hover:bg-[#d32f2f] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                            onClick={() => setSeoSmmDocConfirm({ documentId: selectedVerificationProject.documentId, project: selectedVerificationProject.project, status: "REJECTED" })}
+                                            disabled={verifySeoSmmDocumentMutation.isPending}
+                                        >
+                                            Reject
+                                        </Button>
+                                        <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => { setVerificationModalOpen(false); setSelectedVerificationProject(null); }}>
+                                            Cancel
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right: Attached Files */}
+                            <div className="space-y-6 bg-gray-50/50 dark:bg-zinc-900 p-6 rounded-xl border border-gray-100 h-fit dark:border-zinc-800">
+                                <div className="flex items-center justify-between border-b pb-3 dark:border-zinc-800">
+                                    <h4 className="text-[14px] font-bold text-gray-700 uppercase tracking-wide dark:text-zinc-400">Attached Files</h4>
+                                </div>
+                                <div className="space-y-3">
+                                    {selectedVerificationProject.documentUrl ? (
+                                        <a
+                                            href={selectedVerificationProject.documentUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100 shadow-sm group hover:border-[#059669] transition-all cursor-pointer no-underline dark:bg-zinc-900 dark:border-zinc-800"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 bg-emerald-50 text-[#059669] rounded-lg flex items-center justify-center ring-4 ring-emerald-50/50 dark:bg-zinc-800 dark:text-emerald-400">
+                                                    <FileText className="h-5 w-5" />
+                                                </div>
+                                                <p className="text-[13px] font-bold text-gray-800 mb-0 dark:text-zinc-100 truncate max-w-[220px]">
+                                                    {selectedVerificationProject.documentUrl.split("/").pop()}
+                                                </p>
+                                            </div>
+                                            <Download className="h-4 w-4 text-gray-400 group-hover:text-[#059669] transition-colors" />
+                                        </a>
+                                    ) : (
+                                        <div className="flex items-center justify-center p-6 text-[12px] text-gray-400 font-medium border border-dashed border-gray-200 rounded-xl dark:border-zinc-800">
+                                            No file attached
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="pt-2 border-t mt-4 dark:border-zinc-800">
+                                    <p className="text-[11px] text-gray-500 font-medium leading-relaxed dark:text-zinc-400">
+                                        Please verify all requirements before approving.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            <AlertDialog open={!!seoSmmDocConfirm} onOpenChange={(open) => { if (!open) { setSeoSmmDocConfirm(null); setSeoSmmRejectReason(""); } }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            {seoSmmDocConfirm?.status === "APPROVED" ? "Approve this document?" : "Reject this document?"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {seoSmmDocConfirm?.status === "APPROVED"
+                                ? <>"{seoSmmDocConfirm?.project}" will move to the Approved tab.</>
+                                : <>"{seoSmmDocConfirm?.project}" will be sent back to the sales executive to re-upload.</>}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    {seoSmmDocConfirm?.status === "REJECTED" && (
+                        <div className="space-y-1.5">
+                            <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-400">Reason for rejection *</label>
+                            <Textarea
+                                value={seoSmmRejectReason}
+                                onChange={(e) => setSeoSmmRejectReason(e.target.value)}
+                                placeholder="Explain what's wrong with the uploaded document..."
+                                className="min-h-[80px]"
+                            />
+                        </div>
+                    )}
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={verifySeoSmmDocumentMutation.isPending || (seoSmmDocConfirm?.status === "REJECTED" && !seoSmmRejectReason.trim())}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                if (!seoSmmDocConfirm) return;
+                                verifySeoSmmDocumentMutation.mutate({
+                                    documentId: seoSmmDocConfirm.documentId,
+                                    status: seoSmmDocConfirm.status,
+                                    reason: seoSmmDocConfirm.status === "REJECTED" ? seoSmmRejectReason.trim() : undefined,
+                                });
+                            }}
+                            className={seoSmmDocConfirm?.status === "REJECTED" ? "bg-red-600 hover:bg-red-700" : "bg-[#059669] hover:bg-[#047857]"}
+                        >
+                            {verifySeoSmmDocumentMutation.isPending ? "Saving..." : seoSmmDocConfirm?.status === "APPROVED" ? "Approve" : "Reject"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

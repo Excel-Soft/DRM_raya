@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest, apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { ItAssetManagementSection } from "@/components/it-asset-management-section";
-import { Server, CheckCircle, Archive, AlertTriangle, ChevronRight } from "lucide-react";
+import { Server, CheckCircle, Archive, AlertTriangle, ChevronRight, Play, CheckSquare } from "lucide-react";
 
 interface AssetStats {
     overview: { totalAssets: number; inUse: number; inCustody: number; damaged: number };
@@ -55,7 +57,37 @@ const PROJECTS_OVERVIEW_TILES: Array<{ label: string; route?: string }> = [
 export default function ItExecutiveDashboard() {
     const [, navigate] = useLocation();
     const { toast } = useToast();
+    const queryClient = useQueryClient();
     const [bannerIndex, setBannerIndex] = useState(0);
+
+    // Tasks the IT Manager assigns from the Approval tab's "Assign Task" form
+    // (POST /api/pms/tasks) land here. GET /api/pms/tasks auto-scopes to
+    // "owned by or assigned to me" for a non-managerial role like
+    // it_executive, so no extra assignedToUserId filter is needed — just the
+    // status per tab.
+    const [projectTab, setProjectTab] = useState<"assign" | "working" | "complete">("assign");
+    const PROJECT_TAB_STATUS: Record<typeof projectTab, string> = {
+        assign: "ToDo",
+        working: "InProgress",
+        complete: "Completed",
+    };
+    const { data: myTasks = [], isLoading: tasksLoading } = useQuery<any[]>({
+        queryKey: [`/api/pms/tasks?status=${PROJECT_TAB_STATUS[projectTab]}`],
+    });
+    const updateTaskStatusMutation = useMutation({
+        mutationFn: async ({ id, status }: { id: string; status: string }) => {
+            return apiRequestJson("PATCH", `/api/it/tasks/${id}/status`, { status });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=ToDo`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=InProgress`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=Completed`] });
+            toast({ title: "Task updated" });
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to update task", variant: "destructive" });
+        },
+    });
 
     const handleTileClick = (tile: { label: string; route?: string }) => {
         if (tile.route) navigate(tile.route);
@@ -205,21 +237,65 @@ export default function ItExecutiveDashboard() {
                         </div>
                     </div>
 
+                    {/* Assign / Working / Complete Project — tasks the IT Manager
+                        assigns from an Approved document (see it-manager-dashboard.tsx's
+                        Assign Task form) land in "Assign Project" (ToDo); this executive
+                        moves them along themselves. */}
                     <Card className="border border-slate-200 shadow-sm rounded-sm bg-white overflow-hidden mt-4 dark:bg-zinc-900 dark:border-zinc-800">
-                        <Table>
-                            <TableHeader className="bg-slate-50/80 dark:bg-zinc-900/80">
-                                <TableRow>
-                                    <TableHead className="text-center font-bold text-slate-700 border-r border-slate-200 dark:text-zinc-300 dark:border-zinc-800">Renewal</TableHead>
-                                    <TableHead className="text-center font-bold text-slate-700 dark:text-zinc-300">New Project</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                <TableRow>
-                                    <TableCell className="text-center text-[16px] font-bold text-slate-800 border-r border-slate-200 dark:text-zinc-100 dark:border-zinc-800">{stats?.projectTypes.renewal ?? 0}</TableCell>
-                                    <TableCell className="text-center text-[16px] font-bold text-slate-800 dark:text-zinc-100">{stats?.projectTypes.newProject ?? 0}</TableCell>
-                                </TableRow>
-                            </TableBody>
-                        </Table>
+                        <div className="flex items-center gap-2 p-3 border-b border-slate-200 dark:border-zinc-800 bg-slate-50/80 dark:bg-zinc-900/80">
+                            {([
+                                { key: "assign", label: "Assign Project" },
+                                { key: "working", label: "Working Project" },
+                                { key: "complete", label: "Complete Project" },
+                            ] as const).map((tab) => (
+                                <button
+                                    key={tab.key}
+                                    onClick={() => setProjectTab(tab.key)}
+                                    className={cn(
+                                        "px-4 py-1.5 text-[12px] font-bold rounded-md transition-all",
+                                        projectTab === tab.key ? "bg-emerald-600 text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-zinc-800"
+                                    )}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+                            {tasksLoading ? (
+                                <div className="p-6 text-center text-[13px] text-slate-400">Loading...</div>
+                            ) : myTasks.length === 0 ? (
+                                <div className="p-6 text-center text-[13px] text-slate-400">
+                                    {projectTab === "assign" ? "No new tasks assigned yet." : projectTab === "working" ? "Nothing in progress." : "Nothing completed yet."}
+                                </div>
+                            ) : myTasks.map((task: any) => (
+                                <div key={task.id} className="flex items-center justify-between p-3">
+                                    <div>
+                                        <p className="text-[13px] font-bold text-slate-800 dark:text-zinc-100">{task.title}</p>
+                                        {task.description && <p className="text-[11px] text-slate-400">{task.description}</p>}
+                                    </div>
+                                    {projectTab === "assign" && (
+                                        <Button
+                                            size="sm"
+                                            className="h-8 px-3 text-[12px] bg-emerald-600 hover:bg-emerald-700"
+                                            disabled={updateTaskStatusMutation.isPending}
+                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "InProgress" })}
+                                        >
+                                            <Play className="w-3.5 h-3.5 mr-1" /> Start Working
+                                        </Button>
+                                    )}
+                                    {projectTab === "working" && (
+                                        <Button
+                                            size="sm"
+                                            className="h-8 px-3 text-[12px] bg-emerald-600 hover:bg-emerald-700"
+                                            disabled={updateTaskStatusMutation.isPending}
+                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "Completed" })}
+                                        >
+                                            <CheckSquare className="w-3.5 h-3.5 mr-1" /> Mark Complete
+                                        </Button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
                     </Card>
                 </div>
 

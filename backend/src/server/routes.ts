@@ -59,6 +59,7 @@ import noticeRoutes from "./routes/notice-routes";
 import policyRoutes from "./routes/policy-routes";
 import portfolioRoutes from "./routes/portfolio-routes";
 import itAssetsRoutes from "./routes/it-assets-routes";
+import seoSmmProjectsRoutes from "./routes/seo-smm-projects-routes";
 import branchesRoutes from "./routes/branches-routes";
 import servicesCatalogRoutes from "./routes/services-catalog-routes";
 import itAssetInventoryRoutes from "./routes/it-asset-inventory-routes";
@@ -422,6 +423,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/policies", policyRoutes);
   app.use("/api/portfolio", portfolioRoutes);
   app.use("/api/it", itAssetsRoutes);
+  app.use("/api/seo-smm", seoSmmProjectsRoutes);
   app.use("/api/drm/branches", branchesRoutes);
   app.use("/api/drm/services", servicesCatalogRoutes);
   app.use("/api/it/asset-inventory", itAssetInventoryRoutes);

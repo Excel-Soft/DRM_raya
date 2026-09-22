@@ -4,12 +4,20 @@ import { eq, and, sql, or, desc, lte, gte, isNotNull, ilike, inArray } from "dri
 import { alias } from "drizzle-orm/pg-core";
 import { quotedUuidList } from "../utils/sql-safety";
 
+// Deliberately NOT typeof users.$inferSelect — that includes password/
+// passwordHash. GET /api/pms/tasks(+/:id, /board) return this straight to
+// any authenticated caller who can see the task, so the owner/assignee
+// projection below is limited to safe display fields only (security fix —
+// this previously leaked every task owner's password hash, and on rows
+// still carrying the legacy plaintext column, the plaintext password too).
+type SafeUserRef = { id: string; name: string | null; fullName: string | null; email: string };
+
 export type TaskWithOwner = Task & {
-  owner: typeof users.$inferSelect;
+  owner: SafeUserRef;
 };
 
 export type TaskBoardItem = Task & {
-  owner?: typeof users.$inferSelect | null;
+  owner?: SafeUserRef | null;
   assignee?: { id: string; name: string | null } | null;
   project?: { id: string; name: string | null } | null;
 };
@@ -101,7 +109,10 @@ export class TasksRepository {
     await ensureTasksSchema();
     await ensureUsersSchemaForTasks();
     const [result] = await db
-      .select()
+      .select({
+        task: tasks,
+        owner: { id: users.id, name: users.name, fullName: users.fullName, email: users.email },
+      })
       .from(tasks)
       .innerJoin(users, eq(tasks.ownerUserId, users.id))
       .where(eq(tasks.id, id));
@@ -109,8 +120,8 @@ export class TasksRepository {
     if (!result) return undefined;
 
     return {
-      ...result.tasks,
-      owner: result.users,
+      ...result.task,
+      owner: result.owner,
     };
   }
 
@@ -152,14 +163,17 @@ export class TasksRepository {
     }
 
     const results = await db
-      .select()
+      .select({
+        task: tasks,
+        owner: { id: users.id, name: users.name, fullName: users.fullName, email: users.email },
+      })
       .from(tasks)
       .innerJoin(users, eq(tasks.ownerUserId, users.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined);
 
     return results.map((row) => ({
-      ...row.tasks,
-      owner: row.users,
+      ...row.task,
+      owner: row.owner,
     }));
   }
 
@@ -296,7 +310,7 @@ export class TasksRepository {
     const results = await db
       .select({
         task: tasks,
-        owner: users,
+        owner: { id: users.id, name: users.name, fullName: users.fullName, email: users.email },
       })
       .from(tasks)
       .innerJoin(users, eq(tasks.ownerUserId, users.id))
@@ -403,7 +417,7 @@ export class TasksRepository {
     const query = db
       .select({
         task: tasks,
-        owner: users,
+        owner: { id: users.id, name: users.name, fullName: users.fullName, email: users.email },
         assignee: {
           id: assignees.id,
           name: assignees.name,
@@ -431,7 +445,7 @@ export class TasksRepository {
 }
 
 export type TaskWithAssignee = Task & {
-  owner: typeof users.$inferSelect;
+  owner: SafeUserRef;
 };
 
 export const tasksRepository = new TasksRepository();
