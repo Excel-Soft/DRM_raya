@@ -4,4 +4,8 @@ import { Router } from "express";
 // Empty router — mounted routes will 404 instead of crashing the app.
 const router = Router();
 
+router.get("/team-share/me", (req: any, res: any) => {
+    return res.json([]);
+});
+
 export const teamCommissionRouter = router;
