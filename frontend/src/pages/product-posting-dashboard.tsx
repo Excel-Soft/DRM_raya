@@ -659,8 +659,10 @@ export default function ProductPostingDashboard() {
                 queueItems = queueItems.filter((_item: any) => {
                     return false;
                 });
+            } else {
+                // product_posting_manager: ensure only their department projects show
+                queueItems = queueItems.filter((item: any) => item.project?.departmentType === 'PRODUCT_POSTING');
             }
-            // product_posting_manager: server already filtered, show all returned items
         }
 
 

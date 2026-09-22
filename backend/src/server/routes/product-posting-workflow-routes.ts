@@ -390,10 +390,10 @@ router.get("/manager/queue", async (req: any, res: any) => {
                 w.overtime_requested_minutes as "overtimeRequestedMinutes",
                 w.overtime_approved_minutes as "overtimeApprovedMinutes",
                 w.overtime_reason as "overtimeReason",
-                p.id as project_id, p.name as project_name, COALESCE(c.company_name, i.company_name) as company_name, p.project_number as project_number,
+                p.id as project_id, p.name as project_name, COALESCE(c.company_name, i.company_name) as company_name, p.project_number as project_number, p.department_type as department_type,
                 i.project_name as invoice_project_name,
                 COALESCE((
-                    SELECT json_agg(json_build_object('documentUrl', d.document_url)) 
+                    SELECT json_agg(json_build_object('id', d.id, 'documentUrl', d.document_url)) 
                     FROM drm.project_documents d 
                     WHERE d.project_id = w.project_id
                 ), '[]'::json) as documents
@@ -422,7 +422,8 @@ router.get("/manager/queue", async (req: any, res: any) => {
                 id: row.project_id,
                 name: row.project_name,
                 companyName: row.company_name,
-                projectNumber: row.project_number
+                projectNumber: row.project_number,
+                departmentType: row.department_type
             }
         }));
 

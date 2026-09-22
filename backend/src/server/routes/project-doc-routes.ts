@@ -153,4 +153,62 @@ router.post("/:id/documents", (req, res, next) => {
     }
 });
 
+// GET /documents/pending - Stub endpoint for pending documents
+router.get("/documents/pending", async (req: any, res: any) => {
+    // This endpoint was called by the frontend but not implemented.
+    // The product-posting-dashboard relies on /manager/queue instead,
+    // so we return an empty array here to prevent 500 errors.
+    return res.json([]);
+});
+
+// PUT /documents/:id/verify - Verify project document
+router.put("/documents/:id/verify", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { id } = req.params;
+        const { action, reason } = req.body;
+        
+        const status = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+        
+        const docRes = await pool.query(
+            `UPDATE drm.project_documents SET status = $1, updated_at = now() WHERE id = $2 RETURNING id, project_id`,
+            [status, id]
+        );
+        
+        if (docRes.rowCount === 0) return res.status(404).json({ error: "Document not found" });
+        
+        const projectId = docRes.rows[0].project_id;
+        
+        if (status === 'REJECTED') {
+            const wfRes = await pool.query(
+                `SELECT id, current_phase FROM drm.product_posting_workflows WHERE project_id = $1`,
+                [projectId]
+            );
+            if (wfRes.rows.length > 0) {
+                await pool.query(
+                    `INSERT INTO drm.product_posting_rework_history (workflow_id, from_phase, to_phase, action, remarks, actor_user_id)
+                     VALUES ($1, $2, 'PENDING_PROJECT', 'DOCUMENT_REJECTED', $3, $4)`,
+                    [wfRes.rows[0].id, wfRes.rows[0].current_phase, reason, req.user?.userId || req.user?.id]
+                );
+                
+                await pool.query(
+                    `UPDATE drm.product_posting_workflows SET current_phase = 'RETURNED_FOR_CHANGE' WHERE id = $1`,
+                    [wfRes.rows[0].id]
+                );
+            }
+        } else {
+            // If approved, move phase to VERIFICATION_COMPLETE
+            await pool.query(
+                `UPDATE drm.product_posting_workflows SET current_phase = 'VERIFICATION_COMPLETE' WHERE project_id = $1`,
+                [projectId]
+            );
+        }
+        
+        return res.json({ success: true });
+    } catch (error) {
+        console.error("Error verifying document:", error);
+        return res.status(500).json({ error: "Failed to verify document" });
+    }
+});
+
 export const projectDocRouter = router;
