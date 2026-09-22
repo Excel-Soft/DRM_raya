@@ -66,7 +66,8 @@ import {
 } from "@shared/gm-sales-constants";
 import { normalizeRole, ROLES } from "../utils/role-utils";
 import { requireRole } from "../middleware/auth.middleware";
-import { InvoiceWorkflowService, INVOICE_AUDIT_ENTITY, type Actor } from "./services/invoice-workflow.service";
+import { InvoiceWorkflowService, INVOICE_AUDIT_ENTITY } from "./services/invoice-workflow.service";
+type Actor = any;
 import { transitionWorkflowStatus } from "./services/workflow-status.service";
 import {
   createOrLinkProjectForApprovedInvoice,
@@ -598,8 +599,8 @@ export function registerAccountRoutes(app: Express) {
         ${whereSql}
         ORDER BY created_at DESC
       `;
-      const { rows } = await pool.query(sqlText, params);
-      const entries = rows.map((row: any) => {
+      const result = await pool.query(sqlText, params);
+      const entries = result.rows.map((row: any) => {
         const approvalStatus = row.approval_status || null;
         const rawStatus = row.status || "Pending";
         const finalStatus = row.final_status || null;
@@ -1330,8 +1331,7 @@ export function registerAccountRoutes(app: Express) {
       // value; the derived flags below feed is_loan/is_partial_payment.
       const typeResult = resolveCanonicalGmType({
         explicit: (req.body as any)?.canonicalGmType,
-        isLoan: validated.isLoan,
-        isPartialPayment: validated.isPartialPayment,
+        loanMode: validated.isLoan ? "loan" : (validated.isPartialPayment ? "installment" : "none"),
       });
       if (!typeResult.ok || !typeResult.value) {
         await recordGmSalesAudit({
@@ -1711,7 +1711,7 @@ export function registerAccountRoutes(app: Express) {
               requiredRoles: ["account_manager", "admin"],
               module: "invoice-workflow",
               req,
-              execute: (client) => InvoiceWorkflowService.approveByAccountTx(client, actor, entry.id),
+              execute: (client: any) => InvoiceWorkflowService.approveByAccountTx(client, actor, entry.id),
             });
           } catch (approveErr) {
             return sendError(res, approveErr);
@@ -2017,7 +2017,7 @@ export function registerAccountRoutes(app: Express) {
                 message: `Your GM entry for '${entry.company_name}' has been rejected by Account Manager. Reason: ${notes || "No reason provided"}`,
                 type: "ERROR",
                 targetUrl: "/gm-pool",
-            }).catch(e => console.error("Notification failed", e));
+            }).catch((e: any) => console.error("Notification failed", e));
         }
       } else {
         let salesPersonId = entry.sales_person_id;
@@ -2032,7 +2032,7 @@ export function registerAccountRoutes(app: Express) {
             message: `Your GM entry for '${entry.company_name}' has been fully approved by the Account Manager. Please upload the required documents in the PMS module.`,
             type: "SUCCESS",
             targetUrl: "/gm-pool",
-          }).catch(e => console.error("Notification failed", e));
+          }).catch((e: any) => console.error("Notification failed", e));
         }
       }
 
@@ -3472,7 +3472,7 @@ export function registerAccountRoutes(app: Express) {
         const userId = (req.user as any)?.userId || null;
 
         // Perform the status transition in a transaction
-        const updatedRow = await withPgTransaction(async (client) => {
+        const updatedRow = await withPgTransaction(async (client: any) => {
           // Fetch current row
           const current = await client.query(`SELECT * FROM drm.ab_payments WHERE id::text=$1::text AND coalesce(is_deleted,false)=false`, [String(id)]);
           if (!current.rows.length) {
@@ -3564,7 +3564,7 @@ export function registerAccountRoutes(app: Express) {
           return res.status(400).json({ error: "A valid reason (minimum 3 characters) is required to delete." });
         }
 
-        await withPgTransaction(async (client) => {
+        await withPgTransaction(async (client: any) => {
           const current = await client.query(`SELECT * FROM drm.ab_payments WHERE id::text=$1::text`, [String(id)]);
           if (!current.rows.length) {
             throw new ApiError(404, "NOT_FOUND", "AB payment not found");
@@ -3625,7 +3625,7 @@ export function registerAccountRoutes(app: Express) {
           return res.status(400).json({ error: "A valid reason (minimum 3 characters) is required to cancel." });
         }
 
-        const updatedRow = await withPgTransaction(async (client) => {
+        const updatedRow = await withPgTransaction(async (client: any) => {
           const current = await client.query(`SELECT * FROM drm.ab_payments WHERE id::text=$1::text AND coalesce(is_deleted,false)=false`, [String(id)]);
           if (!current.rows.length) {
             throw new ApiError(404, "NOT_FOUND", "AB payment not found");
@@ -3680,7 +3680,7 @@ export function registerAccountRoutes(app: Express) {
           return res.status(400).json({ error: "A valid reason (minimum 3 characters) is required to void." });
         }
 
-        const updatedRow = await withPgTransaction(async (client) => {
+        const updatedRow = await withPgTransaction(async (client: any) => {
           const current = await client.query(`SELECT * FROM drm.ab_payments WHERE id::text=$1::text AND coalesce(is_deleted,false)=false`, [String(id)]);
           if (!current.rows.length) {
             throw new ApiError(404, "NOT_FOUND", "AB payment not found");
@@ -3735,7 +3735,7 @@ export function registerAccountRoutes(app: Express) {
           return res.status(400).json({ error: "A valid reason (minimum 3 characters) is required to delete." });
         }
 
-        await withPgTransaction(async (client) => {
+        await withPgTransaction(async (client: any) => {
           const current = await client.query(`SELECT * FROM drm.ab_payments WHERE id::text=$1::text`, [String(id)]);
           if (!current.rows.length) {
             throw new ApiError(404, "NOT_FOUND", "AB payment not found");
