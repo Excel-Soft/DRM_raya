@@ -63,16 +63,21 @@ export default function PmsPendingApprovals() {
         reference: "",
         categories: "",
         detailNotes: "",
-        documentUrl: ""
     });
+    // The actual File to upload — kept separate from uploadFormData since it
+    // can't round-trip through the form-reset object above. Previously the
+    // file input only read file.name and sent that string as "documentUrl",
+    // so nothing was ever really uploaded and no downstream "view document"
+    // link could ever work; this now sends the real file.
+    const [documentFile, setDocumentFile] = useState<File | null>(null);
 
     const { data: projects = [], isLoading } = useQuery<PendingProject[]>({
         queryKey: ["/api/pms/pending-documents"],
     });
 
     const uploadMutation = useMutation({
-        mutationFn: async (data: any) => {
-            const res = await apiRequest("POST", `/api/projects/${selectedProjectId}/documents`, data);
+        mutationFn: async (formData: FormData) => {
+            const res = await apiRequest("POST", `/api/projects/${selectedProjectId}/documents`, formData);
             await throwIfResNotOk(res); // ← throw if 403/500/etc — triggers onError
             return res.json();
         },
@@ -89,8 +94,8 @@ export default function PmsPendingApprovals() {
                 reference: "",
                 categories: "",
                 detailNotes: "",
-                documentUrl: ""
             });
+            setDocumentFile(null);
         },
         onError: (error: any) => {
             toast({ title: "Failed to upload document", description: error.message, variant: "destructive" });
@@ -111,10 +116,10 @@ export default function PmsPendingApprovals() {
 
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        uploadMutation.mutate({
-            ...uploadFormData,
-            evidenceUrl: uploadFormData.documentUrl // Use documentUrl as evidenceUrl for now
-        });
+        const formData = new FormData();
+        Object.entries(uploadFormData).forEach(([key, value]) => formData.append(key, value));
+        if (documentFile) formData.append("document", documentFile);
+        uploadMutation.mutate(formData);
     };
 
     const filteredData = useMemo(() => {
@@ -493,17 +498,17 @@ export default function PmsPendingApprovals() {
                                     <div className="flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm items-center dark:bg-zinc-900 dark:border-zinc-800">
                                         <label className="bg-[#f0f0f0] border border-gray-300 px-3 py-1 cursor-pointer mr-2 text-[12px] text-[#495057] active:bg-gray-200 hover:bg-gray-100 rounded-sm dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800">
                                             Choose files
-                                            <input 
-                                                type="file" 
-                                                className="hidden" 
+                                            <input
+                                                type="file"
+                                                className="hidden"
                                                 onChange={(e) => {
-                                                    const fileName = e.target.files?.[0]?.name;
-                                                    if(fileName) setUploadFormData(prev => ({ ...prev, documentUrl: fileName }));
+                                                    const file = e.target.files?.[0] ?? null;
+                                                    setDocumentFile(file);
                                                 }}
                                             />
                                         </label>
                                         <span className="text-[12px] text-gray-400">
-                                            {uploadFormData.documentUrl || "No file chosen"}
+                                            {documentFile?.name || "No file chosen"}
                                         </span>
                                     </div>
                                 </div>

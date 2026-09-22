@@ -47,3 +47,6 @@ logs/
 # Test/debug scripts at root
 test_scripts/
 markdown_files/
+
+# Runtime-uploaded user files (portfolio images, project documents, etc.)
+backend/uploads/

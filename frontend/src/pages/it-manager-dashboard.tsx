@@ -4,12 +4,18 @@ import { queryClient, apiRequestJson, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-    Users, Repeat, Tag, Target, Clock, Wallet, CheckCircle, ChevronRight, Activity, Building2, Briefcase, ChevronLeft, Plug, User, Eye, UserPlus, FileText, CloudDownload, Search, Pencil, Loader2, Trash2, Plus
+    Users, Repeat, Tag, Target, Clock, Wallet, CheckCircle, ChevronRight, Activity, Building2, Briefcase, ChevronLeft, Plug, User, Eye, UserPlus, FileText, CloudDownload, Search, Pencil, Loader2, Trash2, Plus, Download, Calendar
 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import {
+    AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+    AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
@@ -36,6 +42,17 @@ export default function ItManagerDashboard() {
 
     const { data: itHostingPackages = [] } = useQuery<any[]>({
         queryKey: ["/api/it/hosting-packages"],
+    });
+
+    // Sales-uploaded project documents routed to the IT department
+    // (drm.projects.department_type = 'IT') — previously had no dashboard
+    // destination at all; these back the new Pending/Approval tabs below,
+    // alongside the existing domain-registry-backed tabs.
+    const { data: pendingItProjects = [] } = useQuery<any[]>({
+        queryKey: ["/api/it/projects?status=pending"],
+    });
+    const { data: approvedItProjects = [] } = useQuery<any[]>({
+        queryKey: ["/api/it/projects?status=approved"],
     });
 
     const [backupForm, setBackupForm] = useState({
@@ -98,6 +115,34 @@ export default function ItManagerDashboard() {
             toast({ title: extractErrorMessage(err, "Failed to delete backup"), variant: "destructive" });
         }
     });
+
+    const verifyItDocumentMutation = useMutation({
+        mutationFn: async ({ documentId, status, reason }: { documentId: string; status: "APPROVED" | "REJECTED"; reason?: string }) => {
+            return apiRequestJson("PATCH", `/api/it/documents/${documentId}/verify`, { status, reason });
+        },
+        onSuccess: (_data, variables) => {
+            toast({ title: variables.status === "APPROVED" ? "Document approved" : "Document rejected — sales exec can now re-upload" });
+            queryClient.invalidateQueries({ queryKey: ["/api/it/projects?status=pending"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/it/projects?status=approved"] });
+            setItDocConfirm(null);
+            setItRejectReason("");
+            setSelectedItProject(null);
+        },
+        onError: (err) => {
+            toast({ title: extractErrorMessage(err, "Failed to update document"), variant: "destructive" });
+        }
+    });
+
+    // Approve/Reject on a sales-uploaded document always asks for confirmation
+    // first; reject additionally requires a reason (surfaced back to the sales
+    // exec via project-doc-routes.ts's rework-history integration).
+    const [itDocConfirm, setItDocConfirm] = useState<{ documentId: string; project: string; status: "APPROVED" | "REJECTED" } | null>(null);
+    const [itRejectReason, setItRejectReason] = useState("");
+    // Single action button on a Pending/Approval row opens this full detail +
+    // attached-file + Approve/Reject modal, matching the same
+    // "Projects Overview & Verification" pattern already used on the Product
+    // Posting manager dashboard, instead of a row of separate icon buttons.
+    const [selectedItProject, setSelectedItProject] = useState<any>(null);
 
     const [activeDomainTab, setActiveDomainTab] = useState("3-month");
     const [domainStatsScope, setDomainStatsScope] = useState<"ld" | "all">("ld");
@@ -2224,9 +2269,69 @@ export default function ItManagerDashboard() {
                                 >
                                     Expired Domains
                                 </button>
+                                <button
+                                    onClick={() => setActiveDomainTab("pending")}
+                                    className={cn(
+                                        "px-5 py-1.5 text-[13px] font-bold rounded transition-all",
+                                        activeDomainTab === "pending" ? "bg-[#059669] text-white shadow-sm hover:bg-[#047857]" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 hover:bg-slate-200/50"
+                                    )}
+                                >
+                                    Pending{pendingItProjects.length > 0 ? ` (${pendingItProjects.length})` : ""}
+                                </button>
+                                <button
+                                    onClick={() => setActiveDomainTab("approval")}
+                                    className={cn(
+                                        "px-5 py-1.5 text-[13px] font-bold rounded transition-all",
+                                        activeDomainTab === "approval" ? "bg-[#059669] text-white shadow-sm hover:bg-[#047857]" : "text-slate-500 dark:text-slate-400 hover:text-slate-700 hover:bg-slate-200/50"
+                                    )}
+                                >
+                                    Approval
+                                </button>
                             </div>
                         </CardHeader>
 
+                        {activeDomainTab === "pending" || activeDomainTab === "approval" ? (
+                            <div className="overflow-x-auto min-h-[300px]">
+                                <Table>
+                                    <TableHeader className="bg-[#f0f4f8] dark:bg-zinc-900">
+                                        <TableRow className="hover:bg-transparent border-none">
+                                            <TableHead className="text-[13px] font-bold text-slate-600 py-3 pl-6 w-16 dark:text-zinc-300">No#</TableHead>
+                                            <TableHead className="text-[13px] font-bold text-slate-600 py-3 dark:text-zinc-300">Company</TableHead>
+                                            <TableHead className="text-[13px] font-bold text-slate-600 py-3 dark:text-zinc-300">Project</TableHead>
+                                            <TableHead className="text-[13px] font-bold text-slate-600 py-3 text-center dark:text-zinc-300">Uploaded</TableHead>
+                                            <TableHead className="text-[13px] font-bold text-slate-600 py-3 text-center pr-6 dark:text-zinc-300">Action</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {(activeDomainTab === "pending" ? pendingItProjects : approvedItProjects).length === 0 ? (
+                                            <TableRow>
+                                                <TableCell colSpan={5} className="text-center py-8 text-slate-400 dark:text-zinc-500">
+                                                    {activeDomainTab === "pending" ? "No documents awaiting review." : "No approved documents yet."}
+                                                </TableCell>
+                                            </TableRow>
+                                        ) : (activeDomainTab === "pending" ? pendingItProjects : approvedItProjects).map((row: any, idx: number) => (
+                                            <TableRow key={row.documentId} className="hover:bg-slate-50 border-slate-50 group dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                                <TableCell className="text-[13px] font-medium text-slate-800 py-3 pl-6 dark:text-zinc-100">{idx + 1}</TableCell>
+                                                <TableCell className="text-[13px] font-semibold uppercase py-3 dark:text-zinc-100">{row.company}</TableCell>
+                                                <TableCell className="text-[13px] font-medium text-slate-600 py-3 dark:text-zinc-300">{row.project}</TableCell>
+                                                <TableCell className="text-[13px] font-medium text-slate-600 py-3 text-center tabular-nums dark:text-zinc-300">
+                                                    {row.uploadedAt ? new Date(row.uploadedAt).toLocaleDateString("en-GB") : "—"}
+                                                </TableCell>
+                                                <TableCell className="py-3 text-center pr-6">
+                                                    <button
+                                                        onClick={() => setSelectedItProject(row)}
+                                                        className="w-7 h-7 rounded-full bg-[#059669]/10 flex items-center justify-center text-[#059669] hover:bg-[#059669]/20 transition-all shadow-sm mx-auto"
+                                                        title="View & Verify"
+                                                    >
+                                                        <Eye className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        ) : (
                         <div className="overflow-x-auto min-h-[300px]">
                             <Table>
                                 <TableHeader className="bg-[#f0f4f8] dark:bg-zinc-900">
@@ -2263,6 +2368,7 @@ export default function ItManagerDashboard() {
                                 </TableBody>
                             </Table>
                         </div>
+                        )}
                     </Card>
 
                     {/* Monthly Invoices Box — real query against /api/reports/invoice-entries (same contract as invoice-report.tsx), scoped to the current calendar month */}
@@ -2832,6 +2938,173 @@ export default function ItManagerDashboard() {
                     </div>
                 </DialogContent>
             </Dialog>
+
+            {/* Projects Overview & Verification — single action button on a
+                Pending/Approval row opens this, matching the same modal
+                pattern already used on the Product Posting manager dashboard */}
+            <Dialog open={!!selectedItProject} onOpenChange={(open) => { if (!open) setSelectedItProject(null); }}>
+                <DialogContent className="max-w-[1100px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
+                    <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30 dark:bg-zinc-900 dark:border-zinc-800 flex-shrink-0">
+                        <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">Projects Overview &amp; Verification</DialogTitle>
+                    </div>
+
+                    {selectedItProject && (
+                        <div className="p-8 pb-10 overflow-y-auto grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-12">
+                            {/* Left: Details */}
+                            <div className="space-y-6">
+                                <div className="flex items-start justify-between">
+                                    <div className="flex items-center gap-5">
+                                        <div className="w-14 h-14 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-100">
+                                            <div className="relative">
+                                                <Building2 className="w-9 h-9 text-white opacity-20 absolute -top-1 -left-1" />
+                                                <Briefcase className="w-7 h-7 text-white relative z-10" />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-[22px] font-bold text-gray-900 leading-tight tracking-tight dark:text-zinc-100">{selectedItProject.company}</h3>
+                                            <p className="text-[15px] text-gray-500 font-medium dark:text-zinc-400">{selectedItProject.project}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-2 pt-1">
+                                        <Calendar className="h-5 w-5 text-[#059669] dark:text-zinc-400" />
+                                        <div className="text-right">
+                                            <p className="text-[13px] font-bold text-gray-700 dark:text-zinc-400">Upload Date</p>
+                                            <p className="text-[12px] text-gray-500 whitespace-nowrap dark:text-zinc-400">
+                                                {selectedItProject.uploadedAt ? new Date(selectedItProject.uploadedAt).toLocaleString("en-GB") : "N/A"}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 pt-2">
+                                    <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Project Details :</h4>
+                                    <div className="grid gap-2 pl-1">
+                                        {[
+                                            ["Company", selectedItProject.company],
+                                            ["Package", selectedItProject.packageName],
+                                            ["Web_url", selectedItProject.minisiteUrl],
+                                            ["Phone", selectedItProject.phone],
+                                            ["Mobile", selectedItProject.mobile],
+                                            ["Address", selectedItProject.address],
+                                            ["Referance_web", selectedItProject.reference],
+                                            ["Categories", selectedItProject.categories],
+                                            ["Detail", selectedItProject.detailNotes],
+                                        ].map(([label, value]) => (
+                                            <div key={label} className="flex items-center gap-2 text-[13px]">
+                                                <span className="font-bold text-gray-700 min-w-[140px] dark:text-zinc-300">{label}</span>
+                                                <ChevronRight className="w-3.5 h-3.5 text-gray-300" />
+                                                <span className="text-gray-500 dark:text-zinc-400">{value || "N/A"}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {activeDomainTab === "pending" && (
+                                    <div className="flex items-center gap-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
+                                        <Button
+                                            className="bg-[#059669] hover:bg-[#047857] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                            onClick={() => setItDocConfirm({ documentId: selectedItProject.documentId, project: selectedItProject.project, status: "APPROVED" })}
+                                            disabled={verifyItDocumentMutation.isPending}
+                                        >
+                                            Approve
+                                        </Button>
+                                        <Button
+                                            className="bg-[#ef4444] hover:bg-[#d32f2f] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                            onClick={() => setItDocConfirm({ documentId: selectedItProject.documentId, project: selectedItProject.project, status: "REJECTED" })}
+                                            disabled={verifyItDocumentMutation.isPending}
+                                        >
+                                            Reject
+                                        </Button>
+                                        <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => setSelectedItProject(null)}>
+                                            Cancel
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right: Attached Files */}
+                            <div className="space-y-6 bg-gray-50/50 dark:bg-zinc-900 p-6 rounded-xl border border-gray-100 h-fit dark:border-zinc-800">
+                                <div className="flex items-center justify-between border-b pb-3 dark:border-zinc-800">
+                                    <h4 className="text-[14px] font-bold text-gray-700 uppercase tracking-wide dark:text-zinc-400">Attached Files</h4>
+                                </div>
+                                <div className="space-y-3">
+                                    {selectedItProject.documentUrl ? (
+                                        <a
+                                            href={selectedItProject.documentUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center justify-between p-3 bg-white rounded-xl border border-gray-100 shadow-sm group hover:border-[#059669] transition-all cursor-pointer no-underline dark:bg-zinc-900 dark:border-zinc-800"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 bg-emerald-50 text-[#059669] rounded-lg flex items-center justify-center ring-4 ring-emerald-50/50 dark:bg-zinc-800 dark:text-emerald-400">
+                                                    <FileText className="h-5 w-5" />
+                                                </div>
+                                                <p className="text-[13px] font-bold text-gray-800 mb-0 dark:text-zinc-100 truncate max-w-[220px]">
+                                                    {selectedItProject.documentUrl.split("/").pop()}
+                                                </p>
+                                            </div>
+                                            <Download className="h-4 w-4 text-gray-400 group-hover:text-[#059669] transition-colors" />
+                                        </a>
+                                    ) : (
+                                        <div className="flex items-center justify-center p-6 text-[12px] text-gray-400 font-medium border border-dashed border-gray-200 rounded-xl dark:border-zinc-800">
+                                            No file attached
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="pt-2 border-t mt-4 dark:border-zinc-800">
+                                    <p className="text-[11px] text-gray-500 font-medium leading-relaxed dark:text-zinc-400">
+                                        Please verify all requirements before approving.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            <AlertDialog open={!!itDocConfirm} onOpenChange={(open) => { if (!open) { setItDocConfirm(null); setItRejectReason(""); } }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            {itDocConfirm?.status === "APPROVED" ? "Approve this document?" : "Reject this document?"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {itDocConfirm?.status === "APPROVED"
+                                ? <>"{itDocConfirm?.project}" will move to the Approval tab.</>
+                                : <>"{itDocConfirm?.project}" will be sent back to the sales executive to re-upload.</>}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    {itDocConfirm?.status === "REJECTED" && (
+                        <div className="space-y-1.5">
+                            <label className="text-[12px] font-semibold text-slate-600 dark:text-zinc-400">Reason for rejection *</label>
+                            <Textarea
+                                value={itRejectReason}
+                                onChange={(e) => setItRejectReason(e.target.value)}
+                                placeholder="Explain what's wrong with the uploaded document..."
+                                className="min-h-[80px]"
+                            />
+                        </div>
+                    )}
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            disabled={verifyItDocumentMutation.isPending || (itDocConfirm?.status === "REJECTED" && !itRejectReason.trim())}
+                            onClick={(e) => {
+                                e.preventDefault();
+                                if (!itDocConfirm) return;
+                                verifyItDocumentMutation.mutate({
+                                    documentId: itDocConfirm.documentId,
+                                    status: itDocConfirm.status,
+                                    reason: itDocConfirm.status === "REJECTED" ? itRejectReason.trim() : undefined,
+                                });
+                            }}
+                            className={itDocConfirm?.status === "REJECTED" ? "bg-red-600 hover:bg-red-700" : "bg-[#059669] hover:bg-[#047857]"}
+                        >
+                            {verifyItDocumentMutation.isPending ? "Saving..." : itDocConfirm?.status === "APPROVED" ? "Approve" : "Reject"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

@@ -1,18 +1,50 @@
 import { Router } from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { pool } from "../db";
 
 const router = Router();
 
+// Real disk-backed file storage — mirrors portfolio-routes.ts's multer setup.
+// The previous version of this route never actually received a file; the
+// frontend only read the picked file's *name* client-side and sent that
+// string as "documentUrl", so nothing was ever stored anywhere and the
+// resulting "view document" link on any downstream dashboard could never work.
+const PROJECT_DOC_UPLOAD_DIR = path.join(process.cwd(), "uploads", "project-documents");
+fs.mkdirSync(PROJECT_DOC_UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, PROJECT_DOC_UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+        const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+        cb(null, `${unique}${path.extname(file.originalname)}`);
+    },
+});
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
+}).single("document");
+
 // POST /api/projects/:id/documents - Upload document and project details
-router.post("/:id/documents", async (req: any, res: any) => {
+router.post("/:id/documents", (req, res, next) => {
+    upload(req as any, res as any, (err: any) => {
+        if (err) {
+            console.error("Error uploading project document:", err);
+            return res.status(400).json({ error: err.message || "Failed to upload document" });
+        }
+        next();
+    });
+}, async (req: any, res: any) => {
     try {
         if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-        
+
         const { id } = req.params;
-        const { 
-            packageName, minisiteUrl, phone, mobile, 
-            address, reference, categories, detailNotes, 
-            evidenceUrl, documentUrl 
+        const {
+            packageName, minisiteUrl, phone, mobile,
+            address, reference, categories, detailNotes,
+            evidenceUrl, documentUrl
         } = req.body;
 
         // Ensure project exists
@@ -34,7 +66,7 @@ router.post("/:id/documents", async (req: any, res: any) => {
                 )
             `, [
                 id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
-                address || null, reference || null, categories || null, detailNotes || null, 
+                address || null, reference || null, categories || null, detailNotes || null,
                 evidenceUrl || null
             ]);
         } else {
@@ -53,7 +85,7 @@ router.post("/:id/documents", async (req: any, res: any) => {
                 WHERE project_id = $1
             `, [
                 id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
-                address || null, reference || null, categories || null, detailNotes || null, 
+                address || null, reference || null, categories || null, detailNotes || null,
                 evidenceUrl || null
             ]);
         }
@@ -62,26 +94,27 @@ router.post("/:id/documents", async (req: any, res: any) => {
         // We get the project's service_type, and then find its project_department in service_subservices
         // We also check if the project already has a department_type assigned
         const routingCheck = await pool.query(`
-            SELECT 
-                p.department_type, 
-                COALESCE(ss.project_department, s.project_department) AS project_department 
+            SELECT
+                p.department_type,
+                COALESCE(ss.project_department, s.project_department) AS project_department
             FROM drm.projects p
             LEFT JOIN drm.service_subservices ss ON p.service_type = ss.name
             LEFT JOIN drm.services s ON p.service_type = s.name
             WHERE p.id = $1
         `, [id]);
-        
+
         const projDept = routingCheck.rows[0]?.project_department || routingCheck.rows[0]?.department_type;
         if (!projDept) {
-            return res.status(400).json({ 
-                error: "Target department not found. Please contact management to add the Target department against this service." 
+            return res.status(400).json({
+                error: "Target department not found. Please contact management to add the Target department against this service."
             });
         }
         // ------------------------------------------------
 
-        // Insert project_documents
-        // We use documentUrl if available, else evidenceUrl, else a dummy string
-        const docUrl = documentUrl || evidenceUrl || 'uploaded-document';
+        // Real uploaded file takes priority; documentUrl/evidenceUrl strings stay
+        // as a fallback for any caller that still posts a URL directly instead
+        // of a file (kept for backward compatibility, not used by this page anymore).
+        const docUrl = req.file ? `/uploads/project-documents/${req.file.filename}` : (documentUrl || evidenceUrl || 'uploaded-document');
         await pool.query(`
             INSERT INTO drm.project_documents (project_id, document_url, uploaded_by_user_id, status, created_at, updated_at)
             VALUES ($1, $2, $3, 'PENDING', now(), now())
@@ -102,8 +135,8 @@ router.post("/:id/documents", async (req: any, res: any) => {
             `, [id]);
         } else {
             await pool.query(`
-                UPDATE drm.product_posting_workflows 
-                SET salesperson_uploaded_at = now(), updated_at = now() 
+                UPDATE drm.product_posting_workflows
+                SET salesperson_uploaded_at = now(), updated_at = now()
                 WHERE project_id = $1
             `, [id]);
         }

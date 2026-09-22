@@ -109,7 +109,7 @@ const NOTIFICATION_ICON: Record<string, { icon: typeof Activity; color: string }
     SUCCESS: { icon: CheckCircle2, color: "text-emerald-500" },
     WARNING: { icon: AlertCircle, color: "text-amber-500" },
     ERROR: { icon: AlertCircle, color: "text-rose-500" },
-    INFO: { icon: Activity, color: "text-blue-500" },
+    INFO: { icon: Activity, color: "text-emerald-600" },
 };
 
 const STATUS_TRACKER_PAGE_SIZE = 10;
@@ -182,8 +182,8 @@ export default function SeoSmmManagerDashboard() {
         // API). Total managed projects is the closest real, already-fetched figure.
         const totalManaged = normalizeList(projects).length;
         return [
-            { label: "Ongoing Tasks", value: inProgress.toString(), icon: Zap, color: "text-blue-500", bg: "bg-blue-50" },
-            { label: "Total Managed Projects", value: totalManaged.toString(), icon: Globe, color: "text-purple-500", bg: "bg-purple-50" },
+            { label: "Ongoing Tasks", value: inProgress.toString(), icon: Zap, color: "text-emerald-600", bg: "bg-emerald-50" },
+            { label: "Total Managed Projects", value: totalManaged.toString(), icon: Globe, color: "text-teal-600", bg: "bg-teal-50" },
             { label: "Campaigns Finished", value: completed.toString(), icon: Rocket, color: "text-emerald-500", bg: "bg-emerald-50" },
             { label: "Critical Delays", value: delayed.toString(), icon: AlertCircle, color: "text-rose-500", bg: "bg-rose-50" },
         ];
@@ -255,7 +255,7 @@ export default function SeoSmmManagerDashboard() {
             completedPercent: pct(totals.completed),
             segments: [
                 { label: "To Do", value: pct(totals.toDo), color: "bg-slate-400" },
-                { label: "In Progress", value: pct(totals.inProgress), color: "bg-indigo-600" },
+                { label: "In Progress", value: pct(totals.inProgress), color: "bg-emerald-600" },
                 { label: "Blocked", value: pct(totals.blocked), color: "bg-rose-500" },
                 { label: "Completed", value: pct(totals.completed), color: "bg-emerald-600" },
             ],
@@ -313,10 +313,10 @@ export default function SeoSmmManagerDashboard() {
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-[1600px] mx-auto">
                     <div>
                         <div className="flex items-center gap-2">
-                            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700">
+                            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-700 to-teal-700">
                                 SEO/SMM Command Center
                             </h1>
-                            <Badge className="bg-indigo-50 text-indigo-700 border-indigo-100 hover:bg-indigo-100 transition-colors uppercase text-[10px] font-bold px-2 py-0">Manager</Badge>
+                            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 hover:bg-emerald-100 transition-colors uppercase text-[10px] font-bold px-2 py-0">Manager</Badge>
                         </div>
                         <p className="text-sm text-slate-500 font-medium mt-0.5 dark:text-zinc-400">Strategy & Performance Overview</p>
                     </div>
@@ -362,7 +362,7 @@ export default function SeoSmmManagerDashboard() {
                         <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900">
                             <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50 dark:bg-zinc-900">
                                 <div className="flex items-center gap-3">
-                                    <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100">
+                                    <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-100">
                                         <Activity className="w-5 h-5" />
                                     </div>
                                     <CardTitle className="text-lg font-bold text-slate-800 dark:text-zinc-100">Department Status Tracker</CardTitle>
@@ -376,8 +376,8 @@ export default function SeoSmmManagerDashboard() {
                                             className={cn(
                                                 "capitalize h-8 px-4 font-bold text-[11px] tracking-wide rounded-lg transition-all",
                                                 activeTab === tab 
-                                                    ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md"
-                                                    : "text-slate-500 dark:text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                                                    ? "bg-emerald-600 text-white hover:bg-emerald-700 shadow-md"
+                                                    : "text-slate-500 dark:text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
                                             )}
                                             onClick={() => handleTabChange(tab)}
                                         >
@@ -412,7 +412,7 @@ export default function SeoSmmManagerDashboard() {
                                                     <tr key={idx} className="group hover:bg-slate-50/50 dark:hover:bg-zinc-800 transition-colors">
                                                         <td className="px-6 py-5">
                                                             <div className="flex items-center gap-3">
-                                                                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-black text-xs border border-white group-hover:border-indigo-100 transition-colors dark:text-zinc-400 dark:bg-zinc-900">
+                                                                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-black text-xs border border-white group-hover:border-emerald-100 transition-colors dark:text-zinc-400 dark:bg-zinc-900">
                                                                     #{row.no}
                                                                 </div>
                                                                 <div>
@@ -442,7 +442,7 @@ export default function SeoSmmManagerDashboard() {
                                                             <Button
                                                                 variant="outline"
                                                                 size="sm"
-                                                                className="h-8 w-8 p-0 rounded-lg hover:bg-indigo-600 hover:text-white border-slate-200 transition-all dark:border-zinc-800"
+                                                                className="h-8 w-8 p-0 rounded-lg hover:bg-emerald-600 hover:text-white border-slate-200 transition-all dark:border-zinc-800"
                                                             >
                                                                 <ArrowRight className="w-4 h-4" />
                                                             </Button>
@@ -488,7 +488,7 @@ export default function SeoSmmManagerDashboard() {
                             <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl bg-white overflow-hidden dark:bg-zinc-900">
                                 <CardHeader className="p-6 pb-0">
                                     <CardTitle className="text-sm font-bold text-slate-600 flex items-center gap-2 dark:text-zinc-300">
-                                        <PieChart className="w-4 h-4 text-indigo-500" />
+                                        <PieChart className="w-4 h-4 text-emerald-500" />
                                         Work Distribution
                                     </CardTitle>
                                 </CardHeader>
@@ -534,14 +534,14 @@ export default function SeoSmmManagerDashboard() {
                                 </CardContent>
                             </Card>
 
-                            <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl bg-gradient-to-br from-indigo-700 to-purple-800 text-white overflow-hidden relative">
+                            <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl bg-gradient-to-br from-emerald-700 to-teal-800 text-white overflow-hidden relative">
                                 <CardContent className="p-6 flex flex-col items-center justify-center min-h-[160px] text-center">
                                     <div className="p-3 bg-white rounded-2xl mb-4 backdrop-blur-md dark:bg-zinc-900">
                                         <Rocket className="w-8 h-8 text-white animate-pulse" />
                                     </div>
                                     <h3 className="text-xl font-black mb-1">Scale Your Reach</h3>
-                                    <p className="text-indigo-100 text-xs px-6 font-medium leading-relaxed">Boost your department's analytics directly from the command center.</p>
-                                    <Button className="mt-6 bg-white text-indigo-700 hover:bg-slate-100 font-black text-xs px-8 h-10 rounded-xl shadow-lg border-none dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                                    <p className="text-emerald-100 text-xs px-6 font-medium leading-relaxed">Boost your department's analytics directly from the command center.</p>
+                                    <Button className="mt-6 bg-white text-emerald-700 hover:bg-slate-100 font-black text-xs px-8 h-10 rounded-xl shadow-lg border-none dark:bg-zinc-900 dark:hover:bg-zinc-800">
                                         View Data Insights
                                     </Button>
                                     <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-white opacity-5 rounded-full blur-2xl dark:bg-zinc-900"></div>
@@ -553,7 +553,7 @@ export default function SeoSmmManagerDashboard() {
                         <Card className="border-none shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-2xl overflow-hidden bg-white dark:bg-zinc-900">
                             <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 border-b bg-slate-50/50 dark:bg-zinc-900">
                                 <div className="flex items-center gap-3">
-                                    <div className="p-2.5 bg-purple-600 text-white rounded-xl shadow-lg shadow-purple-100">
+                                    <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-lg shadow-emerald-100">
                                         <ClipboardList className="w-5 h-5" />
                                     </div>
                                     <CardTitle className="text-lg font-bold text-slate-800 dark:text-zinc-100">Daily Report</CardTitle>
@@ -586,7 +586,7 @@ export default function SeoSmmManagerDashboard() {
                                             {dailyReportLoading ? (
                                                 <tr>
                                                     <td colSpan={5} className="px-6 py-16 text-center">
-                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-indigo-400" />
+                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-emerald-400" />
                                                     </td>
                                                 </tr>
                                             ) : dailyReportRows.length === 0 ? (
@@ -662,7 +662,7 @@ export default function SeoSmmManagerDashboard() {
                                             {activitiesLoading ? (
                                                 <tr>
                                                     <td colSpan={4} className="px-6 py-16 text-center">
-                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-indigo-400" />
+                                                        <Loader2 className="w-6 h-6 mx-auto animate-spin text-emerald-400" />
                                                     </td>
                                                 </tr>
                                             ) : activityRows.length === 0 ? (
@@ -712,9 +712,9 @@ export default function SeoSmmManagerDashboard() {
                                 <div className="grid grid-cols-2 gap-3">
                                     {QUICK_SHORTS.map((item, i) => (
                                         <Link key={i} href={item.href}>
-                                            <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-50/80 border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-md transition-all group cursor-pointer text-center aspect-square dark:hover:bg-zinc-800">
+                                            <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-50/80 border border-transparent hover:border-emerald-100 hover:bg-white hover:shadow-md transition-all group cursor-pointer text-center aspect-square dark:hover:bg-zinc-800">
                                                 <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center mb-3 shadow-inner group-hover:scale-110 transition-transform bg-white dark:bg-zinc-900 border border-slate-100 dark:border-slate-700")}>
-                                                    <item.icon className="w-5 h-5 text-indigo-600" />
+                                                    <item.icon className="w-5 h-5 text-emerald-600" />
                                                 </div>
                                                 <span className="text-[10px] font-black text-slate-600 leading-tight uppercase tracking-tight dark:text-zinc-300">{item.label}</span>
                                             </div>
@@ -735,7 +735,7 @@ export default function SeoSmmManagerDashboard() {
                             <CardContent className="p-0">
                                 {notificationsLoading ? (
                                     <div className="p-8 flex items-center justify-center">
-                                        <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                                        <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
                                     </div>
                                 ) : liveFeed.length === 0 ? (
                                     <div className="p-8 flex flex-col items-center justify-center opacity-40 text-center">

@@ -76,14 +76,19 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  // FormData (file uploads) must NOT be JSON-stringified or given an explicit
+  // Content-Type — the browser needs to set its own multipart boundary. Every
+  // other caller passes a plain object/array, which still goes through
+  // JSON.stringify as before.
+  const isFormData = typeof FormData !== "undefined" && data instanceof FormData;
   const headers: Record<string, string> = {
-    ...(data ? { "Content-Type": "application/json" } : {}),
+    ...(data && !isFormData ? { "Content-Type": "application/json" } : {}),
     ...getAuthHeader(),
   };
   const res = await fetch(url, {
     method,
     headers,
-    body: data ? JSON.stringify(data) : undefined,
+    body: isFormData ? (data as FormData) : data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
 
