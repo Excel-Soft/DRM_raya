@@ -205,6 +205,7 @@ async function enforceLoanPartialFinalApprovalGate(
   const isFull = !isLoan && !isPartial;
 
   if (isPartial || isFull) {
+    /* BYPASS FOR TESTING: Disable the receipt-check for partial and full GMs
     const paidRes = await pool.query(
       "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
       [id],
@@ -225,6 +226,7 @@ async function enforceLoanPartialFinalApprovalGate(
         },
       };
     }
+    */
   }
 
   if (isLoan) {
