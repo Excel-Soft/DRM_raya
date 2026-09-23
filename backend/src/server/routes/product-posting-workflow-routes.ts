@@ -55,7 +55,7 @@ router.post("/", async (req: any, res: any) => {
                 invoice_number, amount, sales_exec_id, customer_id, project_name,
                 company_name, status, invoice_type, auto_generated, payment_method, generated_by, generated_at
              ) VALUES (
-                'INV-' || nextval('drm.product_posting_invoice_number_seq'),
+                'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0'),
                 $1, $2, $3, $4, $5, 'PENDING_HOD', $4, false, $6, $2, now()
              ) RETURNING *`,
             [amount || 0, userId, customerId || null, invoiceType || 'Product Posting', companyName || '', paymentMethod || null]
