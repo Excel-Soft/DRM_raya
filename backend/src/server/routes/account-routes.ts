@@ -567,7 +567,7 @@ export function registerAccountRoutes(app: Express) {
             'ProductPosting' as gm_type,
             'PP-' || p.id::text as drm_id,
             p.project_name as member_id,
-            'INV-' || p.id::text as order_id,
+            p.invoice_number as order_id,
             p.company_name,
             u.full_name as sales_person_name,
             u.full_name as added_by_name,
@@ -944,6 +944,7 @@ export function registerAccountRoutes(app: Express) {
                ELSE 'FULL' END AS gm_type_canonical,
           e.company_name, e.sales_person_name, e.package_type, e.status, e.created_at,
           e.approval_status, e.hod_status, e.approved_at, e.hod_approved_at,
+          e.payment_status,
           COALESCE(e.amount_usd,0)::numeric AS amount_usd,
           COALESCE(e.alibaba_discount_usd,0)::numeric AS alibaba_discount_usd,
           e.customer_dollar,
@@ -1006,6 +1007,13 @@ export function registerAccountRoutes(app: Express) {
         // APPROVED/PAID for a GM that's still sitting at HOD or awaiting the
         // Account Manager's own approve action.
         if ((r.approval_status || "").toLowerCase() !== "approved") return "PENDING";
+        
+        // If the GM is fully approved, its native payment_status (set by Account
+        // Manager upon approval) takes precedence over pending invoices.
+        if (r.payment_status && r.payment_status.toLowerCase() !== "pending") {
+            return r.payment_status.toUpperCase();
+        }
+
         if (r.any_paid) return "PAID";
         if (r.any_approved) return "APPROVED";
         if (r.any_pending) return "PENDING";
@@ -1727,11 +1735,11 @@ export function registerAccountRoutes(app: Express) {
           actorUserId,
           req,
         });
-        if (!genResult.ok || !genResult.projectId) {
+        if (!genResult.ok || !(genResult as any).projectId) {
           return res.status(500).json({ error: "Failed to create or link project", details: genResult.reason });
         }
-        projectId = genResult.projectId;
-        created = genResult.created;
+        projectId = (genResult as any).projectId;
+        created = (genResult as any).created || false;
       } else {
         const genResult = await createOrLinkProjectForGm({
           gmId: entry.id,
@@ -1742,11 +1750,20 @@ export function registerAccountRoutes(app: Express) {
           actorUserId,
           req,
         });
-        if (!genResult.ok || !genResult.projectId) {
+        if (!genResult.ok || !(genResult as any).projectId) {
           return res.status(500).json({ error: "Failed to create or link project", details: genResult.reason });
         }
-        projectId = genResult.projectId;
-        created = genResult.created;
+        projectId = (genResult as any).projectId;
+        created = (genResult as any).created || false;
+        
+        try {
+          await pool.query(
+            `UPDATE drm.gm_entries SET status = 'Approved', approval_status = 'approved' WHERE id = $1`,
+            [entry.id]
+          );
+        } catch (gmStatusErr) {
+          console.warn("[create-project-from-gm] Failed to update GM status:", gmStatusErr);
+        }
       }
 
       // The remaining side effects (workflow init, financials, approval stage,
@@ -2401,9 +2418,9 @@ export function registerAccountRoutes(app: Express) {
   // GET /api/account/invoices/next-number - Get next invoice number
   app.get("/api/account/invoices/next-number", async (_req, res) => {
     try {
-      const result = await pool.query(`SELECT MAX(CAST(NULLIF(regexp_replace(invoice_number, '\\D', '', 'g'), '') AS integer)) as max_num FROM drm.invoices`);
+      const result = await pool.query(`SELECT last_value + (CASE WHEN is_called THEN 1 ELSE 0 END) as max_num FROM drm.global_invoice_number_seq`);
       const maxNum = result.rows[0]?.max_num || 0;
-      const nextNumber = `INV-${String(Number(maxNum) + 1).padStart(5, "0")}`;
+      const nextNumber = `INV-${String(Number(maxNum)).padStart(5, "0")}`;
       res.json({ invoiceNumber: nextNumber });
     } catch (error) {
       console.error("Error generating invoice number:", error);

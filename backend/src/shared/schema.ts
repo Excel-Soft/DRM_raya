@@ -516,7 +516,7 @@ export const productPostingInvoices = drmSchema.table("product_posting_invoices"
   // across every screen/role — replaces the old per-screen practice of slicing
   // the internal `id` UUID differently in each place (never consistent).
   invoiceNumber: text("invoice_number").notNull().unique()
-    .default(sql`nextval('drm.product_posting_invoice_number_seq')`),
+    .default(sql`'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0')`),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
   salesExecId: uuid("sales_exec_id").notNull().references(() => users.id),
   customerId: uuid("customer_id").references(() => customers.id),
@@ -1347,7 +1347,8 @@ export const bvEntries = drmSchema.table("bv_entries", {
 // Invoices
 export const invoices = drmSchema.table("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  invoiceNumber: text("invoice_number").notNull().unique(),
+  invoiceNumber: text("invoice_number").notNull().unique()
+    .default(sql`'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0')`),
   customerId: varchar("customer_id").references(() => customers.id),
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email"),

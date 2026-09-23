@@ -51,11 +51,20 @@ interface PendingProject {
 // (DESIGN_DEVELOPMENT / "SEO/SMM" with a slash) alongside the newer
 // DEPARTMENT_OPTIONS codes, so both are normalized before matching.
 function departmentLabel(departmentType?: string | null): string {
-    const normalized = (departmentType || "").toUpperCase().replace(/[\s/]+/g, "_");
-    if (normalized === "PRODUCT_POSTING") return "P&P";
-    if (normalized === "DND" || normalized === "DESIGN_DEVELOPMENT") return "D&D";
+    let normalized = (departmentType || "").toUpperCase().replace(/[\s/]+/g, "_");
+    normalized = normalized.replace(/^DEP:/i, '');
+    
+    if (normalized === "PRODUCT_POSTING" || normalized === "9") return "P&P";
+    if (normalized === "DND" || normalized === "DESIGN_DEVELOPMENT" || normalized === "10") return "D&D";
+    if (normalized === "13") return "IT";
+    if (normalized === "8") return "SEO/SMM";
+    if (normalized === "11") return "Software";
+    if (normalized === "12") return "Service";
+    if (normalized === "1") return "Sales";
+    if (normalized === "2") return "Accounts";
+
     const match = DEPARTMENT_OPTIONS.find((opt) => opt.value === normalized);
-    return match?.label || "Manager";
+    return match?.label || normalized || "Manager";
 }
 
 export default function PmsPendingApprovals() {
@@ -115,12 +124,11 @@ export default function PmsPendingApprovals() {
     const handleUploadClick = (projectId: string) => {
         setSelectedProjectId(projectId);
         const project = projects.find(p => p.id === projectId);
-        if (project) {
-            setUploadFormData(prev => ({
-                ...prev,
-                packageName: "", // Reset or fetch from somewhere
-            }));
-        }
+        setUploadFormData(prev => ({
+            ...prev,
+            packageName: project?.serviceType || "",
+        }));
+        setDocumentFile(null);
         setIsUploadOpen(true);
     };
 

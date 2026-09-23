@@ -23,6 +23,18 @@ interface ServiceNode {
 }
 
 function deptLabel(code: string): string {
+    const normalized = code.replace(/^dep:/i, '');
+    const legacyMap: Record<string, string> = {
+        "13": "IT",
+        "10": "D&D",
+        "8": "SEO/SMM",
+        "9": "Product Posting",
+        "11": "Software",
+        "12": "Service",
+        "1": "Sales",
+        "2": "Accounts"
+    };
+    if (legacyMap[normalized]) return legacyMap[normalized];
     return DEPARTMENT_OPTIONS.find((o) => o.value === code)?.label ?? code;
 }
 
@@ -68,6 +80,16 @@ function toPayload(values: ServiceFormValues) {
     };
 }
 
+function getLegacyDeptName(depId: number): string {
+    const map: Record<number, string> = {
+        13: "IT",
+        10: "D&D",
+        8: "SEO/SMM",
+        9: "Product Posting"
+    };
+    return map[depId] || `Dept #${depId}`;
+}
+
 function DaysBadges({ node }: { node: ServiceNode }) {
     return (
         <>
@@ -79,7 +101,7 @@ function DaysBadges({ node }: { node: ServiceNode }) {
             </Badge>
             {node.depId != null && (
                 <Badge variant="outline" className="text-[10px] bg-violet-50 text-violet-700 border-violet-200">
-                    Dept #{node.depId}
+                    {getLegacyDeptName(node.depId)}
                 </Badge>
             )}
             {(node.routeDepartments || []).map((code) => (

@@ -85,12 +85,26 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
         if (!allowedDeps || allowedDeps.length === 0) return false;
         
         return allowedDeps.some(dep => {
-            const d = dep.toLowerCase();
+            let d = dep.toLowerCase();
+            d = d.replace(/^dep:/i, '');
+            // Map legacy IDs to the new string values for checking
+            const legacyMap: Record<string, string> = {
+                "13": "it",
+                "10": "dnd",
+                "8": "seo_smm",
+                "9": "product_posting",
+                "11": "software",
+                "12": "service",
+                "1": "sales",
+                "2": "accounts"
+            };
+            if (legacyMap[d]) d = legacyMap[d];
+
             if (d === 'sales') return normalizedRole.includes('sales');
             if (d === 'accounts') return normalizedRole.includes('account');
             if (d === 'it') return normalizedRole === 'it_manager' || normalizedRole.includes('it');
             if (d === 'software') return normalizedRole.includes('software');
-            if (d === 'dnd') return normalizedRole.includes('dd') || normalizedRole.includes('dnd');
+            if (d === 'dnd' || d === 'd&d') return normalizedRole.includes('dd') || normalizedRole.includes('dnd');
             if (d === 'product_posting') return normalizedRole.includes('product_posting') || normalizedRole.includes('posting');
             if (d === 'seo_smm') return normalizedRole.includes('seo') || normalizedRole.includes('smm');
             if (d === 'service') return normalizedRole.includes('service');
@@ -141,16 +155,23 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
                 return await res2.json();
             }
             const json = await res.json();
-            return json.data || json;
+            return json.items || json.data || json;
         }
     });
 
     const products = useMemo(() => {
         const apiProducts = Array.isArray(productsData) ? productsData : [];
-        // Combine API products with default ones, filter out duplicates by name
         const combined = [...DEFAULT_PRODUCTS];
+        
+        const normalizeName = (name: string) => {
+            if (!name) return "";
+            // Lowercase, trim, and replace multiple or non-breaking spaces with a single space
+            return name.toLowerCase().replace(/\s+/g, ' ').trim();
+        };
+
         apiProducts.forEach(ap => {
-            if (!combined.some(c => c.name.toLowerCase() === ap.name.toLowerCase())) {
+            const normalizedApName = normalizeName(ap.name);
+            if (!combined.some(c => normalizeName(c.name) === normalizedApName)) {
                 combined.push(ap);
             }
         });
@@ -347,7 +368,7 @@ export default function InvoiceCreateForm({ lead, onSave, onClose }: InvoiceCrea
                                                                 key={p.id || p.name}
                                                                 value={p.name}
                                                                 onSelect={(currentValue) => {
-                                                                    const allowedDeps = p.routeDepartments || [];
+                                                                    const allowedDeps = (p as any).routeDepartments || [];
                                                                     const role = currentUser?.roleId || "sales_executive";
                                                                     if (!isDepartmentAllowed(role, allowedDeps)) {
                                                                         Swal.fire({

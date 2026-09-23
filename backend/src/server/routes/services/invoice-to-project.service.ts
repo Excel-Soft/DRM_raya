@@ -13,8 +13,67 @@ function makeStub(label: string): any {
   });
 }
 
-export const createOrLinkProjectForApprovedInvoice = makeStub("createOrLinkProjectForApprovedInvoice");
-export const createOrLinkProjectForGm = makeStub("createOrLinkProjectForGm");
+export const createOrLinkProjectForApprovedInvoice = async ({
+  invoiceId,
+  actorUserId,
+  req,
+}: any) => {
+  try {
+    const invRes = await pool.query(`SELECT * FROM drm.product_posting_invoices WHERE id = $1`, [invoiceId]);
+    const inv = invRes.rows[0];
+    if (!inv) return { ok: false, reason: "Invoice not found" };
+
+    return await createOrLinkProjectForLegacySource({
+      sourceId: invoiceId,
+      customerId: inv.customer_id,
+      ownerUserId: inv.sales_exec_id || actorUserId,
+      name: inv.company_name || 'Project from Invoice',
+      description: `Project created from Invoice ${inv.invoice_number || inv.id}`,
+      actorUserId,
+      req,
+    });
+  } catch (err) {
+    console.error("Failed to create project for invoice:", err);
+    return { ok: false, reason: "Unexpected error" };
+  }
+};
+export const createOrLinkProjectForGm = async ({
+  gmId,
+  customerId,
+  ownerUserId,
+  name,
+  description,
+  actorUserId,
+  req,
+}: any) => {
+  try {
+    const existing = await pool.query(
+      `SELECT id FROM drm.projects WHERE gm_id = $1 AND COALESCE(is_deleted, false) = false LIMIT 1`,
+      [String(gmId)]
+    );
+    if (existing.rows[0]) {
+      return { ok: true, created: false, linked: true, projectId: existing.rows[0].id, reason: "Already exists" };
+    }
+
+    const ins = await pool.query(
+      `INSERT INTO drm.projects (
+          gm_id, name, customer_id, owner_user_id, status, department_type, description, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, 'Active', NULL, $5, now(), now()) RETURNING id`,
+      [String(gmId), name || 'Project from GM', customerId, ownerUserId, description || '']
+    );
+
+    // Update GM entry status
+    await pool.query(
+      `UPDATE drm.gm_entries SET status = 'Approved' WHERE id = $1`,
+      [gmId]
+    );
+
+    return { ok: true, created: true, linked: false, projectId: ins.rows[0].id };
+  } catch (err) {
+    console.error("Failed to create project for GM:", err);
+    return { ok: false, reason: "Unexpected error" };
+  }
+};
 
 export async function createOrLinkProjectForLegacySource({
   sourceId,
@@ -41,14 +100,13 @@ export async function createOrLinkProjectForLegacySource({
     const resolveDepartmentFromItems = async (items: any[]) => {
         if (!items || items.length === 0) return false;
         for (const item of items) {
-            // Match by productId first -- the exact catalog row the sales exec
-            // actually picked. Service/subservice names are not unique (the
-            // catalog has duplicate "SSL Certificate" rows, one fully configured
-            // and one blank), so a name-only lookup with no ORDER BY can silently
-            // resolve to the wrong, unconfigured duplicate. Name match is kept as
-            // a fallback for older items that predate productId being recorded.
             if (item.productId) {
-                const ssById = await pool.query(`SELECT project_department FROM drm.service_subservices WHERE id = $1 LIMIT 1`, [item.productId]);
+                const ssById = await pool.query(`
+                    SELECT COALESCE(ss.project_department, s_parent.project_department) AS project_department
+                    FROM drm.service_subservices ss
+                    LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
+                    WHERE ss.id = $1 LIMIT 1
+                `, [item.productId]);
                 if (ssById.rows[0] && ssById.rows[0].project_department) {
                     deptType = ssById.rows[0].project_department;
                     serviceType = item.name;
@@ -62,7 +120,12 @@ export async function createOrLinkProjectForLegacySource({
                 }
             }
             // First check subservices
-            const ssRes = await pool.query(`SELECT project_department FROM drm.service_subservices WHERE name = $1 LIMIT 1`, [item.name]);
+            const ssRes = await pool.query(`
+                SELECT COALESCE(ss.project_department, s_parent.project_department) AS project_department
+                FROM drm.service_subservices ss
+                LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
+                WHERE ss.name = $1 LIMIT 1
+            `, [item.name]);
             if (ssRes.rows[0] && ssRes.rows[0].project_department) {
                 deptType = ssRes.rows[0].project_department;
                 serviceType = item.name;

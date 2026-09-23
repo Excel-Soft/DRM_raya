@@ -1558,7 +1558,7 @@ export function registerGmPoolRoutes(app: Express) {
       const amApproveParams: any[] = [id, req.user.userId, comment || null, paymentStatus || null, alibabaStatus || null];
       const amApproveScope = await gmApprovalScopeClause(req, amApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, payment_status = COALESCE($4, payment_status), alibaba_status = COALESCE($5, alibaba_status), updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, payment_status = COALESCE($4, payment_status), alibaba_status = COALESCE($5, alibaba_status), updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amApproveScope} RETURNING *`,
         amApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -1664,7 +1664,7 @@ export function registerGmPoolRoutes(app: Express) {
             data: entry,
           });
         }
-        await pool.query(`UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
+        await pool.query(`UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
 
         // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
         // No-op under the default ON_GM_CREATION policy; never throws.

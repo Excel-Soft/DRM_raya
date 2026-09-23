@@ -589,6 +589,48 @@ async function ensureInvoiceStage4Schema(client: {
  * column is additive/idempotent (ADD COLUMN IF NOT EXISTS) like the rest of
  * this file, and pre-existing rows are backfilled once, in creation order.
  */
+async function ensureGlobalInvoiceNumberSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE SEQUENCE IF NOT EXISTS drm.global_invoice_number_seq START 1001`
+  );
+
+  await client.query(
+    `SELECT setval(
+       'drm.global_invoice_number_seq',
+       GREATEST(1001, (
+         SELECT COALESCE(MAX(val), 1000) FROM (
+           SELECT CASE 
+             WHEN invoice_number ~ '^INV-[0-9]+$' THEN substring(invoice_number from '^INV-([0-9]+)')::int
+             WHEN invoice_number ~ '^[0-9]+$' THEN invoice_number::int
+             WHEN invoice_number ~ '^AUTO-[0-9]+$' THEN substring(invoice_number from 'AUTO-([0-9]+)')::int
+             ELSE NULL
+           END as val
+           FROM drm.product_posting_invoices
+           UNION ALL
+           SELECT CASE 
+             WHEN invoice_number ~ '^INV-[0-9]+$' THEN substring(invoice_number from '^INV-([0-9]+)')::int
+             WHEN invoice_number ~ '^[0-9]+$' THEN invoice_number::int
+             ELSE NULL
+           END as val
+           FROM drm.invoices
+         ) combined
+       ))
+     )`
+  );
+
+  await client.query(
+    `ALTER TABLE drm.product_posting_invoices
+       ALTER COLUMN invoice_number SET DEFAULT 'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0')`
+  );
+  
+  await client.query(
+    `ALTER TABLE drm.invoices
+       ALTER COLUMN invoice_number SET DEFAULT 'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0')`
+  );
+}
+
 async function ensureInvoiceNumberSchema(client: {
   query: (sql: string) => Promise<unknown>;
 }): Promise<void> {
@@ -874,6 +916,7 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureGmEntriesPatch5Schema(client);
         await ensureGmStage3Schema(client);
         await ensureInvoiceStage4Schema(client);
+        await ensureGlobalInvoiceNumberSchema(client);
         await ensureInvoiceNumberSchema(client);
         await ensureProjectStage5Schema(client);
         await ensureProjectNumberSchema(client);

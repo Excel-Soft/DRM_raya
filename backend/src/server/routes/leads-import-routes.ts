@@ -555,8 +555,8 @@ export function registerLeadsImportRoutes(app: Express) {
             ${sel("max_price")},
             ${sel("tax")},
             ${sel("stock")},
-            ss.route_departments,
-            ss.project_department
+            coalesce(ss.route_departments, s.route_departments) as route_departments,
+            coalesce(ss.project_department, s.project_department) as project_department
          from drm.service_subservices ss
          join drm.services s on s.id = ss.service_id
          where 1=1 ${where}

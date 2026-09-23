@@ -90,23 +90,51 @@ router.post("/:id/documents", (req, res, next) => {
             ]);
         }
 
-        // --- Check Service Configuration for Routing ---
-        // We get the project's service_type, and then find its project_department in service_subservices
-        // We also check if the project already has a department_type assigned
-        const routingCheck = await pool.query(`
-            SELECT
-                p.department_type,
-                COALESCE(ss.project_department, s.project_department) AS project_department
-            FROM drm.projects p
-            LEFT JOIN drm.service_subservices ss ON p.service_type = ss.name
-            LEFT JOIN drm.services s ON p.service_type = s.name
-            WHERE p.id = $1
-        `, [id]);
+        // --- Resolve Target Department ---
+        // 1. Use the project's already-assigned department_type (set at invoice approval time).
+        // 2. Only if that is null, try to resolve from the project's service_type in the catalog.
+        // 3. Only if that too is null, try to resolve from the packageName submitted in this form.
+        // This avoids breaking document uploads for existing projects where the packageName
+        // in the form (e.g. "Basic Plus") doesn't match any catalog entry.
+        const projectRow = await pool.query(
+            `SELECT department_type, service_type FROM drm.projects WHERE id = $1`,
+            [id]
+        );
 
-        const projDept = routingCheck.rows[0]?.project_department || routingCheck.rows[0]?.department_type;
+        let projDept: string | null = projectRow.rows[0]?.department_type || null;
+
+        if (!projDept) {
+            // Fallback: resolve from service_type stored on the project
+            const serviceType = projectRow.rows[0]?.service_type;
+            if (serviceType) {
+                const svcCheck = await pool.query(`
+                    SELECT COALESCE(ss.project_department, s_parent.project_department, s.project_department) AS project_department
+                    FROM (SELECT $1::text AS s_name) AS input
+                    LEFT JOIN drm.service_subservices ss ON ss.name = input.s_name
+                    LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
+                    LEFT JOIN drm.services s ON s.name = input.s_name
+                    LIMIT 1
+                `, [serviceType]);
+                projDept = svcCheck.rows[0]?.project_department || null;
+            }
+        }
+
+        if (!projDept && packageName) {
+            // Last resort: try to resolve from the packageName submitted in the form
+            const pkgCheck = await pool.query(`
+                SELECT COALESCE(ss.project_department, s_parent.project_department, s.project_department) AS project_department
+                FROM (SELECT $1::text AS s_name) AS input
+                LEFT JOIN drm.service_subservices ss ON ss.name = input.s_name
+                LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
+                LEFT JOIN drm.services s ON s.name = input.s_name
+                LIMIT 1
+            `, [packageName]);
+            projDept = pkgCheck.rows[0]?.project_department || null;
+        }
+
         if (!projDept) {
             return res.status(400).json({
-                error: "Target department not found. Please contact management to add the Target department against this service."
+                error: "Project Target Department is not assigned so first assigned it"
             });
         }
         // ------------------------------------------------

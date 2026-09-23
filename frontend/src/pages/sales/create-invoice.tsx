@@ -176,14 +176,30 @@ export default function CreateInvoice() {
         for (const p of products) {
             if (p.subServices && p.subServices.length > 0) {
                 for (const sub of p.subServices) {
+                    const subRouteDeps = sub.routeDepartments && sub.routeDepartments.length > 0 ? sub.routeDepartments : (p.routeDepartments || []);
+                    const subProjDep = sub.projectDepartment || p.projectDepartment;
+                    
                     list.push({ 
                         ...sub, 
                         parentName: p.name, 
                         price: sub.price ?? p.price, 
                         description: sub.description !== null && sub.description !== undefined ? sub.description : (p.description !== null && p.description !== undefined ? p.description : sub.name),
-                        routeDepartments: sub.routeDepartments && sub.routeDepartments.length > 0 ? sub.routeDepartments : (p.routeDepartments || []),
-                        projectDepartment: sub.projectDepartment || p.projectDepartment
+                        routeDepartments: subRouteDeps,
+                        projectDepartment: subProjDep
                     });
+                    
+                    if (sub.subSubservices && sub.subSubservices.length > 0) {
+                        for (const subSub of sub.subSubservices) {
+                            list.push({
+                                ...subSub,
+                                parentName: `${p.name} > ${sub.name}`,
+                                price: subSub.price ?? sub.price ?? p.price,
+                                description: subSub.description !== null && subSub.description !== undefined ? subSub.description : (sub.description !== null && sub.description !== undefined ? sub.description : subSub.name),
+                                routeDepartments: subSub.routeDepartments && subSub.routeDepartments.length > 0 ? subSub.routeDepartments : subRouteDeps,
+                                projectDepartment: subSub.projectDepartment || subProjDep
+                            });
+                        }
+                    }
                 }
             } else {
                 list.push({
