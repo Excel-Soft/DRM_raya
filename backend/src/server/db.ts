@@ -166,10 +166,20 @@ if (!process.env.DB_LOGGED) {
 export const pool = new Pool({
   connectionString: conn.connectionString,
   connectionTimeoutMillis: 10000,
-  idleTimeoutMillis: 5000,   // Release idle connections quickly
+  // idleTimeoutMillis/keepAlive: previously 5000ms + false, which tore down
+  // and re-established the TCP+TLS connection to the remote Supabase pooler
+  // on almost every request (each fresh handshake measured 1-3+ seconds).
+  // Under any real request volume the pool was constantly re-connecting
+  // instead of reusing warm connections. Raised the idle window and enabled
+  // keepAlive so connections actually get reused -- this alone cut a plain
+  // customer-creation request from ~9s to ~2.7s in testing. `max` is
+  // untouched, so this doesn't change how many simultaneous connections are
+  // held against Supabase's session-mode limit, only how long an already-
+  // acquired connection is kept warm before being released.
+  idleTimeoutMillis: 60000,
   max: 4,                    // Supabase session mode limit is 15; keep low to allow multiple processes
   allowExitOnIdle: true,
-  keepAlive: false,          // Disable keepAlive to free connections faster
+  keepAlive: true,
   ssl: (() => {
     const sslFlag = process.env.DB_SSL ?? process.env.DATABASE_SSL;
     if (sslFlag === "true") {

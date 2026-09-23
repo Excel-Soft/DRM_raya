@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
@@ -75,7 +75,32 @@ type Project = {
     };
 };
 
-type TabType = "waiting" | "delay" | "approved";
+type TabType = "waiting" | "delay" | "approved" | "inProgress";
+
+// Live countdown against a task's due date, ticking every second. Shows
+// elapsed time instead (in red) once the deadline has passed.
+function TaskCountdown({ dueDate }: { dueDate?: string | null }) {
+    const [, forceTick] = useState(0);
+    useEffect(() => {
+        if (!dueDate) return;
+        const id = setInterval(() => forceTick((n) => n + 1), 1000);
+        return () => clearInterval(id);
+    }, [dueDate]);
+
+    if (!dueDate) return <span className="text-[11px] text-slate-400">No time set</span>;
+    const diffMs = new Date(dueDate).getTime() - Date.now();
+    const overdue = diffMs < 0;
+    const abs = Math.abs(diffMs);
+    const h = Math.floor(abs / 3_600_000);
+    const m = Math.floor((abs % 3_600_000) / 60_000);
+    const s = Math.floor((abs % 60_000) / 1000);
+    const label = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    return (
+        <span className={cn("text-[11px] font-bold tabular-nums", overdue ? "text-rose-600" : "text-emerald-600")}>
+            {overdue ? `Overdue by ${label}` : `${label} left`}
+        </span>
+    );
+}
 
 // ── Shared Constants ────────────────────────────────────────────────────────
 const QUICK_SHORTS = [
@@ -147,6 +172,13 @@ export default function SeoSmmManagerDashboard() {
     const { data: approvedSeoSmmProjects = [] } = useQuery<any[]>({
         queryKey: ["/api/seo-smm/projects?status=approved"],
     });
+    // "In Progress" — approved documents whose assigned task has actually
+    // been started (or finished) by the executive; a project moves here from
+    // "Approved" the moment they click "Start Working".
+    const { data: inProgressSeoSmmProjects = [] } = useQuery<any[]>({
+        queryKey: ["/api/seo-smm/projects?status=in-progress"],
+        refetchInterval: 30_000,
+    });
     const verifySeoSmmDocumentMutation = useMutation({
         mutationFn: async ({ documentId, status, reason }: { documentId: string; status: "APPROVED" | "REJECTED"; reason?: string }) => {
             return apiRequestJson("PATCH", `/api/seo-smm/documents/${documentId}/verify`, { status, reason });
@@ -162,6 +194,38 @@ export default function SeoSmmManagerDashboard() {
         },
         onError: (err: any) => {
             toast({ title: err?.message || "Failed to update document", variant: "destructive" });
+        },
+    });
+
+    // Assign Task section shown in the same modal once a document is already
+    // Approved — reuses the real /api/pms/tasks endpoint, mirroring the IT
+    // Manager dashboard's identical flow.
+    const { data: seoSmmExecutives = [] } = useQuery<any[]>({
+        queryKey: ["/api/seo-smm/executives"],
+    });
+    const [assignTaskForm, setAssignTaskForm] = useState({ assigneeId: "", title: "", hours: "" });
+    const assignTaskMutation = useMutation({
+        mutationFn: async ({ projectId, assigneeId, title, hours }: { projectId: string; assigneeId: string; title: string; hours: string }) => {
+            const hoursNum = parseFloat(hours);
+            const dueDate = hoursNum > 0 ? new Date(Date.now() + hoursNum * 3600_000).toISOString() : undefined;
+            return apiRequestJson("POST", "/api/pms/tasks", {
+                projectId,
+                assignedToUserId: assigneeId,
+                title,
+                description: `SEO/SMM task for ${selectedVerificationProject?.project ?? "project"}`,
+                dueDate,
+            });
+        },
+        onSuccess: () => {
+            toast({ title: "Task assigned to executive" });
+            setAssignTaskForm({ assigneeId: "", title: "", hours: "" });
+            queryClient.invalidateQueries({ queryKey: ["/api/seo-smm/projects?status=approved"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/seo-smm/projects?status=in-progress"] });
+            setVerificationModalOpen(false);
+            setSelectedVerificationProject(null);
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to assign task", variant: "destructive" });
         },
     });
 
@@ -324,7 +388,8 @@ export default function SeoSmmManagerDashboard() {
             deadlines: p.endDate ? new Date(p.endDate).toLocaleDateString() : "Expired",
         }));
 
-        // "Approved" — SEO/SMM-reviewed documents.
+        // "Approved" — SEO/SMM-reviewed documents whose task (if any) hasn't
+        // been started yet.
         const approved = approvedSeoSmmProjects.map((p: any, i: number) => ({
             no: `${i + 1}`,
             company: p.company,
@@ -334,8 +399,20 @@ export default function SeoSmmManagerDashboard() {
             raw: p,
         }));
 
-        return { waiting, delay, approved };
-    }, [projects, pendingSeoSmmProjects, approvedSeoSmmProjects]);
+        // "In Progress" — the executive has clicked "Start Working" (or
+        // finished); shows the live countdown against the time allotted.
+        const inProgress = inProgressSeoSmmProjects.map((p: any, i: number) => ({
+            no: `${i + 1}`,
+            company: p.company,
+            project: p.project,
+            status: p.taskStatus || "InProgress",
+            time: p.uploadedAt ? new Date(p.uploadedAt).toLocaleDateString() : "N/A",
+            dueDate: p.taskDueDate,
+            raw: p,
+        }));
+
+        return { waiting, delay, approved, inProgress };
+    }, [projects, pendingSeoSmmProjects, approvedSeoSmmProjects, inProgressSeoSmmProjects]);
 
     const currentTableRows = dynamicTableData[activeTab];
     const statusTrackerTotalPages = Math.max(1, Math.ceil(currentTableRows.length / STATUS_TRACKER_PAGE_SIZE));
@@ -412,20 +489,20 @@ export default function SeoSmmManagerDashboard() {
                                     <CardTitle className="text-lg font-bold text-slate-800 dark:text-zinc-100">Department Status Tracker</CardTitle>
                                 </div>
                                 <div className="flex items-center gap-1 p-1 bg-white border rounded-xl shadow-sm dark:bg-zinc-900">
-                                    {(["waiting", "delay", "approved"] as TabType[]).map((tab) => (
+                                    {(["waiting", "delay", "approved", "inProgress"] as TabType[]).map((tab) => (
                                         <Button
                                             key={tab}
                                             variant="ghost"
                                             size="sm"
                                             className={cn(
                                                 "capitalize h-8 px-4 font-bold text-[11px] tracking-wide rounded-lg transition-all",
-                                                activeTab === tab 
+                                                activeTab === tab
                                                     ? "bg-emerald-600 text-white hover:bg-emerald-700 shadow-md"
                                                     : "text-slate-500 dark:text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
                                             )}
                                             onClick={() => handleTabChange(tab)}
                                         >
-                                            {tab === 'waiting' ? 'Pending' : tab === 'delay' ? 'Delayed' : 'Approved'}
+                                            {tab === 'waiting' ? 'Pending' : tab === 'delay' ? 'Delayed' : tab === 'approved' ? 'Approved' : 'In Progress'}
                                         </Button>
                                     ))}
                                 </div>
@@ -481,6 +558,9 @@ export default function SeoSmmManagerDashboard() {
                                                             )}>
                                                                 {row.status}
                                                             </Badge>
+                                                            {activeTab === "inProgress" && row.status !== "Completed" && (
+                                                                <div className="mt-1.5"><TaskCountdown dueDate={row.dueDate} /></div>
+                                                            )}
                                                         </td>
                                                         <td className="px-6 py-5 text-right">
                                                             <Button
@@ -899,6 +979,61 @@ export default function SeoSmmManagerDashboard() {
                                         <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => { setVerificationModalOpen(false); setSelectedVerificationProject(null); }}>
                                             Cancel
                                         </Button>
+                                    </div>
+                                )}
+
+                                {activeTab === "approved" && (
+                                    <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
+                                        <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Assign Task to Executive</h4>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            <Select
+                                                value={assignTaskForm.assigneeId}
+                                                onValueChange={(v) => setAssignTaskForm((f) => ({ ...f, assigneeId: v }))}
+                                            >
+                                                <SelectTrigger className="h-10 text-[13px]">
+                                                    <SelectValue placeholder="Choose an SEO/SMM executive..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {seoSmmExecutives.length === 0 ? (
+                                                        <div className="px-3 py-2 text-[12px] text-slate-400">No SEO/SMM executives found.</div>
+                                                    ) : seoSmmExecutives.map((ex: any) => (
+                                                        <SelectItem key={ex.id} value={ex.id}>{ex.name} ({ex.email})</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <Input
+                                                placeholder="Task title..."
+                                                value={assignTaskForm.title}
+                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, title: e.target.value }))}
+                                                className="h-10 text-[13px]"
+                                            />
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.5"
+                                                placeholder="Time allotted (hours)..."
+                                                value={assignTaskForm.hours}
+                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, hours: e.target.value }))}
+                                                className="h-10 text-[13px]"
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <Button
+                                                className="bg-[#059669] hover:bg-[#047857] text-white font-bold h-11 px-10 rounded shadow-md transition-all active:scale-95 text-[14px]"
+                                                disabled={assignTaskMutation.isPending || !assignTaskForm.assigneeId || !assignTaskForm.title.trim()}
+                                                onClick={() => assignTaskMutation.mutate({
+                                                    projectId: selectedVerificationProject.projectId,
+                                                    assigneeId: assignTaskForm.assigneeId,
+                                                    title: assignTaskForm.title.trim(),
+                                                    hours: assignTaskForm.hours,
+                                                })}
+                                            >
+                                                {assignTaskMutation.isPending ? "Assigning..." : "Assign"}
+                                            </Button>
+                                            <Button variant="outline" className="h-11 px-10 rounded text-[14px]" onClick={() => { setVerificationModalOpen(false); setSelectedVerificationProject(null); }}>
+                                                Cancel
+                                            </Button>
+                                        </div>
                                     </div>
                                 )}
                             </div>

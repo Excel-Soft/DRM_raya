@@ -107,6 +107,7 @@ export function TopBar({
           sales_executive: "/dashboard/sales-executive",
           account_manager: "/dashboard/account-manager",
           service_manager: "/dashboard/service-manager",
+          service_assistant_manager: "/dashboard/service-assistant-manager",
           service_executive: "/dashboard/service-executive",
           super_hod: "/dashboard/super-hod",
           hod: "/dashboard/hod",
@@ -118,10 +119,15 @@ export function TopBar({
           product_posting_executive: "/product-posting/executive",
           posting_executive: "/product-posting/executive",
           developer: "/dashboard/developer",
+          it_manager: "/dashboard/it-manager",
+          it_executive: "/dashboard/it-executive",
+          reception_manager: "/dashboard/reception",
           software_manager: "/dashboard/software-manager",
           software_executive: "/dashboard/software-executive",
           lead_manager: "/dashboard/lead-manager",
+          lead_executive: "/dashboard/lead-executive",
           seo_smm_manager: "/dashboard/seo-smm",
+          seo_smm_executive: "/dashboard/seo-smm-executive",
           marketing_manager: "/dashboard/marketing-manager",
         };
 

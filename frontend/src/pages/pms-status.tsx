@@ -1,14 +1,36 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarIcon, Play, ArrowUpCircle, Clock, ExternalLink, PlayCircle, Eye, Plus, CheckCircle2, Briefcase, Download, FileText, TimerReset } from "lucide-react";
+import { CalendarIcon, Play, ArrowUpCircle, Clock, ExternalLink, PlayCircle, Eye, Plus, CheckCircle2, Briefcase, Download, FileText, TimerReset, Upload, Paperclip } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson } from "@/lib/queryClient";
+
+// Same "links inside task.notes" parsing already used inline in the Working
+// Links table column — pulled out here so the Files modal's "Provided
+// Files" panel can show the same data without duplicating the parse logic
+// at both call sites from scratch.
+function extractProvidedLinks(task: any): string[] {
+    try {
+        if (task?.notes) {
+            const parsed = JSON.parse(task.notes);
+            if (parsed.links) {
+                let candidates: string[] = [];
+                if (Array.isArray(parsed.links)) {
+                    candidates = parsed.links.map((l: string) => String(l).trim()).filter(Boolean);
+                } else if (typeof parsed.links === "string" && parsed.links.trim()) {
+                    candidates = parsed.links.split(",").map((l: string) => l.trim()).filter(Boolean);
+                }
+                return candidates.filter((l: string) => isNaN(Number(l)) && (l.includes(".") || l.includes("http")));
+            }
+        }
+    } catch (e) { }
+    return [];
+}
 
 interface ProjectStatus {
     id: string;
@@ -26,7 +48,7 @@ interface ProjectStatus {
 export default function PmsStatus() {
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
-    const [isProjectOverviewOpen, setIsProjectOverviewOpen] = useState(false);
+    const [filesModalTask, setFilesModalTask] = useState<any>(null);
     const [isEndTaskModalOpen, setIsEndTaskModalOpen] = useState(false);
     const [finishingTaskId, setFinishingTaskId] = useState<string | null>(null);
     const [endTaskForm, setEndTaskForm] = useState({
@@ -271,7 +293,10 @@ export default function PmsStatus() {
 
     const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
     const role = ((userData as any)?.role || userRoleName).toLowerCase();
-    
+    // "Add Task" is a manager/assigner action — an executive only works the
+    // tasks already assigned to them, they don't create new ones.
+    const isExecutive = role.includes("executive");
+
     let departmentTitle = "RUNNING PROJECT";
     if (role.includes("software_executive")) {
         departmentTitle = "RUNNING PROJECT";
@@ -481,17 +506,19 @@ export default function PmsStatus() {
                     <div className="p-8">
                         <div className="mb-6 flex items-center justify-between">
                             <h3 className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Assign Projects</h3>
-                            <button
-                                onClick={() => setIsAddTaskFormOpen((v) => !v)}
-                                className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
-                                data-testid="button-toggle-add-task"
-                            >
-                                <Plus className="h-4 w-4" />
-                                Add Task
-                            </button>
+                            {!isExecutive && (
+                                <button
+                                    onClick={() => setIsAddTaskFormOpen((v) => !v)}
+                                    className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
+                                    data-testid="button-toggle-add-task"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                    Add Task
+                                </button>
+                            )}
                         </div>
 
-                        {isAddTaskFormOpen && (
+                        {!isExecutive && isAddTaskFormOpen && (
                             <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
@@ -721,8 +748,8 @@ export default function PmsStatus() {
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        <button 
-                                                            onClick={() => setIsProjectOverviewOpen(true)}
+                                                        <button
+                                                            onClick={() => setFilesModalTask(task)}
                                                             className="w-9 h-9 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100 mx-auto"
                                                         >
                                                             <ArrowUpCircle className="h-5 w-5 text-white" />
@@ -1000,140 +1027,222 @@ export default function PmsStatus() {
                 </DialogContent>
             </Dialog>
 
-            {/* Project Overview Modal */}
-            <Dialog open={isProjectOverviewOpen} onOpenChange={setIsProjectOverviewOpen}>
-                <DialogContent className="max-w-[95vw] w-[950px] max-h-[85vh] bg-white p-0 flex flex-col border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
-                    <div className="p-6 border-b border-gray-100 flex items-center justify-between dark:border-zinc-800 flex-shrink-0">
-                        <h2 className="text-[14px] font-bold text-gray-500 uppercase tracking-wider dark:text-zinc-400">
-                            PROJECTS OVERVIEW
-                        </h2>
-                    </div>
-
-                    <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-10 bg-white overflow-y-auto dark:bg-zinc-900">
-                        <div className="lg:col-span-2 space-y-8">
-                            <div className="flex justify-between items-start">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-[60px] h-[60px] bg-[#4285F4] rounded-xl flex items-center justify-center shadow-lg shadow-blue-100">
-                                        <Briefcase className="w-8 h-8 text-white" />
-                                    </div>
-                                    <div>
-                                        <h3 className="text-[20px] font-bold text-gray-900 dark:text-zinc-100">
-                                            {selectedProjectInfo?.company} {selectedProjectInfo?.assign ? `Ã¢â‚¬Â¢ ${selectedProjectInfo.assign}` : ''}
-                                        </h3>
-                                        <p className="text-[13px] font-medium text-gray-400 mt-1">N/A</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center">
-                                        <CalendarIcon className="w-5 h-5 text-emerald-500" />
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Upload Date</p>
-                                        <p className="text-[13px] font-medium text-gray-600 mt-0.5 dark:text-zinc-300">{selectedProjectInfo?.date || 'N/A'}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <div className="flex items-center gap-3 mb-6">
-                                    <div className="w-1.5 h-6 bg-emerald-500 rounded-full"></div>
-                                    <h4 className="text-[18px] font-bold text-gray-800 dark:text-zinc-100">Project Details :</h4>
-                                </div>
-                                <div className="space-y-4">
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Product_detail_add</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {selectedProjectInfo?.id ? selectedProjectInfo.id.slice(0, 5) : 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Company</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {selectedProjectInfo?.company || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Package</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {selectedProjectInfo?.project || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Web_url</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {(selectedProjectInfo as any)?.webUrl || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Phone</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {(selectedProjectInfo as any)?.phone || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Mobile</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {(selectedProjectInfo as any)?.mobile || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Address</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {(selectedProjectInfo as any)?.address || 'N/A'}
-                                        </div>
-                                    </div>
-                                    <div className="grid grid-cols-[180px_auto] text-[14px]">
-                                        <div className="text-gray-500 font-medium dark:text-zinc-400">Categories</div>
-                                        <div className="text-gray-900 font-bold flex items-center gap-4 dark:text-zinc-100">
-                                            <span className="text-gray-300 mx-2">&gt;</span>
-                                            {(selectedProjectInfo as any)?.category || 'N/A'}
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div className="pt-2">
-                                <label className="block text-[14px] font-bold text-gray-700 mb-2 dark:text-zinc-400">Rejection Reason (if rejecting)</label>
-                                <textarea 
-                                    className="w-full border-2 border-slate-700 rounded-lg min-h-[100px] p-4 text-[13px] text-gray-600 outline-none resize-none shadow-sm dark:text-zinc-300 dark:border-zinc-800"
-                                    placeholder="Enter reason for rejection..."
-                                />
-                            </div>
-                        </div>
-
-                        <div className="bg-[#f8f9fc] rounded-2xl p-6 border border-gray-100 flex flex-col h-max dark:border-zinc-800 dark:bg-zinc-900">
-                            <h4 className="text-[14px] font-extrabold text-gray-800 mb-6 tracking-wide dark:text-zinc-100">ATTACHED FILES</h4>
-                            
-                            <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex items-center justify-between mb-6 hover:border-emerald-200 hover:shadow-md transition-all cursor-pointer group dark:bg-zinc-900 dark:border-zinc-800">
-                                <div className="flex items-center gap-4">
-                                    <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center group-hover:bg-emerald-50 transition-colors dark:bg-zinc-900">
-                                        <FileText className="w-6 h-6 text-gray-500 group-hover:text-emerald-500 dark:text-zinc-400" />
-                                    </div>
-                                    <div>
-                                        <h5 className="text-[14px] font-bold text-gray-900 mb-0.5 dark:text-zinc-100">Requirements.docx</h5>
-                                        <p className="text-[12px] font-medium text-slate-400">Project Documentation</p>
-                                    </div>
-                                </div>
-                                <button className="w-8 h-8 rounded-full hover:bg-slate-50 flex items-center justify-center text-slate-400 hover:text-emerald-500 transition-colors dark:hover:bg-zinc-800">
-                                    <Download className="w-4 h-4" />
-                                </button>
-                            </div>
-
-                            <button className="w-full py-4 rounded-xl border-2 border-dashed border-gray-200 text-[13px] font-medium text-gray-400 hover:border-emerald-300 hover:text-emerald-500 hover:bg-emerald-50/30 transition-all dark:border-zinc-800">
-                                Click to view all attachments
-                            </button>
-                        </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
+            {/* Files modal — the "Details" action button opens this instead of
+                the old Projects Overview panel: the executive attaches
+                evidence files + a note against the task, and can see what
+                the manager originally provided (description / working
+                links) alongside what's already been submitted. */}
+            <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
         </div>
+    );
+}
+
+interface TaskFileEntry {
+    id: string;
+    fileUrl: string | null;
+    fileName: string | null;
+    description: string | null;
+    createdAt: string;
+    uploadedByName: string | null;
+}
+
+function RichTextEditor({ onChange }: { onChange: (html: string) => void }) {
+    const editorRef = useRef<HTMLDivElement>(null);
+
+    const handleCommand = (command: string, value: string = "") => {
+        editorRef.current?.focus();
+        document.execCommand(command, false, value || undefined);
+        onChange(editorRef.current?.innerHTML || "");
+    };
+
+    return (
+        <div className="rounded-[4px] border border-[#cfd7e3] dark:border-zinc-700">
+            <div className="flex flex-wrap items-center gap-3 border-b border-[#cfd7e3] dark:border-zinc-700 bg-[#f8f9fa] dark:bg-zinc-800 px-3 py-2 text-[13px] text-[#44556d] dark:text-zinc-300">
+                <select onMouseDown={(e) => e.preventDefault()} onChange={(e) => handleCommand('fontName', e.target.value)} className="bg-transparent outline-none cursor-pointer text-[#44556d] dark:text-zinc-300">
+                    <option value="Arial">Sans Serif</option>
+                    <option value="Times New Roman">Serif</option>
+                    <option value="Courier New">Monospace</option>
+                </select>
+                <select onMouseDown={(e) => e.preventDefault()} onChange={(e) => handleCommand('fontSize', e.target.value)} className="bg-transparent outline-none cursor-pointer text-[#44556d] dark:text-zinc-300">
+                    <option value="3">Normal</option>
+                    <option value="1">Small</option>
+                    <option value="5">Large</option>
+                    <option value="7">Huge</option>
+                </select>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('bold'); }} className="font-bold hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Bold">B</button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('italic'); }} className="italic hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Italic">I</button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('underline'); }} className="underline hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Underline">U</button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('strikeThrough'); }} className="line-through hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Strikethrough">S</button>
+                <div className="h-4 w-[1px] bg-gray-300 dark:bg-zinc-700"></div>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('superscript'); }} className="hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Superscript">X²</button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('subscript'); }} className="hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Subscript">X₂</button>
+                <div className="h-4 w-[1px] bg-gray-300 dark:bg-zinc-700"></div>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('insertUnorderedList'); }} className="hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Bullet List">• List</button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('insertOrderedList'); }} className="hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Numbered List">1. List</button>
+            </div>
+            <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                className="min-h-[140px] w-full resize-y p-4 text-[14px] outline-none focus:ring-0 overflow-auto bg-white dark:bg-zinc-900"
+                style={{ cursor: "text" }}
+                data-placeholder="Type description here..."
+                onInput={(e) => onChange(e.currentTarget.innerHTML)}
+            ></div>
+        </div>
+    );
+}
+
+function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+    const [description, setDescription] = useState("");
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const taskId = task?.id;
+
+    const { data: uploadedRes } = useQuery<{ success: boolean; data: TaskFileEntry[] }>({
+        queryKey: [`/api/tasks/${taskId}/files`],
+        enabled: !!taskId,
+        queryFn: () => apiRequestJson("GET", `/api/tasks/${taskId}/files`),
+    });
+    const uploadedFiles = uploadedRes?.data || [];
+
+    const submitMutation = useMutation({
+        mutationFn: async () => {
+            const form = new FormData();
+            pendingFiles.forEach((f) => form.append("files", f));
+            const plainText = description.replace(/<[^>]*>/g, "").trim();
+            if (plainText) form.append("description", plainText);
+            return apiRequestJson("POST", `/api/tasks/${taskId}/files`, form);
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            setPendingFiles([]);
+            setDescription("");
+            toast({ title: "Sent", description: "Your files/detail were submitted." });
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to send files", variant: "destructive" });
+        },
+    });
+
+    if (!task) return null;
+    const providedLinks = extractProvidedLinks(task);
+
+    return (
+        <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
+            <DialogContent className="max-w-[95vw] w-[1100px] max-h-[90vh] bg-white p-0 flex flex-col border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
+                <div className="p-6 border-b border-gray-100 dark:border-zinc-800 flex-shrink-0">
+                    <h2 className="text-[20px] font-bold text-gray-700 dark:text-zinc-300">Files</h2>
+                </div>
+
+                <div className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-10 bg-white overflow-y-auto dark:bg-zinc-900">
+                    {/* Left: upload */}
+                    <div className="space-y-4">
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => fileInputRef.current?.click()}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                                e.preventDefault();
+                                const files = Array.from(e.dataTransfer.files || []);
+                                if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+                            }}
+                            className="border border-gray-300 dark:border-zinc-700 rounded-md h-[220px] flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-emerald-400 transition-colors"
+                        >
+                            <Upload className="w-8 h-8 text-slate-400" />
+                            <p className="text-[14px] font-semibold text-gray-600 dark:text-zinc-300">
+                                {pendingFiles.length > 0 ? `${pendingFiles.length} file(s) selected` : "Drop files here or click to upload."}
+                            </p>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(e) => setPendingFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
+                            />
+                        </div>
+                        <Button
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
+                            disabled={submitMutation.isPending}
+                            onClick={() => submitMutation.mutate()}
+                        >
+                            Send Files
+                        </Button>
+
+                        <label className="block text-[14px] font-bold text-gray-700 dark:text-zinc-300 pt-2">Detail</label>
+                        <RichTextEditor onChange={setDescription} />
+                        <Button
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
+                            disabled={submitMutation.isPending}
+                            onClick={() => submitMutation.mutate()}
+                        >
+                            {submitMutation.isPending ? "Sending..." : "Send Files"}
+                        </Button>
+                    </div>
+
+                    {/* Right: what's already there */}
+                    <div className="space-y-6">
+                        <div>
+                            <h4 className="text-[14px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Uploaded Files</h4>
+                            <div className="border-t border-gray-100 dark:border-zinc-800 pt-2 space-y-2">
+                                {uploadedFiles.filter((f) => f.fileUrl).length === 0 ? (
+                                    <p className="text-[13px] text-gray-400">No files uploaded yet.</p>
+                                ) : uploadedFiles.filter((f) => f.fileUrl).map((f) => (
+                                    <a key={f.id} href={f.fileUrl!} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[13px] text-emerald-600 hover:underline">
+                                        <Paperclip className="w-3.5 h-3.5" /> {f.fileName || "File"}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="text-[14px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Uploaded Discription</h4>
+                            <div className="border-t border-gray-100 dark:border-zinc-800 pt-2 space-y-2">
+                                {uploadedFiles.filter((f) => f.description).length === 0 ? (
+                                    <p className="text-[13px] text-gray-400">No description submitted yet.</p>
+                                ) : uploadedFiles.filter((f) => f.description).map((f) => (
+                                    <p key={f.id} className="text-[13px] text-gray-600 dark:text-zinc-400">{f.description}</p>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="text-[14px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Provided Files</h4>
+                            <div className="border-t border-gray-100 dark:border-zinc-800 pt-2 space-y-2">
+                                {providedLinks.length === 0 ? (
+                                    <p className="text-[13px] text-gray-400">No files provided by the manager.</p>
+                                ) : providedLinks.map((link, i) => (
+                                    <a key={i} href={link.startsWith("http") ? link : `https://${link}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-[13px] text-indigo-500 hover:underline truncate">
+                                        <Paperclip className="w-3.5 h-3.5 shrink-0" /> {link}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 className="text-[14px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Provided Discription</h4>
+                            <p className="text-[13px] text-gray-600 dark:text-zinc-400 border-t border-gray-100 dark:border-zinc-800 pt-2">
+                                {task.description || "No description provided."}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-4 border-t bg-slate-50 dark:bg-zinc-900 flex items-center justify-end gap-3 flex-shrink-0">
+                    <Button variant="outline" className="h-10 px-6" onClick={onClose}>Close</Button>
+                    <Button
+                        className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                        disabled={submitMutation.isPending}
+                        onClick={() => submitMutation.mutate()}
+                    >
+                        {submitMutation.isPending ? "Saving..." : "Save"}
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }
 

@@ -379,6 +379,31 @@ function getPeriodRange(periodRaw: string) {
       const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
       const userDept = userRes.rows[0]?.department || '';
 
+      // department_type is stored under several inconsistent spellings across
+      // the app (e.g. 'SEO_SMM' vs 'SEO/SMM', 'DND' vs 'DESIGN_DEVELOPMENT'),
+      // and users.department is frequently left unset entirely for real
+      // accounts. Rather than trust a single exact-match string, derive the
+      // full set of acceptable department_type spellings from BOTH the
+      // user's own department column (if set) and their role prefix (e.g.
+      // "seo_smm_executive" -> SEO/SMM), matching the same known-variant
+      // aliasing already used in seo-smm-projects-routes.ts.
+      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
+          seo_smm: ["SEO_SMM", "SEO/SMM"],
+          it: ["IT"],
+          dd: ["DND", "DESIGN_DEVELOPMENT"],
+          product_posting: ["PRODUCT_POSTING"],
+          software: ["SOFTWARE"],
+          service: ["SERVICE"],
+      };
+      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+      const deptCandidates = Array.from(new Set([
+          ...(userDept ? [userDept] : []),
+          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+      ]));
+      const deptInClause = deptCandidates.length > 0
+          ? `(${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
+          : `('')`; // no candidates -> matches nothing, same as the old empty-string behavior
+
       let roleFilter = "";
       if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
@@ -387,10 +412,10 @@ function getPeriodRange(periodRaw: string) {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole.includes("executive")) {
           // Dynamic check for executive assigned tasks
-          roleFilter = `AND p.department_type = '${userDept}' AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
+          roleFilter = `AND p.department_type IN ${deptInClause} AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
       } else if (userRole.includes("manager")) {
           // Dynamic check for managers
-          roleFilter = `AND p.department_type = '${userDept}'`;
+          roleFilter = `AND p.department_type IN ${deptInClause}`;
       }
 
       // Optional query filters wired from the client (Department / City / Status / Date range).

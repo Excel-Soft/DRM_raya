@@ -2651,6 +2651,21 @@ export const taskResults = drmSchema.table("task_results", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Generic per-task file + note submissions (the Task System "Files" modal —
+// an executive attaches evidence files/a description against any task,
+// regardless of department). Deliberately not productPostingEvidenceLinks,
+// which requires a product_posting_workflows row and so can't back
+// IT/SEO-SMM/D&D tasks that never get one.
+export const taskFiles = drmSchema.table("task_files", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  uploadedByUserId: uuid("uploaded_by_user_id").notNull().references(() => users.id),
+  fileUrl: text("file_url"),
+  fileName: text("file_name"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const productPostingPhaseDefinitions = drmSchema.table("product_posting_phase_definitions", {
   phaseKey: varchar("phase_key", { length: 64 }).primaryKey(),
   label: text("label").notNull(),
@@ -3246,6 +3261,9 @@ export const insertProductPostingInvoiceSchema = createInsertSchema(productPosti
 export const insertProjectDocumentSchema = createInsertSchema(projectDocuments);
 export const insertTaskTimeExtensionSchema = createInsertSchema(taskTimeExtensions);
 export const insertTaskResultSchema = createInsertSchema(taskResults);
+export const insertTaskFileSchema = createInsertSchema(taskFiles);
+export type TaskFile = typeof taskFiles.$inferSelect;
+export type InsertTaskFile = z.infer<typeof insertTaskFileSchema>;
 export const insertProductPostingPhaseDefinitionSchema = createInsertSchema(productPostingPhaseDefinitions);
 export const insertProductPostingWorkflowSchema = createInsertSchema(productPostingWorkflows);
 export const insertProductPostingEvidenceLinkSchema = createInsertSchema(productPostingEvidenceLinks);

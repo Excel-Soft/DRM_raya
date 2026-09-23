@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -11,7 +13,7 @@ import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-    ChevronRight, ClipboardList, Clock, Activity, CheckCircle2, ExternalLink,
+    ChevronRight, ClipboardList, Clock, Activity, CheckCircle2,
     Play, CheckSquare, Timer, Calendar, UserCheck, ListTodo, FileText, SendHorizonal,
 } from "lucide-react";
 
@@ -37,9 +39,35 @@ interface Promotion {
     title?: string | null;
 }
 
+// Live countdown against a task's due date, ticking every second. Shows
+// elapsed time instead (in red) once the deadline has passed.
+function TaskCountdown({ dueDate }: { dueDate?: string | null }) {
+    const [, forceTick] = useState(0);
+    useEffect(() => {
+        if (!dueDate) return;
+        const id = setInterval(() => forceTick((n) => n + 1), 1000);
+        return () => clearInterval(id);
+    }, [dueDate]);
+
+    if (!dueDate) return null;
+    const diffMs = new Date(dueDate).getTime() - Date.now();
+    const overdue = diffMs < 0;
+    const abs = Math.abs(diffMs);
+    const h = Math.floor(abs / 3_600_000);
+    const m = Math.floor((abs % 3_600_000) / 60_000);
+    const s = Math.floor((abs % 60_000) / 1000);
+    const label = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    return (
+        <span className={cn("text-[11px] font-bold tabular-nums", overdue ? "text-rose-600" : "text-emerald-600")}>
+            {overdue ? `Overdue by ${label}` : `${label} left`}
+        </span>
+    );
+}
+
 export default function SeoSmmExecutiveDashboard() {
     const [, setLocation] = useLocation();
-    const [activeTab, setActiveTab] = useState("today");
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
     const [topSellingFilter, setTopSellingFilter] = useState("LD");
     const [activitiesFilter, setActivitiesFilter] = useState("TD");
     const [dailyReportFilter, setDailyReportFilter] = useState("daily");
@@ -56,8 +84,34 @@ export default function SeoSmmExecutiveDashboard() {
     });
     const myActivityRow = (activityPlanData as any)?.data?.rows?.[0] ?? null;
 
-    const { data: dbTaskListData } = useQuery({ queryKey: [`/api/dd-executive/tasks/${activeTab}`] });
-    const taskListData = Array.isArray(dbTaskListData) ? dbTaskListData : [];
+    // Tasks the SEO/SMM Manager assigns from the Approved tab's "Assign Task"
+    // form (POST /api/pms/tasks) land here. GET /api/pms/tasks auto-scopes to
+    // "owned by or assigned to me" for a non-managerial role like
+    // seo_smm_executive, so no extra assignedToUserId filter is needed — just
+    // the status per tab.
+    const [projectTab, setProjectTab] = useState<"assign" | "working" | "complete">("assign");
+    const PROJECT_TAB_STATUS: Record<typeof projectTab, string> = {
+        assign: "ToDo",
+        working: "InProgress",
+        complete: "Completed",
+    };
+    const { data: myTasks = [], isLoading: tasksLoading } = useQuery<any[]>({
+        queryKey: [`/api/pms/tasks?status=${PROJECT_TAB_STATUS[projectTab]}`],
+    });
+    const updateTaskStatusMutation = useMutation({
+        mutationFn: async ({ id, status }: { id: string; status: string }) => {
+            return apiRequestJson("PATCH", `/api/seo-smm/tasks/${id}/status`, { status });
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=ToDo`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=InProgress`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=Completed`] });
+            toast({ title: "Task updated" });
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to update task", variant: "destructive" });
+        },
+    });
 
     const { data: dailyReportData } = useQuery({
         queryKey: ["/api/dd-executive/daily-report", dailyReportFilter],
@@ -183,85 +237,71 @@ export default function SeoSmmExecutiveDashboard() {
             <div className="grid grid-cols-12 gap-6">
                 {/* Main Content (8 columns) */}
                 <div className="col-span-12 lg:col-span-8 space-y-6">
-                    {/* Assigned Project */}
+                    {/* Assign / Working / Complete Project — tasks the SEO/SMM
+                        Manager assigns from an Approved document (see
+                        seo-smm-manager-dashboard.tsx's Assign Task form) land in
+                        "Assign Project" (ToDo); this executive moves them along
+                        themselves. */}
                     <Card className="border-none shadow-sm rounded-xl bg-white overflow-hidden dark:bg-zinc-900">
                         <CardHeader className="py-4 px-6 border-b border-slate-50 dark:border-zinc-800">
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <CardTitle className="text-[15px] font-bold text-slate-700 dark:text-zinc-400">Assigned Project</CardTitle>
+                                <CardTitle className="text-[15px] font-bold text-slate-700 dark:text-zinc-400">Project Tasks</CardTitle>
                                 <div className="flex items-center gap-0 bg-slate-100/50 p-1 rounded-lg">
-                                    <button
-                                        className={cn(
-                                            "px-10 py-2 rounded-md text-[13px] font-bold transition-all",
-                                            activeTab === "today" ? "bg-[#059669] text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700",
-                                        )}
-                                        onClick={() => setActiveTab("today")}
-                                    >
-                                        Today
-                                    </button>
-                                    <button
-                                        className={cn(
-                                            "px-10 py-2 rounded-md text-[13px] font-bold transition-all",
-                                            activeTab === "waiting" ? "bg-[#059669] text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700",
-                                        )}
-                                        onClick={() => setActiveTab("waiting")}
-                                    >
-                                        Waiting
-                                    </button>
+                                    {([
+                                        { key: "assign", label: "Assign Project" },
+                                        { key: "working", label: "Working Project" },
+                                        { key: "complete", label: "Complete Project" },
+                                    ] as const).map((tab) => (
+                                        <button
+                                            key={tab.key}
+                                            className={cn(
+                                                "px-6 py-2 rounded-md text-[13px] font-bold transition-all",
+                                                projectTab === tab.key ? "bg-[#059669] text-white shadow-sm" : "text-slate-500 dark:text-slate-400 hover:text-slate-700",
+                                            )}
+                                            onClick={() => setProjectTab(tab.key)}
+                                        >
+                                            {tab.label}
+                                        </button>
+                                    ))}
                                 </div>
                             </div>
                         </CardHeader>
-                        <div className="overflow-x-auto">
-                            <Table>
-                                <TableHeader className="bg-slate-50/50 dark:bg-zinc-900">
-                                    <TableRow className="hover:bg-transparent border-none">
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 pl-6 dark:text-zinc-400">No#</TableHead>
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 dark:text-zinc-400">Company</TableHead>
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 text-center dark:text-zinc-400">Project</TableHead>
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 text-center dark:text-zinc-400">Status</TableHead>
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 text-center dark:text-zinc-400">Time</TableHead>
-                                        <TableHead className="text-xs font-bold text-slate-500 uppercase py-4 text-center pr-6 dark:text-zinc-400">Action</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {taskListData.length > 0 ? (
-                                        taskListData.map((task: any, idx: number) => (
-                                            <TableRow key={task.id} className="hover:bg-slate-50 border-slate-50 group dark:hover:bg-zinc-800 dark:border-zinc-800">
-                                                <TableCell className="py-4 pl-6 text-sm font-bold text-slate-400">{idx + 1}</TableCell>
-                                                <TableCell className="py-4 text-sm font-bold text-slate-700 dark:text-zinc-400">{task.company}</TableCell>
-                                                <TableCell className="py-4 text-sm font-bold text-slate-500 text-center dark:text-zinc-400">{task.project}</TableCell>
-                                                <TableCell className="py-4 text-center">
-                                                    <span className={cn(
-                                                        "inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-black uppercase",
-                                                        task.status === "Completed" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
-                                                        task.status === "InProgress" ? "bg-blue-50 text-blue-600 border border-blue-100" :
-                                                        "bg-amber-50 text-amber-600 border border-amber-100",
-                                                    )}>
-                                                        {task.status}
-                                                    </span>
-                                                </TableCell>
-                                                <TableCell className="py-4 text-center text-sm font-bold text-emerald-600">{task.time}</TableCell>
-                                                <TableCell className="py-4 pr-6 text-center">
-                                                    <button
-                                                        title="View in PMS Project Status"
-                                                        onClick={() => {
-                                                            const pid = task.projectId || task.id;
-                                                            const url = pid ? `/pms/status?projectId=${pid}` : "/pms/status";
-                                                            window.location.href = url;
-                                                        }}
-                                                        className="opacity-40 group-hover:opacity-100 transition-opacity hover:text-indigo-600"
-                                                    >
-                                                        <ExternalLink className="h-4 w-4 text-indigo-400" />
-                                                    </button>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))
-                                    ) : (
-                                        <TableRow>
-                                            <TableCell colSpan={6} className="text-center py-20 text-slate-400 font-medium">No tasks found</TableCell>
-                                        </TableRow>
+                        <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+                            {tasksLoading ? (
+                                <div className="p-6 text-center text-[13px] text-slate-400">Loading...</div>
+                            ) : myTasks.length === 0 ? (
+                                <div className="p-6 text-center text-[13px] text-slate-400">
+                                    {projectTab === "assign" ? "No new tasks assigned yet." : projectTab === "working" ? "Nothing in progress." : "Nothing completed yet."}
+                                </div>
+                            ) : myTasks.map((task: any) => (
+                                <div key={task.id} className="flex items-center justify-between p-4">
+                                    <div>
+                                        <p className="text-[13px] font-bold text-slate-800 dark:text-zinc-100">{task.title}</p>
+                                        {task.description && <p className="text-[11px] text-slate-400">{task.description}</p>}
+                                        {projectTab === "working" && <div className="mt-1"><TaskCountdown dueDate={task.dueDate} /></div>}
+                                    </div>
+                                    {projectTab === "assign" && (
+                                        <Button
+                                            size="sm"
+                                            className="h-8 px-3 text-[12px] bg-emerald-600 hover:bg-emerald-700"
+                                            disabled={updateTaskStatusMutation.isPending}
+                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "InProgress" })}
+                                        >
+                                            <Play className="w-3.5 h-3.5 mr-1" /> Start Working
+                                        </Button>
                                     )}
-                                </TableBody>
-                            </Table>
+                                    {projectTab === "working" && (
+                                        <Button
+                                            size="sm"
+                                            className="h-8 px-3 text-[12px] bg-emerald-600 hover:bg-emerald-700"
+                                            disabled={updateTaskStatusMutation.isPending}
+                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "Completed" })}
+                                        >
+                                            <CheckSquare className="w-3.5 h-3.5 mr-1" /> Mark Complete
+                                        </Button>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     </Card>
 

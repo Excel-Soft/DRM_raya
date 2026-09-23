@@ -176,51 +176,54 @@ export async function resolveOrCreateCanonicalDrmId(
         }
     }
 
-    // 3. Lookup existing customer by companyName, email, or phone
-    if (company || email || phone) {
-        const cMatch = await executor.query(
-            `SELECT drm_id, id FROM drm.customers
-              WHERE drm_id IS NOT NULL AND drm_id <> '' AND (
-                (lower(trim(company_name)) = lower(trim($1)) AND $1 <> '')
-                OR (lower(trim(email)) = $2 AND $2 <> '')
-                OR (regexp_replace(coalesce(phone_normalized, phone, ''), '\\D', '', 'g') = $3 AND $3 <> '')
-              )
-              ORDER BY created_at ASC LIMIT 1`,
-            [company, email, phone]
-        );
-        if (cMatch.rows[0]?.drm_id) {
-            return cMatch.rows[0].drm_id;
-        }
+    // 3-5. Lookup an existing DRM ID across customers, temp contacts, and GM
+    // entries. These three tables are independent, so the lookups run
+    // concurrently instead of one at a time (each was a full extra round trip
+    // to the remote DB) -- then results are checked in the original priority
+    // order (customer > temp contact > GM entry) so behavior is unchanged.
+    const wantsLookup = company || email || phone;
+    const [cMatch, tMatch, gMatch] = await Promise.all([
+        wantsLookup
+            ? executor.query(
+                `SELECT drm_id, id FROM drm.customers
+                  WHERE drm_id IS NOT NULL AND drm_id <> '' AND (
+                    (lower(trim(company_name)) = lower(trim($1)) AND $1 <> '')
+                    OR (lower(trim(email)) = $2 AND $2 <> '')
+                    OR (regexp_replace(coalesce(phone_normalized, phone, ''), '\\D', '', 'g') = $3 AND $3 <> '')
+                  )
+                  ORDER BY created_at ASC LIMIT 1`,
+                [company, email, phone]
+            )
+            : Promise.resolve({ rows: [] }),
+        wantsLookup
+            ? executor.query(
+                `SELECT drm_id, id FROM drm.temp_contacts
+                  WHERE drm_id IS NOT NULL AND drm_id <> '' AND (
+                    (lower(trim(person_name)) = lower(trim($1)) AND $1 <> '')
+                    OR (lower(trim(email)) = $2 AND $2 <> '')
+                    OR (regexp_replace(coalesce(mobile, ''), '\\D', '', 'g') = $3 AND $3 <> '')
+                  )
+                  ORDER BY created_at ASC LIMIT 1`,
+                [company, email, phone]
+            )
+            : Promise.resolve({ rows: [] }),
+        company
+            ? executor.query(
+                `SELECT drm_id FROM drm.gm_entries
+                  WHERE drm_id IS NOT NULL AND drm_id <> '' AND lower(trim(company_name)) = lower(trim($1))
+                  ORDER BY created_at ASC LIMIT 1`,
+                [company]
+            )
+            : Promise.resolve({ rows: [] }),
+    ]);
+    if (cMatch.rows[0]?.drm_id) {
+        return cMatch.rows[0].drm_id;
     }
-
-    // 4. Lookup existing temp contact by person_name / email / mobile
-    if (company || email || phone) {
-        const tMatch = await executor.query(
-            `SELECT drm_id, id FROM drm.temp_contacts
-              WHERE drm_id IS NOT NULL AND drm_id <> '' AND (
-                (lower(trim(person_name)) = lower(trim($1)) AND $1 <> '')
-                OR (lower(trim(email)) = $2 AND $2 <> '')
-                OR (regexp_replace(coalesce(mobile, ''), '\\D', '', 'g') = $3 AND $3 <> '')
-              )
-              ORDER BY created_at ASC LIMIT 1`,
-            [company, email, phone]
-        );
-        if (tMatch.rows[0]?.drm_id) {
-            return tMatch.rows[0].drm_id;
-        }
+    if (tMatch.rows[0]?.drm_id) {
+        return tMatch.rows[0].drm_id;
     }
-
-    // 5. Lookup existing GM entry by companyName
-    if (company) {
-        const gMatch = await executor.query(
-            `SELECT drm_id FROM drm.gm_entries
-              WHERE drm_id IS NOT NULL AND drm_id <> '' AND lower(trim(company_name)) = lower(trim($1))
-              ORDER BY created_at ASC LIMIT 1`,
-            [company]
-        );
-        if (gMatch.rows[0]?.drm_id) {
-            return gMatch.rows[0].drm_id;
-        }
+    if (gMatch.rows[0]?.drm_id) {
+        return gMatch.rows[0].drm_id;
     }
 
     // 6. No existing DRM ID found anywhere — generate a new canonical DRM ID ONCE,

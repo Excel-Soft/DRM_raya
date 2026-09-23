@@ -2,6 +2,8 @@ import { Router } from "express";
 import { pool } from "../db";
 import { NotificationService } from "./services/notification-service";
 import { projectsRepository } from "../repositories/projects.repository";
+import { tasksRepository } from "../repositories/tasks.repository";
+import { insertTaskSchema } from "@shared/schema";
 
 const router = Router();
 
@@ -431,6 +433,63 @@ router.get("/manager/queue", async (req: any, res: any) => {
     } catch (error) {
         console.error("Error fetching manager queue:", error);
         return res.status(500).json({ error: "Failed to fetch manager queue" });
+    }
+});
+
+// POST /api/product-posting/projects/:id/assign-task — { assigneeId, title,
+// description?, links?, dueDate?, assignedDurationMinutes? }
+// This route never existed (confirmed via grep -- only referenced in
+// comments and a forward-looking UAT spec that was never wired up), so every
+// "Assign Task" click here, on dd-manager-dashboard.tsx, and on
+// product-posting-executive-widget.tsx always failed with "Assignment
+// failed / Failed to assign task". Fixed by reusing the exact same real,
+// working insertTaskSchema + tasksRepository mechanism POST /api/pms/tasks
+// already uses. The widget that shows this project's assignment status
+// re-fetches GET /api/pms/projects?withStats=true on success (see its
+// onSuccess handler), which is backed by the same drm.tasks table, so a
+// plain task row on the SAME project is sufficient -- no separate
+// product_posting_workflows/SUBPROJECT row is created. (The generic
+// endpoint's own optional `ensureProductPostingWorkflow` ->
+// getOrCreateProductPostingWorkflow path is itself an unimplemented stub;
+// deliberately not relied on here for the same reason.)
+router.post("/projects/:id/assign-task", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const projectId = req.params.id;
+        const { assigneeId, title, description, links, dueDate, assignedDurationMinutes } = req.body || {};
+        if (!assigneeId || !title) {
+            return res.status(400).json({ error: "assigneeId and title are required" });
+        }
+
+        const projRes = await pool.query(`select id from drm.projects where id = $1`, [projectId]);
+        if (projRes.rowCount === 0) return res.status(404).json({ error: "Project not found" });
+
+        const combinedDescription = [description, links ? `Links: ${links}` : null].filter(Boolean).join("\n\n") || undefined;
+        const minutes = Number(assignedDurationMinutes) || 0;
+        const computedDueDate = dueDate || (minutes > 0 ? new Date(Date.now() + minutes * 60_000).toISOString() : undefined);
+        const userId = getUserId(req);
+
+        const validated = insertTaskSchema.parse({
+            projectId,
+            title,
+            description: combinedDescription,
+            assignedToUserId: assigneeId,
+            dueDate: computedDueDate,
+            ownerUserId: userId,
+        });
+
+        const task = await tasksRepository.create({
+            ...validated,
+            createdBy: userId,
+        } as any);
+
+        res.status(201).json({ taskId: task.id, ...task });
+    } catch (error: any) {
+        console.error("Error assigning product posting task:", error);
+        if (error?.name === "ZodError") {
+            return res.status(400).json({ error: "Invalid request", details: error.issues });
+        }
+        res.status(500).json({ error: "Failed to assign task" });
     }
 });
 
