@@ -50,7 +50,7 @@ function getScreenName(path: string): string {
     "/customers/service-pool": "Service Pool",
     "/customers/gm-pool": "GM Pool",
     "/pms/tasks": "PMS Task System",
-    "/pms/status": "PMS Project Status",
+    "/pms/status": "PMS Project Report",
     "/workspace": "Workspace",
     "/gm-pool/add-gm": "GM Pool / Add GM",
     "/reports/loan": "Loan Reports",

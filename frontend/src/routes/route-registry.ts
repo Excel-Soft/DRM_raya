@@ -162,10 +162,10 @@ export const routeRegistry: RouteEntry[] = [
   // ── PMS ───────────────────────────────────────────────────────────────
   { path: "/pms/task-templates", component: "PmsTaskTemplates", title: "Task Templates", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/pms/tasks", component: "PmsTasks", title: "Task System", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
-  { path: "/pms/status", component: "PmsStatus", title: "Project Status", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
+  { path: "/pms/status", component: "PmsStatus", title: "Project Report", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/pms/running-projects", component: "PmsRunningProjects", title: "Running Projects", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/pms/approvals", component: "PmsPendingApprovals", title: "Pending Project", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
-  { path: "/pms/task-history", component: "PmsTaskHistory", title: "Task History", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
+  { path: "/pms/task-history", component: "PmsTaskHistory", title: "Task Complete", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/pms/team-workspace", component: "PmsTeamWorkspace", title: "Team Workspace", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/pms/project-report", component: "PmsProjectReport", title: "Project Report", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF, notes: "Canonical project report." },
   { path: "/dd-manager/project-report", component: "PmsProjectReport", title: "Project Report (alias)", module: "PMS", sidebarVisible: false, allowedRoles: ALL_STAFF, redirectTo: "/pms/project-report", notes: "Alias → /pms/project-report." },

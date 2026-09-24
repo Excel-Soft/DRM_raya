@@ -216,7 +216,7 @@ export default function PmsTaskHistory() {
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
             <h1 className="text-[17px] font-bold text-[#495057] uppercase tracking-wide mb-6 dark:text-zinc-400">
-                MONTHLY COMPLETE PROJECT
+                COMPLETE PROJECT
             </h1>
 
             {/* Pending My Review — tasks an executive has submitted (READY_FOR_QA),
