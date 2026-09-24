@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,10 +12,11 @@ import {
 } from "@/components/ui/select";
 
 // Free-text department codes — same convention projects.departmentType
-// already uses elsewhere in this schema. Not an enum; sourced from the real
-// departments in drm.roles (grouped by role name), not guessed. Shared by
-// both the "Allowed Department(s)" multi-select and the single-value
-// "Project Department" select below.
+// already uses elsewhere in this schema. Static fallback for callers that
+// just need a label lookup outside of React Query (e.g. plain badge
+// rendering) — the live, admin-manageable list now lives in
+// drm.departments (see /drm/attributes -> Departments tab) and is what
+// useDepartmentOptions() below actually renders in this form.
 export const DEPARTMENT_OPTIONS = [
     { value: "SALES", label: "Sales" },
     { value: "ACCOUNTS", label: "Accounts" },
@@ -29,6 +32,31 @@ export const DEPARTMENT_OPTIONS = [
     { value: "RECEPTION", label: "Reception" },
     { value: "VERIFICATION", label: "Verification" },
 ] as const;
+
+export interface DepartmentOption {
+    value: string;
+    label: string;
+}
+
+// Live department list from drm.departments, falling back to the static
+// DEPARTMENT_OPTIONS above while loading or if the request fails — so a
+// brand-new/renamed/deactivated department (managed from the Departments
+// attributes tab) shows up here without needing a code change, while never
+// leaving this form with an empty picker.
+export function useDepartmentOptions(): DepartmentOption[] {
+    const { data } = useQuery<DepartmentOption[]>({
+        queryKey: ["/api/drm/departments"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/drm/departments");
+            const body = await res.json();
+            return (body.data ?? [])
+                .filter((d: any) => d.isActive)
+                .map((d: any) => ({ value: d.code, label: d.name }));
+        },
+        staleTime: 60_000,
+    });
+    return data && data.length > 0 ? data : (DEPARTMENT_OPTIONS as unknown as DepartmentOption[]);
+}
 
 export interface ServiceFormValues {
     name: string;
@@ -58,6 +86,7 @@ interface ServiceFormDialogProps {
 
 export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValues, isEditing, isSaving, onSave }: ServiceFormDialogProps) {
     const [form, setForm] = useState<ServiceFormValues>(initialValues);
+    const departmentOptions = useDepartmentOptions();
 
     useEffect(() => {
         if (open) setForm(initialValues);
@@ -118,7 +147,7 @@ export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValue
                             Which department(s) may use this service to build a quotation.
                         </p>
                         <div className="grid grid-cols-2 gap-2 mt-1">
-                            {DEPARTMENT_OPTIONS.map((opt) => (
+                            {departmentOptions.map((opt) => (
                                 <label key={opt.value} className="flex items-center gap-2 text-sm cursor-pointer">
                                     <Checkbox
                                         checked={form.routeDepartments.includes(opt.value)}
@@ -141,7 +170,7 @@ export function ServiceFormDialog({ open, onOpenChange, levelLabel, initialValue
                             <SelectTrigger><SelectValue placeholder="Choose a department..." /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="__none__">None</SelectItem>
-                                {DEPARTMENT_OPTIONS.map((opt) => (
+                                {departmentOptions.map((opt) => (
                                     <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                                 ))}
                             </SelectContent>

@@ -1,31 +1,14 @@
 import { useState, useMemo } from "react";
-import { Eye, Plug, Link as LinkIcon, ExternalLink, Loader2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Eye, Link as LinkIcon, ExternalLink, Loader2, ArrowUp, ArrowDown, ArrowUpDown, CheckCircle2, XCircle, ClipboardCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-
-function isValidHttpUrl(value: string): boolean {
-    try {
-        const parsed = new URL(value);
-        return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch {
-        return false;
-    }
-}
 
 interface TaskStatusHistoryRecord {
     id: string;
@@ -39,7 +22,35 @@ interface TaskStatusHistoryRecord {
     user?: { id: string; name: string | null } | null;
 }
 
+interface PendingReviewTask {
+    id: string;
+    title: string;
+    description: string | null;
+    projectId: string;
+    assigneeId: string | null;
+    assigneeName: string | null;
+    project: string | null;
+    company: string | null;
+    departmentType: string | null;
+    submittedAt: string | null;
+    submissionNotes: string | null;
+}
+
 const TASK_HISTORY_KEY = "/api/pms/task-history";
+const PENDING_REVIEW_KEY = "/api/pms/tasks/pending-review";
+
+function extractSubmittedLinks(notes: string | null): string[] {
+    if (!notes) return [];
+    try {
+        const parsed = JSON.parse(notes);
+        if (Array.isArray(parsed?.links)) {
+            return parsed.links.filter((l: any) => typeof l === "string" && l.trim());
+        }
+    } catch {
+        // Not JSON — no links to show.
+    }
+    return [];
+}
 
 export default function PmsTaskHistory() {
     const { toast } = useToast();
@@ -55,17 +66,60 @@ export default function PmsTaskHistory() {
         queryFn: () => apiRequestJson<TaskStatusHistoryRecord[]>("GET", TASK_HISTORY_KEY),
     });
 
+    // Server-gated (GET /api/pms/tasks/pending-review returns [] for any
+    // non-managerial role) — the client-side isManager check below only
+    // decides whether to render the section at all, it isn't the real gate.
+    const { data: pendingReview = [], isLoading: isPendingReviewLoading } = useQuery<PendingReviewTask[]>({
+        queryKey: [PENDING_REVIEW_KEY],
+        queryFn: () => apiRequestJson<PendingReviewTask[]>("GET", PENDING_REVIEW_KEY),
+    });
+
+    const { data: userData } = useQuery({ queryKey: ["/api/auth/me"] });
+    const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
+    const currentRole = ((userData as any)?.role || userRoleName).toLowerCase();
+    const isManager = currentRole.includes("manager") || currentRole.includes("admin") || currentRole.includes("hod");
+
+    const invalidateReview = () => {
+        queryClient.invalidateQueries({ queryKey: [PENDING_REVIEW_KEY] });
+        queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+    };
+
+    const approveMutation = useMutation({
+        mutationFn: async (taskId: string) =>
+            apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "Completed" }),
+        onSuccess: () => {
+            invalidateReview();
+            toast({ title: "Approved", description: "The task is complete and handed off to QA." });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not approve task", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
+    const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+    const [rejectingTask, setRejectingTask] = useState<PendingReviewTask | null>(null);
+    const [rejectReason, setRejectReason] = useState("");
+
+    const rejectMutation = useMutation({
+        mutationFn: async () => {
+            if (!rejectingTask) return;
+            return apiRequestJson("PATCH", `/api/pms/task/${rejectingTask.id}/status`, { status: "Blocked", reason: rejectReason.trim() });
+        },
+        onSuccess: () => {
+            invalidateReview();
+            setRejectDialogOpen(false);
+            setRejectingTask(null);
+            setRejectReason("");
+            toast({ title: "Rejected", description: "Sent back to the executive for rework." });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not reject task", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
     const [linksModalOpen, setLinksModalOpen] = useState(false);
     const [selectedLinks, setSelectedLinks] = useState<string[]>([]);
     const [selectedProjectName, setSelectedProjectName] = useState("");
-
-    // Action Modal State
-    const [actionModalOpen, setActionModalOpen] = useState(false);
-    const [confirmOpen, setConfirmOpen] = useState(false);
-    const [selectedActionRow, setSelectedActionRow] = useState<any>(null);
-    const [actionStatus, setActionStatus] = useState<string>("");
-    const [actionStage, setActionStage] = useState<string>("");
-    const [actionLinks, setActionLinks] = useState<string>("");
     const [searchQuery, setSearchQuery] = useState("");
 
     const history = useMemo(() => {
@@ -159,66 +213,95 @@ export default function PmsTaskHistory() {
         return sortConfig.direction === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
     };
 
-    const managerReviewMutation = useMutation({
-        mutationFn: async () => {
-            const links = actionLinks.split("\n").map((l) => l.trim()).filter(Boolean);
-            return apiRequestJson("POST", `/api/tasks/${selectedActionRow?.taskId}/manager-review`, {
-                status: actionStatus,
-                stage: actionStage,
-                links,
-            });
-        },
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
-            setActionModalOpen(false);
-            toast({
-                title: actionStatus === "complete" ? "Task sent to QA" : "Progress saved",
-                description: selectedActionRow?.project
-                    ? `Changes for "${selectedActionRow.project}" were saved.`
-                    : "Your changes were saved.",
-            });
-        },
-        onError: (err: any) => {
-            toast({
-                title: "Could not save task",
-                description: err?.message || "Please try again.",
-                variant: "destructive",
-            });
-        },
-    });
-
-    const handleSaveTask = () => {
-        if (!selectedActionRow?.taskId) {
-            toast({ title: "Missing task reference", description: "Can't save — this row has no linked task.", variant: "destructive" });
-            return;
-        }
-        if (!actionStatus) {
-            toast({ title: "Choose a status", description: "Select Complete or Changing before saving.", variant: "destructive" });
-            return;
-        }
-        const enteredLines = actionLinks.split("\n").map((l) => l.trim()).filter(Boolean);
-        const invalidLines = enteredLines.filter((l) => !isValidHttpUrl(l));
-        if (invalidLines.length > 0) {
-            toast({
-                title: "Invalid link",
-                description: `"${invalidLines[0]}" is not a valid link. Links must start with http:// or https://.`,
-                variant: "destructive",
-            });
-            return;
-        }
-        setConfirmOpen(true);
-    };
-
-    const handleConfirmSave = () => {
-        setConfirmOpen(false);
-        managerReviewMutation.mutate();
-    };
-
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans dark:bg-zinc-950">
             <h1 className="text-[17px] font-bold text-[#495057] uppercase tracking-wide mb-6 dark:text-zinc-400">
                 MONTHLY COMPLETE PROJECT
             </h1>
+
+            {/* Pending My Review — tasks an executive has submitted (READY_FOR_QA),
+                waiting on this manager to Approve (-> Completed, handed to QA) or
+                Reject (-> Blocked, back to the executive for rework). Only rendered
+                for managerial roles; the backend independently gates the data too
+                (GET /api/pms/tasks/pending-review returns [] for anyone else). */}
+            {isManager && (
+                <Card className="border-t-4 border-t-[#008d4c] shadow-sm mb-6">
+                    <CardHeader className="pb-2 flex flex-row items-center gap-2">
+                        <ClipboardCheck className="w-4 h-4 text-[#008d4c]" />
+                        <CardTitle className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Pending My Review</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                        {isPendingReviewLoading ? (
+                            <div className="p-6 text-center text-[13px] text-gray-400 flex items-center justify-center gap-2">
+                                <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+                            </div>
+                        ) : pendingReview.length === 0 ? (
+                            <div className="p-6 text-center text-[13px] text-gray-400">
+                                Nothing waiting on your review right now.
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-gray-100 dark:divide-zinc-800">
+                                {pendingReview.map((task) => {
+                                    const links = extractSubmittedLinks(task.submissionNotes);
+                                    return (
+                                        <div key={task.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <p className="text-[14px] font-bold text-[#343a40] dark:text-zinc-100">{task.title}</p>
+                                                <p className="text-[12px] text-[#6c757d] mt-0.5">
+                                                    {task.project || "—"} <span className="opacity-60">·</span> {task.company || "—"}
+                                                    <span className="opacity-60"> · submitted by </span>
+                                                    <span className="font-semibold">{task.assigneeName || "Unknown"}</span>
+                                                    {task.submittedAt && (
+                                                        <span className="opacity-60"> on {new Date(task.submittedAt).toLocaleString()}</span>
+                                                    )}
+                                                </p>
+                                                {links.length > 0 && (
+                                                    <div className="flex flex-wrap gap-2 mt-1.5">
+                                                        {links.map((link, i) => (
+                                                            <a
+                                                                key={i}
+                                                                href={link.startsWith("http") ? link : `https://${link}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-[11px] font-semibold text-indigo-500 hover:text-indigo-700 underline truncate max-w-[220px]"
+                                                            >
+                                                                {link}
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                <Button
+                                                    size="sm"
+                                                    className="bg-[#008d4c] hover:bg-[#00733e] text-white h-8"
+                                                    disabled={approveMutation.isPending}
+                                                    onClick={() => approveMutation.mutate(task.id)}
+                                                >
+                                                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approve &amp; Send to QA
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="border-rose-200 text-rose-600 hover:bg-rose-50 h-8"
+                                                    disabled={rejectMutation.isPending}
+                                                    onClick={() => {
+                                                        setRejectingTask(task);
+                                                        setRejectReason("");
+                                                        setRejectDialogOpen(true);
+                                                    }}
+                                                >
+                                                    <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             <div className="bg-white rounded border border-gray-100 shadow-sm overflow-hidden flex flex-col dark:bg-zinc-900 dark:border-zinc-800">
                 <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row items-center justify-between gap-4 dark:border-zinc-800">
@@ -318,14 +401,13 @@ export default function PmsTaskHistory() {
                                         Spent <SortIcon column="spent" />
                                     </button>
                                 </th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Link</th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Action</th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Links</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {isLoading ? (
                                 <tr>
-                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                    <td colSpan={12} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
                                         <span className="inline-flex items-center gap-2">
                                             <Loader2 className="w-4 h-4 animate-spin" />
                                             Loading task history...
@@ -334,13 +416,13 @@ export default function PmsTaskHistory() {
                                 </tr>
                             ) : isError ? (
                                 <tr>
-                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-red-500">
+                                    <td colSpan={12} className="px-4 py-10 text-center text-[13px] text-red-500">
                                         Failed to load task history{error instanceof Error ? `: ${error.message}` : ""}.
                                     </td>
                                 </tr>
                             ) : sortedHistory.length === 0 ? (
                                 <tr>
-                                    <td colSpan={13} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
+                                    <td colSpan={12} className="px-4 py-10 text-center text-[13px] text-gray-400 dark:text-zinc-500">
                                         No task history found.
                                     </td>
                                 </tr>
@@ -406,21 +488,6 @@ export default function PmsTaskHistory() {
                                             <Eye className={`w-[18px] h-[18px] ${(row.links && row.links.length > 0) ? "" : "opacity-40"}`} strokeWidth={2} />
                                         </button>
                                     </td>
-                                    <td className="px-4 py-3 text-center">
-                                        <button 
-                                            className="text-[#2bc18c] hover:bg-[#2bc18c]/10 p-1.5 rounded-full transition-colors inline-block dark:text-zinc-100"
-                                            onClick={() => {
-                                                setSelectedActionRow(row);
-                                                setActionStatus("complete");
-                                                setActionStage("");
-                                                setActionLinks((row.links || []).join("\n"));
-                                                setActionModalOpen(true);
-                                            }}
-                                            title="Complete Task"
-                                        >
-                                            <Plug className="w-[18px] h-[18px]" strokeWidth={2} />
-                                        </button>
-                                    </td>
                                 </tr>
                             ))}
                         </tbody>
@@ -480,97 +547,42 @@ export default function PmsTaskHistory() {
                 </DialogContent>
             </Dialog>
 
-            {/* Complete Task Action Modal */}
-            <Dialog open={actionModalOpen} onOpenChange={setActionModalOpen}>
-                <DialogContent className="max-w-xl bg-white p-0 border-0 shadow-xl font-sans rounded-none dark:bg-zinc-900">
-                    <DialogHeader className="px-6 py-4 border-b border-gray-100 flex flex-row items-center justify-between dark:border-zinc-800">
-                        <DialogTitle className="text-[19px] font-bold text-[#495057] dark:text-zinc-400">
-                            Complete Task
-                        </DialogTitle>
+            {/* Reject reason — required before a Pending My Review task can be
+                sent back (Blocked) to its executive for rework. */}
+            <Dialog open={rejectDialogOpen} onOpenChange={(open) => { if (!open) { setRejectDialogOpen(false); setRejectingTask(null); } }}>
+                <DialogContent className="max-w-md bg-white dark:bg-zinc-900">
+                    <DialogHeader>
+                        <DialogTitle className="text-[17px] font-bold text-[#495057] dark:text-zinc-400">Reject Task</DialogTitle>
+                        <DialogDescription className="text-sm text-[#6c757d]">
+                            {rejectingTask?.title} will go back to <span className="font-semibold">{rejectingTask?.assigneeName || "the executive"}</span> for rework.
+                        </DialogDescription>
                     </DialogHeader>
-
-                    <div className="p-6 space-y-5 shadow-[inset_0px_10px_15px_-10px_rgba(0,0,0,0.03)] bg-gradient-to-b from-[#f8f9fc]/50 to-white">
-                        <div className="space-y-1.5">
-                            <label className="text-[14px] font-semibold text-[#495057] dark:text-zinc-400">Company</label>
-                            <Input 
-                                disabled 
-                                value={selectedActionRow?.company || ""} 
-                                className="bg-[#f3f4f8] border-gray-200 text-[#495057] h-10 w-full dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900"
-                            />
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="text-[14px] font-semibold text-[#495057] dark:text-zinc-400">Status</label>
-                            <Select value={actionStatus} onValueChange={setActionStatus}>
-                                <SelectTrigger className="w-full text-[14px] text-gray-500 h-10 border-gray-200 focus:ring-1 focus:ring-emerald-500/50 dark:text-zinc-400 dark:border-zinc-800">
-                                    <SelectValue placeholder="Choose..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="complete">Complete</SelectItem>
-                                    <SelectItem value="changing">Changing</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="text-[14px] font-semibold text-[#495057] dark:text-zinc-400">Stage</label>
-                            <Select value={actionStage} onValueChange={setActionStage}>
-                                <SelectTrigger className="w-full text-[14px] text-gray-500 h-10 border-gray-200 focus:ring-1 focus:ring-emerald-500/50 dark:text-zinc-400 dark:border-zinc-800">
-                                    <SelectValue placeholder="Choose..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="design">Design</SelectItem>
-                                    <SelectItem value="development">Development</SelectItem>
-                                    <SelectItem value="data-feeding">Data Feeding</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="text-[14px] font-semibold text-[#495057] dark:text-zinc-400">Final Links</label>
-                            <textarea
-                                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-[#495057] placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 min-h-[140px] resize-y dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
-                                placeholder="One link per line..."
-                                value={actionLinks}
-                                onChange={(e) => setActionLinks(e.target.value)}
-                            />
-                        </div>
+                    <div className="space-y-1.5 py-2">
+                        <label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-400">Reason</label>
+                        <Textarea
+                            value={rejectReason}
+                            onChange={(e) => setRejectReason(e.target.value)}
+                            placeholder="Explain what needs to change..."
+                            className="min-h-[100px]"
+                        />
                     </div>
-
-                    <div className="p-4 px-6 border-t border-gray-100 flex items-center justify-end gap-3 bg-gray-50/10 dark:border-zinc-800">
-                        <Button 
-                            variant="secondary" 
-                            className="bg-[#f0f2f5] hover:bg-[#e4e6eb] text-[#343a40] text-[14px] font-medium px-6 shadow-none dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-100"
-                            onClick={() => setActionModalOpen(false)}
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                        <Button
+                            variant="secondary"
+                            onClick={() => { setRejectDialogOpen(false); setRejectingTask(null); }}
                         >
-                            Close
+                            Cancel
                         </Button>
                         <Button
-                            className="bg-[#0f9d58] hover:bg-[#0b8043] text-white text-[14px] font-medium px-6 shadow-sm"
-                            onClick={handleSaveTask}
-                            disabled={managerReviewMutation.isPending}
+                            className="bg-rose-600 hover:bg-rose-700 text-white"
+                            disabled={rejectMutation.isPending || !rejectReason.trim()}
+                            onClick={() => rejectMutation.mutate()}
                         >
-                            {managerReviewMutation.isPending ? "Saving..." : "Save"}
+                            {rejectMutation.isPending ? "Rejecting..." : "Reject & Send Back"}
                         </Button>
                     </div>
                 </DialogContent>
             </Dialog>
-
-            {/* Submit Confirmation */}
-            <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-                <AlertDialogContent>
-                    <AlertDialogHeader>
-                        <AlertDialogTitle>Submit this task?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                            Are you sure you want to submit this task? This action will record your changes.
-                        </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleConfirmSave}>Confirm</AlertDialogAction>
-                    </AlertDialogFooter>
-                </AlertDialogContent>
-            </AlertDialog>
         </div>
     );
 }

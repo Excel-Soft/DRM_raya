@@ -292,7 +292,11 @@ export default function PmsPendingApprovals() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                {row.sentToManager ? (
+                                                {/* Same isVerifiedNow-wins-over-sentToManager priority as the Action
+                                                    column below — a stray still-PENDING row left over from before
+                                                    uploads got locked shouldn't make an already-verified project
+                                                    look like it's still awaiting the department. */}
+                                                {row.sentToManager && !isVerifiedNow ? (
                                                     <span className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-full font-semibold shadow-sm border bg-blue-50 text-blue-700 border-blue-200">
                                                         <span className="relative flex h-2 w-2">
                                                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
@@ -337,9 +341,7 @@ export default function PmsPendingApprovals() {
                                                         Waiting
                                                     </span>
                                                 ) : isVerifiedNow ? (
-                                                    <span className="px-3 py-1 rounded-full bg-sky-100 text-emerald-600 font-medium text-[11px] border border-sky-200">
-                                                        Approved
-                                                    </span>
+                                                    <span className="text-emerald-600 font-bold">Verified</span>
                                                 ) : (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
                                                         Waiting
@@ -350,7 +352,20 @@ export default function PmsPendingApprovals() {
                                                 {row.date ? format(new Date(row.date), "dd-MM-yyyy") : "N/A"}
                                             </td>
                                             <td className="px-4 py-4 text-[13px]">
-                                                {row.sentToManager ? (
+                                                {/* isVerifiedNow must win over sentToManager: once the department has
+                                                    actually approved the document, uploads stay locked even if a
+                                                    stray/older still-PENDING row also exists for this project (e.g.
+                                                    a duplicate upload from before this lock existed). */}
+                                                {isVerifiedNow ? (
+                                                    <button
+                                                        disabled
+                                                        title="This document has already been verified by the department — no further upload is needed."
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-400 border border-gray-200 rounded-[3px] text-[13px] cursor-not-allowed dark:bg-zinc-900 dark:text-zinc-600 dark:border-zinc-800"
+                                                    >
+                                                        <Upload className="w-3.5 h-3.5" />
+                                                        Upload Documents
+                                                    </button>
+                                                ) : row.sentToManager ? (
                                                     <div className="flex flex-col gap-1">
                                                         <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-[3px] text-[12px] font-semibold">
                                                             ✓ Documents Sent {row.rejectionReason ? 'Again ' : ''}to {departmentLabel(row.departmentType)}
@@ -364,7 +379,7 @@ export default function PmsPendingApprovals() {
                                                         </button>
                                                     </div>
                                                 ) : (
-                                                    <button 
+                                                    <button
                                                         onClick={() => handleUploadClick(row.id)}
                                                         disabled={uploadMutation.isPending}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-[#00a65a] text-white rounded-[3px] hover:bg-[#008d4c] transition-colors disabled:opacity-50"

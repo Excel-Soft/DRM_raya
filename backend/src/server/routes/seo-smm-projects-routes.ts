@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { pool } from "../db";
 import { requireRole } from "../middleware/auth.middleware";
 import { AuditLogService } from "./services/audit-log.service";
+import { changeTaskStatus } from "./services/pms-transition.service";
 
 // SEO/SMM manager's "Department Status Tracker" Pending/Approved tabs —
 // sales-uploaded project documents routed to the SEO/SMM department.
@@ -160,41 +161,52 @@ router.get("/executives", requireRole(...SEO_SMM_ROLES), async (req: Request, re
 
 const SEO_SMM_WRITE_ROLES = ["admin", "super_hod", "seo_smm_manager"];
 
-// PATCH /api/seo-smm/tasks/:id/status — { status: "ToDo" | "InProgress" | "Completed" }
-// Deliberately bypasses the generic PMS task-transition service (a stub that
-// throws) with a direct, department-scoped update, mirroring
-// PATCH /api/it/tasks/:id/status. Only the task's own assignee or a
-// SEO/SMM write-role may move it.
+// PATCH /api/seo-smm/tasks/:id/status — { status: "ToDo" | "InProgress" | "READY_FOR_QA" }
+// The SEO/SMM executive's own "start working" / "submit for review" actions.
+// Used to deliberately bypass the generic PMS task-transition service
+// because it was a no-op stub; that's fixed now, so this routes through the
+// same real changeTaskStatus() gate everything else does — Completed is no
+// longer reachable from here (only the SEO/SMM manager's review, via the
+// central Kanban status endpoint, can move a submitted task to Completed).
 router.patch("/tasks/:id/status", async (req: Request, res: Response) => {
   try {
     if (!(req as any).user) return res.status(401).json({ error: "Not authenticated" });
     const status = req.body?.status;
-    if (!["ToDo", "InProgress", "Completed"].includes(status)) {
-      return res.status(400).json({ error: "status must be ToDo, InProgress, or Completed" });
+    if (!["ToDo", "InProgress", "READY_FOR_QA"].includes(status)) {
+      return res.status(400).json({ error: "status must be ToDo, InProgress, or READY_FOR_QA" });
     }
 
     const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
 
     const userId = actorId(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const isAssignee = taskRes.rows[0].assigned_to_user_id === userId;
     const isWriteRole = SEO_SMM_WRITE_ROLES.includes((req as any).user?.roleId) || ((req as any).user?.roles || []).some((r: string) => SEO_SMM_WRITE_ROLES.includes(r));
     if (!isAssignee && !isWriteRole) {
       return res.status(403).json({ error: "Only the assigned executive or a SEO/SMM manager can update this task." });
     }
 
-    // Starting the timer only on the ToDo -> InProgress transition (never
-    // overwritten on a later re-entry into InProgress) is what the "In
-    // Progress" tab's countdown is measured from.
-    if (status === "InProgress") {
-      await pool.query(
-        `update drm.tasks set status = $1, timer_started_at = coalesce(timer_started_at, now()), updated_at = now() where id = $2`,
-        [status, req.params.id],
-      );
-    } else {
-      await pool.query(`update drm.tasks set status = $1, updated_at = now() where id = $2`, [status, req.params.id]);
+    const roles = [(req as any).user?.activeRoleId, (req as any).user?.roleId, (req as any).user?.role, ...(((req as any).user?.roles) || [])].filter(Boolean);
+    const transition = await changeTaskStatus({
+      taskId: req.params.id,
+      toStatus: status,
+      actorUserId: userId,
+      actorRoles: roles,
+    });
+    if (!transition.success) {
+      return res.status(transition.status || 400).json({ error: transition.error, code: (transition as any).code });
     }
-    res.json({ success: true });
+
+    // Starting the timer on entry into InProgress (never overwritten on a
+    // later re-entry) is what the "In Progress" tab's countdown is measured
+    // from — changeTaskStatus itself only ever clears timer_started_at, it
+    // doesn't set one, so that's still done here.
+    if (status === "InProgress") {
+      await pool.query(`update drm.tasks set timer_started_at = coalesce(timer_started_at, now()) where id = $1`, [req.params.id]);
+    }
+
+    res.json({ success: true, status: transition.task.status });
   } catch (error) {
     console.error("Error updating SEO/SMM task status:", error);
     res.status(500).json({ error: "Failed to update task status" });

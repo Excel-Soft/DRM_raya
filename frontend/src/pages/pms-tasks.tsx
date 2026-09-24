@@ -177,23 +177,24 @@ export default function PmsTasks() {
             });
         },
         onSuccess: (_data, taskId) => {
+            // Submitting moves the task to READY_FOR_QA — awaiting the
+            // manager's review in PMS Task History, not finished yet.
             const updatedTasks = projectTasks.map((t: any) =>
-                t.id === taskId ? { ...t, status: "Completed", timerStartedAt: null } : t
+                t.id === taskId ? { ...t, status: "READY_FOR_QA", timerStartedAt: null } : t
             );
 
             invalidateTaskData();
 
-            // When all tasks are finished, close the details modal. The transfer to the
-            // D&D Manager queue is handled server-side by the task-completion endpoint.
-            if (updatedTasks.every((t: any) => t.status === "Completed" || t.status === "Done")) {
+            // When every task is at least submitted, close the details modal.
+            if (updatedTasks.every((t: any) => t.status === "READY_FOR_QA" || t.status === "Completed" || t.status === "Done")) {
                 setTimeout(() => {
                     setIsDetailsModalOpen(false);
                 }, 500);
             }
 
-            toast({ title: "Task completed successfully" });
+            toast({ title: "Task submitted for review", description: "Your manager will review it in Task History." });
         },
-        onError: (err: any) => toast({ title: "Completion Error", description: err.message, variant: "destructive" })
+        onError: (err: any) => toast({ title: "Submission Error", description: err.message, variant: "destructive" })
     });
 
     const displayTasks = projectTasks;
@@ -291,6 +292,11 @@ export default function PmsTasks() {
     const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
     const currentRole = ((userData as any)?.role || userRoleName).toLowerCase();
     const isExecutive = currentRole.includes("executive");
+    // Product Posting Executive gets a lightweight links-only submission
+    // form here instead of the Files modal (dropzone + rich-text detail) —
+    // that modal is for IT/SEO-SMM/D&D executives only, per explicit
+    // instruction; Product Posting's own flow is link-based.
+    const isProductPostingExecutive = currentRole === "product_posting_executive" || currentRole === "posting_executive";
 
     return (
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans flex flex-col dark:bg-zinc-950">
@@ -650,26 +656,50 @@ export default function PmsTasks() {
                                                         </button>
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        <span className="bg-amber-50 text-amber-500 px-3 py-1 rounded-md font-bold text-[11px] border border-amber-100 italic">
-                                                            {task.status || 'Pending'}
-                                                        </span>
+                                                        {task.status === 'Blocked' ? (
+                                                            <span
+                                                                className="bg-rose-50 text-rose-600 px-3 py-1 rounded-md font-bold text-[11px] border border-rose-100 cursor-help"
+                                                                title={(() => {
+                                                                    try {
+                                                                        const parsed = task.rejectionNotes ? JSON.parse(task.rejectionNotes) : null;
+                                                                        return parsed?.reason ? `Rejected: ${parsed.reason}` : "Rejected by manager";
+                                                                    } catch {
+                                                                        return task.rejectionNotes || "Rejected by manager";
+                                                                    }
+                                                                })()}
+                                                            >
+                                                                Rejected — needs rework
+                                                            </span>
+                                                        ) : task.status === 'READY_FOR_QA' ? (
+                                                            <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md font-bold text-[11px] border border-blue-100 italic">
+                                                                Pending Review
+                                                            </span>
+                                                        ) : (
+                                                            <span className="bg-amber-50 text-amber-500 px-3 py-1 rounded-md font-bold text-[11px] border border-amber-100 italic">
+                                                                {task.status || 'Pending'}
+                                                            </span>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
                                                         <div className="flex items-center justify-center gap-2 relative">
-                                                            <div className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}>
-                                                                {task.timerStartedAt ? formatElapsed(elapsedTimes[task.id] || 0) : '0:0:0'}
-                                                            </div>
-                                                            <button
-                                                                className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
-                                                                onClick={() => handleToggleTimer(task)}
-                                                                disabled={startTimerMutation.isPending || stopTimerMutation.isPending}
-                                                            >
-                                                                {task.timerStartedAt ? (
-                                                                    <div className="w-3 h-3 bg-white rounded-sm shadow-inner dark:bg-zinc-900" />
-                                                                ) : (
-                                                                    <PlayCircle className="h-6 w-6 text-white fill-white/10" />
-                                                                )}
-                                                            </button>
+                                                            {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
+                                                                <>
+                                                                    <div className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}>
+                                                                        {task.timerStartedAt ? formatElapsed(elapsedTimes[task.id] || 0) : '0:0:0'}
+                                                                    </div>
+                                                                    <button
+                                                                        className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
+                                                                        onClick={() => handleToggleTimer(task)}
+                                                                        disabled={startTimerMutation.isPending || stopTimerMutation.isPending}
+                                                                    >
+                                                                        {task.timerStartedAt ? (
+                                                                            <div className="w-3 h-3 bg-white rounded-sm shadow-inner dark:bg-zinc-900" />
+                                                                        ) : (
+                                                                            <PlayCircle className="h-6 w-6 text-white fill-white/10" />
+                                                                        )}
+                                                                    </button>
+                                                                </>
+                                                            )}
 
                                                             {/* Done/Plus Button - only visible when timer has been run once (status is InProgress) and is currently stopped */}
                                                             {!task.timerStartedAt && task.status === 'InProgress' && (
@@ -686,7 +716,7 @@ export default function PmsTasks() {
                                                             )}
 
                                                             {/* Overtime Button */}
-                                                            {task.status !== 'Completed' && (
+                                                            {task.status !== 'Completed' && task.status !== 'READY_FOR_QA' && (
                                                                 <button
                                                                     onClick={() => {
                                                                         setOvertimeTaskId(task.id);
@@ -921,12 +951,15 @@ export default function PmsTasks() {
                 </DialogContent>
             </Dialog>
 
-            {/* Files modal — the "Details" action button opens this instead of
-                the old Projects Overview panel: the executive attaches
-                evidence files + a note against the task, and can see what
-                the manager originally provided (description / working
-                links) alongside what's already been submitted. */}
-            <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
+            {/* The "Details" action button opens one of two modals depending on
+                role: IT/SEO-SMM/D&D executives get the full Files modal
+                (dropzone + rich-text detail); Product Posting Executive gets
+                the simpler links-only form their workflow actually needs. */}
+            {isProductPostingExecutive ? (
+                <AddLinksModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
+            ) : (
+                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
+            )}
         </div>
     );
 }
@@ -984,6 +1017,153 @@ function RichTextEditor({ onChange }: { onChange: (html: string) => void }) {
                 onInput={(e) => onChange(e.currentTarget.innerHTML)}
             ></div>
         </div>
+    );
+}
+
+// Product Posting Executive's "Details" form — deliberately not the Files
+// modal below: their submissions are working links (posted listing URLs),
+// not evidence files/a rich-text note. Submits through the same generic
+// /api/tasks/:id/files endpoint (description-only, no file), which already
+// works for any task regardless of department/workflow.
+function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [links, setLinks] = useState<string[]>([""]);
+    const taskId = task?.id;
+
+    const { data: uploadedRes } = useQuery<{ success: boolean; data: TaskFileEntry[] }>({
+        queryKey: [`/api/tasks/${taskId}/files`],
+        enabled: !!taskId,
+        queryFn: () => apiRequestJson("GET", `/api/tasks/${taskId}/files`),
+    });
+    const submittedLinks = (uploadedRes?.data || []).filter((f) => !f.fileUrl && f.description);
+
+    const submitMutation = useMutation({
+        mutationFn: async () => {
+            const validLinks = links.map((l) => l.trim()).filter(Boolean);
+            for (const link of validLinks) {
+                const form = new FormData();
+                form.append("description", link);
+                await apiRequestJson("POST", `/api/tasks/${taskId}/files`, form);
+            }
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            setLinks([""]);
+            toast({ title: "Sent", description: "Your links were submitted." });
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to send links", variant: "destructive" });
+        },
+    });
+
+    if (!task) return null;
+    const providedLinks = extractProvidedLinks(task);
+    const hasValidLink = links.some((l) => l.trim());
+
+    return (
+        <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
+            <DialogContent className="max-w-[95vw] w-[700px] max-h-[90vh] bg-white p-0 flex flex-col border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
+                <div className="p-6 border-b border-gray-100 dark:border-zinc-800 flex-shrink-0">
+                    <h2 className="text-[20px] font-bold text-gray-700 dark:text-zinc-300">Links</h2>
+                </div>
+
+                <div className="p-8 space-y-6 bg-white overflow-y-auto dark:bg-zinc-900">
+                    <div>
+                        <h3 className="text-[13px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Provided Links</h3>
+                        {providedLinks.length === 0 ? (
+                            <p className="text-[13px] text-gray-400">No links provided by the manager.</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {providedLinks.map((link, i) => (
+                                    <a
+                                        key={i}
+                                        href={link.startsWith("http") ? link : `https://${link}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
+                                    >
+                                        {link}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div>
+                        <h3 className="text-[13px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Submitted Links</h3>
+                        {submittedLinks.length === 0 ? (
+                            <p className="text-[13px] text-gray-400">No links submitted yet.</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {submittedLinks.map((f) => (
+                                    <a
+                                        key={f.id}
+                                        href={(f.description || "").startsWith("http") ? f.description! : `https://${f.description}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="block text-[13px] text-emerald-600 hover:text-emerald-800 underline truncate"
+                                    >
+                                        {f.description}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Add Link(s)</label>
+                        <div className="space-y-2">
+                            {links.map((link, idx) => (
+                                <Input
+                                    key={idx}
+                                    value={link}
+                                    placeholder="https://..."
+                                    onChange={(e) => {
+                                        const next = [...links];
+                                        next[idx] = e.target.value;
+                                        setLinks(next);
+                                    }}
+                                    className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
+                                />
+                            ))}
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setLinks((prev) => [...prev, ""])}
+                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
+                            >
+                                Add Link
+                            </button>
+                            {links.length > 1 && (
+                                <button
+                                    onClick={() => setLinks((prev) => prev.slice(0, -1))}
+                                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded text-[13px] font-bold dark:bg-zinc-800 dark:text-zinc-300"
+                                >
+                                    Remove Link
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-4 border-t bg-slate-50 flex justify-end gap-3 dark:bg-zinc-900 flex-shrink-0">
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[14px] font-bold transition-colors dark:bg-zinc-900 dark:text-zinc-400"
+                    >
+                        Close
+                    </button>
+                    <button
+                        onClick={() => submitMutation.mutate()}
+                        disabled={submitMutation.isPending || !hasValidLink}
+                        className="px-6 py-2 bg-[#008d4c] hover:bg-[#00733e] text-white rounded text-[14px] font-bold shadow-lg disabled:opacity-50 transition-all active:scale-95"
+                    >
+                        {submitMutation.isPending ? "Sending..." : "Send Links"}
+                    </button>
+                </div>
+            </DialogContent>
+        </Dialog>
     );
 }
 

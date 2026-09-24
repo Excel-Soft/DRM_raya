@@ -2166,6 +2166,33 @@ export const insertBranchSchema = createInsertSchema(branches).omit({
 export type Branch = typeof branches.$inferSelect;
 export type InsertBranch = z.infer<typeof insertBranchSchema>;
 
+// ---------------------------------------------------------------------------
+// Departments — dynamic, admin-manageable department list. `code` is the
+// stable identifier stored on services.routeDepartments (Allowed Department
+// checkboxes) / services.projectDepartment (single-select) and on
+// projects.departmentType elsewhere in this schema; `name` is the display
+// label. Seeded from the departments actually in use (grouped drm.roles),
+// editable going forward via /api/drm/departments.
+// ---------------------------------------------------------------------------
+export const departments = drmSchema.table("departments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull().unique(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdBy: uuid("created_by").references(() => users.id),
+  updatedBy: uuid("updated_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const insertDepartmentSchema = createInsertSchema(departments).omit({
+  id: true, createdAt: true, updatedAt: true, deletedAt: true, createdBy: true, updatedBy: true,
+});
+export type Department = typeof departments.$inferSelect;
+export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
+
 export const insertPhysicalAssetSchema = createInsertSchema(physicalAssets).omit({
   id: true, createdAt: true, updatedAt: true, deletedAt: true, createdBy: true, updatedBy: true,
 }).extend({

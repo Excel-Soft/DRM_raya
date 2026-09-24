@@ -4,6 +4,16 @@ import path from "path";
 import fs from "fs";
 import { pool } from "../db";
 import { taskTimeLogsRepository } from "../repositories/task-time-logs.repository";
+import { changeTaskStatus } from "./services/pms-transition.service";
+
+function actorRoles(req: Request): string[] {
+  const u = (req as any).user;
+  if (!u) return [];
+  const out: string[] = [];
+  for (const v of [u.activeRoleId, u.roleId, u.role]) if (v) out.push(String(v));
+  if (Array.isArray(u.roles)) for (const r of u.roles) if (r) out.push(String(r));
+  return out;
+}
 
 // Backs the "Assigned Project" (Today/Waiting) widget and the per-task
 // timer controls on product-posting-executive-widget.tsx (and any other
@@ -77,16 +87,33 @@ router.get("/my-executions", async (req: Request, res: Response) => {
 
 // POST /api/tasks/:id/timers/start — only the task's own assignee can start
 // its timer. No-ops (returns the existing start time) if already running,
-// so a duplicate click can't lose the original start time.
+// so a duplicate click can't lose the original start time. Also moves the
+// task into InProgress if it isn't already (ToDo -> InProgress on first
+// start, Blocked -> InProgress when the executive resumes work after a
+// manager rejection) — routed through the real PMS transition gate so a
+// task still awaiting manager review (READY_FOR_QA) correctly can't be
+// silently reopened this way.
 router.post("/:id/timers/start", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-    const taskRes = await pool.query(`select id, assigned_to_user_id, timer_started_at from drm.tasks where id = $1`, [req.params.id]);
+    const taskRes = await pool.query(`select id, assigned_to_user_id, status, timer_started_at from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     if (taskRes.rows[0].assigned_to_user_id !== uid) {
       return res.status(403).json({ error: "Only the assigned executive can start this task's timer." });
+    }
+
+    if (taskRes.rows[0].status !== "InProgress") {
+      const transition = await changeTaskStatus({
+        taskId: req.params.id,
+        toStatus: "InProgress",
+        actorUserId: uid,
+        actorRoles: actorRoles(req),
+      });
+      if (!transition.success) {
+        return res.status(transition.status || 400).json({ error: transition.error, code: (transition as any).code });
+      }
     }
 
     const result = await pool.query(
@@ -219,9 +246,13 @@ router.post("/:id/files", (req, res, next) => {
 });
 
 // POST /api/tasks/:id/complete — { linksPosted, outputNotes }
-// Marks the task Completed and records a drm.task_results row (linksPosted +
-// total time actually spent, summed from the real task_time_logs rows the
-// timer start/stop endpoints above create).
+// The executive's "submit for review" action — records a drm.task_results
+// row (linksPosted + total time actually spent, summed from the real
+// task_time_logs rows the timer start/stop endpoints above create), then
+// moves the task to READY_FOR_QA (not straight to Completed — that would
+// skip the manager's review/QA-handoff step entirely). The manager then
+// approves (-> Completed) or rejects (-> Blocked, back to this executive)
+// from the PMS Task History review queue via the same transition gate.
 router.post("/:id/complete", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
@@ -243,8 +274,19 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
       [req.params.id, linksPosted, totalDurationMinutes],
     );
 
-    await pool.query(`update drm.tasks set status = 'Completed', timer_started_at = null, updated_at = now() where id = $1`, [req.params.id]);
-    res.json({ success: true });
+    const notes = typeof req.body?.outputNotes === "string" && req.body.outputNotes.trim() ? req.body.outputNotes : null;
+    const transition = await changeTaskStatus({
+      taskId: req.params.id,
+      toStatus: "READY_FOR_QA",
+      actorUserId: uid,
+      actorRoles: actorRoles(req),
+      notes,
+    });
+    if (!transition.success) {
+      return res.status(transition.status || 400).json({ error: transition.error, code: (transition as any).code });
+    }
+
+    res.json({ success: true, status: transition.task.status });
   } catch (error) {
     console.error("Error completing task:", error);
     res.status(500).json({ error: "Failed to complete task" });

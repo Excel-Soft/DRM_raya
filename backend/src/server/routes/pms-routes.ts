@@ -325,7 +325,16 @@ function getPeriodRange(periodRaw: string) {
             CASE WHEN i.status IN ('APPROVED', 'PAID') THEN i.updated_at END,
             CASE WHEN gi.status IN ('Paid', 'Overdue') THEN COALESCE(gi.paid_at, gi.updated_at) END
           ) as "accountsApprovedAt",
-          wf.data_verified_at as "verifiedAt",
+          -- The department this project was routed to actually approving the
+          -- uploaded document — wf.data_verified_at (below) is never written
+          -- by any route, so this column was permanently stuck on "Waiting"
+          -- regardless of real approval status. Every department's own verify
+          -- endpoint (seo-smm/it/project-doc "documents/:id/verify") writes
+          -- the same real signal: drm.project_documents.status = 'APPROVED'.
+          -- MAX(updated_at) picks up the latest approval, so a reject ->
+          -- re-upload -> re-approve cycle still reports correctly (the old
+          -- rejected row's approval, if any, is superseded).
+          (SELECT max(apd.updated_at) FROM drm.project_documents apd WHERE apd.project_id = p.id AND apd.status = 'APPROVED') as "verifiedAt",
           (SELECT remarks FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectionReason",
           (SELECT created_at FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectedAt",
           (SELECT id FROM drm.project_documents 
@@ -498,6 +507,76 @@ function getPeriodRange(periodRaw: string) {
     }
   });
 
+  // GET /api/pms/tasks/pending-review — the manager's "Pending My Review"
+  // queue: tasks an executive has submitted (READY_FOR_QA) and that are now
+  // waiting on this manager to Approve (-> Completed, effectively handing it
+  // to QA) or Reject (-> Blocked, back to the executive for rework). Same
+  // department-scoping approach as /api/pms/department-status above — a
+  // manager only sees their own department's submissions; admin sees all.
+  app.get("/api/pms/tasks/pending-review", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+      const userRole = req.user.roleId || (req.user as any).role || "";
+      if (!isManagerialRole(userRole)) return res.json([]);
+
+      const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
+      const userDept = userRes.rows[0]?.department || "";
+
+      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
+        seo_smm: ["SEO_SMM", "SEO/SMM"],
+        it: ["IT"],
+        dd: ["DND", "DESIGN_DEVELOPMENT"],
+        product_posting: ["PRODUCT_POSTING"],
+        software: ["SOFTWARE"],
+        service: ["SERVICE"],
+      };
+      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+      const deptCandidates = Array.from(new Set([
+        ...(userDept ? [userDept] : []),
+        ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+      ]));
+
+      // admin/super_hod aren't tied to any one department — they see every
+      // department's queue, matching /api/pms/department-status's own
+      // "no roleFilter branch matches -> no filter" behavior for those roles.
+      const isDeptBoundManager = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(userRole);
+      const deptFilter = isDeptBoundManager
+        ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
+        : "";
+
+      const { rows } = await pool.query(`
+        SELECT
+          t.id,
+          t.title,
+          t.description,
+          t.project_id as "projectId",
+          t.assigned_to_user_id as "assigneeId",
+          au.name as "assigneeName",
+          COALESCE(NULLIF(p.name, ''), 'Unknown') as "project",
+          COALESCE(c.company_name, i.company_name, 'Unknown') as "company",
+          p.department_type as "departmentType",
+          t.updated_at as "submittedAt",
+          (SELECT notes FROM drm.task_status_history
+             WHERE task_id = t.id AND to_status = 'READY_FOR_QA'
+             ORDER BY changed_at DESC LIMIT 1) as "submissionNotes"
+        FROM drm.tasks t
+        JOIN drm.projects p ON p.id = t.project_id
+        LEFT JOIN drm.customers c ON c.id = p.customer_id
+        LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
+        LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
+        WHERE t.status = 'READY_FOR_QA' AND COALESCE(t.is_deleted, false) = false
+        ${deptFilter}
+        ORDER BY t.updated_at DESC
+      `);
+
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching pending review tasks:", error);
+      res.status(500).json({ error: "Failed to fetch pending review tasks" });
+    }
+  });
+
   // GET /api/pms/project-tasks/:projectId - Direct raw SQL tasks for modal (bypasses ORM user-scope)
   app.get("/api/pms/project-tasks/:projectId", async (req, res) => {
     try {
@@ -525,7 +604,14 @@ function getPeriodRange(periodRaw: string) {
           t.created_at as "createdAt",
           t.updated_at as "updatedAt",
           u.full_name as "assigneeName",
-          p.name as "projectName"
+          p.name as "projectName",
+          -- Why the manager sent this back, when it's currently Blocked —
+          -- the executive needs to know what to fix before resubmitting.
+          CASE WHEN t.status = 'Blocked' THEN (
+            SELECT notes FROM drm.task_status_history
+             WHERE task_id = t.id AND to_status = 'Blocked'
+             ORDER BY changed_at DESC LIMIT 1
+          ) END as "rejectionNotes"
         FROM drm.tasks t
         LEFT JOIN drm.users u ON u.id = t.assigned_to_user_id
         LEFT JOIN drm.projects p ON p.id = t.project_id
