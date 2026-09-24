@@ -184,7 +184,7 @@ router.post("/:id/documents", (req, res, next) => {
         } else {
             await pool.query(`
                 UPDATE drm.product_posting_workflows
-                SET salesperson_uploaded_at = now(), updated_at = now()
+                SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
                 WHERE project_id = $1
             `, [id]);
         }
@@ -256,6 +256,83 @@ router.put("/documents/:id/verify", async (req: any, res: any) => {
     } catch (error) {
         console.error("Error verifying document:", error);
         return res.status(500).json({ error: "Failed to verify document" });
+    }
+});
+
+// GET /api/projects/:id/details - Fetch project details
+router.get("/:id/details", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { id } = req.params;
+        
+        const detailsRes = await pool.query(`
+            SELECT pd.*, 
+                   json_build_object(
+                       'id', p.id,
+                       'companyName', COALESCE(c.company_name, inv.company_name, p.name)
+                   ) as project
+            FROM drm.project_details pd
+            JOIN drm.projects p ON p.id = pd.project_id
+            LEFT JOIN drm.customers c ON c.id = p.customer_id
+            LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+            WHERE pd.project_id = $1
+        `, [id]);
+        
+        if (detailsRes.rows.length === 0) {
+            // Provide fallback if no details uploaded yet
+            const projectRes = await pool.query(`
+                SELECT p.id, COALESCE(c.company_name, inv.company_name, p.name) as "companyName", p.created_at as "createdAt"
+                FROM drm.projects p
+                LEFT JOIN drm.customers c ON c.id = p.customer_id
+                LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+                WHERE p.id = $1
+            `, [id]);
+            if (projectRes.rows.length > 0) {
+                return res.json({ data: { project: projectRes.rows[0], createdAt: projectRes.rows[0].createdAt } });
+            }
+            return res.status(404).json({ error: "Project not found" });
+        }
+        
+        const row = detailsRes.rows[0];
+        res.json({
+            data: {
+                project: row.project,
+                packageName: row.package_name,
+                minisiteUrl: row.minisite_url,
+                phone: row.phone,
+                mobile: row.mobile,
+                address: row.address,
+                reference: row.reference,
+                categories: row.categories,
+                detailNotes: row.detail_notes,
+                evidenceUrl: row.evidence_url,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at
+            }
+        });
+    } catch (error) {
+        console.error("Error fetching project details:", error);
+        res.status(500).json({ error: "Failed to fetch project details" });
+    }
+});
+
+// GET /api/projects/:id/documents - Fetch project documents
+router.get("/:id/documents", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { id } = req.params;
+        
+        const docsRes = await pool.query(`
+            SELECT id, document_url as "documentUrl", status, created_at as "createdAt"
+            FROM drm.project_documents
+            WHERE project_id = $1
+            ORDER BY created_at DESC
+        `, [id]);
+        
+        res.json({ data: docsRes.rows });
+    } catch (error) {
+        console.error("Error fetching project documents:", error);
+        res.status(500).json({ error: "Failed to fetch project documents" });
     }
 });
 

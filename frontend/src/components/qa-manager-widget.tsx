@@ -45,6 +45,24 @@ import { WorkflowTimeline } from "@/components/workflow-timeline";
  }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
+function extractProvidedLinks(task: any): string[] {
+    try {
+        if (task?.notes) {
+            const parsed = JSON.parse(task.notes);
+            if (parsed.links) {
+                let candidates: string[] = [];
+                if (Array.isArray(parsed.links)) {
+                    candidates = parsed.links.map((l: string) => String(l).trim()).filter(Boolean);
+                } else if (typeof parsed.links === "string" && parsed.links.trim()) {
+                    candidates = parsed.links.split(",").map((l: string) => l.trim()).filter(Boolean);
+                }
+                return candidates.filter((l: string) => isNaN(Number(l)) && (l.includes(".") || l.includes("http")));
+            }
+        }
+    } catch (e) { }
+    return [];
+}
+
 function StatCard({ label, icon: Icon, value, colorClass = "bg-[#00a65a]" }: { label: string; icon: any; value: string | number; colorClass?: string }) {
     return (
         <div className="flex-1 p-4 bg-white rounded-lg border flex items-center justify-between gap-3 min-w-[200px] shadow-sm dark:bg-zinc-900">
@@ -199,12 +217,11 @@ export function QAManagerWidget() {
         }
     });
 
-    // Distinct projects that have ever reached QA — not /api/pms/stats' system-wide
-    // count, which includes every department regardless of QA involvement.
+    // Distinct projects that have ever reached QA, pending, completed, and changing
     const { data: qaStatsData } = useQuery({
-        queryKey: ["/api/product-posting/qa/stats", statsPeriod],
+        queryKey: ["/api/product-posting/qa/dashboard-stats", statsPeriod],
         queryFn: async () => {
-            const res = await apiRequest("GET", `/api/product-posting/qa/stats?period=${statsPeriod}`);
+            const res = await apiRequest("GET", `/api/product-posting/qa/dashboard-stats?period=${statsPeriod}`);
             return res.json();
         }
     });
@@ -287,6 +304,16 @@ export function QAManagerWidget() {
 
     const queueRows = myTasksData?.data || [];
 
+    const parseComment = (noteStr: string | null) => {
+        if (!noteStr) return "";
+        try {
+            const parsed = JSON.parse(noteStr);
+            return parsed.reason || noteStr;
+        } catch {
+            return noteStr;
+        }
+    };
+
     const projectListData = queueRows.slice(0, 50).map((p: any, idx: number) => ({
         no: idx + 1,
         company: p.companyName || "N/A",
@@ -294,8 +321,14 @@ export function QAManagerWidget() {
         project: p.name || p.title,
         status: p.phaseLabel || p.status,
         statusTag: p.returnCount ? `rework ${p.returnCount}` : 'awaiting qa',
-        time: p.executiveSubmittedAt ? new Date(p.executiveSubmittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "N/A",
+        qty: "-",
+        invoiceNumber: p.invoiceNumber ? `#${p.invoiceNumber}` : "-",
+        time: p.executiveSubmittedAt 
+            ? new Date(p.executiveSubmittedAt).toLocaleTimeString('en-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: true }) 
+            : "N/A",
+        vmComment: p.vmComment || "",
         id: p.taskId,
+        links: extractProvidedLinks(p),
         raw: p,
     })).filter((p: any) => !hiddenProjectKeys.includes(getProjectKey(p))) || [];
 
@@ -304,9 +337,15 @@ export function QAManagerWidget() {
         company: p.companyName || "N/A",
         tasker: p.assignee?.name || "Posting Executive",
         project: p.name || p.title,
+        qty: "-",
+        invoiceNumber: p.invoiceNumber ? `#${p.invoiceNumber}` : "-",
         status: p.phaseLabel || p.status,
-        time: p.updatedAt ? new Date(p.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "N/A",
+        time: p.updatedAt 
+            ? new Date(p.updatedAt).toLocaleTimeString('en-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: true }) 
+            : "N/A",
+        vmComment: p.vmComment || "",
         id: p.taskId,
+        links: extractProvidedLinks(p),
         raw: p,
     })).filter((p: any) => !hiddenProjectKeys.includes(getProjectKey(p))) || [];
 
@@ -365,13 +404,13 @@ export function QAManagerWidget() {
                                 <StatCard label="Total Project" icon={Users} value={qaStatsData?.total ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setProjectTab("pending")}>
-                                <StatCard label="Pending Reviews" icon={RefreshCw} value={queueRows.length || "0"} />
+                                <StatCard label="Pending" icon={RefreshCw} value={qaStatsData?.pending ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Complete" icon={Tag} value={pmsStats?.projects?.completedProjects ?? 0} />
+                                <StatCard label="Complete" icon={Tag} value={qaStatsData?.complete ?? 0} />
                             </div>
                             <div className="flex-1 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => setLocation("/pms/status")}>
-                                <StatCard label="Changing" icon={Target} value={changingProjectsData.length} />
+                                <StatCard label="Changing" icon={Target} value={qaStatsData?.changing ?? 0} />
                             </div>
                         </div>
                     </div>
@@ -403,8 +442,9 @@ export function QAManagerWidget() {
                                 <thead>
                                     <tr className="bg-[#f8f9fa] border-b dark:bg-zinc-900">
                                         <th className="px-4 py-4 text-left font-bold text-gray-700 w-16 dark:text-zinc-400">No#</th>
-                                        <th className="px-4 py-4 text-left font-bold text-gray-700 dark:text-zinc-400">Detail</th>
+                                        <th className="px-4 py-4 text-left font-bold text-gray-700 dark:text-zinc-400 w-[350px]">Detail</th>
                                         <th className="px-4 py-4 text-left font-bold text-gray-700 dark:text-zinc-400">Status/Time</th>
+                                        <th className="px-4 py-4 text-left font-bold text-gray-700 dark:text-zinc-400">VM Comment</th>
                                         <th className="px-4 py-4 text-center font-bold text-gray-700 dark:text-zinc-400">Action</th>
                                     </tr>
                                 </thead>
@@ -423,6 +463,8 @@ export function QAManagerWidget() {
                                                         <div className="flex gap-1.5"><span className="font-black text-gray-800 dark:text-zinc-100">Company:</span> <span className="text-gray-500 font-bold uppercase dark:text-zinc-400">{row.company}</span></div>
                                                         <div className="flex gap-1.5"><span className="font-black text-gray-800 dark:text-zinc-100">Tasker:</span> <span className="text-gray-500 font-bold dark:text-zinc-400">{row.tasker}</span></div>
                                                         <div className="flex gap-1.5"><span className="font-black text-gray-800 dark:text-zinc-100">Project:</span> <span className="text-gray-500 font-bold dark:text-zinc-400">{row.project}</span></div>
+                                                        <div className="flex gap-1.5"><span className="font-black text-gray-800 dark:text-zinc-100">Qty:</span> <span className="text-gray-500 font-bold dark:text-zinc-400">{row.qty}</span></div>
+                                                        <div className="flex gap-1.5"><span className="font-black text-gray-800 dark:text-zinc-100">Invoice:</span> <span className="text-gray-500 font-bold dark:text-zinc-400">{row.invoiceNumber}</span></div>
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-6 align-middle">
@@ -432,6 +474,11 @@ export function QAManagerWidget() {
                                                         </span>
                                                         <span className="text-gray-400">/</span>
                                                         <span className="text-gray-500 font-bold dark:text-zinc-400">{row.time || format(new Date(), "yyyy-MM-dd")}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-6 align-middle">
+                                                    <div className="text-[13px] text-red-500 font-bold whitespace-pre-wrap max-w-[200px]">
+                                                        {row.vmComment || "-"}
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-6 align-middle">
@@ -760,11 +807,12 @@ export function QAManagerWidget() {
                             </div>
 
                             <div className="space-y-1.5">
-                                <Label className="text-[13px] font-semibold text-gray-600 dark:text-zinc-300">Project</Label>
+                                <Label className="text-[13px] font-semibold text-gray-600 dark:text-zinc-300">Comment</Label>
                                 <Textarea
                                     value={remarksValue}
                                     onChange={(e) => setRemarksValue(e.target.value)}
                                     className="min-h-[100px] border-gray-200 focus:ring-[#00a65a] focus:border-[#00a65a] resize-none dark:border-zinc-800"
+                                    placeholder="Enter your QA remarks or feedback here..."
                                 />
                             </div>
                         </div>

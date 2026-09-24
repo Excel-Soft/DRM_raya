@@ -525,22 +525,32 @@ router.get("/qa/queue", async (req: any, res: any) => {
                 t.id as "taskId",
                 t.title,
                 t.status,
+                t.notes,
                 t.sent_to_qa_at as "executiveSubmittedAt",
                 t.updated_at as "updatedAt",
                 COALESCE(c.company_name, inv.company_name, p.name) as "companyName",
                 p.id as "projectId",
+                inv.invoice_number as "invoiceNumber",
                 jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "assignee",
                 (SELECT count(*) FROM drm.task_status_history h
                    WHERE h.task_id = t.id AND h.to_status = 'Blocked'
-                     AND h.notes LIKE '%"qaReturn":true%') as "returnCount"
+                     AND h.notes LIKE '%"qaReturn":true%') as "returnCount",
+                (SELECT remarks FROM drm.product_posting_rework_history rh
+                   JOIN drm.product_posting_workflows wf ON wf.id = rh.workflow_id
+                   WHERE wf.project_id = t.project_id AND rh.action = 'DOCUMENT_REJECTED'
+                   ORDER BY rh.created_at DESC LIMIT 1) as "vmComment"
             FROM drm.tasks t
             JOIN drm.projects p ON p.id = t.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
             LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
-            WHERE t.sent_to_qa_at IS NOT NULL AND t.qa_reviewed_at IS NULL
-              AND COALESCE(t.is_deleted, false) = false
-            ORDER BY t.sent_to_qa_at DESC
+            WHERE COALESCE(t.is_deleted, false) = false
+              AND (
+                  (t.sent_to_qa_at IS NOT NULL AND t.qa_reviewed_at IS NULL)
+                  OR
+                  (t.status = 'Blocked' AND t.sent_to_qa_at IS NULL AND EXISTS (SELECT 1 FROM drm.task_status_history h WHERE h.task_id = t.id AND h.to_status = 'Blocked' AND h.notes LIKE '%"qaReturn":true%'))
+              )
+            ORDER BY COALESCE(t.sent_to_qa_at, t.updated_at) DESC
         `);
 
         res.json({ success: true, data: rows });
@@ -550,24 +560,39 @@ router.get("/qa/queue", async (req: any, res: any) => {
     }
 });
 
-// GET /api/product-posting/qa/stats?period=X — "Distinct projects that have
-// ever reached QA" (the widget's own words), i.e. total ever sent, not just
-// the still-pending queue above.
-router.get("/qa/stats", async (req: any, res: any) => {
+// GET /api/product-posting/qa/dashboard-stats?period=X
+router.get("/qa/dashboard-stats", async (req: any, res: any) => {
     try {
         if (!req.user) return res.status(401).json({ error: "Not authenticated" });
 
         const { from, to } = getStatsPeriodRange(req.query.period as string | undefined);
-        const conditions = ["sent_to_qa_at IS NOT NULL", "coalesce(is_deleted, false) = false"];
+        let timeFilter = "";
         const params: any[] = [];
-        if (from) { params.push(from); conditions.push(`sent_to_qa_at >= $${params.length}`); }
-        if (to) { params.push(to); conditions.push(`sent_to_qa_at <= $${params.length}`); }
+        if (from) {
+            params.push(from);
+            timeFilter += ` AND COALESCE(t.sent_to_qa_at, t.qa_reviewed_at, t.updated_at) >= $${params.length}`;
+        }
+        if (to) {
+            params.push(to);
+            timeFilter += ` AND COALESCE(t.sent_to_qa_at, t.qa_reviewed_at, t.updated_at) <= $${params.length}`;
+        }
 
-        const { rows } = await pool.query(
-            `SELECT count(*)::int as total FROM drm.tasks WHERE ${conditions.join(" AND ")}`,
-            params,
-        );
-        res.json({ total: rows[0]?.total ?? 0 });
+        const { rows } = await pool.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE t.sent_to_qa_at IS NOT NULL OR t.qa_reviewed_at IS NOT NULL OR EXISTS (SELECT 1 FROM drm.task_status_history h WHERE h.task_id = t.id AND h.to_status = 'Blocked' AND h.notes LIKE '%"qaReturn":true%'))::int as total,
+                COUNT(*) FILTER (WHERE t.sent_to_qa_at IS NOT NULL AND t.qa_reviewed_at IS NULL)::int as pending,
+                COUNT(*) FILTER (WHERE t.qa_reviewed_at IS NOT NULL)::int as complete,
+                COUNT(*) FILTER (WHERE t.status = 'Blocked' AND t.sent_to_qa_at IS NULL AND EXISTS (SELECT 1 FROM drm.task_status_history h WHERE h.task_id = t.id AND h.to_status = 'Blocked' AND h.notes LIKE '%"qaReturn":true%'))::int as changing
+            FROM drm.tasks t
+            WHERE coalesce(t.is_deleted, false) = false ${timeFilter}
+        `, params);
+
+        res.json({
+            total: rows[0]?.total ?? 0,
+            pending: rows[0]?.pending ?? 0,
+            complete: rows[0]?.complete ?? 0,
+            changing: rows[0]?.changing ?? 0
+        });
     } catch (error) {
         console.error("Error fetching QA stats:", error);
         res.status(500).json({ error: "Failed to fetch QA stats" });
@@ -635,6 +660,15 @@ router.post("/tasks/:id/qa-review", async (req: any, res: any) => {
         console.error("Error recording QA review:", error);
         res.status(500).json({ error: "Failed to record QA review" });
     }
+});
+
+// Dummy endpoints to satisfy WorkflowTimeline component which expects them
+router.get("/task/:id/rework-history", async (req: any, res: any) => {
+    res.json({ success: true, data: [] });
+});
+
+router.get("/task/:id/report-links", async (req: any, res: any) => {
+    res.json({ success: true, data: [] });
 });
 
 export const productPostingWorkflowRouter = router;

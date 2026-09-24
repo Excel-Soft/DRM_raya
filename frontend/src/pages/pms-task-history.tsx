@@ -147,6 +147,7 @@ export default function PmsTaskHistory() {
     });
 
     const [searchQuery, setSearchQuery] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
 
     const [viewingTask, setViewingTask] = useState<PendingReviewTask | null>(null);
     const { data: viewingFilesRes, isLoading: isViewingFilesLoading, isError: isViewingFilesError, error: viewingFilesError } = useQuery<{ success: boolean; data: SubmittedFileEntry[] }>({
@@ -167,10 +168,17 @@ export default function PmsTaskHistory() {
             // instead of always showing an empty list.
             let parsedLinks: string[] = [];
             let detailText = record.notes || "";
+            let isQaReturn = false;
+            let qaCommentText = "N/A";
+            
             if (record.notes) {
                 try {
                     const parsed = JSON.parse(record.notes);
-                    if (Array.isArray(parsed?.links)) {
+                    if (parsed.qaReturn) {
+                        isQaReturn = true;
+                        qaCommentText = parsed.reason || "";
+                        detailText = parsed.reason ? `QA Return: ${parsed.reason}` : "QA Returned Project";
+                    } else if (Array.isArray(parsed?.links)) {
                         parsedLinks = parsed.links.filter((l: any) => typeof l === "string" && l.trim());
                         detailText = parsedLinks.length > 0 ? `${parsedLinks.length} link(s) submitted` : "";
                     }
@@ -185,7 +193,8 @@ export default function PmsTaskHistory() {
                 name: userName,
                 avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}`,
                 company: record.company || "—",
-                qa: "N/A",
+                qa: qaCommentText,
+                isQaReturn,
                 vm: "",
                 project: record.task?.title || "—",
                 taskDesc: record.fromStatus
@@ -205,9 +214,13 @@ export default function PmsTaskHistory() {
     }, [historyRecords]);
 
     const filteredHistory = useMemo(() => {
-        if (!searchQuery.trim()) return history;
+        let current = history;
+        if (statusFilter === "changing") {
+            current = current.filter(row => row.isQaReturn);
+        }
+        if (!searchQuery.trim()) return current;
         const lowerSearch = searchQuery.toLowerCase();
-        return history.filter((row) =>
+        return current.filter((row) =>
             String(row.no || "").toLowerCase().includes(lowerSearch) ||
             String(row.name || "").toLowerCase().includes(lowerSearch) ||
             String(row.company || "").toLowerCase().includes(lowerSearch) ||
@@ -218,7 +231,7 @@ export default function PmsTaskHistory() {
             String(row.detail || "").toLowerCase().includes(lowerSearch) ||
             String(row.status || "").toLowerCase().includes(lowerSearch)
         );
-    }, [searchQuery, history]);
+    }, [searchQuery, history, statusFilter]);
 
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
@@ -353,12 +366,13 @@ export default function PmsTaskHistory() {
                     <h3 className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Completed Projects</h3>
                     
                     <div className="flex items-center gap-3 w-full md:w-auto">
-                        <Select defaultValue="all">
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
                             <SelectTrigger className="h-9 w-[120px] text-[13px] bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-800">
                                 <SelectValue placeholder="All" />
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="changing">Changing</SelectItem>
                             </SelectContent>
                         </Select>
 
@@ -520,10 +534,36 @@ export default function PmsTaskHistory() {
                                     <td className="px-4 py-3 text-center">
                                         <span className="text-[12.5px] font-medium text-[#495057] tracking-wide dark:text-zinc-400">{row.spent}</span>
                                     </td>
-                                    <td className="px-4 py-3 text-center">
-                                        {row.status !== 'Completed' ? null : row.sentToQaAt ? (
+                                    <td className="px-4 py-3 text-center min-w-[200px]">
+                                        {row.isQaReturn ? (
+                                            <div className="flex items-center justify-center gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    className="h-7 px-3 text-[11px] border border-amber-400 text-amber-600 bg-amber-50 hover:bg-amber-100"
+                                                    disabled={rejectMutation.isPending}
+                                                    onClick={() => {
+                                                        apiRequestJson("PATCH", `/api/pms/task/${row.taskId}/status`, { status: "InProgress", reason: "Sent back by Manager" })
+                                                            .then(() => {
+                                                                queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+                                                                toast({ title: "Reassigned to Executive" });
+                                                            })
+                                                            .catch((err) => toast({ title: "Error", description: err.message, variant: "destructive" }));
+                                                    }}
+                                                >
+                                                    Assign to Exec
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
+                                                    disabled={sendToQaMutation.isPending}
+                                                    onClick={() => sendToQaMutation.mutate(row.taskId)}
+                                                >
+                                                    Send to QA
+                                                </Button>
+                                            </div>
+                                        ) : row.status !== 'Completed' ? null : row.sentToQaAt ? (
                                             <span
-                                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"
+                                                className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-600"
                                                 title={`Sent to QA on ${new Date(row.sentToQaAt).toLocaleString()}`}
                                             >
                                                 <CheckCircle2 className="w-3.5 h-3.5" /> Sent
