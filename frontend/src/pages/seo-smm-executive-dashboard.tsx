@@ -89,10 +89,13 @@ export default function SeoSmmExecutiveDashboard() {
     // "owned by or assigned to me" for a non-managerial role like
     // seo_smm_executive, so no extra assignedToUserId filter is needed — just
     // the status per tab.
-    const [projectTab, setProjectTab] = useState<"assign" | "working" | "complete">("assign");
+    const [projectTab, setProjectTab] = useState<"assign" | "working" | "submitted" | "complete">("assign");
     const PROJECT_TAB_STATUS: Record<typeof projectTab, string> = {
         assign: "ToDo",
         working: "InProgress",
+        // Submitted for the SEO/SMM manager's review — READY_FOR_QA until
+        // they approve (-> Completed, below) or reject (-> back to Working).
+        submitted: "READY_FOR_QA",
         complete: "Completed",
     };
     const { data: myTasks = [], isLoading: tasksLoading } = useQuery<any[]>({
@@ -105,6 +108,7 @@ export default function SeoSmmExecutiveDashboard() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=ToDo`] });
             queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=InProgress`] });
+            queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=READY_FOR_QA`] });
             queryClient.invalidateQueries({ queryKey: [`/api/pms/tasks?status=Completed`] });
             toast({ title: "Task updated" });
         },
@@ -250,6 +254,7 @@ export default function SeoSmmExecutiveDashboard() {
                                     {([
                                         { key: "assign", label: "Assign Project" },
                                         { key: "working", label: "Working Project" },
+                                        { key: "submitted", label: "Pending Review" },
                                         { key: "complete", label: "Complete Project" },
                                     ] as const).map((tab) => (
                                         <button
@@ -271,7 +276,7 @@ export default function SeoSmmExecutiveDashboard() {
                                 <div className="p-6 text-center text-[13px] text-slate-400">Loading...</div>
                             ) : myTasks.length === 0 ? (
                                 <div className="p-6 text-center text-[13px] text-slate-400">
-                                    {projectTab === "assign" ? "No new tasks assigned yet." : projectTab === "working" ? "Nothing in progress." : "Nothing completed yet."}
+                                    {projectTab === "assign" ? "No new tasks assigned yet." : projectTab === "working" ? "Nothing in progress." : projectTab === "submitted" ? "Nothing waiting on the manager's review." : "Nothing completed yet."}
                                 </div>
                             ) : myTasks.map((task: any) => (
                                 <div key={task.id} className="flex items-center justify-between p-4">
@@ -295,10 +300,15 @@ export default function SeoSmmExecutiveDashboard() {
                                             size="sm"
                                             className="h-8 px-3 text-[12px] bg-emerald-600 hover:bg-emerald-700"
                                             disabled={updateTaskStatusMutation.isPending}
-                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "Completed" })}
+                                            onClick={() => updateTaskStatusMutation.mutate({ id: task.id, status: "READY_FOR_QA" })}
                                         >
-                                            <CheckSquare className="w-3.5 h-3.5 mr-1" /> Mark Complete
+                                            <CheckSquare className="w-3.5 h-3.5 mr-1" /> Submit for Review
                                         </Button>
+                                    )}
+                                    {projectTab === "submitted" && (
+                                        <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+                                            Awaiting manager review
+                                        </span>
                                     )}
                                 </div>
                             ))}

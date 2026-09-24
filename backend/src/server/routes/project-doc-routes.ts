@@ -53,6 +53,26 @@ router.post("/:id/documents", (req, res, next) => {
             return res.status(404).json({ error: "Project not found" });
         }
 
+        // Block re-upload once the routed department has already verified the
+        // current document — matches pms-pending-approvals.tsx's own
+        // isVerifiedNow logic (latest APPROVED project_documents row newer
+        // than any later rejection). A rejection always re-opens uploads
+        // again; this only locks the genuinely-done state.
+        const verifyState = await pool.query(
+            `SELECT
+               (SELECT max(pd.updated_at) FROM drm.project_documents pd WHERE pd.project_id = $1 AND pd.status = 'APPROVED') as approved_at,
+               (SELECT max(rh.created_at) FROM drm.product_posting_workflows wf2
+                  JOIN drm.product_posting_rework_history rh ON rh.workflow_id = wf2.id
+                  WHERE wf2.project_id = $1 AND rh.action = 'DOCUMENT_REJECTED') as rejected_at`,
+            [id],
+        );
+        const { approved_at: approvedAt, rejected_at: rejectedAt } = verifyState.rows[0] || {};
+        if (approvedAt && (!rejectedAt || new Date(approvedAt) > new Date(rejectedAt))) {
+            return res.status(409).json({
+                error: "This document has already been verified by the department. No further upload is needed.",
+            });
+        }
+
         // Upsert project_details safely without ON CONFLICT (in case of missing unique constraint)
         const checkDetails = await pool.query(`SELECT id FROM drm.project_details WHERE project_id = $1`, [id]);
         if (checkDetails.rows.length === 0) {

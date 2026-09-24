@@ -7,6 +7,7 @@ import {
 } from "../repositories/it-assets.repository";
 import { requireRole } from "../middleware/auth.middleware";
 import { AuditLogService } from "./services/audit-log.service";
+import { changeTaskStatus } from "./services/pms-transition.service";
 import { insertItDomainSchema, insertItBackupSchema } from "@shared/schema";
 import { pool } from "../db";
 
@@ -709,32 +710,43 @@ router.get("/executives", requireRole(...IT_READ_ROLES), async (req: Request, re
   }
 });
 
-// PATCH /api/it/tasks/:id/status — { status: "ToDo" | "InProgress" | "Completed" }
-// Deliberately bypasses the generic PMS task-transition service
-// (pms-transition.service.ts's changeTaskStatus is a stub that throws on any
-// real use) with a direct, IT-scoped update instead. Only the task's own
-// assignee or an IT write-role may move it, so an executive can work their
-// own queue without needing manager-level task permissions.
+// PATCH /api/it/tasks/:id/status — { status: "ToDo" | "InProgress" | "READY_FOR_QA" }
+// The IT executive's own "start working" / "submit for review" actions.
+// Used to deliberately bypass the generic PMS task-transition service
+// because it was a no-op stub; that's fixed now, so this routes through the
+// same real changeTaskStatus() gate everything else does — Completed is no
+// longer reachable from here at all (only the IT manager's review, via the
+// central Kanban status endpoint, can move a submitted task to Completed).
 router.patch("/tasks/:id/status", async (req: Request, res: Response) => {
   try {
     if (!(req as any).user) return res.status(401).json({ error: "Not authenticated" });
     const status = req.body?.status;
-    if (!["ToDo", "InProgress", "Completed"].includes(status)) {
-      return res.status(400).json({ error: "status must be ToDo, InProgress, or Completed" });
+    if (!["ToDo", "InProgress", "READY_FOR_QA"].includes(status)) {
+      return res.status(400).json({ error: "status must be ToDo, InProgress, or READY_FOR_QA" });
     }
 
     const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
 
     const userId = actorId(req);
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const isAssignee = taskRes.rows[0].assigned_to_user_id === userId;
     const isWriteRole = IT_WRITE_ROLES.includes((req as any).user?.roleId) || ((req as any).user?.roles || []).some((r: string) => IT_WRITE_ROLES.includes(r));
     if (!isAssignee && !isWriteRole) {
       return res.status(403).json({ error: "Only the assigned executive or an IT manager can update this task." });
     }
 
-    await pool.query(`update drm.tasks set status = $1, updated_at = now() where id = $2`, [status, req.params.id]);
-    res.json({ success: true });
+    const roles = [(req as any).user?.activeRoleId, (req as any).user?.roleId, (req as any).user?.role, ...(((req as any).user?.roles) || [])].filter(Boolean);
+    const transition = await changeTaskStatus({
+      taskId: req.params.id,
+      toStatus: status,
+      actorUserId: userId,
+      actorRoles: roles,
+    });
+    if (!transition.success) {
+      return res.status(transition.status || 400).json({ error: transition.error, code: (transition as any).code });
+    }
+    res.json({ success: true, status: transition.task.status });
   } catch (error) {
     console.error("Error updating IT task status:", error);
     res.status(500).json({ error: "Failed to update task status" });

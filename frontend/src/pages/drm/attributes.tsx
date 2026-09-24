@@ -31,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { ServiceCatalogTree } from "@/components/service-catalog-tree";
 import { QaAttributeTree } from "@/components/qa-attribute-tree";
 import { BuyerDetailTree } from "@/components/buyer-detail-tree";
+import { DepartmentsManager } from "@/components/departments-manager";
 
 const ATTRIBUTE_CATEGORIES = [
     "Company Detail",
@@ -52,6 +53,7 @@ const ATTRIBUTE_CATEGORIES = [
     "Buyer Detail",
     "Portfolio Categories",
     "Alibaba Packages",
+    "Departments",
 ];
 
 export default function AttributesPage() {
@@ -90,10 +92,16 @@ export default function AttributesPage() {
     // "Buyer Detail" is a genuine 2-level tree (buyer -> reference contacts,
     // each with optional email/phone) — its own tree UI handles fetching/rendering.
     const isBuyerDetailCategory = selectedCategory === "Buyer Detail";
+    // "Departments" is a thin view over the real, dedicated drm.departments
+    // table (full CRUD with code/sortOrder/isActive lives at
+    // /api/drm/departments) — same "single source of truth" reasoning as
+    // Company Branch above. It also needs an Edit affordance the generic
+    // add/delete list below doesn't have, so it gets its own component.
+    const isDepartmentCategory = selectedCategory === "Departments";
     const extraColumnCount = (isPenaltyCategory ? 1 : 0) + (isGovtLeaveCategory ? 1 : 0) + (isAccountTaskCategory ? 2 : 0);
 
     // Fetch attributes for selected category (Service for Quotation / Q & A /
-    // Buyer Detail manage their own fetching entirely inside their own tree components).
+    // Buyer Detail / Departments manage their own fetching entirely inside their own components).
     const { data: attributes = [], isLoading } = useQuery({
         queryKey: isBranchCategory ? ["/api/drm/branches", "all"] : ["/api/attributes", selectedCategory],
         queryFn: async () => {
@@ -105,7 +113,7 @@ export default function AttributesPage() {
             const res = await apiRequest("GET", `/api/attributes/${encodeURIComponent(selectedCategory)}`);
             return res.json();
         },
-        enabled: !isServiceCategory && !isQaCategory && !isBuyerDetailCategory,
+        enabled: !isServiceCategory && !isQaCategory && !isBuyerDetailCategory && !isDepartmentCategory,
     });
 
     // Add mutation — mutationRequest throws on non-2xx so 401/403 messages
@@ -186,6 +194,8 @@ export default function AttributesPage() {
                     <QaAttributeTree />
                 ) : isBuyerDetailCategory ? (
                     <BuyerDetailTree />
+                ) : isDepartmentCategory ? (
+                    <DepartmentsManager />
                 ) : (
                     <>
                         <div className="flex items-center justify-between mb-6">

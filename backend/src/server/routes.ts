@@ -61,6 +61,7 @@ import portfolioRoutes from "./routes/portfolio-routes";
 import itAssetsRoutes from "./routes/it-assets-routes";
 import seoSmmProjectsRoutes from "./routes/seo-smm-projects-routes";
 import branchesRoutes from "./routes/branches-routes";
+import departmentsRoutes from "./routes/departments-routes";
 import servicesCatalogRoutes from "./routes/services-catalog-routes";
 import itAssetInventoryRoutes from "./routes/it-asset-inventory-routes";
 import receptionRoutes from "./routes/reception-routes";
@@ -425,6 +426,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/it", itAssetsRoutes);
   app.use("/api/seo-smm", seoSmmProjectsRoutes);
   app.use("/api/drm/branches", branchesRoutes);
+  app.use("/api/drm/departments", departmentsRoutes);
   app.use("/api/drm/services", servicesCatalogRoutes);
   app.use("/api/it/asset-inventory", itAssetInventoryRoutes);
 

@@ -3,6 +3,7 @@ import { authMiddleware } from "../middleware/auth.middleware";
 import { pool } from "../db";
 import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 import { safePage, safePageSize } from "../utils/sql-safety";
+import { changeTaskStatus } from "./services/pms-transition.service";
 
 function shortLog(method: string, path: string, status: number, ms: number) {
   console.log(`[${new Date().toISOString()}] ${method} ${path} -> ${status} (${ms}ms)`);
@@ -342,6 +343,30 @@ export function registerQuickEntriesRoutes(app: Express) {
   app.patch("/api/tasks/:id", async (req, res) => {
     const start = Date.now();
     try {
+      // `status` is pulled out of the generic field list and routed through
+      // the real PMS transition gate — this legacy endpoint used to write it
+      // with a raw UPDATE and no lifecycle validation at all, an unguarded
+      // path straight to e.g. "Completed" bypassing manager review.
+      if (req.body.status) {
+        const roles = [
+          (req.user as any)?.activeRoleId,
+          req.user?.roleId,
+          (req.user as any)?.role,
+          ...(((req.user as any)?.roles) || []),
+        ].filter(Boolean);
+        const transition = await changeTaskStatus({
+          taskId: req.params.id,
+          toStatus: req.body.status,
+          actorUserId: req.user!.userId,
+          actorRoles: roles,
+          reason: req.body?.reason ?? null,
+        });
+        if (!transition.success) {
+          shortLog(req.method, req.originalUrl, transition.status || 400, Date.now() - start);
+          return res.status(transition.status || 400).json({ success: false, message: transition.error, code: (transition as any).code });
+        }
+      }
+
       const isManager = isManagerialRole(req.user!.roleId);
       const params: any[] = [];
       let where = "where id = $1";
@@ -350,10 +375,15 @@ export function registerQuickEntriesRoutes(app: Express) {
       const fields: string[] = [];
       if (req.body.title) { params.push(req.body.title); fields.push(`title = $${params.length}`); }
       if (req.body.description !== undefined) { params.push(req.body.description); fields.push(`description = $${params.length}`); }
-      if (req.body.status) { params.push(req.body.status); fields.push(`status = $${params.length}`); }
       if (req.body.priority) { params.push(req.body.priority); fields.push(`priority = $${params.length}`); }
       if (req.body.dueDate) { params.push(req.body.dueDate); fields.push(`due_at = $${params.length}`); }
-      if (!fields.length) return res.status(400).json({ success: false, message: "No fields to update" });
+      if (!fields.length) {
+        if (req.body.status) {
+          shortLog(req.method, req.originalUrl, 200, Date.now() - start);
+          return res.json({ success: true, message: "Updated" });
+        }
+        return res.status(400).json({ success: false, message: "No fields to update" });
+      }
       params.push(new Date()); fields.push(`updated_at = $${params.length}`);
       const sql = `update tasks set ${fields.join(", ")} ${where} returning id`;
       const result = await pool.query(sql, params);
