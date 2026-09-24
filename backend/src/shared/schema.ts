@@ -639,6 +639,17 @@ export const tasks = drmSchema.table("tasks", {
   timerStartedAt: timestamp("timer_started_at", { withTimezone: true }),
   notes: text("notes"),
   isDeleted: boolean("is_deleted").default(false),
+  // Set once a manager explicitly hands a Completed task off to QA from the
+  // "Completed Projects" table — deliberately separate from `status`
+  // reaching "Completed": approving the executive's submission and sending
+  // it to QA are two distinct manager actions, not the same click.
+  sentToQaAt: timestamp("sent_to_qa_at", { withTimezone: true }),
+  // Set once QA finishes reviewing a task sent to them. QA "return" doesn't
+  // set this — it clears sentToQaAt and reopens the task (status -> Blocked)
+  // instead, the same rework loop a manager's reject already uses.
+  qaReviewedAt: timestamp("qa_reviewed_at", { withTimezone: true }),
+  qaLevel: text("qa_level"),
+  qaRemarks: text("qa_remarks"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -3,7 +3,9 @@ import { pool } from "../db";
 import { NotificationService } from "./services/notification-service";
 import { projectsRepository } from "../repositories/projects.repository";
 import { tasksRepository } from "../repositories/tasks.repository";
+import { taskStatusHistoryRepository } from "../repositories/task-status-history.repository";
 import { insertTaskSchema } from "@shared/schema";
+import { getStatsPeriodRange } from "./pms-routes";
 
 const router = Router();
 
@@ -490,6 +492,147 @@ router.post("/projects/:id/assign-task", async (req: any, res: any) => {
             return res.status(400).json({ error: "Invalid request", details: error.issues });
         }
         res.status(500).json({ error: "Failed to assign task" });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// QA Manager dashboard (frontend/src/components/qa-manager-widget.tsx,
+// served at /qa/manager) — previously called three endpoints that never
+// existed anywhere in the backend (GET /qa/queue, GET /qa/stats, POST
+// /tasks/:id/qa-review all 404'd via the SPA fallback), so the page was
+// permanently empty regardless of any real data. Built for real here,
+// sourced from drm.tasks.sent_to_qa_at (see PATCH .../send-to-qa in
+// pms-routes.ts) — deliberately department-agnostic, not tied to
+// product_posting_workflows, since "Send to QA" on PMS Task History works
+// for any department's tasks, not just Product Posting.
+// ---------------------------------------------------------------------------
+
+function isQaManagerRole(req: any): boolean {
+    const role = String(req.user?.activeRoleId || req.user?.roleId || req.user?.role || "").toLowerCase();
+    return role === "qa_manager" || role === "admin" || role === "super_admin";
+}
+
+// GET /api/product-posting/qa/queue — tasks a manager has sent to QA that
+// QA hasn't reviewed yet (this is the "Pending Reviews" queue + Project
+// List / Changing Projects table data).
+router.get("/qa/queue", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+        const { rows } = await pool.query(`
+            SELECT
+                t.id as "taskId",
+                t.title,
+                t.status,
+                t.sent_to_qa_at as "executiveSubmittedAt",
+                t.updated_at as "updatedAt",
+                COALESCE(c.company_name, inv.company_name, p.name) as "companyName",
+                p.id as "projectId",
+                jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "assignee",
+                (SELECT count(*) FROM drm.task_status_history h
+                   WHERE h.task_id = t.id AND h.to_status = 'Blocked'
+                     AND h.notes LIKE '%"qaReturn":true%') as "returnCount"
+            FROM drm.tasks t
+            JOIN drm.projects p ON p.id = t.project_id
+            LEFT JOIN drm.customers c ON c.id = p.customer_id
+            LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+            LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
+            WHERE t.sent_to_qa_at IS NOT NULL AND t.qa_reviewed_at IS NULL
+              AND COALESCE(t.is_deleted, false) = false
+            ORDER BY t.sent_to_qa_at DESC
+        `);
+
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error("Error fetching QA queue:", error);
+        res.status(500).json({ error: "Failed to fetch QA queue" });
+    }
+});
+
+// GET /api/product-posting/qa/stats?period=X — "Distinct projects that have
+// ever reached QA" (the widget's own words), i.e. total ever sent, not just
+// the still-pending queue above.
+router.get("/qa/stats", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+        const { from, to } = getStatsPeriodRange(req.query.period as string | undefined);
+        const conditions = ["sent_to_qa_at IS NOT NULL", "coalesce(is_deleted, false) = false"];
+        const params: any[] = [];
+        if (from) { params.push(from); conditions.push(`sent_to_qa_at >= $${params.length}`); }
+        if (to) { params.push(to); conditions.push(`sent_to_qa_at <= $${params.length}`); }
+
+        const { rows } = await pool.query(
+            `SELECT count(*)::int as total FROM drm.tasks WHERE ${conditions.join(" AND ")}`,
+            params,
+        );
+        res.json({ total: rows[0]?.total ?? 0 });
+    } catch (error) {
+        console.error("Error fetching QA stats:", error);
+        res.status(500).json({ error: "Failed to fetch QA stats" });
+    }
+});
+
+// POST /api/product-posting/tasks/:id/qa-review — { action: "complete" |
+// "return", remarks?, level? }. "complete" finalizes the task (records QA's
+// level/remarks, task stays Completed). "return" reopens it for rework —
+// the same Blocked status + reason the manager's own reject already uses on
+// PMS Task History, so the executive sees it exactly the same way regardless
+// of who sent it back.
+router.post("/tasks/:id/qa-review", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isQaManagerRole(req)) {
+            return res.status(403).json({ error: "Only QA can review this task." });
+        }
+
+        const { action, remarks, level } = req.body || {};
+        if (!["complete", "return"].includes(action)) {
+            return res.status(400).json({ error: "action must be complete or return" });
+        }
+
+        const taskRes = await pool.query(
+            `SELECT id, status, sent_to_qa_at, qa_reviewed_at FROM drm.tasks WHERE id = $1`,
+            [req.params.id],
+        );
+        if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+        const task = taskRes.rows[0];
+        if (!task.sent_to_qa_at || task.qa_reviewed_at) {
+            return res.status(400).json({ error: "This task isn't waiting on a QA review." });
+        }
+
+        const userId = getUserId(req);
+
+        if (action === "complete") {
+            await pool.query(
+                `UPDATE drm.tasks SET qa_reviewed_at = now(), qa_level = $2, qa_remarks = $3 WHERE id = $1`,
+                [req.params.id, level || null, remarks || null],
+            );
+            return res.json({ success: true });
+        }
+
+        // action === "return" — reopen for rework. Completed has no legal
+        // outgoing transition in the normal PMS state machine (it's meant to
+        // be terminal for the manager's own flow), so this is a deliberate,
+        // QA-only exception applied directly rather than through
+        // changeTaskStatus. sent_to_qa_at is cleared so the task can be sent
+        // back to QA again once resubmitted and re-approved.
+        await pool.query(
+            `UPDATE drm.tasks SET status = 'Blocked', sent_to_qa_at = null, timer_started_at = null WHERE id = $1`,
+            [req.params.id],
+        );
+        await taskStatusHistoryRepository.create({
+            taskId: req.params.id,
+            userId,
+            fromStatus: "Completed" as any,
+            toStatus: "Blocked" as any,
+            notes: JSON.stringify({ reason: remarks || "Returned by QA", qaReturn: true }),
+        } as any);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error recording QA review:", error);
+        res.status(500).json({ error: "Failed to record QA review" });
     }
 });
 

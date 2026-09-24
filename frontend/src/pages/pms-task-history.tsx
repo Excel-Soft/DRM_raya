@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Eye, Link as LinkIcon, ExternalLink, Loader2, ArrowUp, ArrowDown, ArrowUpDown, CheckCircle2, XCircle, ClipboardCheck } from "lucide-react";
+import { Eye, Loader2, ArrowUp, ArrowDown, ArrowUpDown, CheckCircle2, XCircle, ClipboardCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,8 +18,17 @@ interface TaskStatusHistoryRecord {
     changedAt: string | null;
     notes: string | null;
     company?: string | null;
+    timeSpentMinutes?: number;
+    sentToQaAt?: string | null;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
+}
+
+function formatDuration(minutes: number): string {
+    if (!minutes || minutes <= 0) return "0m";
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 interface PendingReviewTask {
@@ -34,6 +43,15 @@ interface PendingReviewTask {
     departmentType: string | null;
     submittedAt: string | null;
     submissionNotes: string | null;
+}
+
+interface SubmittedFileEntry {
+    id: string;
+    fileUrl: string | null;
+    fileName: string | null;
+    description: string | null;
+    createdAt: string;
+    uploadedByName: string | null;
 }
 
 const TASK_HISTORY_KEY = "/api/pms/task-history";
@@ -89,10 +107,21 @@ export default function PmsTaskHistory() {
             apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "Completed" }),
         onSuccess: () => {
             invalidateReview();
-            toast({ title: "Approved", description: "The task is complete and handed off to QA." });
+            toast({ title: "Approved", description: "The task is complete — send it to QA from Completed Projects below." });
         },
         onError: (err: any) => {
             toast({ title: "Could not approve task", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
+    const sendToQaMutation = useMutation({
+        mutationFn: async (taskId: string) => apiRequestJson("POST", `/api/pms/tasks/${taskId}/send-to-qa`, {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+            toast({ title: "Sent to QA" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not send to QA", description: err?.message || "Please try again.", variant: "destructive" });
         },
     });
 
@@ -117,10 +146,16 @@ export default function PmsTaskHistory() {
         },
     });
 
-    const [linksModalOpen, setLinksModalOpen] = useState(false);
-    const [selectedLinks, setSelectedLinks] = useState<string[]>([]);
-    const [selectedProjectName, setSelectedProjectName] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
+
+    const [viewingTask, setViewingTask] = useState<PendingReviewTask | null>(null);
+    const { data: viewingFilesRes, isLoading: isViewingFilesLoading, isError: isViewingFilesError, error: viewingFilesError } = useQuery<{ success: boolean; data: SubmittedFileEntry[] }>({
+        queryKey: [`/api/tasks/${viewingTask?.id}/files`],
+        enabled: !!viewingTask,
+        queryFn: () => apiRequestJson("GET", `/api/tasks/${viewingTask!.id}/files`),
+        retry: 1,
+    });
+    const viewingFiles = viewingFilesRes?.data || [];
 
     const history = useMemo(() => {
         return (historyRecords || []).map((record, idx) => {
@@ -161,8 +196,10 @@ export default function PmsTaskHistory() {
                 taskTime: "",
                 status: record.toStatus || "",
                 run: "",
-                spent: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
+                spent: formatDuration(record.timeSpentMinutes || 0),
+                changedAt: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
                 links: parsedLinks,
+                sentToQaAt: record.sentToQaAt || null,
             };
         });
     }, [historyRecords]);
@@ -274,11 +311,19 @@ export default function PmsTaskHistory() {
                                             <div className="flex items-center gap-2 flex-shrink-0">
                                                 <Button
                                                     size="sm"
+                                                    variant="outline"
+                                                    className="h-8"
+                                                    onClick={() => setViewingTask(task)}
+                                                >
+                                                    <Eye className="w-3.5 h-3.5 mr-1" /> View
+                                                </Button>
+                                                <Button
+                                                    size="sm"
                                                     className="bg-[#008d4c] hover:bg-[#00733e] text-white h-8"
                                                     disabled={approveMutation.isPending}
                                                     onClick={() => approveMutation.mutate(task.id)}
                                                 >
-                                                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approve &amp; Send to QA
+                                                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approved
                                                 </Button>
                                                 <Button
                                                     size="sm"
@@ -401,7 +446,7 @@ export default function PmsTaskHistory() {
                                         Spent <SortIcon column="spent" />
                                     </button>
                                 </th>
-                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">Links</th>
+                                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-center">QA</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
@@ -476,17 +521,23 @@ export default function PmsTaskHistory() {
                                         <span className="text-[12.5px] font-medium text-[#495057] tracking-wide dark:text-zinc-400">{row.spent}</span>
                                     </td>
                                     <td className="px-4 py-3 text-center">
-                                        <button 
-                                            className="text-[#2bc18c] hover:bg-[#2bc18c]/10 p-1.5 rounded-full transition-colors inline-block dark:text-zinc-100"
-                                            onClick={() => {
-                                                setSelectedLinks(row.links || []);
-                                                setSelectedProjectName(row.project);
-                                                setLinksModalOpen(true);
-                                            }}
-                                            title="View Links"
-                                        >
-                                            <Eye className={`w-[18px] h-[18px] ${(row.links && row.links.length > 0) ? "" : "opacity-40"}`} strokeWidth={2} />
-                                        </button>
+                                        {row.status !== 'Completed' ? null : row.sentToQaAt ? (
+                                            <span
+                                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"
+                                                title={`Sent to QA on ${new Date(row.sentToQaAt).toLocaleString()}`}
+                                            >
+                                                <CheckCircle2 className="w-3.5 h-3.5" /> Sent
+                                            </span>
+                                        ) : (
+                                            <Button
+                                                size="sm"
+                                                className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
+                                                disabled={sendToQaMutation.isPending}
+                                                onClick={() => sendToQaMutation.mutate(row.taskId)}
+                                            >
+                                                Send to QA
+                                            </Button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -495,57 +546,6 @@ export default function PmsTaskHistory() {
                 </div>
             </div>
 
-            {/* Links Viewer Modal */}
-            <Dialog open={linksModalOpen} onOpenChange={setLinksModalOpen}>
-                <DialogContent className="max-w-md bg-white p-0 overflow-hidden border-0 shadow-lg font-sans dark:bg-zinc-900">
-                    <DialogHeader className="p-6 pb-4 border-b border-gray-100 bg-gray-50/50 dark:bg-zinc-900 dark:border-zinc-800">
-                        <DialogTitle className="text-lg font-bold text-[#343a40] flex items-center gap-2 dark:text-zinc-100">
-                            <LinkIcon className="text-emerald-500 w-5 h-5" />
-                            Submitted Project Links
-                        </DialogTitle>
-                        <DialogDescription className="text-sm text-[#6c757d]">
-                            Viewing workflow output links mapped to <span className="font-semibold text-emerald-600">{selectedProjectName}</span>
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="p-6 pt-4 max-h-[60vh] overflow-y-auto">
-                        {selectedLinks.length > 0 ? (
-                            <div className="space-y-3">
-                                {selectedLinks.map((link, idx) => (
-                                    <div key={idx} className="flex items-start gap-3 p-3 rounded-xl bg-gray-50/80 dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 hover:border-emerald-100 dark:hover:border-emerald-900/50 hover:bg-emerald-50/30 dark:hover:bg-emerald-950/30 transition-colors group">
-                                        <div className="mt-0.5 shrink-0 w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold text-xs">
-                                            {idx + 1}
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <a 
-                                                href={link.startsWith('http') ? link : `https://${link}`} 
-                                                target="_blank" 
-                                                rel="noopener noreferrer"
-                                                className="text-sm font-medium text-blue-600 hover:text-blue-800 break-words line-clamp-2"
-                                            >
-                                                {link}
-                                            </a>
-                                        </div>
-                                        <a 
-                                            href={link.startsWith('http') ? link : `https://${link}`} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer"
-                                            className="shrink-0 text-gray-400 hover:text-emerald-500 transition-colors"
-                                            title="Open link in new tab"
-                                        >
-                                            <ExternalLink className="w-4 h-4" />
-                                        </a>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-gray-400">
-                                <LinkIcon className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                                <p className="text-sm font-medium">No links were attached to this project.</p>
-                            </div>
-                        )}
-                    </div>
-                </DialogContent>
-            </Dialog>
 
             {/* Reject reason — required before a Pending My Review task can be
                 sent back (Blocked) to its executive for rework. */}
@@ -580,6 +580,90 @@ export default function PmsTaskHistory() {
                         >
                             {rejectMutation.isPending ? "Rejecting..." : "Reject & Send Back"}
                         </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* View submission — what the executive actually did, so the
+                manager can check the work before Approve/Reject instead of
+                deciding blind. Same files/description data the executive's
+                own "Files" modal on Task System writes to. */}
+            <Dialog open={!!viewingTask} onOpenChange={(open) => { if (!open) setViewingTask(null); }}>
+                <DialogContent className="max-w-lg bg-white dark:bg-zinc-900">
+                    <DialogHeader>
+                        <DialogTitle className="text-[17px] font-bold text-[#495057] dark:text-zinc-400">{viewingTask?.title}</DialogTitle>
+                        <DialogDescription className="text-sm text-[#6c757d]">
+                            Submitted by <span className="font-semibold">{viewingTask?.assigneeName || "Unknown"}</span>
+                            {viewingTask?.submittedAt && ` on ${new Date(viewingTask.submittedAt).toLocaleString()}`}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-5 py-2 max-h-[60vh] overflow-y-auto">
+                        <div>
+                            <h4 className="text-[13px] font-bold text-[#495057] dark:text-zinc-400 mb-1.5">Submitted Links</h4>
+                            {(() => {
+                                const links = extractSubmittedLinks(viewingTask?.submissionNotes ?? null);
+                                return links.length === 0 ? (
+                                    <p className="text-[13px] text-gray-400">No links submitted.</p>
+                                ) : (
+                                    <div className="space-y-1">
+                                        {links.map((link, i) => (
+                                            <a
+                                                key={i}
+                                                href={link.startsWith("http") ? link : `https://${link}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
+                                            >
+                                                {link}
+                                            </a>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+
+                        {isViewingFilesError ? (
+                            <p className="text-[13px] text-rose-500">
+                                Couldn't load files/description{viewingFilesError instanceof Error ? `: ${viewingFilesError.message}` : "."}
+                            </p>
+                        ) : (
+                            <>
+                                <div>
+                                    <h4 className="text-[13px] font-bold text-[#495057] dark:text-zinc-400 mb-1.5">Uploaded Files</h4>
+                                    {isViewingFilesLoading ? (
+                                        <p className="text-[13px] text-gray-400">Loading...</p>
+                                    ) : viewingFiles.filter((f) => f.fileUrl).length === 0 ? (
+                                        <p className="text-[13px] text-gray-400">No files uploaded.</p>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            {viewingFiles.filter((f) => f.fileUrl).map((f) => (
+                                                <a key={f.id} href={f.fileUrl!} target="_blank" rel="noopener noreferrer" className="block text-[13px] text-emerald-600 hover:underline">
+                                                    {f.fileName || "File"}
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div>
+                                    <h4 className="text-[13px] font-bold text-[#495057] dark:text-zinc-400 mb-1.5">Description</h4>
+                                    {isViewingFilesLoading ? (
+                                        <p className="text-[13px] text-gray-400">Loading...</p>
+                                    ) : viewingFiles.filter((f) => f.description).length === 0 ? (
+                                        <p className="text-[13px] text-gray-400">No description submitted.</p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {viewingFiles.filter((f) => f.description).map((f) => (
+                                                <p key={f.id} className="text-[13px] text-gray-600 dark:text-zinc-400">{f.description}</p>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                    <div className="flex items-center justify-end pt-2">
+                        <Button variant="secondary" onClick={() => setViewingTask(null)}>Close</Button>
                     </div>
                 </DialogContent>
             </Dialog>

@@ -577,6 +577,41 @@ function getPeriodRange(periodRaw: string) {
     }
   });
 
+  // POST /api/pms/tasks/:id/send-to-qa — a manager's explicit hand-off from
+  // "Completed Projects", a deliberately separate action from Approve
+  // (which just moves the task to Completed). Only legal once the task is
+  // actually Completed; idempotent — sending twice just returns the
+  // original timestamp instead of erroring or double-notifying.
+  app.post("/api/pms/tasks/:id/send-to-qa", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userRole = req.user.roleId || (req.user as any).role || "";
+      if (!isManagerialRole(userRole)) {
+        return res.status(403).json({ error: "Only a manager can send a task to QA." });
+      }
+
+      const taskRes = await pool.query(`SELECT id, status, sent_to_qa_at FROM drm.tasks WHERE id = $1`, [req.params.id]);
+      if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+      const task = taskRes.rows[0];
+      if (task.status !== "Completed") {
+        return res.status(400).json({ error: "Only a Completed task can be sent to QA." });
+      }
+
+      if (task.sent_to_qa_at) {
+        return res.json({ success: true, sentToQaAt: task.sent_to_qa_at });
+      }
+
+      const updated = await pool.query(
+        `UPDATE drm.tasks SET sent_to_qa_at = now() WHERE id = $1 RETURNING sent_to_qa_at`,
+        [req.params.id],
+      );
+      res.json({ success: true, sentToQaAt: updated.rows[0].sent_to_qa_at });
+    } catch (error) {
+      console.error("Error sending task to QA:", error);
+      res.status(500).json({ error: "Failed to send task to QA" });
+    }
+  });
+
   // GET /api/pms/project-tasks/:projectId - Direct raw SQL tasks for modal (bypasses ORM user-scope)
   app.get("/api/pms/project-tasks/:projectId", async (req, res) => {
     try {
@@ -2361,40 +2396,129 @@ function getPeriodRange(periodRaw: string) {
       }
 
       const { userId, dateFrom, dateTo, limit } = req.query;
+      const limitNum = limit ? parseInt(limit as string) : 50;
+      const userRole = req.user.roleId || (req.user as any).role || "";
 
-      const filters: any = {
-        limit: limit ? parseInt(limit as string) : 50,
-      };
-      // Default to the caller's own id when the page doesn't explicitly ask
-      // for someone else's history — matches the sibling /task-history/summary
-      // and /task-history/status-changes endpoints below, which already do
-      // this. Without the default, findRecent()'s "only filter if userId is
-      // set" guard never fired, so every non-admin role saw the full org-wide
-      // feed regardless of role.
-      filters.userId = (userId as string) || req.user.userId;
-      filters.roleId = req.user.roleId;
-      if (dateFrom) filters.dateFrom = new Date(dateFrom as string);
-      if (dateTo) filters.dateTo = new Date(dateTo as string);
+      let history: any[];
+      if (isManagerialRole(userRole) && !userId) {
+        // A manager's "Completed Projects" list must cover their whole
+        // department, not just tasks they personally own/are assigned to —
+        // the task a manager just Approved in "Pending My Review" is very
+        // often neither (a different manager assigned it, or an admin
+        // created it), so the plain owner-or-assignee filter below silently
+        // excluded exactly the rows a manager most needs to see here. Same
+        // department-scoping approach as /api/pms/tasks/pending-review.
+        const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
+        const userDept = userRes.rows[0]?.department || "";
+        const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
+          seo_smm: ["SEO_SMM", "SEO/SMM"],
+          it: ["IT"],
+          dd: ["DND", "DESIGN_DEVELOPMENT"],
+          product_posting: ["PRODUCT_POSTING"],
+          software: ["SOFTWARE"],
+          service: ["SERVICE"],
+        };
+        const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+        const deptCandidates = Array.from(new Set([
+          ...(userDept ? [userDept] : []),
+          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+        ]));
+        const isDeptBoundManager = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(userRole);
+        const deptFilter = isDeptBoundManager
+          ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
+          : "";
 
-      const history = await taskStatusHistoryRepository.findRecent(filters);
+        const params: any[] = [];
+        let dateFilter = "";
+        if (dateFrom) { params.push(new Date(dateFrom as string)); dateFilter += ` AND h.changed_at >= $${params.length}`; }
+        if (dateTo) { params.push(new Date(dateTo as string)); dateFilter += ` AND h.changed_at <= $${params.length}`; }
+        params.push(limitNum);
+
+        const { rows } = await pool.query(
+          `SELECT
+             h.id, h.task_id as "taskId", h.user_id as "userId",
+             h.from_status as "fromStatus", h.to_status as "toStatus",
+             h.changed_at as "changedAt", h.notes,
+             t.id as "taskTaskId", t.title as "taskTitle",
+             t.owner_user_id as "taskOwnerUserId", t.assigned_to_user_id as "taskAssignedToUserId",
+             u.id as "userUserId", u.name as "userName"
+           FROM drm.task_status_history h
+           JOIN drm.tasks t ON t.id = h.task_id
+           JOIN drm.projects p ON p.id = t.project_id
+           JOIN drm.users u ON u.id = h.user_id
+           WHERE 1=1 ${deptFilter} ${dateFilter}
+           ORDER BY h.changed_at DESC
+           LIMIT $${params.length}`,
+          params,
+        );
+        history = rows.map((r: any) => ({
+          id: r.id, taskId: r.taskId, userId: r.userId,
+          fromStatus: r.fromStatus, toStatus: r.toStatus, changedAt: r.changedAt, notes: r.notes,
+          task: { id: r.taskTaskId, title: r.taskTitle, ownerUserId: r.taskOwnerUserId, assignedToUserId: r.taskAssignedToUserId },
+          user: { id: r.userUserId, name: r.userName },
+        }));
+      } else {
+        const filters: any = { limit: limitNum };
+        // Default to the caller's own id when the page doesn't explicitly ask
+        // for someone else's history — matches the sibling /task-history/summary
+        // and /task-history/status-changes endpoints below, which already do
+        // this. Without the default, findRecent()'s "only filter if userId is
+        // set" guard never fired, so every non-admin role saw the full org-wide
+        // feed regardless of role.
+        filters.userId = (userId as string) || req.user.userId;
+        filters.roleId = req.user.roleId;
+        if (dateFrom) filters.dateFrom = new Date(dateFrom as string);
+        if (dateTo) filters.dateTo = new Date(dateTo as string);
+        history = await taskStatusHistoryRepository.findRecent(filters);
+      }
 
       // Enrich with the company name behind each task's project (invoice's
       // customer, falling back to the invoice/project name) — the history
-      // rows themselves carry no company info.
+      // rows themselves carry no company info. Also enrich with the task's
+      // real total time spent (summed from task_time_logs, the same rows
+      // the timer start/stop endpoints create) — the "Spent" column used to
+      // just show the status-change timestamp, not an actual duration.
       const taskIds = Array.from(new Set(history.map((h) => h.task?.id).filter(Boolean)));
       let companyByTaskId: Record<string, string> = {};
+      let minutesByTaskId: Record<string, number> = {};
+      let sentToQaByTaskId: Record<string, string | null> = {};
       if (taskIds.length > 0) {
-        const companyRows = await pool.query(
-          `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
-             FROM drm.tasks t
-             LEFT JOIN drm.projects p ON p.id = t.project_id
-             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-             LEFT JOIN drm.customers c ON c.id = COALESCE(p.customer_id, inv.customer_id)
-            WHERE t.id = ANY($1::uuid[])`,
-          [taskIds],
-        );
+        const [companyRows, timeRows, qaRows] = await Promise.all([
+          pool.query(
+            `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
+               FROM drm.tasks t
+               LEFT JOIN drm.projects p ON p.id = t.project_id
+               LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+               LEFT JOIN drm.customers c ON c.id = COALESCE(p.customer_id, inv.customer_id)
+              WHERE t.id = ANY($1::uuid[])`,
+            [taskIds],
+          ),
+          pool.query(
+            // task_time_logs.duration_minutes is what the Drizzle schema's
+            // timeSpentMinutes field actually maps to (the physical table
+            // also has an unrelated, always-zero legacy time_spent_minutes
+            // column — not this one).
+            `SELECT task_id, COALESCE(SUM(duration_minutes), 0) AS minutes
+               FROM drm.task_time_logs
+              WHERE task_id = ANY($1::uuid[])
+              GROUP BY task_id`,
+            [taskIds],
+          ),
+          pool.query(
+            `SELECT id AS task_id, sent_to_qa_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
+            [taskIds],
+          ),
+        ]);
         companyByTaskId = companyRows.rows.reduce((acc: Record<string, string>, row: any) => {
           acc[row.task_id] = row.company;
+          return acc;
+        }, {});
+        minutesByTaskId = timeRows.rows.reduce((acc: Record<string, number>, row: any) => {
+          acc[row.task_id] = Number(row.minutes) || 0;
+          return acc;
+        }, {});
+        sentToQaByTaskId = qaRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
+          acc[row.task_id] = row.sent_to_qa_at;
           return acc;
         }, {});
       }
@@ -2402,6 +2526,8 @@ function getPeriodRange(periodRaw: string) {
       const enriched = history.map((h) => ({
         ...h,
         company: h.task?.id ? companyByTaskId[h.task.id] ?? null : null,
+        timeSpentMinutes: h.task?.id ? minutesByTaskId[h.task.id] ?? 0 : 0,
+        sentToQaAt: h.task?.id ? sentToQaByTaskId[h.task.id] ?? null : null,
       }));
 
       res.json(enriched);

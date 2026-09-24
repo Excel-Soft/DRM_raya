@@ -5,6 +5,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CalendarIcon, Play, ArrowUpCircle, Clock, ExternalLink, PlayCircle, Eye, Plus, CheckCircle2, Briefcase, Download, FileText, TimerReset, Upload, Paperclip } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -49,14 +59,8 @@ export default function PmsStatus() {
     const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [filesModalTask, setFilesModalTask] = useState<any>(null);
-    const [isEndTaskModalOpen, setIsEndTaskModalOpen] = useState(false);
     const [finishingTaskId, setFinishingTaskId] = useState<string | null>(null);
-    const [endTaskForm, setEndTaskForm] = useState({
-        links: [""],
-        isShowcase: false,
-        type: "",
-        detail: ""
-    });
+    const [endTaskConfirmOpen, setEndTaskConfirmOpen] = useState(false);
     const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState(false);
     const [overtimeTaskId, setOvertimeTaskId] = useState<string | null>(null);
     const [overtimeForm, setOvertimeForm] = useState({ minutes: "60", reason: "" });
@@ -173,11 +177,7 @@ export default function PmsStatus() {
 
     const completeTaskMutation = useMutation({
         mutationFn: async (taskId: string) => {
-            const validLinks = endTaskForm.links.filter((l: string) => l.trim() !== "");
-            return apiRequestJson("POST", `/api/tasks/${taskId}/complete`, {
-                linksPosted: validLinks.length,
-                outputNotes: JSON.stringify({ links: validLinks }),
-            });
+            return apiRequestJson("POST", `/api/tasks/${taskId}/complete`, {});
         },
         onSuccess: (_data, taskId) => {
             // Submitting moves the task to READY_FOR_QA — awaiting the
@@ -262,31 +262,6 @@ export default function PmsStatus() {
         }
         startTimerMutation.mutate(task.id);
     };
-
-    // End task validation logic
-    let endTaskExpectedLinks = 0;
-    const taskToFinish = displayTasks.find((t: any) => t.id === finishingTaskId);
-    if (taskToFinish?.notes) {
-        try {
-            const metadata = JSON.parse(taskToFinish.notes);
-            if (metadata.links) {
-                const parsedLinks = Number(metadata.links);
-                if (!isNaN(parsedLinks)) {
-                    endTaskExpectedLinks = parsedLinks;
-                } else {
-                    endTaskExpectedLinks = metadata.links.split(',').filter((l: string) => l.trim()).length;
-                }
-            }
-        } catch(e) {}
-    }
-
-    const providedLinksCount = endTaskForm.links.map(l => l.trim()).filter(l => l).length;
-    const hasValidLinksCount = endTaskExpectedLinks === 0 || providedLinksCount === endTaskExpectedLinks;
-
-    const urlRegex = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i;
-    const hasInvalidUrls = endTaskForm.links.some(link => link.trim() && !urlRegex.test(link.trim()));
-
-    const isEndTaskSaveDisabled = completeTaskMutation.isPending || !hasValidLinksCount || hasInvalidUrls;
 
     const { data: userData } = useQuery({
         queryKey: ["/api/auth/me"],
@@ -807,18 +782,28 @@ export default function PmsStatus() {
                                                                 </>
                                                             )}
 
-                                                            {/* Done/Plus Button - only visible when timer has been run once (status is InProgress) and is currently stopped */}
+                                                            {/* Done/Plus Button - only visible when timer has been run once (status is InProgress) and is currently stopped. Goes straight to the Yes/No submit confirmation — no intermediate form. */}
                                                             {!task.timerStartedAt && task.status === 'InProgress' && (
                                                                 <button
                                                                     onClick={() => {
                                                                         setFinishingTaskId(task.id);
-                                                                        setIsEndTaskModalOpen(true);
+                                                                        setEndTaskConfirmOpen(true);
                                                                     }}
                                                                     disabled={completeTaskMutation.isPending}
                                                                     className="w-10 h-10 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100"
                                                                 >
                                                                     <Plus className="h-6 w-6 text-white stroke-[3]" />
                                                                 </button>
+                                                            )}
+
+                                                            {/* Once submitted, the task is locked — no more buttons here until the manager decides. */}
+                                                            {task.status === 'READY_FOR_QA' && (
+                                                                <span
+                                                                    className="text-rose-600 font-bold text-[12px]"
+                                                                    title="This task has been submitted for review — it cannot be worked on again until your manager reviews it."
+                                                                >
+                                                                    Submitted
+                                                                </span>
                                                             )}
 
                                                             {/* Overtime Button */}
@@ -886,123 +871,34 @@ export default function PmsStatus() {
                 </DialogContent>
             </Dialog>
                     
-            {/* End Task Modal (Moved to sibling to prevent focus infinite loop) */}
-            <Dialog open={isEndTaskModalOpen} onOpenChange={setIsEndTaskModalOpen}>
-                <DialogContent className="max-w-md p-0 overflow-hidden font-sans">
-                    <div className="p-4 border-b bg-white dark:bg-zinc-900">
-                        <h2 className="text-[18px] font-bold text-gray-700 dark:text-zinc-400">End Task</h2>
-                    </div>
-                    <div className="p-6 space-y-6">
-                        <div className="flex gap-2">
-                            <button 
-                                onClick={() => setEndTaskForm(prev => ({ ...prev, links: [...prev.links, ""] }))}
-                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
-                            >
-                                Add Link
-                            </button>
-                            <button 
-                                onClick={() => setEndTaskForm(prev => ({ ...prev, links: prev.links.slice(0, -1) }))}
-                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
-                            >
-                                Remove Link
-                            </button>
-                        </div>
-
-                        <div className="space-y-4">
-                            <div className="space-y-1.5">
-                                <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Links:</label>
-                                <div className="space-y-2">
-                                    {endTaskForm.links.map((link, idx) => (
-                                        <Input 
-                                            key={idx}
-                                            value={link}
-                                            onChange={(e) => {
-                                                const newLinks = [...endTaskForm.links];
-                                                newLinks[idx] = e.target.value;
-                                                setEndTaskForm(prev => ({ ...prev, links: newLinks }));
-                                            }}
-                                            className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                <input 
-                                    type="checkbox" 
-                                    id="showcase"
-                                    checked={endTaskForm.isShowcase}
-                                    onChange={(e) => setEndTaskForm(prev => ({ ...prev, isShowcase: e.target.checked }))}
-                                    className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 dark:border-zinc-800"
-                                />
-                                <label htmlFor="showcase" className="text-[13px] font-medium text-gray-600 dark:text-zinc-300">
-                                    Select if product is showcase
-                                </label>
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Type:</label>
-                                <Select value={endTaskForm.type} onValueChange={(v) => setEndTaskForm(prev => ({ ...prev, type: v }))}>
-                                    <SelectTrigger className="h-10 text-[13px] border-gray-200 dark:border-zinc-800">
-                                        <SelectValue placeholder="Choose..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="Website">Website</SelectItem>
-                                        <SelectItem value="SEO">SEO</SelectItem>
-                                        <SelectItem value="Social Media">Social Media</SelectItem>
-                                        <SelectItem value="Other">Other</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="space-y-1.5">
-                                <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Detail:</label>
-                                <textarea 
-                                    value={endTaskForm.detail}
-                                    onChange={(e) => setEndTaskForm(prev => ({ ...prev, detail: e.target.value }))}
-                                    className="w-full border border-gray-200 rounded min-h-[100px] p-3 text-[13px] outline-none focus:ring-1 focus:ring-emerald-500 dark:border-zinc-800"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div className="p-4 border-t bg-slate-50 flex items-center justify-between gap-3 dark:bg-zinc-900">
-                        <div className="text-[12px] font-medium text-rose-500">
-                            {!hasValidLinksCount && endTaskExpectedLinks > 0 && (
-                                <span>* You must provide exactly {endTaskExpectedLinks} link(s).</span>
-                            )}
-                            {hasValidLinksCount && hasInvalidUrls && (
-                                <span>* One or more provided links are invalid URLs.</span>
-                            )}
-                        </div>
-                        <div className="flex gap-3">
-                            <button 
-                                onClick={() => setIsEndTaskModalOpen(false)}
-                                className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[14px] font-bold transition-colors dark:bg-zinc-900 dark:text-zinc-400"
-                            >
-                                Close
-                            </button>
-                            <button 
-                                onClick={() => {
-                                    if (finishingTaskId && !isEndTaskSaveDisabled) {
-                                        if (window.confirm("Are you sure you want to end this task?")) {
-                                            completeTaskMutation.mutate(finishingTaskId);
-                                            setIsEndTaskModalOpen(false);
-                                        }
-                                    }
-                                }}
-                                disabled={isEndTaskSaveDisabled}
-                                className={`px-6 py-2 rounded text-[14px] font-bold transition-colors ${
-                                    isEndTaskSaveDisabled 
-                                        ? "bg-gray-300 text-gray-500 dark:text-slate-400 cursor-not-allowed" 
-                                        : "bg-[#00a65a] hover:bg-[#008d4c] text-white shadow-md shadow-emerald-100"
-                                }`}
-                            >
-                                {completeTaskMutation.isPending ? "Saving..." : "Save"}
-                            </button>
-                        </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
+            {/* Submit confirmation — the "+" button opens this directly, no
+                intermediate form. Once submitted, the task moves to
+                READY_FOR_QA and locks (no timer/Start button) until the
+                manager reviews it, so the executive needs to know upfront it
+                can't be restarted. */}
+            <AlertDialog open={endTaskConfirmOpen} onOpenChange={setEndTaskConfirmOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Submit this task?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Once submitted, this task goes to your manager for review and you won't be able to start it again unless it's rejected back to you.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>No</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => {
+                                if (finishingTaskId) {
+                                    completeTaskMutation.mutate(finishingTaskId);
+                                    setEndTaskConfirmOpen(false);
+                                }
+                            }}
+                        >
+                            Yes, Submit
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             {/* Overtime Modal */}
             <Dialog open={isOvertimeModalOpen} onOpenChange={setIsOvertimeModalOpen}>
@@ -1309,6 +1205,10 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
 
     if (!task) return null;
     const providedLinks = extractProvidedLinks(task);
+    // Once submitted for review (or fully done), the task is locked — same
+    // rule as the "+" submit button elsewhere: no more work until the
+    // manager reviews it.
+    const isLocked = task.status === 'READY_FOR_QA' || task.status === 'Completed';
 
     return (
         <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1320,17 +1220,23 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                 <div className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-10 bg-white overflow-y-auto dark:bg-zinc-900">
                     {/* Left: upload */}
                     <div className="space-y-4">
+                        {isLocked && (
+                            <div className="bg-rose-50 border border-rose-200 text-rose-600 text-[13px] font-semibold rounded-md px-4 py-3">
+                                This task has been submitted for review — files can no longer be sent until your manager reviews it.
+                            </div>
+                        )}
                         <div
                             role="button"
                             tabIndex={0}
-                            onClick={() => fileInputRef.current?.click()}
-                            onDragOver={(e) => e.preventDefault()}
+                            onClick={() => { if (!isLocked) fileInputRef.current?.click(); }}
+                            onDragOver={(e) => { if (!isLocked) e.preventDefault(); }}
                             onDrop={(e) => {
                                 e.preventDefault();
+                                if (isLocked) return;
                                 const files = Array.from(e.dataTransfer.files || []);
                                 if (files.length) setPendingFiles((prev) => [...prev, ...files]);
                             }}
-                            className="border border-gray-300 dark:border-zinc-700 rounded-md h-[220px] flex flex-col items-center justify-center gap-3 cursor-pointer hover:border-emerald-400 transition-colors"
+                            className={`border border-gray-300 dark:border-zinc-700 rounded-md h-[220px] flex flex-col items-center justify-center gap-3 transition-colors ${isLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-emerald-400"}`}
                         >
                             <Upload className="w-8 h-8 text-slate-400" />
                             <p className="text-[14px] font-semibold text-gray-600 dark:text-zinc-300">
@@ -1340,13 +1246,14 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                                 ref={fileInputRef}
                                 type="file"
                                 multiple
+                                disabled={isLocked}
                                 className="hidden"
                                 onChange={(e) => setPendingFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
                             />
                         </div>
                         <Button
                             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                            disabled={submitMutation.isPending}
+                            disabled={submitMutation.isPending || isLocked}
                             onClick={() => submitMutation.mutate()}
                         >
                             Send Files
@@ -1356,7 +1263,7 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                         <RichTextEditor onChange={setDescription} />
                         <Button
                             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                            disabled={submitMutation.isPending}
+                            disabled={submitMutation.isPending || isLocked}
                             onClick={() => submitMutation.mutate()}
                         >
                             {submitMutation.isPending ? "Sending..." : "Send Files"}
@@ -1415,7 +1322,7 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                     <Button variant="outline" className="h-10 px-6" onClick={onClose}>Close</Button>
                     <Button
                         className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                        disabled={submitMutation.isPending}
+                        disabled={submitMutation.isPending || isLocked}
                         onClick={() => submitMutation.mutate()}
                     >
                         {submitMutation.isPending ? "Saving..." : "Save"}

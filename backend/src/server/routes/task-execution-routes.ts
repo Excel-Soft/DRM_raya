@@ -5,6 +5,7 @@ import fs from "fs";
 import { pool } from "../db";
 import { taskTimeLogsRepository } from "../repositories/task-time-logs.repository";
 import { changeTaskStatus } from "./services/pms-transition.service";
+import { isManagerialRole } from "../utils/role-utils";
 
 function actorRoles(req: Request): string[] {
   const u = (req as any).user;
@@ -160,8 +161,12 @@ router.post("/:id/timers/stop", async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/tasks/:id/files — everyone with visibility on the task (owner or
-// assignee) can see what's been submitted against it.
+// GET /api/tasks/:id/files — the task's owner/assignee, or any managerial
+// role, can see what's been submitted against it. The manager reviewing a
+// task in the "Pending My Review" queue is very often neither the owner nor
+// the assignee (e.g. a different manager assigned it, or it was created by
+// an admin), so owner/assignee-only here left the review modal stuck loading
+// on a silent 403 for exactly the people who need to read it.
 router.get("/:id/files", async (req: Request, res: Response) => {
   try {
     const uid = userId(req);
@@ -170,7 +175,9 @@ router.get("/:id/files", async (req: Request, res: Response) => {
     const taskRes = await pool.query(`select id, owner_user_id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     const task = taskRes.rows[0];
-    if (task.owner_user_id !== uid && task.assigned_to_user_id !== uid) {
+    const role = (req as any).user?.activeRoleId || (req as any).user?.roleId || (req as any).user?.role;
+    const isManager = isManagerialRole(role) || ((req as any).user?.roles || []).some((r: string) => isManagerialRole(r));
+    if (task.owner_user_id !== uid && task.assigned_to_user_id !== uid && !isManager) {
       return res.status(403).json({ error: "You don't have access to this task's files." });
     }
 
