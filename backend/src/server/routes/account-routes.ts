@@ -2467,10 +2467,52 @@ export function registerAccountRoutes(app: Express) {
       }
 
       const validated = insertInvoiceSchema.parse(req.body);
-      const [invoice] = await db.insert(invoices).values({
-        ...validated,
-        createdByUserId: getUserId(req)!,
-      }).returning();
+      
+      let invoice;
+      let attempt = 0;
+      
+      while (attempt < 3) {
+        try {
+          // Generate sequential invoice number
+          const maxInvoiceRes = await db.execute(sql`
+            SELECT invoice_number 
+            FROM drm.invoices 
+            WHERE invoice_number ~ '^INV-\\d+$' 
+            ORDER BY CAST(SUBSTRING(invoice_number FROM 5) AS INTEGER) DESC 
+            LIMIT 1
+          `);
+          
+          let nextSeq = 1;
+          if (maxInvoiceRes.rows && maxInvoiceRes.rows.length > 0) {
+            const maxInv = maxInvoiceRes.rows[0].invoice_number as string;
+            const maxNum = parseInt(maxInv.substring(4), 10);
+            if (!isNaN(maxNum)) {
+              nextSeq = maxNum + 1;
+            }
+          }
+          
+          let currentInvoiceNumber = `INV-${String(nextSeq).padStart(5, '0')}`;
+          // In rare cases (e.g., frontend forcing an ID or concurrent insert), we retry with an incremented sequence
+          if (attempt > 0) {
+             currentInvoiceNumber = `INV-${String(nextSeq + attempt).padStart(5, '0')}`;
+          }
+
+          const [inserted] = await db.insert(invoices).values({
+            ...validated,
+            invoiceNumber: currentInvoiceNumber,
+            createdByUserId: getUserId(req)!,
+          }).returning();
+          invoice = inserted;
+          break;
+        } catch (dbError: any) {
+          if (dbError.code === '23505' && dbError.constraint === 'invoices_invoice_number_key') {
+            attempt++;
+            if (attempt >= 3) throw dbError;
+          } else {
+            throw dbError;
+          }
+        }
+      }
 
       res.status(201).json(invoice);
     } catch (error) {

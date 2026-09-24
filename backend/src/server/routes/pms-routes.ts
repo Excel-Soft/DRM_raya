@@ -282,18 +282,35 @@ function getPeriodRange(periodRaw: string) {
       const userRes = await pool.query('SELECT department FROM drm.users WHERE id = $1', [req.user.userId]);
       const userDept = userRes.rows[0]?.department || '';
 
+      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
+          seo_smm: ["SEO_SMM", "SEO/SMM"],
+          it: ["IT"],
+          dd: ["DND", "DESIGN_DEVELOPMENT"],
+          product_posting: ["PRODUCT_POSTING"],
+          software: ["SOFTWARE"],
+          service: ["SERVICE"],
+      };
+      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+      const deptCandidates = Array.from(new Set([
+          ...(userDept ? [userDept] : []),
+          ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+      ]));
+      const deptInClause = deptCandidates.length > 0
+          ? `(${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
+          : `('')`; // no candidates -> matches nothing, same as the old empty-string behavior
+
       let roleFilter = "";
       if (userRole === "sales_executive") {
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
       } else if (userRole === "sales_manager") {
           // Self-only — never team/org data (explicit product decision).
           roleFilter = `AND p.owner_user_id = '${req.user.userId}'`;
-      } else if (userDept && !isManagerialRole(userRole)) {
-          // Dynamic department-based visibility check for executives
-          roleFilter = `AND (p.department_type = '${userDept}')`;
-      } else if (userDept && isManagerialRole(userRole)) {
-          // Dynamic department-based visibility check for managers
-          roleFilter = `AND (p.department_type = '${userDept}')`;
+      } else if (userRole.includes("executive")) {
+          // Dynamic check for executive assigned tasks
+          roleFilter = `AND p.department_type IN ${deptInClause} AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.assigned_to_user_id = '${req.user.userId}')`;
+      } else if (userRole.includes("manager")) {
+          // Dynamic check for managers
+          roleFilter = `AND p.department_type IN ${deptInClause}`;
       }
 
       const { rows } = await pool.query(`
@@ -438,8 +455,17 @@ function getPeriodRange(periodRaw: string) {
       let extraFilter = "";
 
       if (department && department.trim() && department.toLowerCase() !== "all") {
-        params.push(`%${department.trim()}%`);
-        extraFilter += ` AND u.department ILIKE $${params.length}`;
+        const deptStr = department.trim().toLowerCase();
+        let mappedDepts: string[] = [department.trim()];
+        if (deptStr === "seo/smm") mappedDepts = ["SEO_SMM", "SEO/SMM", "8"];
+        else if (deptStr === "development" || deptStr === "software") mappedDepts = ["SOFTWARE", "11", "Development"];
+        else if (deptStr === "design") mappedDepts = ["DESIGN", "10", "Design"];
+        else if (deptStr === "product posting") mappedDepts = ["PRODUCT_POSTING", "9", "Product Posting"];
+        else if (deptStr === "d&d" || deptStr === "dnd") mappedDepts = ["DND", "DESIGN_DEVELOPMENT", "10", "D&D"];
+        else if (deptStr === "it") mappedDepts = ["IT", "13"];
+
+        const deptIn = mappedDepts.map(d => `'${d.replace(/'/g, "''")}'`).join(", ");
+        extraFilter += ` AND p.department_type IN (${deptIn})`;
       }
       if (city && city.trim() && city.toLowerCase() !== "all") {
         params.push(`%${city.trim()}%`);

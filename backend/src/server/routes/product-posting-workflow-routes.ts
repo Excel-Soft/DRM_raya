@@ -477,6 +477,7 @@ router.post("/projects/:id/assign-task", async (req: any, res: any) => {
             description: combinedDescription,
             assignedToUserId: assigneeId,
             dueDate: computedDueDate,
+            notes: JSON.stringify({ duration: minutes, links: links || 0 }),
             ownerUserId: userId,
         });
 

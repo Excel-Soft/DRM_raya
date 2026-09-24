@@ -24,7 +24,12 @@ interface RunningProject {
 
 export default function PmsRunningProjects() {
     const { data: projects = [], isLoading } = useQuery<RunningProject[]>({
-        queryKey: ["/api/pms/department-status"],
+        queryKey: ["/api/pms/department-status", { status: "Active" }],
+        queryFn: async () => {
+            const res = await fetch(`/api/pms/department-status?status=Active`, { credentials: "include" });
+            if (!res.ok) throw new Error("Failed to fetch running projects");
+            return res.json();
+        },
     });
 
     const { toast } = useToast();
