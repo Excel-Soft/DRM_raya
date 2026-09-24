@@ -299,31 +299,37 @@ export default function PmsTasks() {
     const isProductPostingExecutive = currentRole === "product_posting_executive" || currentRole === "posting_executive";
 
     return (
+        <>
         <div className="p-4 md:p-6 bg-[#f8f9fc] min-h-[calc(100vh-60px)] font-sans flex flex-col dark:bg-zinc-950">
             <h1 className="text-[17px] font-bold text-[#495057] tracking-wide uppercase mb-6 flex-shrink-0 dark:text-zinc-400">
                 TASK SYSTEM
             </h1>
 
-            {/* List Section */}
-            <div className="bg-white rounded border border-gray-100 shadow-sm flex-1 flex flex-col min-h-0 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-400 dark:border-zinc-800">
-                    List
-                </div>
-                <div className="flex-1 p-4 overflow-auto custom-scrollbar">
-                    <Table className="w-full border-collapse">
-                        <TableHeader>
-                            <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 first:rounded-l w-[60px] dark:text-zinc-100">No#</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Company</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Person</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Project</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Status</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Doc Upload</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Dep Approved</TableHead>
-                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center last:rounded-r dark:text-zinc-100">Action</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
+            <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+                {/* Left: Project List / Sidebar widget */}
+                <div className={`flex flex-col bg-white rounded border border-gray-100 shadow-sm dark:bg-zinc-900 dark:border-zinc-800 transition-all duration-300 min-h-0 ${selectedProjectId ? 'lg:w-[350px] flex-shrink-0' : 'w-full'}`}>
+                    <div className="p-4 border-b border-gray-100 font-bold text-[15px] text-[#495057] dark:text-zinc-400 dark:border-zinc-800 flex items-center justify-between">
+                        <span>Projects</span>
+                        {selectedProjectId && (
+                             <button onClick={() => { setSelectedProjectId(null); setIsDetailsModalOpen(false); }} className="text-[12px] text-gray-400 hover:text-gray-600 underline">View Full</button>
+                        )}
+                    </div>
+                    <div className="flex-1 p-2 lg:p-4 overflow-auto custom-scrollbar">
+                        {!selectedProjectId ? (
+                            <Table className="w-full border-collapse">
+                                <TableHeader>
+                                    <TableRow className="bg-[#daf1e2] hover:bg-[#daf1e2] border-0 dark:bg-zinc-900 dark:hover:bg-zinc-800">
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 first:rounded-l w-[60px] dark:text-zinc-100">No#</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Company</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Person</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Project</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Status</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Doc Upload</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Dep Approved</TableHead>
+                                        <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center last:rounded-r dark:text-zinc-100">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
                             {isLoading ? (
                                 <TableRow>
                                     <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-zinc-400">
@@ -390,34 +396,52 @@ export default function PmsTasks() {
                                 ))
                             )}
                         </TableBody>
-                    </Table>
-                </div>
-            </div>
-
-            {/* Project Details Modal */}
-            <Dialog open={isDetailsModalOpen} onOpenChange={setIsDetailsModalOpen}>
-                <DialogContent className="max-w-[95vw] w-[1200px] bg-[#f8f9fc] p-0 border-none overflow-hidden rounded-xl shadow-2xl dark:bg-zinc-900">
-                    <div className="p-6 bg-white border-b border-gray-100 dark:bg-zinc-900 dark:border-zinc-800">
-                        <h2 className="text-[18px] font-bold text-[#495057] uppercase tracking-wider flex items-center gap-3 dark:text-zinc-400">
-                            PROJECT DETAILS VERIFY &amp; START WORKING
-                        </h2>
+                            </Table>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                {projects.map((row, idx) => (
+                                    <div 
+                                        key={row.id} 
+                                        onClick={() => { setSelectedProjectId(row.id); setIsDetailsModalOpen(true); }}
+                                        className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedProjectId === row.id ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/10' : 'border-gray-100 hover:border-gray-300 dark:border-zinc-800 dark:hover:border-zinc-700'}`}
+                                    >
+                                        <div className="flex justify-between items-start mb-1">
+                                            <div className="font-bold text-[13px] text-[#495057] dark:text-zinc-300 line-clamp-1">{row.company}</div>
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-tight ${row.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : row.status === 'Active' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                {row.status}
+                                            </span>
+                                        </div>
+                                        <div className="text-[11px] text-gray-500 dark:text-zinc-500 mb-1 line-clamp-1">{row.project}</div>
+                                        <div className="flex justify-between items-center text-[10px] text-gray-400">
+                                            <span className="font-medium text-emerald-600">{row.assign || "Not Assigned"}</span>
+                                            <span>Docs: Yes</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
+                </div>
 
-                    <div className="p-8">
-                        <div className="mb-6 flex items-center justify-between">
-                            <h3 className="text-[15px] font-bold text-[#495057] dark:text-zinc-400">Assign Projects</h3>
+                {/* Project Details Panel (Right Side) */}
+                {selectedProjectId && (
+                    <div className="flex-1 flex flex-col bg-white rounded border border-gray-100 shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800 h-[calc(100vh-140px)]">
+                        <div className="p-4 bg-[#f8f9fc] border-b border-gray-100 dark:bg-zinc-900 dark:border-zinc-800 flex justify-between items-center shrink-0">
+                            <h2 className="text-[15px] font-bold text-[#495057] uppercase tracking-wider flex items-center gap-3 dark:text-zinc-400">
+                                {selectedProjectInfo?.company || "PROJECT"} - TASKS
+                            </h2>
                             {!isExecutive && (
                                 <button
                                     onClick={() => setIsAddTaskFormOpen((v) => !v)}
-                                    className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
-                                    data-testid="button-toggle-add-task"
+                                    className="flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-3 py-1.5 rounded text-[12px] font-bold"
                                 >
-                                    <Plus className="h-4 w-4" />
+                                    <Plus className="h-3 w-3" />
                                     Add Task
                                 </button>
                             )}
                         </div>
 
+                        <div className="flex-1 overflow-y-auto p-4 md:p-6 custom-scrollbar">
                         {!isExecutive && isAddTaskFormOpen && (
                             <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -547,7 +571,7 @@ export default function PmsTasks() {
                                             </TableCell>
                                         </TableRow>
                                     ) : displayTasks.map((task: any, idx: number) => {
-                                            let durationText = "8:0";
+                                            let durationText = "0:0";
                                             let linksCount = 0;
                                             try {
                                                 if (task.notes) {
@@ -648,12 +672,22 @@ export default function PmsTasks() {
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        <button
-                                                            onClick={() => setFilesModalTask(task)}
-                                                            className="w-9 h-9 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100 mx-auto"
-                                                        >
-                                                            <ArrowUpCircle className="h-5 w-5 text-white" />
-                                                        </button>
+                                                        {isExecutive ? (
+                                                            <button
+                                                                onClick={() => setFilesModalTask(task)}
+                                                                className="w-9 h-9 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100 mx-auto"
+                                                            >
+                                                                <ArrowUpCircle className="h-5 w-5 text-white" />
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => setFilesModalTask(task)}
+                                                                className="w-9 h-9 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-all mx-auto dark:bg-zinc-800"
+                                                                title="View Details"
+                                                            >
+                                                                <Eye className="h-4 w-4 text-gray-500" />
+                                                            </button>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
                                                         {task.status === 'Blocked' ? (
@@ -680,56 +714,63 @@ export default function PmsTasks() {
                                                             </span>
                                                         )}
                                                     </TableCell>
-                                                    <TableCell className="px-6 py-5 text-center">
-                                                        <div className="flex items-center justify-center gap-2 relative">
-                                                            {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
-                                                                <>
-                                                                    <div className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}>
-                                                                        {task.timerStartedAt ? formatElapsed(elapsedTimes[task.id] || 0) : '0:0:0'}
-                                                                    </div>
+                                                    {isExecutive && (
+                                                        <TableCell className="px-6 py-5 text-center">
+                                                            <div className="flex items-center justify-center gap-2 relative">
+                                                                {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
+                                                                    <>
+                                                                        <div className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}>
+                                                                            {task.timerStartedAt ? formatElapsed(elapsedTimes[task.id] || 0) : '0:0:0'}
+                                                                        </div>
+                                                                        <button
+                                                                            className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
+                                                                            onClick={() => handleToggleTimer(task)}
+                                                                            disabled={startTimerMutation.isPending || stopTimerMutation.isPending}
+                                                                        >
+                                                                            {task.timerStartedAt ? (
+                                                                                <div className="w-3 h-3 bg-white rounded-sm shadow-inner dark:bg-zinc-900" />
+                                                                            ) : (
+                                                                                <PlayCircle className="h-6 w-6 text-white fill-white/10" />
+                                                                            )}
+                                                                        </button>
+                                                                    </>
+                                                                )}
+
+                                                                {/* Done/Plus Button - only visible when timer has been run once (status is InProgress) and is currently stopped */}
+                                                                {!task.timerStartedAt && task.status === 'InProgress' && (
                                                                     <button
-                                                                        className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
-                                                                        onClick={() => handleToggleTimer(task)}
-                                                                        disabled={startTimerMutation.isPending || stopTimerMutation.isPending}
+                                                                        onClick={() => {
+                                                                            setFinishingTaskId(task.id);
+                                                                            setIsEndTaskModalOpen(true);
+                                                                        }}
+                                                                        disabled={completeTaskMutation.isPending}
+                                                                        className="w-10 h-10 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100"
                                                                     >
-                                                                        {task.timerStartedAt ? (
-                                                                            <div className="w-3 h-3 bg-white rounded-sm shadow-inner dark:bg-zinc-900" />
-                                                                        ) : (
-                                                                            <PlayCircle className="h-6 w-6 text-white fill-white/10" />
-                                                                        )}
+                                                                        <Plus className="h-6 w-6 text-white stroke-[3]" />
                                                                     </button>
-                                                                </>
-                                                            )}
+                                                                )}
 
-                                                            {/* Done/Plus Button - only visible when timer has been run once (status is InProgress) and is currently stopped */}
-                                                            {!task.timerStartedAt && task.status === 'InProgress' && (
-                                                                <button
-                                                                    onClick={() => {
-                                                                        setFinishingTaskId(task.id);
-                                                                        setIsEndTaskModalOpen(true);
-                                                                    }}
-                                                                    disabled={completeTaskMutation.isPending}
-                                                                    className="w-10 h-10 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100"
-                                                                >
-                                                                    <Plus className="h-6 w-6 text-white stroke-[3]" />
-                                                                </button>
-                                                            )}
-
-                                                            {/* Overtime Button */}
-                                                            {task.status !== 'Completed' && task.status !== 'READY_FOR_QA' && (
-                                                                <button
-                                                                    onClick={() => {
-                                                                        setOvertimeTaskId(task.id);
-                                                                        setIsOvertimeModalOpen(true);
-                                                                    }}
-                                                                    className="w-10 h-10 bg-amber-500 hover:bg-amber-600 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-amber-100"
-                                                                    title="Request Overtime"
-                                                                >
-                                                                    <TimerReset className="h-5 w-5 text-white" />
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </TableCell>
+                                                                {/* Overtime Button */}
+                                                                {task.status !== 'Completed' && task.status !== 'READY_FOR_QA' && (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setOvertimeTaskId(task.id);
+                                                                            setIsOvertimeModalOpen(true);
+                                                                        }}
+                                                                        className="w-10 h-10 bg-amber-500 hover:bg-amber-600 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-amber-100"
+                                                                        title="Request Overtime"
+                                                                    >
+                                                                        <TimerReset className="h-5 w-5 text-white" />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </TableCell>
+                                                    )}
+                                                    {!isExecutive && (
+                                                        <TableCell className="px-6 py-5 text-center text-[11px] text-gray-400 font-medium">
+                                                            View Only
+                                                        </TableCell>
+                                                    )}
                                                 </TableRow>
                                             );
                                         })
@@ -777,8 +818,9 @@ export default function PmsTasks() {
                             </div>
                         </div>
                     </div>
-                </DialogContent>
-            </Dialog>
+                </div>
+                )}
+            </div>
 
             {/* End Task Modal (Moved to sibling to prevent focus infinite loop) */}
             <Dialog open={isEndTaskModalOpen} onOpenChange={setIsEndTaskModalOpen}>
@@ -961,6 +1003,7 @@ export default function PmsTasks() {
                 <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
             )}
         </div>
+        </>
     );
 }
 

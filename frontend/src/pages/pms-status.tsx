@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -297,6 +298,25 @@ export default function PmsStatus() {
     // "Add Task" is a manager/assigner action — an executive only works the
     // tasks already assigned to them, they don't create new ones.
     const isExecutive = role.includes("executive");
+    const isManager = role.includes("manager") && !role.includes("admin");
+    const isAdmin = role.includes("admin");
+
+    useEffect(() => {
+        if (isManager && !isAdmin) {
+            let dept = "all";
+            if (role.includes("product_posting") || role.includes("posting")) dept = "Product Posting";
+            else if (role.includes("software") || role.includes("it")) dept = "Development";
+            else if (role.includes("seo")) dept = "SEO/SMM";
+            else if (role.includes("design")) dept = "Design";
+            else if (role.includes("dd_")) dept = "D&D";
+
+            if (dept !== "all") {
+                setFilters(prev => ({ ...prev, department: dept }));
+                setAppliedFilters(prev => ({ ...prev, department: dept }));
+            }
+        }
+    }, [isManager, isAdmin, role]);
+
     // Product Posting Executive gets a lightweight links-only submission
     // form here instead of the Files modal (dropzone + rich-text detail) —
     // that modal is for IT/SEO-SMM/D&D executives only, per explicit
@@ -318,23 +338,26 @@ export default function PmsStatus() {
 
             {/* Filter Section */}
             <div className="bg-white rounded border border-gray-100 p-6 shadow-sm flex-shrink-0 mb-6 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-6">
+                <div className={`grid grid-cols-1 ${isExecutive ? 'md:grid-cols-2' : 'md:grid-cols-5'} gap-6 mb-6`}>
+                    {!isExecutive && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Department</label>
-                        <Select value={filters.department} onValueChange={(v) => setFilters(prev => ({ ...prev, department: v }))}>
+                        <Select value={filters.department} onValueChange={(v) => setFilters(prev => ({ ...prev, department: v }))} disabled={isManager && !isAdmin}>
                             <SelectTrigger className="h-10 text-[13px] text-gray-500 dark:text-zinc-400">
                                 <SelectValue placeholder="Choose ..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="all">All Departments</SelectItem>
-                                <SelectItem value="SEO/SMM">SEO/SMM</SelectItem>
-                                <SelectItem value="Development">Development</SelectItem>
-                                <SelectItem value="Design">Design</SelectItem>
-                                <SelectItem value="Product Posting">Product Posting</SelectItem>
-                                <SelectItem value="D&D">D&D</SelectItem>
+                                {(!isManager || isAdmin) && <SelectItem value="all">All Departments</SelectItem>}
+                                {((!isManager || isAdmin) || filters.department === "SEO/SMM") && <SelectItem value="SEO/SMM">SEO/SMM</SelectItem>}
+                                {((!isManager || isAdmin) || filters.department === "Development") && <SelectItem value="Development">Development</SelectItem>}
+                                {((!isManager || isAdmin) || filters.department === "Design") && <SelectItem value="Design">Design</SelectItem>}
+                                {((!isManager || isAdmin) || filters.department === "Product Posting") && <SelectItem value="Product Posting">Product Posting</SelectItem>}
+                                {((!isManager || isAdmin) || filters.department === "D&D") && <SelectItem value="D&D">D&D</SelectItem>}
                             </SelectContent>
                         </Select>
                     </div>
+                    )}
+                    {!isExecutive && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select City</label>
                         <Select value={filters.city} onValueChange={(v) => setFilters(prev => ({ ...prev, city: v }))}>
@@ -349,6 +372,8 @@ export default function PmsStatus() {
                             </SelectContent>
                         </Select>
                     </div>
+                    )}
+                    {!isExecutive && (
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Select Status</label>
                         <Select value={filters.status} onValueChange={(v) => setFilters(prev => ({ ...prev, status: v }))}>
@@ -363,6 +388,7 @@ export default function PmsStatus() {
                             </SelectContent>
                         </Select>
                     </div>
+                    )}
                     <div className="flex flex-col gap-2">
                         <label className="text-[12.5px] font-semibold text-[#495057] dark:text-zinc-400">Start Date</label>
                         <div className="relative">
@@ -423,6 +449,7 @@ export default function PmsStatus() {
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Company</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Person</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Project</TableHead>
+                                <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Date</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Status</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Doc Upload</TableHead>
                                 <TableHead className="text-[12.5px] font-bold text-[#212529] px-4 py-3 text-center dark:text-zinc-100">Dep Approved</TableHead>
@@ -432,13 +459,13 @@ export default function PmsStatus() {
                         <TableBody>
                             {isLoading ? (
                                 <TableRow>
-                                    <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-zinc-400">
+                                    <TableCell colSpan={9} className="text-center py-10 text-gray-500 dark:text-zinc-400">
                                         Loading project status...
                                     </TableCell>
                                 </TableRow>
                             ) : isError ? (
                                 <TableRow>
-                                    <TableCell colSpan={8} className="text-center py-10 text-rose-500 dark:text-rose-400">
+                                    <TableCell colSpan={9} className="text-center py-10 text-rose-500 dark:text-rose-400">
                                         Failed to load projects{error instanceof Error ? `: ${error.message}` : ""}.
                                         <button
                                             onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/pms/department-status"] })}
@@ -450,7 +477,7 @@ export default function PmsStatus() {
                                 </TableRow>
                             ) : projects.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={8} className="text-center py-10 text-gray-500 dark:text-zinc-400">
+                                    <TableCell colSpan={9} className="text-center py-10 text-gray-500 dark:text-zinc-400">
                                         No projects found.
                                     </TableCell>
                                 </TableRow>
@@ -461,6 +488,9 @@ export default function PmsStatus() {
                                         <TableCell className="px-4 py-4 font-bold text-[#495057] text-center dark:text-zinc-400">{row.company}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-emerald-600 text-center">{row.assign || "Not Assigned"}</TableCell>
                                         <TableCell className="px-4 py-4 font-bold text-gray-600 text-center dark:text-zinc-300">{row.project}</TableCell>
+                                        <TableCell className="px-4 py-4 text-center text-gray-500 text-[12px] font-semibold dark:text-zinc-400">
+                                            {row.date ? format(new Date(row.date), "dd MMM yyyy") : "-"}
+                                        </TableCell>
                                         <TableCell className="px-4 py-4 text-center">
                                             <span className={`px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-tight ${
                                                 row.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 

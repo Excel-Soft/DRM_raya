@@ -295,6 +295,7 @@ export default function InvoicePool() {
               <TableRow>
                 <TableHead className="font-bold text-slate-600 dark:text-zinc-300">Invoice ID</TableHead>
                 <TableHead className="font-bold text-slate-600 dark:text-zinc-300">Client</TableHead>
+                <TableHead className="font-bold text-slate-600 dark:text-zinc-300">Service Title</TableHead>
                 <TableHead className="font-bold text-slate-600 dark:text-zinc-300">Grand Total</TableHead>
                 <TableHead className="font-bold text-slate-600 dark:text-zinc-300">HOD Status</TableHead>
                 <TableHead className="font-bold text-slate-600 dark:text-zinc-300">Account Status</TableHead>
@@ -305,13 +306,13 @@ export default function InvoicePool() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                  <TableCell colSpan={8} className="h-24 text-center text-slate-500">
                     Loading invoices...
                   </TableCell>
                 </TableRow>
               ) : filteredInvoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-slate-500">
+                  <TableCell colSpan={8} className="h-24 text-center text-slate-500">
                     No {activeTab.toLowerCase()} invoices found.
                   </TableCell>
                 </TableRow>
@@ -323,6 +324,9 @@ export default function InvoicePool() {
                     </TableCell>
                     <TableCell className="text-slate-600 dark:text-zinc-400">
                       {invoice.client || "N/A"}
+                    </TableCell>
+                    <TableCell className="text-slate-600 dark:text-zinc-400 truncate max-w-[200px]" title={invoice.serviceTitle}>
+                      {invoice.serviceTitle || "-"}
                     </TableCell>
                     <TableCell className="font-semibold text-slate-700 dark:text-zinc-300">
                       Rs. {Number(invoice.grandTotal || 0).toLocaleString()}

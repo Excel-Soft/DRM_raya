@@ -47,6 +47,7 @@ import {
     Download,
     X,
 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ProductPostingExecutiveWidget } from "@/components/product-posting-executive-widget";
 import { ProductPostingManagerWidget } from "@/components/product-posting-manager-widget";
 
@@ -305,7 +306,7 @@ export default function ProductPostingDashboard() {
     // ── Queries ──
 
     // 1. PMS Stats for KPI cards and donut chart
-    const { data: pmsStats } = useQuery({
+    const { data: pmsStats, isLoading: isLoadingPmsStats } = useQuery({
         queryKey: ["/api/pms/stats", globalPeriod],
         queryFn: async () => {
             const res = await apiRequest("GET", `/api/pms/stats?period=${globalPeriod}`);
@@ -376,7 +377,7 @@ export default function ProductPostingDashboard() {
     });
 
     // 5. HOD Daily Report
-    const { data: hodDailyReport } = useQuery({
+    const { data: hodDailyReport, isLoading: isLoadingDailyReport } = useQuery({
         queryKey: ["/api/hod/daily-report", dailyReportPeriod],
         enabled: !isExecutiveView,
         queryFn: async () => {
@@ -467,7 +468,7 @@ export default function ProductPostingDashboard() {
     });
     const projectDetails = detailsResponse?.data;
 
-    const { data: managerQueueData, refetch: refetchManagerQueue } = useQuery({
+    const { data: managerQueueData, refetch: refetchManagerQueue, isLoading: isLoadingManagerQueue } = useQuery({
         queryKey: ["/api/product-posting/manager/queue", activityPeriod],
         enabled: !isExecutiveView,
         queryFn: async () => {
@@ -1322,8 +1323,19 @@ export default function ProductPostingDashboard() {
                         <div className="space-y-3 min-w-0 overflow-hidden">
                             {/* Stat Cards - Top row */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                {dynamicStatCards.map((card) => (
-                                    <Card key={card.label} className="shadow-sm hover:shadow-md transition-shadow">
+                                {isLoadingPmsStats ? (
+                                    Array.from({ length: 4 }).map((_, i) => (
+                                        <Card key={i} className="shadow-sm">
+                                            <CardContent className="p-3">
+                                                <Skeleton className="h-4 w-20 mb-3 mt-1" />
+                                                <Skeleton className="h-5 w-12 mb-3" />
+                                                <Skeleton className="h-3 w-16" />
+                                            </CardContent>
+                                        </Card>
+                                    ))
+                                ) : (
+                                    dynamicStatCards.map((card) => (
+                                        <Card key={card.label} className="shadow-sm hover:shadow-md transition-shadow">
                                         <CardContent className="p-3">
                                             <p style={{ fontSize: "12px", fontWeight: 500 }} className="text-muted-foreground uppercase tracking-wide">
                                                 {card.label}
@@ -1360,7 +1372,8 @@ export default function ProductPostingDashboard() {
                                             </div>
                                         </CardContent>
                                     </Card>
-                                ))}
+                                    ))
+                                )}
                             </div>
 
                             {/* Verification & Assign Project */}
@@ -1403,7 +1416,17 @@ export default function ProductPostingDashboard() {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {currentTableRows.length === 0 ? (
+                                            {isLoadingManagerQueue ? (
+                                                Array.from({ length: 4 }).map((_, idx) => (
+                                                    <tr key={`skel-${idx}`}>
+                                                        <td className="px-3 py-3"><Skeleton className="h-4 w-12" /></td>
+                                                        <td className="px-3 py-3"><Skeleton className="h-4 w-32" /></td>
+                                                        <td className="px-3 py-3"><Skeleton className="h-4 w-24" /></td>
+                                                        <td className="px-3 py-3"><Skeleton className="h-5 w-20" /></td>
+                                                        <td className="px-3 py-3"><Skeleton className="h-6 w-6 rounded-full" /></td>
+                                                    </tr>
+                                                ))
+                                            ) : currentTableRows.length === 0 ? (
                                                 <tr>
                                                     <td
                                                         colSpan={5}
@@ -1607,7 +1630,17 @@ export default function ProductPostingDashboard() {
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {dynamicDailyReportRows.slice((dailyReportPage - 1) * 10, dailyReportPage * 10).map((proj: any, idx: number) => (
+                                                {isLoadingDailyReport ? (
+                                                    Array.from({ length: 5 }).map((_, idx) => (
+                                                        <tr key={`skel-dr-${idx}`}>
+                                                            <td className="px-3 py-3"><Skeleton className="h-4 w-32" /></td>
+                                                            <td className="px-3 py-3"><Skeleton className="h-4 w-24" /></td>
+                                                            <td className="px-3 py-3"><Skeleton className="h-5 w-20" /></td>
+                                                            <td className="px-3 py-3"><Skeleton className="h-4 w-12" /></td>
+                                                            <td className="px-3 py-3"><Skeleton className="h-4 w-16" /></td>
+                                                        </tr>
+                                                    ))
+                                                ) : dynamicDailyReportRows.slice((dailyReportPage - 1) * 10, dailyReportPage * 10).map((proj: any, idx: number) => (
                                                     <tr key={idx} className="last:border-0 hover:bg-muted/30 transition-colors">
                                                         <td className="px-3 py-2.5" style={{ fontSize: "12px" }}>
                                                             <div className="flex items-center gap-2">

@@ -339,7 +339,7 @@ async function countGmBvEntries(userId: string, roleId?: string): Promise<number
     const manager = isLeadPoolManager(roleId);
     const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
     const allowedUserIds = manager
-      ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+      ? await getDepartmentFilterUserIds({ user: { userId, roleId: roleId || "", activeRoleId: roleId || "" } })
       : null;
     const params: any[] = [];
     let bvClause = "1=1";
@@ -461,7 +461,7 @@ async function buildLeadPoolSummary(userId: string, roleId?: string): Promise<Le
   const manager = isLeadPoolManager(roleId);
   const isSalesManagerRole = normalizeRole(roleId || "") === ROLES.SALES_MANAGER;
   const allowedUserIds = manager
-    ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+    ? await getDepartmentFilterUserIds({ user: { userId, roleId: roleId || "", activeRoleId: roleId || "" } })
     : null;
   const params: any[] = [];
   let scopeClause = "coalesce(c.is_deleted, false) = false";
@@ -573,7 +573,7 @@ async function buildLeadPoolList(
   // not just their own team's. getDepartmentFilterUserIds only returns null for
   // true global roles; a department manager gets their own team's user ids back.
   const allowedUserIds = manager
-    ? await getDepartmentFilterUserIds({ user: { userId, roleId, activeRoleId: roleId } })
+    ? await getDepartmentFilterUserIds({ user: { userId, roleId: roleId || "", activeRoleId: roleId || "" } })
     : null;
   const conditions: string[] = ["coalesce(c.is_deleted, false) = false"];
   const params: any[] = [];
@@ -1030,22 +1030,49 @@ export function registerSalesRoutes(app: Express) {
       const r = (userObj.role || (Array.isArray(userObj.roles) ? userObj.roles.join(" ") : "")).toLowerCase();
       const isManagerial = r.includes("admin") || r.includes("super_hod") || r.includes("hod") || r.includes("account");
 
-      const whereSql = isManagerial ? "" : "WHERE sales_exec_id = $1";
+      const whereSqlPPI = isManagerial ? "" : "WHERE p.sales_exec_id::text = $1";
+      const whereSqlInv = isManagerial ? "" : "WHERE i.created_by_user_id::text = $1";
       const params = isManagerial ? [] : [req.user.userId];
 
       const { rows } = await pool.query(`
         SELECT
-          id,
-          invoice_number as "invoiceNumber",
-          company_name as "client",
-          amount as "grandTotal",
-          status as "finalStatus",
-          CASE WHEN status IN ('PENDING_ACCOUNT', 'APPROVED') THEN 'Approved' ELSE (CASE WHEN status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "hodStatus",
-          CASE WHEN status = 'APPROVED' THEN 'Approved' ELSE (CASE WHEN status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "accountStatus",
-          created_at as "createdAt"
-        FROM drm.product_posting_invoices 
-        ${whereSql}
-        ORDER BY created_at DESC
+          p.id::text as id,
+          p.invoice_number as "invoiceNumber",
+          p.company_name as "client",
+          p.project_name as "serviceTitle",
+          COALESCE(NULLIF(p.amount, 0), g.amount_usd, 0) as "grandTotal",
+          p.status as "finalStatus",
+          CASE WHEN p.status IN ('PENDING_ACCOUNT', 'APPROVED') THEN 'Approved' ELSE (CASE WHEN p.status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "hodStatus",
+          CASE WHEN p.status = 'APPROVED' THEN 'Approved' ELSE (CASE WHEN p.status = 'REJECTED' THEN 'Rejected' ELSE 'Pending' END) END as "accountStatus",
+          p.created_at as "createdAt"
+        FROM drm.product_posting_invoices p
+        LEFT JOIN drm.gm_entries g ON p.gm_id = g.id::text
+        ${whereSqlPPI}
+
+        UNION ALL
+
+        SELECT
+          i.id::text,
+          i.invoice_number as "invoiceNumber",
+          i.customer_name as "client",
+          'Manual Invoice' as "serviceTitle",
+          i.total as "grandTotal",
+          i.status as "finalStatus",
+          CASE 
+            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved' 
+            WHEN i.status ILIKE '%Reject%' THEN 'Rejected' 
+            ELSE 'Pending' 
+          END as "hodStatus",
+          CASE 
+            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved' 
+            WHEN i.status ILIKE '%Reject%' THEN 'Rejected' 
+            ELSE 'Pending' 
+          END as "accountStatus",
+          i.created_at as "createdAt"
+        FROM drm.invoices i
+        ${whereSqlInv}
+
+        ORDER BY "createdAt" DESC
       `, params);
 
       res.json(rows);
@@ -1062,11 +1089,11 @@ export function registerSalesRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const { rows } = await pool.query(`
+      let { rows } = await pool.query(`
         SELECT
-          i.id,
+          i.id::text,
           i.invoice_number as "invoiceNumber",
-          i.amount,
+          COALESCE(NULLIF(i.amount, 0), g.amount_usd, 0) as amount,
           i.project_name,
           i.company_name,
           i.status,
@@ -1086,8 +1113,40 @@ export function registerSalesRoutes(app: Express) {
           c.city
         FROM drm.product_posting_invoices i
         LEFT JOIN drm.customers c ON i.customer_id::text = c.id::text
-        WHERE i.id = $1
+        LEFT JOIN drm.gm_entries g ON i.gm_id = g.id::text
+        WHERE i.id::text = $1
       `, [req.params.id]);
+
+      if (rows.length === 0) {
+        // Fallback to manual invoices
+        const resManual = await pool.query(`
+          SELECT
+            i.id::text,
+            i.invoice_number as "invoiceNumber",
+            i.total as amount,
+            '' as project_name,
+            i.customer_name as company_name,
+            i.status,
+            i.notes,
+            '' as "rejectionReason",
+            i.created_at,
+            i.updated_at,
+            'MANUAL' as "invoiceType",
+            'MANUAL' as "serviceType",
+            i.payment_method as "paymentMethod",
+            0 as "paidAmount",
+            i.paid_at as "paidDate",
+            c.account_name,
+            c.email,
+            c.phone,
+            c.mobile,
+            c.city
+          FROM drm.invoices i
+          LEFT JOIN drm.customers c ON i.customer_id::text = c.id::text
+          WHERE i.id::text = $1
+        `, [req.params.id]);
+        rows = resManual.rows;
+      }
 
       if (rows.length === 0) {
         return res.status(404).json({ error: "Invoice not found" });
