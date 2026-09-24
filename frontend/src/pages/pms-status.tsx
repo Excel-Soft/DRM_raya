@@ -303,11 +303,11 @@ export default function PmsStatus() {
     // instruction; Product Posting's own flow is link-based.
     const isProductPostingExecutive = role === "product_posting_executive" || role === "posting_executive";
 
-    let departmentTitle = "RUNNING PROJECT";
+    let departmentTitle = "PROJECT REPORT";
     if (role.includes("software_executive")) {
-        departmentTitle = "RUNNING PROJECT";
+        departmentTitle = "PROJECT REPORT";
     } else if (role.includes("software_manager")) {
-        departmentTitle = "RUNNING PROJECT";
+        departmentTitle = "PROJECT REPORT";
     }
 
     return (
