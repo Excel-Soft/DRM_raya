@@ -240,11 +240,16 @@ export function registerDdManagerRoutes(app: Express) {
                 // waiting: DATA_VERIFY (not yet started) OR RUNNING_PROJECT (executive
                 // has submitted and it's awaiting manager review) OR PENDING_PROJECT
                 // with a fresh re-uploaded doc.
+                // Document approval (project-doc-routes.ts) writes
+                // current_phase = 'VERIFICATION_COMPLETE', never
+                // 'PROJECT_OVERVIEW' — so the "approved" tab needs both to
+                // actually show anything (product-posting-dashboard.tsx
+                // already treats these two phases as equivalent elsewhere).
                 const phaseFilter = statusType === "waiting"
                     ? ["DATA_VERIFY", "RUNNING_PROJECT"]
                     : statusType === "delay"
                     ? ["RETURNED_FOR_CHANGE"]
-                    : ["PROJECT_OVERVIEW"];
+                    : ["PROJECT_OVERVIEW", "VERIFICATION_COMPLETE"];
                 
                 const ppResult = await pool.query(`
                     SELECT 
@@ -274,7 +279,18 @@ export function registerDdManagerRoutes(app: Express) {
                             )
                         )
                     )
-                      AND (p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%')
+                      -- The name-substring match below was written only for the
+                      -- Product-Posting "Listing Page"/"Alibaba Minisite" flow and
+                      -- silently excluded every other project actually routed to
+                      -- D&D (p.department_type is the real, authoritative signal —
+                      -- set by project-doc-routes.ts when documents are sent).
+                      -- Kept as an OR fallback rather than removed, in case some
+                      -- legacy row has department_type unset but matches by name.
+                      AND (
+                        p.department_type IN ('DND', 'DESIGN_DEVELOPMENT')
+                        OR p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%'
+                        OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%'
+                      )
                     ORDER BY wf.updated_at DESC
                     LIMIT 50
                 `, [phaseFilter, statusType]);

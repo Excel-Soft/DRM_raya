@@ -615,7 +615,6 @@ export default function PmsStatus() {
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Task No</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Task</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Time</TableHead>
-                                        <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Working Links</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Assign Time</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Details</TableHead>
                                         <TableHead className="text-[12px] font-bold text-[#212529] px-6 py-4 text-center dark:text-zinc-100">Status</TableHead>
@@ -625,11 +624,11 @@ export default function PmsStatus() {
                                 <TableBody>
                                     {isLoadingTasks ? (
                                         <TableRow>
-                                            <TableCell colSpan={8} className="text-center py-20 text-gray-400 font-medium">Fetching project tasks...</TableCell>
+                                            <TableCell colSpan={7} className="text-center py-20 text-gray-400 font-medium">Fetching project tasks...</TableCell>
                                         </TableRow>
                                     ) : isTasksError ? (
                                         <TableRow>
-                                            <TableCell colSpan={8} className="text-center py-16">
+                                            <TableCell colSpan={7} className="text-center py-16">
                                                 <div className="flex flex-col items-center gap-2">
                                                     <div className="w-12 h-12 rounded-full bg-rose-50 flex items-center justify-center">
                                                         <span className="text-rose-400 text-2xl">!</span>
@@ -647,7 +646,7 @@ export default function PmsStatus() {
                                         </TableRow>
                                     ) : displayTasks.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={8} className="text-center py-16">
+                                            <TableCell colSpan={7} className="text-center py-16">
                                                 <div className="flex flex-col items-center gap-2">
                                                     <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center">
                                                         <span className="text-amber-400 text-2xl">⚠</span>
@@ -659,7 +658,6 @@ export default function PmsStatus() {
                                         </TableRow>
                                     ) : displayTasks.map((task: any, idx: number) => {
                                             let durationText = "8:0";
-                                            let linksCount = 0;
                                             try {
                                                 if (task.notes) {
                                                     const metadata = JSON.parse(task.notes);
@@ -667,21 +665,8 @@ export default function PmsStatus() {
                                                         const mins = parseInt(metadata.duration);
                                                         durationText = `${Math.floor(mins / 60)}:${mins % 60}`;
                                                     }
-                                                    if (metadata.links) {
-                                                        const parsedLinks = Number(metadata.links);
-                                                        if (!isNaN(parsedLinks)) {
-                                                            linksCount = parsedLinks;
-                                                        } else {
-                                                            linksCount = metadata.links.split(',').filter((l: string) => l.trim()).length;
-                                                        }
-                                                    }
                                                 }
                                             } catch (e) {}
-                                            // Check description for "Links: N" pattern (e.g. "done Links: 7")
-                                            if (linksCount === 0 && task.description) {
-                                                const descMatch = String(task.description).match(/links[\s:]+(\d+)/i);
-                                                if (descMatch) linksCount = parseInt(descMatch[1]);
-                                            }
 
                                             return (
                                                 <TableRow key={task.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-0 border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
@@ -704,56 +689,6 @@ export default function PmsStatus() {
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
                                                         <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-full font-bold text-[11px] dark:text-zinc-400 dark:bg-zinc-900">{durationText}</span>
-                                                    </TableCell>
-                                                    <TableCell className="px-6 py-5 text-center">
-                                                        {(() => {
-                                                            // Try to get actual clickable links
-                                                            let actualLinks: string[] = [];
-                                                            try {
-                                                                // Check task.notes for manager-assigned links
-                                                                if (task.notes) {
-                                                                    const parsed = JSON.parse(task.notes);
-                                                                    if (parsed.links) {
-                                                                        let candidates: string[] = [];
-                                                                        if (Array.isArray(parsed.links)) {
-                                                                            candidates = parsed.links.map((l: string) => String(l).trim()).filter(Boolean);
-                                                                        } else if (typeof parsed.links === 'string' && parsed.links.trim()) {
-                                                                            candidates = parsed.links.split(',').map((l: string) => l.trim()).filter(Boolean);
-                                                                        }
-                                                                        // Only treat as actual URLs if they look like URLs (not pure numbers)
-                                                                        actualLinks = candidates.filter((l: string) =>
-                                                                            isNaN(Number(l)) && (l.includes('.') || l.includes('http'))
-                                                                        );
-                                                                    }
-                                                                }
-                                                            } catch (e) {}
-
-                                                            if (actualLinks.length > 0) {
-                                                                return (
-                                                                    <div className="flex flex-col gap-1 items-center">
-                                                                        {actualLinks.map((link, i) => (
-                                                                            <a
-                                                                                key={i}
-                                                                                href={link.startsWith('http') ? link : `https://${link}`}
-                                                                                target="_blank"
-                                                                                rel="noopener noreferrer"
-                                                                                className="text-[11px] font-bold text-indigo-500 hover:text-indigo-700 underline max-w-[140px] truncate block"
-                                                                                title={link}
-                                                                            >
-                                                                                {link.replace(/^https?:\/\//, '').slice(0, 22)}...
-                                                                            </a>
-                                                                        ))}
-                                                                    </div>
-                                                                );
-                                                            }
-                                                            // Fallback: show count badge
-                                                            return (
-                                                                <div className="w-6 h-6 bg-indigo-50 rounded-full flex items-center justify-center mx-auto">
-                                                                    <span className="text-[11px] font-bold text-indigo-400">{linksCount}</span>
-                                                                </div>
-                                                            );
-                                                        })()}
- 
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center text-gray-500 font-bold text-[12px] dark:text-zinc-400">
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}

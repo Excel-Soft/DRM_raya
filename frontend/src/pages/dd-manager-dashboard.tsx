@@ -113,9 +113,11 @@ export default function DDManagerDashboard() {
     const [verifyDocModalOpen, setVerifyDocModalOpen] = useState(false);
     const [dataVerificationModalOpen, setDataVerificationModalOpen] = useState(false);
     const [confirmSaveModalOpen, setConfirmSaveModalOpen] = useState(false);
-    const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
-    const [selectedProjectForTask, setSelectedProjectForTask] = useState<any>(null);
     const [selectedDoc, setSelectedDoc] = useState<any>(null);
+    // Reused for the "Assign Task to Executive" section of the Projects
+    // Overview modal (Approved tab) — only assigneeId/title/duration are
+    // populated there; links/dueDate/detail stay empty and are simply
+    // omitted from the resulting task description.
     const [taskDetails, setTaskDetails] = useState({
         assigneeId: "",
         title: "",
@@ -215,11 +217,7 @@ export default function DDManagerDashboard() {
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/users?role=all");
             const data = await res.json();
-            return (data.users || []).filter((u: any) => 
-                u.role === "dd_executive" || 
-                u.role === "posting_executive" || 
-                u.role === "product_posting_executive"
-            );
+            return (data.users || []).filter((u: any) => u.role === "dd_executive");
         }
     });
     const executives = executivesRes || [];
@@ -318,7 +316,8 @@ export default function DDManagerDashboard() {
             queryClientObj.invalidateQueries({ queryKey: ["/api/dd-executive/tasks/waiting"] });
             queryClientObj.invalidateQueries({ queryKey: ["/api/dd-manager/summary"] });
             toast({ title: "Task Assigned", description: `Task has been assigned to executive successfully.` });
-            setCreateTaskModalOpen(false);
+            setVerifyDocModalOpen(false);
+            setSelectedDoc(null);
             setTaskDetails({ assigneeId: "", title: "", duration: "0", links: "", dueDate: "", detail: "" });
         },
         onError: (error: any) => {
@@ -571,30 +570,36 @@ export default function DDManagerDashboard() {
                                             <TableCell className="py-6 pr-8 text-right">
                                                 <div className="flex justify-end gap-2">
                                                     {activeTab === 'approved' ? (
-                                                        <Button 
-                                                            variant="ghost" 
-                                                            size="icon" 
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
                                                             className="h-8 w-8 rounded-lg bg-primary/5 hover:bg-primary text-primary hover:text-white transition-all shadow-sm"
                                                             onClick={() => {
-                                                                setSelectedProjectForTask(row);
                                                                 setTaskDetails({
                                                                     assigneeId: "",
-                                                                    title: row.project || "",
+                                                                    title: "",
                                                                     duration: "0",
                                                                     links: "",
                                                                     dueDate: "",
                                                                     detail: ""
                                                                 });
-                                                                setCreateTaskModalOpen(true);
-                                                                setVerificationDetails({ image: "", detail: "" }); 
+                                                                setSelectedDoc({
+                                                                    id: row.docId,
+                                                                    projectId: row.id,
+                                                                    projectName: row.project,
+                                                                    createdAt: row.docCreatedAt,
+                                                                    rawRow: row,
+                                                                    mode: 'assign'
+                                                                });
+                                                                setVerifyDocModalOpen(true);
                                                             }}
                                                         >
                                                             <SendHorizonal className="h-4 w-4" />
                                                         </Button>
                                                     ) : activeTab === 'waiting' && row.isVerifiable ? (
-                                                        <Button 
-                                                            variant="ghost" 
-                                                            size="icon" 
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
                                                             className="h-8 w-8 rounded-lg bg-emerald-50 hover:bg-emerald-500 text-emerald-600 hover:text-white transition-all shadow-sm"
                                                             disabled={transitionWorkflowMutation.isPending}
                                                             onClick={(e) => {
@@ -604,7 +609,8 @@ export default function DDManagerDashboard() {
                                                                     projectId: row.id,
                                                                     projectName: row.project,
                                                                     createdAt: row.docCreatedAt,
-                                                                    rawRow: row
+                                                                    rawRow: row,
+                                                                    mode: 'verify'
                                                                 });
                                                                 setVerifyDocModalOpen(true);
                                                             }}
@@ -1094,7 +1100,7 @@ export default function DDManagerDashboard() {
             <Dialog open={verifyDocModalOpen} onOpenChange={setVerifyDocModalOpen}>
                 <DialogContent className="max-w-[1100px] max-h-[85vh] p-0 flex flex-col overflow-hidden border-none bg-white rounded-xl shadow-2xl dark:bg-zinc-900">
                     <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/30 flex-shrink-0">
-                        <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">PROJECTS OVERVIEW</DialogTitle>
+                        <DialogTitle className="text-[14px] font-bold text-gray-500 uppercase tracking-[0.05em] dark:text-zinc-400">PROJECTS OVERVIEW &amp; VERIFICATION</DialogTitle>
                     </div>
 
                     <div className="p-8 pb-10 overflow-y-auto">
@@ -1151,84 +1157,148 @@ export default function DDManagerDashboard() {
                                                     <span className="text-gray-900 font-semibold text-[14px] dark:text-zinc-100">{row.value}</span>
                                                 </div>
                                             ))}
-                                            <div className="pt-4">
-                                                <label className="text-[14px] font-bold text-gray-600 block mb-2 dark:text-zinc-300">Rejection Reason (if rejecting)</label>
-                                                <Textarea 
-                                                    className="w-full border-gray-200 text-[13px] dark:border-zinc-800" 
-                                                    placeholder="Enter reason for rejection..."
-                                                    value={rejectionReason}
-                                                    onChange={(e) => setRejectionReason(e.target.value)}
-                                                />
-                                            </div>
+                                            {selectedDoc?.mode !== 'assign' && (
+                                                <div className="pt-4">
+                                                    <label className="text-[14px] font-bold text-gray-600 block mb-2 dark:text-zinc-300">Rejection Reason (if rejecting)</label>
+                                                    <Textarea
+                                                        className="w-full border-gray-200 text-[13px] dark:border-zinc-800"
+                                                        placeholder="Enter reason for rejection..."
+                                                        value={rejectionReason}
+                                                        onChange={(e) => setRejectionReason(e.target.value)}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-3 pt-6">
-                                        <Button 
-                                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-10 px-8 rounded shadow-md transition-all active:scale-95 text-[13px]"
-                                            onClick={() => {
-                                                if (!selectedDoc.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
-                                                    transitionWorkflowMutation.mutate(selectedDoc.projectId);
-                                                    setVerifyDocModalOpen(false);
-                                                } else {
-                                                    verifyDocMutation.mutate({ id: selectedDoc.id, action: 'APPROVE' });
-                                                }
-                                            }}
-                                            disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
-                                        >
-                                            {(verifyDocMutation.isPending || transitionWorkflowMutation.isPending) ? "Processing..." : "Approve & Send to QA"}
-                                        </Button>
-                                        <Button 
-                                            className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold h-10 px-8 rounded shadow-md transition-all active:scale-95 text-[13px]"
-                                            onClick={() => setDataVerificationModalOpen(true)}
-                                            disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
-                                        >
-                                            Verified
-                                        </Button>
-                                        <Button 
-                                            variant="outline"
-                                            className="border-rose-200 text-rose-600 hover:bg-rose-50 font-bold h-10 px-8 rounded text-[13px]"
-                                            onClick={() => {
-                                                if (!rejectionReason) {
-                                                    toast({ title: "Please enter rejection reason", variant: "destructive" });
-                                                    return;
-                                                }
-                                                if (!selectedDoc.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
-                                                    // No reject API exists for the raw product-posting workflow phase.
-                                                    // Do NOT fake success — surface an honest "not available" message.
-                                                    toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
-                                                } else {
-                                                    verifyDocMutation.mutate({ id: selectedDoc.id, action: 'REJECT', reason: rejectionReason });
-                                                }
-                                            }}
-                                            disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
-                                        >
-                                            Reject
-                                        </Button>
-                                    </div>
+                                    {selectedDoc?.mode === 'assign' ? (
+                                        <div className="space-y-4 pt-6 border-t border-gray-100 dark:border-zinc-800">
+                                            <h4 className="text-[14px] font-bold text-gray-800 uppercase dark:text-zinc-100">Assign Task to Executive</h4>
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                                <Select
+                                                    value={taskDetails.assigneeId}
+                                                    onValueChange={(v) => setTaskDetails((f) => ({ ...f, assigneeId: v }))}
+                                                >
+                                                    <SelectTrigger className="h-10 text-[13px]">
+                                                        <SelectValue placeholder="Choose an executive..." />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {executives.length === 0 ? (
+                                                            <div className="px-3 py-2 text-[12px] text-slate-400">No D&amp;D executives found.</div>
+                                                        ) : executives.map((ex: any) => (
+                                                            <SelectItem key={ex.id} value={ex.id}>{ex.fullName || ex.name} ({ex.email})</SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <Input
+                                                    placeholder="Task title..."
+                                                    value={taskDetails.title}
+                                                    onChange={(e) => setTaskDetails((f) => ({ ...f, title: e.target.value }))}
+                                                    className="h-10 text-[13px]"
+                                                />
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="1"
+                                                    placeholder="Time allotted (minutes)..."
+                                                    value={taskDetails.duration}
+                                                    onChange={(e) => setTaskDetails((f) => ({ ...f, duration: e.target.value }))}
+                                                    className="h-10 text-[13px]"
+                                                />
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <Button
+                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-10 px-8 rounded shadow-md transition-all active:scale-95 text-[13px]"
+                                                    disabled={createTaskMutation.isPending || !taskDetails.assigneeId || !taskDetails.title.trim()}
+                                                    onClick={() => createTaskMutation.mutate({
+                                                        projectId: selectedDoc.projectId,
+                                                        ...taskDetails,
+                                                    })}
+                                                >
+                                                    {createTaskMutation.isPending ? "Assigning..." : "Assign"}
+                                                </Button>
+                                                <Button variant="outline" className="h-10 px-8 rounded text-[13px]" onClick={() => { setVerifyDocModalOpen(false); setSelectedDoc(null); }}>
+                                                    Cancel
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-3 pt-6">
+                                            <Button
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-10 px-8 rounded shadow-md transition-all active:scale-95 text-[13px]"
+                                                onClick={() => {
+                                                    if (!selectedDoc.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
+                                                        transitionWorkflowMutation.mutate(selectedDoc.projectId);
+                                                        setVerifyDocModalOpen(false);
+                                                    } else {
+                                                        verifyDocMutation.mutate({ id: selectedDoc.id, action: 'APPROVE' });
+                                                    }
+                                                }}
+                                                disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
+                                            >
+                                                {(verifyDocMutation.isPending || transitionWorkflowMutation.isPending) ? "Processing..." : "Approve & Send to QA"}
+                                            </Button>
+                                            <Button
+                                                className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold h-10 px-8 rounded shadow-md transition-all active:scale-95 text-[13px]"
+                                                onClick={() => setDataVerificationModalOpen(true)}
+                                                disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
+                                            >
+                                                Verified
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                className="border-rose-200 text-rose-600 hover:bg-rose-50 font-bold h-10 px-8 rounded text-[13px]"
+                                                onClick={() => {
+                                                    if (!rejectionReason) {
+                                                        toast({ title: "Please enter rejection reason", variant: "destructive" });
+                                                        return;
+                                                    }
+                                                    if (!selectedDoc.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
+                                                        // No reject API exists for the raw product-posting workflow phase.
+                                                        // Do NOT fake success — surface an honest "not available" message.
+                                                        toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
+                                                    } else {
+                                                        verifyDocMutation.mutate({ id: selectedDoc.id, action: 'REJECT', reason: rejectionReason });
+                                                    }
+                                                }}
+                                                disabled={verifyDocMutation.isPending || transitionWorkflowMutation.isPending || (!selectedDoc.id && selectedDoc?.rawRow?.itemType !== 'PRODUCT_POSTING')}
+                                            >
+                                                Reject
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Right Side: Attached Files */}
                                 <div className="space-y-6 bg-muted/30 p-6 rounded-xl border border-border h-fit">
                                     <h4 className="text-[14px] font-bold text-foreground uppercase tracking-wide">Attached Files</h4>
                                     <div className="space-y-4">
-                                        <div className="flex items-center justify-between p-4 bg-card rounded-xl border border-border shadow-sm group hover:border-primary transition-all cursor-pointer">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-11 h-11 bg-primary/5 text-primary rounded-lg flex items-center justify-center">
-                                                    <FileText className="h-5 w-5" />
-                                                </div>
-                                                <div>
-                                                    <p className="text-[14px] font-bold text-foreground">Requirements.docx</p>
-                                                    <p className="text-[12px] text-muted-foreground font-medium">Project Documentation</p>
-                                                </div>
+                                        {documents.length === 0 ? (
+                                            <div className="p-4 text-center border-2 border-dashed rounded-xl border-border bg-card/50">
+                                                <p className="text-[12px] text-muted-foreground">No files attached.</p>
                                             </div>
-                                            <div className="p-2 text-muted-foreground group-hover:text-primary transition-colors">
-                                                <Download className="h-4 w-4" />
-                                            </div>
-                                        </div>
-                                        <div className="p-4 text-center border-2 border-dashed rounded-xl border-border bg-card/50">
-                                            <p className="text-[12px] text-muted-foreground">Click to view all attachments</p>
-                                        </div>
+                                        ) : documents.map((doc: any) => (
+                                            <a
+                                                key={doc.id}
+                                                href={doc.documentUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex items-center justify-between p-4 bg-card rounded-xl border border-border shadow-sm group hover:border-primary transition-all cursor-pointer"
+                                            >
+                                                <div className="flex items-center gap-4 min-w-0">
+                                                    <div className="w-11 h-11 bg-primary/5 text-primary rounded-lg flex items-center justify-center shrink-0">
+                                                        <FileText className="h-5 w-5" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-[14px] font-bold text-foreground truncate">{doc.documentUrl?.split("/").pop() || "Document"}</p>
+                                                        <p className="text-[12px] text-muted-foreground font-medium">{doc.status}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="p-2 text-muted-foreground group-hover:text-primary transition-colors shrink-0">
+                                                    <Download className="h-4 w-4" />
+                                                </div>
+                                            </a>
+                                        ))}
                                     </div>
                                 </div>
                             </div>
@@ -1295,163 +1365,6 @@ export default function DDManagerDashboard() {
                 </DialogContent>
             </Dialog>
             
-            {/* Step 4: Create Task Modal - Enhanced Flow */}
-            <Dialog open={createTaskModalOpen} onOpenChange={setCreateTaskModalOpen}>
-                <DialogContent className="max-w-[650px] p-0 overflow-hidden border-none bg-white rounded-[1.25rem] shadow-2xl dark:bg-zinc-900">
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-zinc-800">
-                        <DialogTitle className="font-bold text-slate-800 tracking-tight flex flex-wrap items-center gap-2 dark:text-zinc-100">
-                            Create New Task
-                            <span className="text-sm font-medium text-emerald-500">
-                                {new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                        </DialogTitle>
-                    </div>
-
-                    <div className="p-6 space-y-5">
-                        <div className="grid grid-cols-2 gap-5">
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Company</label>
-                                <div className="bg-[#f0f2f5] border border-gray-100 px-4 py-2.5 rounded-lg text-slate-500 font-bold dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
-                                    {selectedProjectForTask?.company || "System Entity"}
-                                </div>
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Project</label>
-                                <div className="bg-[#f0f2f5] border border-gray-100 px-4 py-2.5 rounded-lg text-slate-500 font-bold dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
-                                    {selectedProjectForTask?.project || "System Project"}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-5">
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Person</label>
-                                <Select 
-                                    value={taskDetails.assigneeId} 
-                                    onValueChange={(v) => setTaskDetails(prev => ({ ...prev, assigneeId: v }))}
-                                >
-                                    <SelectTrigger className="h-10 bg-white border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-emerald-500/10 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                                        <SelectValue placeholder="Choose..." />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-white border-slate-200 text-slate-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                                        {executives?.map((e: any) => (
-                                            <SelectItem key={e.id} value={e.id} className="hover:bg-slate-50 font-bold dark:hover:bg-zinc-800">{e.fullName || e.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Task</label>
-                                <Select 
-                                    value={taskDetails.title} 
-                                    onValueChange={(v) => {
-                                        const defaultTimes: Record<string, string> = {
-                                            "ONLINE STORE": "120",
-                                            "BASIC WEBSITE": "60",
-                                            "LOGO DESIGN": "45",
-                                            "PROFESSIONAL WEBSITE": "180",
-                                            "ENTERPRISE WEBSITE": "300"
-                                        };
-                                        const template = taskTemplates.find((t: any) => t.name === v);
-                                        setTaskDetails(prev => ({ 
-                                            ...prev, 
-                                            title: v,
-                                            duration: defaultTimes[v] || template?.time?.toString() || prev.duration
-                                        }));
-                                    }}
-                                >
-                                    <SelectTrigger className="h-10 bg-white border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-emerald-500/10 transition-all dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                                        <SelectValue placeholder="Choose..." />
-                                    </SelectTrigger>
-                                    <SelectContent className="bg-white border-slate-200 text-slate-700 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400">
-                                        {[
-                                            "ONLINE STORE",
-                                            "BASIC WEBSITE",
-                                            "LOGO DESIGN",
-                                            "PROFESSIONAL WEBSITE",
-                                            "ENTERPRISE WEBSITE"
-                                        ].map((t) => (
-                                            <SelectItem key={t} value={t} className="hover:bg-slate-50 py-2.5 font-black dark:hover:bg-zinc-800">{t}</SelectItem>
-                                        ))}
-                                        {taskTemplates?.map((t: any) => (
-                                            <SelectItem key={t.id} value={t.name} className="hover:bg-slate-50 py-2.5 font-bold dark:hover:bg-zinc-800">{t.name}</SelectItem>
-                                        ))}
-                                        <SelectItem value={selectedProjectForTask?.project || "Custom Task"} className="hover:bg-slate-50 py-2.5 font-bold dark:hover:bg-zinc-800">{selectedProjectForTask?.project || "Custom Task"}</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-4">
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Task Time</label>
-                                <Input 
-                                    className="h-10 bg-[#f0f2f5] border-gray-100 rounded-lg text-slate-700 font-medium focus:ring-emerald-500/10 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400" 
-                                    placeholder="Enter time..."
-                                    value={taskDetails.duration}
-                                    onChange={(e) => setTaskDetails(prev => ({ ...prev, duration: e.target.value }))}
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Links</label>
-                                <Input 
-                                    className="h-10 bg-white border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-emerald-500/10 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" 
-                                    placeholder="Working Links"
-                                    value={taskDetails.links}
-                                    onChange={(e) => setTaskDetails(prev => ({ ...prev, links: e.target.value }))}
-                                />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Next Day</label>
-                                <Input 
-                                    type="datetime-local"
-                                    className="h-10 bg-white border-slate-200 rounded-lg text-slate-700 font-medium focus:ring-emerald-500/10 cursor-pointer dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" 
-                                    value={taskDetails.dueDate}
-                                    onChange={(e) => setTaskDetails(prev => ({ ...prev, dueDate: e.target.value }))}
-                                    onClick={(e) => (e.target as any).showPicker?.()}
-                                    onFocus={(e) => (e.target as any).showPicker?.()}
-                                />
-                            </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                            <label className="font-bold text-slate-600 block pl-1 dark:text-zinc-300">Detail</label>
-                            <Textarea 
-                                className="w-full bg-white border-slate-200 rounded-xl text-slate-700 min-h-[100px] focus:ring-emerald-500/10 font-medium p-3 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" 
-                                placeholder="Add detail"
-                                value={taskDetails.detail}
-                                onChange={(e) => setTaskDetails(prev => ({ ...prev, detail: e.target.value }))}
-                            />
-                        </div>
-
-                        <div className="flex items-center justify-end gap-3 pt-2">
-                            <Button 
-                                variant="ghost"
-                                className="bg-[#f0f2f5] hover:bg-[#e4e7eb] text-slate-700 font-bold h-10 px-6 rounded-lg text-[14px] transition-all dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-400"
-                                onClick={() => setCreateTaskModalOpen(false)}
-                            >
-                                Close
-                            </Button>
-                            <Button 
-                                className="bg-[#008d4c] hover:bg-[#00703c] text-white font-bold h-10 px-10 rounded-lg shadow-md text-[14px] transition-all active:scale-95"
-                                onClick={() => {
-                                    if (!taskDetails.assigneeId) {
-                                        toast({ title: "Incomplete Form", description: "Assignee is required to proceed.", variant: "destructive" });
-                                        return;
-                                    }
-                                    createTaskMutation.mutate({
-                                        projectId: selectedProjectForTask.id,
-                                        ...taskDetails
-                                    });
-                                }}
-                            >
-                                Save
-                            </Button>
-                        </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
-
             {/* Step 3: Final Confirmation Modal */}
             <Dialog open={confirmSaveModalOpen} onOpenChange={setConfirmSaveModalOpen}>
                 <DialogContent className="max-w-[440px] p-8 bg-card rounded-2xl shadow-2xl border border-border text-center space-y-6">
@@ -1478,31 +1391,21 @@ export default function DDManagerDashboard() {
                             className="bg-emerald-500 hover:bg-emerald-600 text-white font-black px-12 h-12 rounded-xl shadow-[0_0_30px_rgba(16,185,129,0.3)] active:scale-95 transition-all"
                             onClick={() => {
                                 const isApproved = verificationDetails.image === 'Yes';
-                                if (createTaskModalOpen) {
-                                    // If we are in the Task creation flow
-                                    createTaskMutation.mutate({
-                                        projectId: selectedProjectForTask.id,
-                                        ...taskDetails
-                                    });
-                                } else {
-                                    // If we are in the Doc verification flow
-                                    if (!selectedDoc?.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
-                                        if (isApproved) {
-                                            transitionWorkflowMutation.mutate(selectedDoc.projectId);
-                                        } else {
-                                            toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
-                                        }
+                                if (!selectedDoc?.id && selectedDoc?.rawRow?.itemType === 'PRODUCT_POSTING') {
+                                    if (isApproved) {
+                                        transitionWorkflowMutation.mutate(selectedDoc.projectId);
                                     } else {
-                                        verifyDocMutation.mutate({ 
-                                            id: selectedDoc.id, 
-                                            action: isApproved ? 'APPROVE' : 'REJECT', 
-                                            reason: `Data Verified: ${verificationDetails.image} - ${verificationDetails.detail}` 
-                                        });
+                                        toast({ title: "Reject not available", description: "Returning a project at this workflow stage isn't supported yet.", variant: "destructive" });
                                     }
+                                } else {
+                                    verifyDocMutation.mutate({
+                                        id: selectedDoc.id,
+                                        action: isApproved ? 'APPROVE' : 'REJECT',
+                                        reason: `Data Verified: ${verificationDetails.image} - ${verificationDetails.detail}`
+                                    });
                                 }
                                 setConfirmSaveModalOpen(false);
                                 setDataVerificationModalOpen(false);
-                                setCreateTaskModalOpen(false);
                             }}
                              disabled={verifyDocMutation.isPending || createTaskMutation.isPending || transitionWorkflowMutation.isPending}
                         >

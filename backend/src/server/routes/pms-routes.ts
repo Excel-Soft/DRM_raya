@@ -2508,8 +2508,19 @@ function getPeriodRange(periodRaw: string) {
       let companyByTaskId: Record<string, string> = {};
       let minutesByTaskId: Record<string, number> = {};
       let sentToQaByTaskId: Record<string, string | null> = {};
+      // The task's CURRENT status, as opposed to `toStatus` above (which is
+      // frozen at whatever this specific history row's transition was — e.g.
+      // a QA-return row's toStatus is always "Blocked", forever, even after
+      // the manager has since reassigned it back to the executive). The
+      // "Assign to Exec" / "Send to QA" buttons need to know whether that's
+      // already happened so they can stop showing once it has.
+      let currentStatusByTaskId: Record<string, string | null> = {};
+      // Set once a Verification Manager has ALSO reviewed the task (a step
+      // downstream of QA) — such a task is fully closed and "graduates" out
+      // of this list into GET /api/pms/complete-closed-projects instead.
+      let verificationReviewedAtByTaskId: Record<string, string | null> = {};
       if (taskIds.length > 0) {
-        const [companyRows, timeRows, qaRows] = await Promise.all([
+        const [companyRows, timeRows, qaRows, statusRows, verificationRows] = await Promise.all([
           pool.query(
             `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
                FROM drm.tasks t
@@ -2534,6 +2545,14 @@ function getPeriodRange(periodRaw: string) {
             `SELECT id AS task_id, sent_to_qa_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
             [taskIds],
           ),
+          pool.query(
+            `SELECT id AS task_id, status FROM drm.tasks WHERE id = ANY($1::uuid[])`,
+            [taskIds],
+          ),
+          pool.query(
+            `SELECT id AS task_id, verification_reviewed_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
+            [taskIds],
+          ),
         ]);
         companyByTaskId = companyRows.rows.reduce((acc: Record<string, string>, row: any) => {
           acc[row.task_id] = row.company;
@@ -2547,19 +2566,148 @@ function getPeriodRange(periodRaw: string) {
           acc[row.task_id] = row.sent_to_qa_at;
           return acc;
         }, {});
+        currentStatusByTaskId = statusRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
+          acc[row.task_id] = row.status;
+          return acc;
+        }, {});
+        verificationReviewedAtByTaskId = verificationRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
+          acc[row.task_id] = row.verification_reviewed_at;
+          return acc;
+        }, {});
       }
 
       const enriched = history.map((h) => ({
         ...h,
         company: h.task?.id ? companyByTaskId[h.task.id] ?? null : null,
         timeSpentMinutes: h.task?.id ? minutesByTaskId[h.task.id] ?? 0 : 0,
+        currentStatus: h.task?.id ? currentStatusByTaskId[h.task.id] ?? null : null,
         sentToQaAt: h.task?.id ? sentToQaByTaskId[h.task.id] ?? null : null,
+        verificationReviewedAt: h.task?.id ? verificationReviewedAtByTaskId[h.task.id] ?? null : null,
       }));
 
-      res.json(enriched);
+      // This feed is one row per status-history EVENT, so a single task that
+      // cycles through review more than once (submit -> QA return -> reassign
+      // -> resubmit -> approve) accumulates a new row on every transition —
+      // from the "Completed Projects" table it looks like several different
+      // entries for the same project instead of one continuing one. Collapse
+      // to the single latest row per task, and only keep tasks currently at
+      // rest in Completed (ready for/already sent to QA) or Blocked (waiting
+      // on reassignment) — a task back in ToDo/InProgress/READY_FOR_QA is
+      // "in flight" again and belongs in Task System / Pending My Review,
+      // not here.
+      // The QA reviewer's comment lives on whichever historical row was the
+      // "Completed -> Blocked, qaReturn" event — which is usually NOT the
+      // latest row once the executive has fixed it up and resubmitted. Look
+      // it up separately per task so it keeps showing even after the row
+      // that carried it is no longer the one displayed.
+      const latestQaCommentByTaskId = new Map<string, { reason: string; changedAt: any }>();
+      for (const row of enriched) {
+        const taskId = row.task?.id;
+        if (!taskId || !row.notes) continue;
+        try {
+          const parsed = JSON.parse(row.notes);
+          if (!parsed.qaReturn || !parsed.reason) continue;
+          const existing = latestQaCommentByTaskId.get(taskId);
+          if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
+            latestQaCommentByTaskId.set(taskId, { reason: parsed.reason, changedAt: row.changedAt });
+          }
+        } catch {
+          // Not JSON — not a QA-return note.
+        }
+      }
+
+      const latestByTaskId = new Map<string, (typeof enriched)[number] & { qaComment?: string | null }>();
+      for (const row of enriched) {
+        const taskId = row.task?.id;
+        if (!taskId) continue;
+        if (row.currentStatus !== "Completed" && row.currentStatus !== "Blocked") continue;
+        if (row.verificationReviewedAt) continue; // fully closed — belongs on /api/pms/complete-closed-projects instead
+        const existing = latestByTaskId.get(taskId);
+        if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
+          latestByTaskId.set(taskId, { ...row, qaComment: latestQaCommentByTaskId.get(taskId)?.reason ?? null });
+        }
+      }
+      const deduped = Array.from(latestByTaskId.values()).sort(
+        (a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime(),
+      );
+
+      res.json(deduped);
     } catch (error) {
       console.error("Error fetching task history:", error);
       res.status(500).json({ error: "Failed to fetch task history" });
+    }
+  });
+
+  // GET /api/pms/complete-closed-projects — tasks that have finished the
+  // WHOLE review pipeline (executive -> manager approve -> QA -> Verification),
+  // i.e. drm.tasks.verification_reviewed_at is set. These "graduate" out of
+  // /api/pms/task-history (see the verificationReviewedAt exclusion above)
+  // into this dedicated, manager-only report instead. Department-scoped the
+  // same way /api/pms/task-history's own manager branch is.
+  app.get("/api/pms/complete-closed-projects", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userRole = req.user.roleId || (req.user as any).role || "";
+      if (!isManagerialRole(userRole)) {
+        return res.status(403).json({ error: "Only managers can view this report." });
+      }
+
+      const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
+      const userDept = userRes.rows[0]?.department || "";
+      const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
+        seo_smm: ["SEO_SMM", "SEO/SMM"],
+        it: ["IT"],
+        dd: ["DND", "DESIGN_DEVELOPMENT"],
+        product_posting: ["PRODUCT_POSTING"],
+        software: ["SOFTWARE"],
+        service: ["SERVICE"],
+      };
+      const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+      const deptCandidates = Array.from(new Set([
+        ...(userDept ? [userDept] : []),
+        ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+      ]));
+      // Verification manager (and admin/super_admin/super_hod) see every
+      // department's closed projects — that's the whole point of the role.
+      const isDeptBoundManager = deptCandidates.length > 0
+        && !["admin", "super_admin", "super_hod", "verification_manager"].includes(userRole);
+      const deptFilter = isDeptBoundManager
+        ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
+        : "";
+
+      const limitNum = req.query.limit ? parseInt(req.query.limit as string) : 100;
+      const { rows } = await pool.query(`
+        SELECT
+          t.id as "taskId",
+          t.title,
+          t.status,
+          t.qa_reviewed_at as "qaReviewedAt",
+          t.qa_level as "qaLevel",
+          t.qa_remarks as "qaRemarks",
+          t.verification_reviewed_at as "verificationReviewedAt",
+          t.verification_level as "verificationLevel",
+          t.verification_remarks as "verificationRemarks",
+          COALESCE(c.company_name, inv.company_name, rinv.customer_name, p.name) as "companyName",
+          p.name as "projectName",
+          jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "executive",
+          (SELECT COALESCE(SUM(duration_minutes), 0) FROM drm.task_time_logs WHERE task_id = t.id) as "timeSpentMinutes"
+        FROM drm.tasks t
+        JOIN drm.projects p ON p.id = t.project_id
+        LEFT JOIN drm.customers c ON c.id = p.customer_id
+        LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+        LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
+        LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
+        WHERE t.verification_reviewed_at IS NOT NULL
+          AND COALESCE(t.is_deleted, false) = false
+          ${deptFilter}
+        ORDER BY t.verification_reviewed_at DESC
+        LIMIT $1
+      `, [limitNum]);
+
+      res.json(rows);
+    } catch (error) {
+      console.error("Error fetching complete-closed projects:", error);
+      res.status(500).json({ error: "Failed to fetch complete-closed projects" });
     }
   });
 

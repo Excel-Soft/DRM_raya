@@ -215,6 +215,7 @@ const PmsTasks = lazy(() => import("@/pages/pms-tasks"));
 const PmsStatus = lazy(() => import("@/pages/pms-status"));
 const PmsRunningProjects = lazy(() => import("@/pages/pms-running-projects"));
 const PmsCompletedProjects = lazy(() => import("@/pages/pms-completed-projects"));
+const PmsCompleteClosedProjects = lazy(() => import("@/pages/pms-complete-closed-projects"));
 const PmsPendingApprovals = lazy(() => import("@/pages/pms-pending-approvals"));
 const PmsTaskHistory = lazy(() => import("@/pages/pms-task-history"));
 const PmsTeamWorkspace = lazy(() => import("@/pages/pms-team-workspace"));
@@ -341,6 +342,7 @@ function Router() {
       <Route path="/drm/late-coming" component={LateComingPage} />
       <Route path="/pms/running-projects" component={PmsRunningProjects} />
       <Route path="/pms/completed-projects" component={PmsCompletedProjects} />
+      <Route path="/pms/complete-closed-projects" component={PmsCompleteClosedProjects} />
       <Route path="/pms/approvals" component={PmsPendingApprovals} />
       <Route path="/approvals" component={Approvals} />
       <Route path="/pms/task-history" component={PmsTaskHistory} />

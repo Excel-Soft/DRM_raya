@@ -650,6 +650,13 @@ export const tasks = drmSchema.table("tasks", {
   qaReviewedAt: timestamp("qa_reviewed_at", { withTimezone: true }),
   qaLevel: text("qa_level"),
   qaRemarks: text("qa_remarks"),
+  // Set once the Verification Manager finishes their own post-QA review —
+  // "return" clears this back to null (bounces it back into QA's own queue
+  // by leaving qaReviewedAt cleared too) rather than reopening the task for
+  // the executive; Verification is a check on QA's review, not the work.
+  verificationReviewedAt: timestamp("verification_reviewed_at", { withTimezone: true }),
+  verificationLevel: text("verification_level"),
+  verificationRemarks: text("verification_remarks"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

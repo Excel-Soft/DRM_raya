@@ -170,6 +170,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/pms/project-report", component: "PmsProjectReport", title: "Project Report", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF, notes: "Canonical project report." },
   { path: "/dd-manager/project-report", component: "PmsProjectReport", title: "Project Report (alias)", module: "PMS", sidebarVisible: false, allowedRoles: ALL_STAFF, redirectTo: "/pms/project-report", notes: "Alias → /pms/project-report." },
   { path: "/pms/completed-projects", component: "PmsCompletedProjects", title: "Completed Projects", module: "PMS", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
+  { path: "/pms/complete-closed-projects", component: "PmsCompleteClosedProjects", title: "Complete and Closed Project", module: "PMS", sidebarVisible: true, sidebarGroup: "PMS", permissionKey: "PMS", allowedRoles: ALL_STAFF },
   { path: "/projects", component: "DelayProjectPage", title: "Projects (alias)", module: "PMS", sidebarVisible: false, allowedRoles: ALL_STAFF, redirectTo: "/drm/delay-project", notes: "Alias → /drm/delay-project." },
   { path: "/projects/upcoming", component: "UpcomingProjectPage", title: "Upcoming Projects", module: "PMS", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
 

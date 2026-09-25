@@ -528,21 +528,34 @@ router.get("/qa/queue", async (req: any, res: any) => {
                 t.notes,
                 t.sent_to_qa_at as "executiveSubmittedAt",
                 t.updated_at as "updatedAt",
-                COALESCE(c.company_name, inv.company_name, p.name) as "companyName",
+                COALESCE(c.company_name, inv.company_name, rinv.customer_name, p.name) as "companyName",
                 p.id as "projectId",
-                inv.invoice_number as "invoiceNumber",
+                COALESCE(inv.invoice_number, rinv.invoice_number) as "invoiceNumber",
+                (SELECT COALESCE(SUM((item->>'quantity')::numeric), 0)
+                   FROM jsonb_array_elements(COALESCE(rinv.items::jsonb, '[]'::jsonb)) AS item) as "qty",
                 jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "assignee",
                 (SELECT count(*) FROM drm.task_status_history h
                    WHERE h.task_id = t.id AND h.to_status = 'Blocked'
                      AND h.notes LIKE '%"qaReturn":true%') as "returnCount",
-                (SELECT remarks FROM drm.product_posting_rework_history rh
-                   JOIN drm.product_posting_workflows wf ON wf.id = rh.workflow_id
-                   WHERE wf.project_id = t.project_id AND rh.action = 'DOCUMENT_REJECTED'
-                   ORDER BY rh.created_at DESC LIMIT 1) as "vmComment"
+                -- Whichever "sent back with a reason" event is most recent — the
+                -- pre-existing document-rejection path, or this session's new
+                -- Verification-Manager return (task_status_history, flagged
+                -- verificationReturn:true — see /tasks/:id/verification-review).
+                (SELECT reason_text FROM (
+                    SELECT rh.remarks as reason_text, rh.created_at as ts
+                      FROM drm.product_posting_rework_history rh
+                      JOIN drm.product_posting_workflows wf ON wf.id = rh.workflow_id
+                     WHERE wf.project_id = t.project_id AND rh.action = 'DOCUMENT_REJECTED'
+                    UNION ALL
+                    SELECT (h.notes::jsonb ->> 'reason') as reason_text, h.changed_at as ts
+                      FROM drm.task_status_history h
+                     WHERE h.task_id = t.id AND h.notes LIKE '%"verificationReturn":true%'
+                 ) combined ORDER BY ts DESC LIMIT 1) as "vmComment"
             FROM drm.tasks t
             JOIN drm.projects p ON p.id = t.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+            LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
             LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
             WHERE COALESCE(t.is_deleted, false) = false
               AND (
@@ -634,6 +647,16 @@ router.post("/tasks/:id/qa-review", async (req: any, res: any) => {
                 `UPDATE drm.tasks SET qa_reviewed_at = now(), qa_level = $2, qa_remarks = $3 WHERE id = $1`,
                 [req.params.id, level || null, remarks || null],
             );
+            // Same no-op-status audit entry the "return" branch below already
+            // uses — otherwise QA approving (as opposed to returning) a task
+            // leaves no trace on the Workflow Timeline at all.
+            await taskStatusHistoryRepository.create({
+                taskId: req.params.id,
+                userId,
+                fromStatus: "Completed" as any,
+                toStatus: "Completed" as any,
+                notes: JSON.stringify({ reason: remarks || "Approved by QA", level: level || undefined, qaComplete: true }),
+            } as any);
             return res.json({ success: true });
         }
 
@@ -659,6 +682,152 @@ router.post("/tasks/:id/qa-review", async (req: any, res: any) => {
     } catch (error) {
         console.error("Error recording QA review:", error);
         res.status(500).json({ error: "Failed to record QA review" });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Verification Manager dashboard (frontend/src/components/verification-manager-widget.tsx,
+// served at /verification/manager) — same never-existed-anywhere-in-the-backend
+// problem as the QA dashboard above (GET /verification/queue, GET
+// /verification/stats, POST /tasks/:id/verification-review all 404'd). Built
+// the same way: sourced from drm.tasks, one step downstream of QA. A task
+// enters this queue once QA marks it reviewed (qaReviewedAt set) and leaves
+// once Verification marks it reviewed too. "Return" here is a check on QA's
+// OWN review, not the executive's work — it clears qaReviewedAt (not
+// sentToQaAt/status), which simply drops the task back into QA's own /qa/queue
+// for QA to look at again, rather than reopening it for the executive.
+// ---------------------------------------------------------------------------
+
+function isVerificationManagerRole(req: any): boolean {
+    const role = String(req.user?.activeRoleId || req.user?.roleId || req.user?.role || "").toLowerCase();
+    return role === "verification_manager" || role === "admin" || role === "super_admin";
+}
+
+// GET /api/product-posting/verification/queue — tasks QA has reviewed that
+// Verification hasn't reviewed yet.
+router.get("/verification/queue", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+        const { rows } = await pool.query(`
+            SELECT
+                t.id as "taskId",
+                t.title,
+                t.status,
+                t.notes,
+                t.qa_reviewed_at as "qaReviewedAt",
+                t.updated_at as "updatedAt",
+                COALESCE(c.company_name, inv.company_name, p.name) as "companyName",
+                p.id as "projectId",
+                inv.invoice_number as "invoiceNumber",
+                jsonb_build_object('id', au.id, 'name', COALESCE(au.full_name, au.name, au.username)) as "assignee",
+                (SELECT count(*) FROM drm.task_status_history h
+                   WHERE h.task_id = t.id AND h.notes LIKE '%"verificationReturn":true%') as "returnCount"
+            FROM drm.tasks t
+            JOIN drm.projects p ON p.id = t.project_id
+            LEFT JOIN drm.customers c ON c.id = p.customer_id
+            LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
+            LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
+            WHERE COALESCE(t.is_deleted, false) = false
+              AND t.qa_reviewed_at IS NOT NULL
+              AND t.verification_reviewed_at IS NULL
+            ORDER BY t.qa_reviewed_at DESC
+        `);
+
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error("Error fetching verification queue:", error);
+        res.status(500).json({ error: "Failed to fetch verification queue" });
+    }
+});
+
+// GET /api/product-posting/verification/stats?period=X — distinct tasks that
+// have ever reached Verification (i.e. QA has reviewed them), same "total"
+// convention as /qa/dashboard-stats.
+router.get("/verification/stats", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+
+        const { from, to } = getStatsPeriodRange(req.query.period as string | undefined);
+        let timeFilter = "";
+        const params: any[] = [];
+        if (from) { params.push(from); timeFilter += ` AND t.qa_reviewed_at >= $${params.length}`; }
+        if (to) { params.push(to); timeFilter += ` AND t.qa_reviewed_at <= $${params.length}`; }
+
+        const { rows } = await pool.query(`
+            SELECT count(*)::int as total
+            FROM drm.tasks t
+            WHERE t.qa_reviewed_at IS NOT NULL AND coalesce(t.is_deleted, false) = false ${timeFilter}
+        `, params);
+
+        res.json({ total: rows[0]?.total ?? 0 });
+    } catch (error) {
+        console.error("Error fetching verification stats:", error);
+        res.status(500).json({ error: "Failed to fetch verification stats" });
+    }
+});
+
+// POST /api/product-posting/tasks/:id/verification-review — { action:
+// "complete" | "return", remarks?, level? }. "complete" finalizes
+// verification (task stays Completed). "return" bounces the task back into
+// QA's own queue by clearing qaReviewedAt — QA reviews it again, the
+// executive is never involved at this stage.
+router.post("/tasks/:id/verification-review", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isVerificationManagerRole(req)) {
+            return res.status(403).json({ error: "Only Verification can review this task." });
+        }
+
+        const { action, remarks, level } = req.body || {};
+        if (!["complete", "return"].includes(action)) {
+            return res.status(400).json({ error: "action must be complete or return" });
+        }
+
+        const taskRes = await pool.query(
+            `SELECT id, qa_reviewed_at, verification_reviewed_at FROM drm.tasks WHERE id = $1`,
+            [req.params.id],
+        );
+        if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+        const task = taskRes.rows[0];
+        if (!task.qa_reviewed_at || task.verification_reviewed_at) {
+            return res.status(400).json({ error: "This task isn't waiting on a verification review." });
+        }
+
+        const userId = getUserId(req);
+
+        if (action === "complete") {
+            await pool.query(
+                `UPDATE drm.tasks SET verification_reviewed_at = now(), verification_level = $2, verification_remarks = $3 WHERE id = $1`,
+                [req.params.id, level || null, remarks || null],
+            );
+            await taskStatusHistoryRepository.create({
+                taskId: req.params.id,
+                userId,
+                fromStatus: "Completed" as any,
+                toStatus: "Completed" as any,
+                notes: JSON.stringify({ reason: remarks || "Approved by Verification", level: level || undefined, verificationComplete: true }),
+            } as any);
+            return res.json({ success: true });
+        }
+
+        // action === "return" — send back to QA, not the executive.
+        await pool.query(
+            `UPDATE drm.tasks SET qa_reviewed_at = null, qa_level = null, qa_remarks = null WHERE id = $1`,
+            [req.params.id],
+        );
+        await taskStatusHistoryRepository.create({
+            taskId: req.params.id,
+            userId,
+            fromStatus: "Completed" as any,
+            toStatus: "Completed" as any,
+            notes: JSON.stringify({ reason: remarks || "Returned by Verification", verificationReturn: true }),
+        } as any);
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error recording verification review:", error);
+        res.status(500).json({ error: "Failed to record verification review" });
     }
 });
 

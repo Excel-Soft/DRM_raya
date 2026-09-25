@@ -20,6 +20,8 @@ interface TaskStatusHistoryRecord {
     company?: string | null;
     timeSpentMinutes?: number;
     sentToQaAt?: string | null;
+    currentStatus?: string | null;
+    qaComment?: string | null;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
 }
@@ -125,6 +127,18 @@ export default function PmsTaskHistory() {
         },
     });
 
+    const assignToExecMutation = useMutation({
+        mutationFn: async (taskId: string) =>
+            apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "ToDo", reason: "Sent back by Manager" }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+            toast({ title: "Reassigned to Executive" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not reassign task", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
     const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
     const [rejectingTask, setRejectingTask] = useState<PendingReviewTask | null>(null);
     const [rejectReason, setRejectReason] = useState("");
@@ -168,16 +182,14 @@ export default function PmsTaskHistory() {
             // instead of always showing an empty list.
             let parsedLinks: string[] = [];
             let detailText = record.notes || "";
-            let isQaReturn = false;
-            let qaCommentText = "N/A";
-            
+
             if (record.notes) {
                 try {
                     const parsed = JSON.parse(record.notes);
                     if (parsed.qaReturn) {
-                        isQaReturn = true;
-                        qaCommentText = parsed.reason || "";
                         detailText = parsed.reason ? `QA Return: ${parsed.reason}` : "QA Returned Project";
+                    } else if (typeof parsed.reason === "string" && parsed.reason) {
+                        detailText = `Rejected: ${parsed.reason}`;
                     } else if (Array.isArray(parsed?.links)) {
                         parsedLinks = parsed.links.filter((l: any) => typeof l === "string" && l.trim());
                         detailText = parsedLinks.length > 0 ? `${parsedLinks.length} link(s) submitted` : "";
@@ -186,6 +198,18 @@ export default function PmsTaskHistory() {
                     // Not JSON — keep the raw notes text as-is.
                 }
             }
+
+            // QA's comment on the most recent time they returned this task —
+            // this stays visible even after the executive fixes it and
+            // resubmits, since it's the reason context a manager still wants
+            // before deciding to send it back to QA again.
+            const qaCommentText = record.qaComment || "N/A";
+
+            // The backend already collapses this feed to one row per task
+            // (its latest transition) and only includes tasks currently at
+            // rest in Completed or Blocked — so `currentStatus` here IS this
+            // row's status; no separate "is this stale" check needed.
+            const isQaReturn = record.currentStatus === "Blocked";
 
             return {
                 no: idx + 1,
@@ -209,6 +233,7 @@ export default function PmsTaskHistory() {
                 changedAt: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
                 links: parsedLinks,
                 sentToQaAt: record.sentToQaAt || null,
+                currentStatus: record.currentStatus || null,
             };
         });
     }, [historyRecords]);
@@ -522,7 +547,9 @@ export default function PmsTaskHistory() {
                                         <span className="text-[13px] font-medium text-[#495057] dark:text-zinc-400">{row.taskTime}</span>
                                     </td>
                                     <td className="px-4 py-3 text-center">
-                                        <span className="inline-flex bg-[#2bc18c] text-white text-[10.5px] px-2.5 py-1 rounded-[4px] font-bold shadow-sm leading-none">
+                                        <span
+                                            className={`inline-flex text-white text-[10.5px] px-2.5 py-1 rounded-[4px] font-bold shadow-sm leading-none ${row.status === 'Blocked' ? 'bg-rose-500' : 'bg-[#2bc18c]'}`}
+                                        >
                                             {row.status}
                                         </span>
                                     </td>
@@ -536,31 +563,14 @@ export default function PmsTaskHistory() {
                                     </td>
                                     <td className="px-4 py-3 text-center min-w-[200px]">
                                         {row.isQaReturn ? (
-                                            <div className="flex items-center justify-center gap-2">
-                                                <Button
-                                                    size="sm"
-                                                    className="h-7 px-3 text-[11px] border border-amber-400 text-amber-600 bg-amber-50 hover:bg-amber-100"
-                                                    disabled={rejectMutation.isPending}
-                                                    onClick={() => {
-                                                        apiRequestJson("PATCH", `/api/pms/task/${row.taskId}/status`, { status: "InProgress", reason: "Sent back by Manager" })
-                                                            .then(() => {
-                                                                queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
-                                                                toast({ title: "Reassigned to Executive" });
-                                                            })
-                                                            .catch((err) => toast({ title: "Error", description: err.message, variant: "destructive" }));
-                                                    }}
-                                                >
-                                                    Assign to Exec
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
-                                                    disabled={sendToQaMutation.isPending}
-                                                    onClick={() => sendToQaMutation.mutate(row.taskId)}
-                                                >
-                                                    Send to QA
-                                                </Button>
-                                            </div>
+                                            <Button
+                                                size="sm"
+                                                className="h-7 px-3 text-[11px] border border-amber-400 text-amber-600 bg-amber-50 hover:bg-amber-100"
+                                                disabled={assignToExecMutation.isPending}
+                                                onClick={() => assignToExecMutation.mutate(row.taskId)}
+                                            >
+                                                Assign to Exec
+                                            </Button>
                                         ) : row.status !== 'Completed' ? null : row.sentToQaAt ? (
                                             <span
                                                 className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-600"

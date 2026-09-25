@@ -109,13 +109,46 @@ export function WorkflowTimeline({
             seenStatusIds.add(row.id);
             const from = row.fromStatus || "—";
             const to = row.toStatus || "—";
+
+            // These no-op Completed -> Completed rows (QA/Verification
+            // approving or returning a task) carry a JSON notes blob rather
+            // than a plain remark — parse it into a readable title instead
+            // of showing the raw {"reason":...} text.
+            let title = `${from} → ${to}`;
+            let detail: string | null = row.notes || null;
+            let resolvedKind = kind;
+            if (row.notes) {
+                try {
+                    const parsed = JSON.parse(row.notes);
+                    if (parsed.qaReturn) {
+                        title = "Returned by QA";
+                        resolvedKind = "rework";
+                        detail = parsed.reason || null;
+                    } else if (parsed.verificationReturn) {
+                        title = "Returned by Verification";
+                        resolvedKind = "rework";
+                        detail = parsed.reason || null;
+                    } else if (parsed.qaComplete) {
+                        title = parsed.level ? `Approved by QA (${parsed.level})` : "Approved by QA";
+                        detail = parsed.reason || null;
+                    } else if (parsed.verificationComplete) {
+                        title = parsed.level ? `Approved by Verification (${parsed.level})` : "Approved by Verification";
+                        detail = parsed.reason || null;
+                    } else if (typeof parsed.reason === "string" && parsed.reason) {
+                        detail = parsed.reason;
+                    }
+                } catch {
+                    // Not JSON — show the raw notes text as-is.
+                }
+            }
+
             events.push({
                 id: `status-${row.id}`,
                 at: ts.ms,
                 atLabel: ts.label,
-                kind,
-                title: `${from} → ${to}`,
-                detail: row.notes || null,
+                kind: resolvedKind,
+                title,
+                detail,
                 actor: row.user?.name || null,
             });
         };

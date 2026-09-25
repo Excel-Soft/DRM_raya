@@ -65,6 +65,7 @@ import {
   ScrollText,
   BookOpen,
   NotebookPen,
+  CheckCircle2,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -164,6 +165,7 @@ const menuItems: MenuItem[] = [
       { title: "Running Projects", url: "/pms/running-projects", icon: DollarSign },
       { title: "Pending Project", url: "/pms/approvals", icon: UserCheck },
       { title: "Task Complete", url: "/pms/task-history", icon: History },
+      { title: "Complete and Closed Project", url: "/pms/complete-closed-projects", icon: CheckCircle2 },
       { title: "Team Workspace", url: "/pms/team-workspace", icon: Users },
       { title: "Project Report", url: "/pms/project-report", icon: FileText },
     ],
@@ -646,6 +648,13 @@ export function AppSidebar() {
          return false;
       }
 
+      // Complete and Closed Project is a manager-only report (the backend
+      // 403s any non-managerial role) — hide it for every "_executive" role
+      // instead of showing a dead link that just errors out on click.
+      if (subItem.title === "Complete and Closed Project" && currentUserRoles.some(r => r.includes("executive"))) {
+         return false;
+      }
+
       // MD-22 (Project Owner, 2026-07-27): Bot System / Online Form / FB Post are
       // mock chat-widget stubs with no real provider behind them — hidden from
       // every dashboard until each is individually approved and flagged on.
@@ -719,6 +728,7 @@ export function AppSidebar() {
                   if (u === "pms-running-project" && subItem.url?.includes("running-projects")) return true;
                   if (u === "pms-pending-project" && subItem.url?.includes("approvals")) return true;
                   if (u === "pms-project-task" && subItem.url?.includes("task-history")) return true;
+                  if (u === "pms-project-task" && subItem.url?.includes("complete-closed-projects")) return true;
                   if (u === "work-spaces" && subItem.url?.includes("workspace")) return true;
                   if (u === "kwa-add" && subItem.url?.includes("add-kwa")) return true;
                   if (u === "target-day" && subItem.url?.includes("daily")) return true;

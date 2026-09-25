@@ -5,6 +5,7 @@ import { getVerificationLifecycleLabels } from "@shared/verification-lifecycle";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
+import { cn } from "@/lib/utils";
 import {
     Users, RefreshCw, Tag, Target, ChevronRight,
     Search as SearchIcon, CheckCircle2, LayoutDashboard, Database,
@@ -48,12 +49,15 @@ function StatCard({ label, icon: Icon, value, colorClass = "bg-[#00a65a]" }: { l
     );
 }
 
-function SideLink({ label, href }: { label: string; href: string }) {
+function SideLink({ label, href, pulse }: { label: string; href: string; pulse?: boolean }) {
     const [, setLocation] = useLocation();
     return (
         <button
             onClick={() => setLocation(href)}
-            className="flex items-center justify-between w-full px-3 py-2.5 text-[12px] font-medium text-gray-700 bg-gray-50 rounded border hover:bg-white hover:shadow-sm transition-all group dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-400"
+            className={cn(
+                "flex items-center justify-between w-full px-3 py-2.5 text-[12px] font-medium text-gray-700 bg-gray-50 rounded border hover:bg-white hover:shadow-sm transition-all group dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:text-zinc-400",
+                pulse && "animate-pulse ring-2 ring-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.5)]",
+            )}
         >
             <span>{label}</span>
             <ChevronRight className="h-3.5 w-3.5 text-gray-400 group-hover:text-gray-600 transition-transform" />
@@ -493,6 +497,7 @@ export function VerificationManagerWidget() {
                             <SideLink label="Project List" href="/pms/tasks" />
                             <SideLink label="Delay Project Old" href="/drm/delay-project" />
                             <SideLink label="Verification" href="/verification/customers" />
+                            <SideLink label="Complete and Closed Project" href="/pms/complete-closed-projects" pulse />
                         </div>
                     </div>
 

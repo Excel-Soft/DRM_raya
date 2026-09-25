@@ -321,7 +321,7 @@ export function QAManagerWidget() {
         project: p.name || p.title,
         status: p.phaseLabel || p.status,
         statusTag: p.returnCount ? `rework ${p.returnCount}` : 'awaiting qa',
-        qty: "-",
+        qty: p.qty != null && Number(p.qty) > 0 ? String(p.qty) : "-",
         invoiceNumber: p.invoiceNumber ? `#${p.invoiceNumber}` : "-",
         time: p.executiveSubmittedAt 
             ? new Date(p.executiveSubmittedAt).toLocaleTimeString('en-PK', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: true }) 
@@ -337,7 +337,7 @@ export function QAManagerWidget() {
         company: p.companyName || "N/A",
         tasker: p.assignee?.name || "Posting Executive",
         project: p.name || p.title,
-        qty: "-",
+        qty: p.qty != null && Number(p.qty) > 0 ? String(p.qty) : "-",
         invoiceNumber: p.invoiceNumber ? `#${p.invoiceNumber}` : "-",
         status: p.phaseLabel || p.status,
         time: p.updatedAt 

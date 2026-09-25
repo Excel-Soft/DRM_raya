@@ -26,7 +26,12 @@ const TASK_TRANSITIONS: Record<string, string[]> = {
   ToDo: ["InProgress"],
   InProgress: ["READY_FOR_QA", "Blocked"],
   READY_FOR_QA: ["Completed", "Blocked"],
-  Blocked: ["InProgress"],
+  // Blocked -> InProgress: the executive resumes it themselves (e.g. via the
+  // timer Play button) without the manager doing anything first.
+  // Blocked -> ToDo: the manager explicitly hands it back ("Assign to Exec"
+  // on the Task Complete page) — treated as a fresh assignment so it shows
+  // under the executive's "Assign Project" tab instead of "Working Project".
+  Blocked: ["InProgress", "ToDo"],
   Completed: [],
 };
 

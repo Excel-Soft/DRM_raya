@@ -57,8 +57,8 @@ import {
     Loader2,
     Lock,
     GraduationCap,
-    ExternalLink,
     CheckCircle2 as CheckCircleIcon,
+    Eye,
 } from "lucide-react";
 import {
     Table,
@@ -435,15 +435,15 @@ export default function DDExecutiveDashboard() {
                                                 <TableCell className="py-4 text-center">
                                                     <div className="flex items-center justify-center gap-2">
                                                         <button
-                                                            title="View in PMS Project Status"
+                                                            title="View in PMS Task System"
                                                             onClick={() => {
                                                                 const pid = task.projectId || task.id;
-                                                                const url = pid ? `/pms/status?projectId=${pid}` : '/pms/status';
+                                                                const url = pid ? `/pms/tasks?projectId=${pid}` : '/pms/tasks';
                                                                 window.location.href = url;
                                                             }}
                                                             className="opacity-40 group-hover:opacity-100 transition-opacity hover:text-indigo-600"
                                                         >
-                                                            <ExternalLink className="h-4 w-4 text-indigo-400" />
+                                                            <Eye className="h-4 w-4 text-indigo-400" />
                                                         </button>
                                                         <button
                                                             title="Task actions"
