@@ -2569,8 +2569,13 @@ function getPeriodRange(periodRaw: string) {
       // downstream of QA) — such a task is fully closed and "graduates" out
       // of this list into GET /api/pms/complete-closed-projects instead.
       let verificationReviewedAtByTaskId: Record<string, string | null> = {};
+      // Only Product Posting tasks actually run through QA/Verification —
+      // every other department's manager approval is the final step, so
+      // their "fully closed" test below can't wait on a review stage that
+      // will never happen for them.
+      let deptTypeByTaskId: Record<string, string | null> = {};
       if (taskIds.length > 0) {
-        const [companyRows, timeRows, qaRows, statusRows, verificationRows] = await Promise.all([
+        const [companyRows, timeRows, qaRows, statusRows, verificationRows, deptRows] = await Promise.all([
           pool.query(
             `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
                FROM drm.tasks t
@@ -2603,6 +2608,13 @@ function getPeriodRange(periodRaw: string) {
             `SELECT id AS task_id, verification_reviewed_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
             [taskIds],
           ),
+          pool.query(
+            `SELECT t.id AS task_id, p.department_type
+               FROM drm.tasks t
+               LEFT JOIN drm.projects p ON p.id = t.project_id
+              WHERE t.id = ANY($1::uuid[])`,
+            [taskIds],
+          ),
         ]);
         companyByTaskId = companyRows.rows.reduce((acc: Record<string, string>, row: any) => {
           acc[row.task_id] = row.company;
@@ -2624,6 +2636,10 @@ function getPeriodRange(periodRaw: string) {
           acc[row.task_id] = row.verification_reviewed_at;
           return acc;
         }, {});
+        deptTypeByTaskId = deptRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
+          acc[row.task_id] = row.department_type;
+          return acc;
+        }, {});
       }
 
       const enriched = history.map((h) => ({
@@ -2633,6 +2649,7 @@ function getPeriodRange(periodRaw: string) {
         currentStatus: h.task?.id ? currentStatusByTaskId[h.task.id] ?? null : null,
         sentToQaAt: h.task?.id ? sentToQaByTaskId[h.task.id] ?? null : null,
         verificationReviewedAt: h.task?.id ? verificationReviewedAtByTaskId[h.task.id] ?? null : null,
+        departmentType: h.task?.id ? deptTypeByTaskId[h.task.id] ?? null : null,
       }));
 
       // This feed is one row per status-history EVENT, so a single task that
@@ -2671,7 +2688,10 @@ function getPeriodRange(periodRaw: string) {
         const taskId = row.task?.id;
         if (!taskId) continue;
         if (row.currentStatus !== "Completed" && row.currentStatus !== "Blocked") continue;
-        if (row.verificationReviewedAt) continue; // fully closed — belongs on /api/pms/complete-closed-projects instead
+        const isProductPosting = row.departmentType === "PRODUCT_POSTING";
+        if (isProductPosting && row.verificationReviewedAt) continue; // PP: fully closed once QA + Verification both reviewed it
+        if (!isProductPosting && row.currentStatus === "Completed") continue; // every other dept: manager approval alone is the final step — no QA/Verification exists for them
+        // both land on /api/pms/complete-closed-projects instead
         const existing = latestByTaskId.get(taskId);
         if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
           latestByTaskId.set(taskId, { ...row, qaComment: latestQaCommentByTaskId.get(taskId)?.reason ?? null });
@@ -2747,10 +2767,13 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
         LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
         LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
-        WHERE t.verification_reviewed_at IS NOT NULL
+        WHERE (
+          (p.department_type = 'PRODUCT_POSTING' AND t.verification_reviewed_at IS NOT NULL)
+          OR (COALESCE(p.department_type, '') <> 'PRODUCT_POSTING' AND t.status = 'Completed')
+        )
           AND COALESCE(t.is_deleted, false) = false
           ${deptFilter}
-        ORDER BY t.verification_reviewed_at DESC
+        ORDER BY COALESCE(t.verification_reviewed_at, t.updated_at) DESC
         LIMIT $1
       `, [limitNum]);
 

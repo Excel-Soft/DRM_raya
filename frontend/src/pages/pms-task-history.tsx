@@ -109,7 +109,12 @@ export default function PmsTaskHistory() {
             apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "Completed" }),
         onSuccess: () => {
             invalidateReview();
-            toast({ title: "Approved", description: "The task is complete — send it to QA from Completed Projects below." });
+            // Only Product Posting tasks actually go on to QA/Verification —
+            // every other department's approval here is the final step, so
+            // the task moves straight to Complete and Closed Project instead
+            // of sitting in Completed Projects waiting on a "Send to QA" that
+            // will never apply to it.
+            toast({ title: "Approved", description: "The task is complete." });
         },
         onError: (err: any) => {
             toast({ title: "Could not approve task", description: err?.message || "Please try again.", variant: "destructive" });
