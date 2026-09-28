@@ -62,6 +62,9 @@ interface Customer {
     accountName: string;
     email: string;
     phone: string;
+    address?: string | null;
+    city?: string | null;
+    country?: string | null;
 }
 
 function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { item: InvoiceItem; products: any[]; flatProducts: any[]; updateItemProduct: (itemId: string, productId: string, selectedProduct: any) => void }) {
@@ -156,6 +159,8 @@ export default function CreateInvoice() {
         enabled: !!customerId,
         select: (res: any) => res.data || res,
     });
+
+    const customerAddress = [customer?.address, customer?.city, customer?.country].filter(Boolean).join(", ") || "N/A";
 
     const { data: invoiceInfo } = useQuery<{ invoiceNumber: string }>({
         queryKey: ["/api/account/invoices/next-number"],
@@ -323,6 +328,7 @@ export default function CreateInvoice() {
             customerId: customer.id,
             customerName: customer.companyName || customer.accountName || "N/A",
             customerEmail: customer.email,
+            customerAddress,
             items: JSON.stringify(items.map(item => ({
                 ...item,
                 name: products.find((p: any) => p.id === item.productId)?.name || "Service",
@@ -733,7 +739,7 @@ export default function CreateInvoice() {
                             name: customer?.companyName || customer?.accountName || "N/A",
                             phone: customer?.phone || "N/A",
                             email: customer?.email || "N/A",
-                            address: "..."
+                            address: customerAddress
                         },
                         items: items.map(item => ({
                             name: products.find((p: any) => p.id === item.productId)?.name || "Service",
@@ -774,7 +780,7 @@ export default function CreateInvoice() {
                                         name: customer?.companyName || customer?.accountName || "N/A",
                                         phone: customer?.phone || "N/A",
                                         email: customer?.email || "N/A",
-                                        address: "..."
+                                        address: customerAddress
                                     },
                                     items: items.map(item => ({
                                         name: products.find((p: any) => p.id === item.productId)?.name || "Service",

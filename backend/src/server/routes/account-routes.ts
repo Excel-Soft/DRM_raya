@@ -2979,9 +2979,13 @@ export function registerAccountRoutes(app: Express) {
           'quotation'        AS "source",
           NULL               AS "paymentProofUrl",
           NULL               AS "invoiceNumber",
-          NULL               AS "items"
+          NULL               AS "items",
+          q.contact          AS "customerPhone",
+          cq.address         AS "customerAddress",
+          q.dollar_rate      AS "dollarRate"
         FROM drm.quotations q
         LEFT JOIN drm.users u ON u.id::text = q.created_by::text
+        LEFT JOIN drm.customers cq ON cq.id::text = q.customer_id
         WHERE q.save_status = 'pending_account_manager'
         
         UNION ALL
@@ -3010,9 +3014,13 @@ export function registerAccountRoutes(app: Express) {
           'product_posting'  AS "source",
           NULL               AS "paymentProofUrl",
           p.invoice_number   AS "invoiceNumber",
-          NULL               AS "items"
+          NULL               AS "items",
+          cp.phone           AS "customerPhone",
+          cp.address         AS "customerAddress",
+          NULL::numeric      AS "dollarRate"
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
+        LEFT JOIN drm.customers cp ON cp.id = p.customer_id
         WHERE p.status = 'PENDING_ACCOUNT'
         
         UNION ALL
@@ -3041,9 +3049,13 @@ export function registerAccountRoutes(app: Express) {
           'standard_invoice'  AS "source",
           NULL                AS "paymentProofUrl",
           i.invoice_number    AS "invoiceNumber",
-          i.items             AS "items"
+          i.items             AS "items",
+          ci.phone            AS "customerPhone",
+          COALESCE(i.customer_address, ci.address) AS "customerAddress",
+          i.dollar_rate       AS "dollarRate"
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
+        LEFT JOIN drm.customers ci ON ci.id = i.customer_id
         WHERE i.status = 'Sent'
         ) as combined_results
         ORDER BY COALESCE(combined_results."updatedAt", combined_results."createdAt") DESC NULLS LAST

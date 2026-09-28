@@ -99,6 +99,35 @@ export default function AccountManagerDashboard() {
     const [viewInvoiceOpen, setViewInvoiceOpen] = useState(false);
     const [viewGm, setViewGm] = useState<any>(null);
 
+    // What was actually invoiced — used for the "Create Project" modal's
+    // Project tag, which previously just hardcoded a label from `item.source`
+    // (which of the 3 backing tables the row came from) regardless of what
+    // was actually ordered, e.g. every standard_invoice row said "Standard
+    // Invoice Project" even when its real item was "Alibaba Minisite". Prefer
+    // the invoice's own parsed line item name (the same real data the
+    // receipt preview already reads correctly) before falling back to a
+    // source-based guess for rows with no items breakdown at all.
+    const deriveInvoiceProjectLabel = (item: any): string => {
+        if (item?.items) {
+            try {
+                const parsed = typeof item.items === "string" ? JSON.parse(item.items) : item.items;
+                const first = Array.isArray(parsed) ? parsed[0] : null;
+                const realName = first?.name || first?.title || first?.productName;
+                if (realName) return realName;
+            } catch {
+                // Not JSON — fall through to the guesses below.
+            }
+        }
+        const sourceFallback = item?.source === "product_posting"
+            ? "Alibaba Product Posting"
+            : item?.source === "standard_invoice"
+                ? "Standard Invoice Project"
+                : item?.source === "quotation"
+                    ? "Project from Quotation"
+                    : null;
+        return item?.packageType || item?.note || sourceFallback || item?.entryType || "Product Posting Service";
+    };
+
     // Builds the shared InvoiceReceipt component's data shape from a GM pool
     // entry or a mapped invoice entry (see setViewGm call sites below) so both
     // "View" actions render the same canonical invoice design as HOD/Sales.
@@ -131,7 +160,12 @@ export default function AccountManagerDashboard() {
             finalDetail = "100";
         }
         const amountUsd = Number(g?.amountUsd) || 0;
-        const amountPkr = Number(g?.amountPkr) || 0;
+        // Invoice-sourced rows never carried a real `amountPkr` (that field
+        // doesn't exist anywhere upstream, so it was always 0) — compute it
+        // the same way Sales does: USD * the invoice's own dollar rate,
+        // falling back to the same 280 default used elsewhere in the app
+        // when a source (e.g. product_posting) has no stored rate at all.
+        const amountPkr = Number(g?.amountPkr) || amountUsd * (Number(g?.dollarRate) || 280);
 
         let parsedItems: any[] = [];
         if (g?.items) {
@@ -176,9 +210,9 @@ export default function AccountManagerDashboard() {
             },
             to: {
                 name: g?.companyName || "-",
-                phone: "-",
-                email: "-",
-                address: "Address:",
+                phone: g?.customerPhone || "-",
+                email: g?.email || "-",
+                address: g?.customerAddress || "-",
             },
             items: parsedItems,
             subTotalUsd: amountUsd,
@@ -848,7 +882,7 @@ export default function AccountManagerDashboard() {
                                                                                 amount: item.grandTotal?.toString() || "",
                                                                                 method: "",
                                                                                 approvalStatus: 'approved',
-                                                                                project: item.source === 'product_posting' ? 'Alibaba Product Posting' : (item.source === 'standard_invoice' ? 'Standard Invoice Project' : 'Project from Quotation')
+                                                                                project: deriveInvoiceProjectLabel(item)
                                                                             });
                                                                             setCreateProjectOpen(true);
                                                                         }}
@@ -1227,17 +1261,25 @@ export default function AccountManagerDashboard() {
                                 <Badge className="bg-rose-100 text-rose-500 rounded px-1.5 py-0 text-[10px] font-bold border-none">1</Badge>
                             </div>
                             <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-md bg-white min-h-[48px] dark:bg-zinc-900 dark:border-zinc-800">
-                                {selectedGm && (
-                                    <span className="inline-flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-md px-3 py-1.5 text-sm text-blue-700 font-medium">
-                                        <button
-                                            onClick={() => setSelectedGm(null)}
-                                            className="text-blue-400 hover:text-blue-600"
-                                        >
-                                            <X className="h-3.5 w-3.5" />
-                                        </button>
-                                        Alibaba Product Posting (0)-(0)
-                                    </span>
-                                )}
+                                {selectedGm && (() => {
+                                    // First number = 30% of the total PKR amount (the invoice's
+                                    // own dollar rate when available, same 280 default used
+                                    // elsewhere in the app otherwise); second stays 0.
+                                    const totalPkr = Number(selectedGm?.amountPkr) ||
+                                        (Number(selectedGm?.grandTotal) || 0) * (Number(selectedGm?.dollarRate) || 280);
+                                    const thirtyPercentPkr = Math.round(totalPkr * 0.3);
+                                    return (
+                                        <span className="inline-flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-md px-3 py-1.5 text-sm text-blue-700 font-medium">
+                                            <button
+                                                onClick={() => setSelectedGm(null)}
+                                                className="text-blue-400 hover:text-blue-600"
+                                            >
+                                                <X className="h-3.5 w-3.5" />
+                                            </button>
+                                            {projectForm.project} ({thirtyPercentPkr})-(0)
+                                        </span>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

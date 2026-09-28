@@ -55,12 +55,12 @@ export default function InvoicePool() {
     }
   };
 
-  // "Approved" here tracks the Sales Executive's own concern — has HOD signed
-  // off? — not whether Accounts has also finished, which is a separate
-  // back-office step still visible per-row in the Account Status column.
-  // Only an invoice still waiting on HOD itself counts as "Pending".
-  const isHodApprovedStatus = (s: string) => s === "PENDING_ACCOUNT" || s === "APPROVED";
-  const isPendingHodStatus = (s: string) => s === "PENDING_HOD" || s === "PENDING";
+  // "Approved" means BOTH HOD and Accounts have signed off — an invoice HOD
+  // has approved but Accounts hasn't yet (PENDING_ACCOUNT) stays in Pending,
+  // with its per-stage progress still visible via the HOD/Account Status
+  // badge columns below (e.g. "HOD: Approved, Account: Pending").
+  const isHodApprovedStatus = (s: string) => s === "APPROVED";
+  const isPendingHodStatus = (s: string) => s === "PENDING_HOD" || s === "PENDING" || s === "PENDING_ACCOUNT";
 
   const getTabCounts = () => {
     return {

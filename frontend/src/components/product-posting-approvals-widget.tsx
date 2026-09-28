@@ -79,7 +79,7 @@ function toInvoiceReceiptData(inv: any) {
             email: "Support@Webexcels.com",
             address: "Al-Amin Center, Paris Rd, Opposite The Sialkot Chamber Of Commerce, Sialkot 51310 Pakistan.",
         },
-        to: { name: companyName, phone: "-", email: "-", address: "Address:" },
+        to: { name: companyName, phone: inv?.customerPhone || "-", email: inv?.customerEmail || "-", address: inv?.customerAddress || "-" },
         items: [
             {
                 name: invoiceReceiptItemName(inv),

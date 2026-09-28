@@ -1211,10 +1211,10 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                         address: "Al-Amin Center, Paris Rd, Opposite The Sialkot Chamber Of Commerce, Sialkot 51310 Pakistan"
                                     },
                                     to: {
-                                        name: selectedInvoice.customerName || "N/A",
-                                        phone: selectedInvoice.customerPhone || "N/A",
-                                        email: selectedInvoice.customerEmail || "N/A",
-                                        address: selectedInvoice.customerAddress || "..."
+                                        name: selectedInvoice.customerName || lead.companyName || "N/A",
+                                        phone: lead.phone || selectedInvoice.customerPhone || "N/A",
+                                        email: selectedInvoice.customerEmail || lead.email || "N/A",
+                                        address: lead.address || selectedInvoice.customerAddress || "N/A"
                                     },
                                     items: (() => {
                                         try {

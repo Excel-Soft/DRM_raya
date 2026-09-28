@@ -346,7 +346,7 @@ export function ProductPostingExecutiveWidget() {
                                                         variant="ghost"
                                                         size="icon"
                                                         className="h-8 w-8 rounded-full hover:bg-emerald-50 p-0 transition-all active:scale-90"
-                                                        onClick={() => setLocation("/pms/status")}
+                                                        onClick={() => setLocation("/pms/tasks")}
                                                     >
                                                         <Eye className="w-4 h-4 text-[#00a65a] dark:text-zinc-400" />
                                                     </Button>

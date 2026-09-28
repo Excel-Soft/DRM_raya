@@ -729,6 +729,13 @@ export const taskTimeLogs = drmSchema.table("task_time_logs", {
   taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id),
   timeSpentMinutes: integer("duration_minutes").notNull().default(0),
+  // Second-precision companion to timeSpentMinutes — that column rounds to
+  // the nearest whole minute (other reports, e.g. HOD daily report, depend
+  // on that shape), which made every short/rounded session look like "0h
+  // 0m" with no way to tell it apart from a genuinely empty log. Nullable:
+  // rows logged before this field existed have no seconds value, and
+  // display code falls back to timeSpentMinutes * 60 for those.
+  timeSpentSeconds: integer("time_spent_seconds"),
   description: text("notes"),
   logDate: timestamp("start_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

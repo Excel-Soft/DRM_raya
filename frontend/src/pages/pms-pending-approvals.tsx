@@ -41,6 +41,14 @@ interface PendingProject {
     hodApprovedAt?: string | null;
     accountsApprovedAt?: string | null;
     departmentType?: string | null;
+    detailPackageName?: string | null;
+    minisiteUrl?: string | null;
+    phone?: string | null;
+    mobile?: string | null;
+    address?: string | null;
+    reference?: string | null;
+    categories?: string | null;
+    detailNotes?: string | null;
 }
 
 // Every real department the document could be routed to (same source as the
@@ -124,10 +132,20 @@ export default function PmsPendingApprovals() {
     const handleUploadClick = (projectId: string) => {
         setSelectedProjectId(projectId);
         const project = projects.find(p => p.id === projectId);
-        setUploadFormData(prev => ({
-            ...prev,
-            packageName: project?.serviceType || "",
-        }));
+        // Pre-fill from whatever was already saved for this project — the
+        // backend does a full-column overwrite on submit (no COALESCE), so
+        // opening this blank on a re-upload would silently null out any
+        // field the user doesn't retype.
+        setUploadFormData({
+            packageName: project?.detailPackageName || project?.serviceType || "",
+            minisiteUrl: project?.minisiteUrl || "",
+            phone: project?.phone || "",
+            mobile: project?.mobile || "",
+            address: project?.address || "",
+            reference: project?.reference || "",
+            categories: project?.categories || "",
+            detailNotes: project?.detailNotes || "",
+        });
         setDocumentFile(null);
         setIsUploadOpen(true);
     };
@@ -326,7 +344,12 @@ export default function PmsPendingApprovals() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                {!showRejection && row.hodApprovedAt ? (
+                                                {/* HOD/Account sign-off is a separate, earlier stage than the
+                                                    department's document review below — a later department
+                                                    rejection (showRejection) doesn't undo it, so it must NOT
+                                                    gate this badge the way it correctly gates the Department
+                                                    column further right. */}
+                                                {row.hodApprovedAt ? (
                                                     <span className="text-emerald-600 font-bold">Verified</span>
                                                 ) : (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">
@@ -335,7 +358,7 @@ export default function PmsPendingApprovals() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-[13px] border-r border-gray-100 dark:border-zinc-800">
-                                                {!showRejection && row.accountsApprovedAt ? (
+                                                {row.accountsApprovedAt ? (
                                                     <span className="text-emerald-600 font-bold">Verified</span>
                                                 ) : (
                                                     <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-500 font-medium text-[11px] border border-slate-200 dark:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900">

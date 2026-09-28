@@ -1055,13 +1055,13 @@ export default function ProductPostingDashboard() {
                                                 <DetailRow label="Product_detail_add" value={projectDetails?.id ? String(parseInt(projectDetails.id.split("-")[0], 16) % 100000) : "N/A"} />
                                                 <DetailRow label="Company" value={projectDetails?.project?.companyName || selectedDoc?.rawRow?.company || "N/A"} />
                                                 <DetailRow label="Package" value={projectDetails?.packageName || "N/A"} />
-                                                <DetailRow label="Web_url" value={projectDetails?.minisiteUrl} />
-                                                <DetailRow label="Phone" value={projectDetails?.phone} />
-                                                <DetailRow label="Mobile" value={projectDetails?.mobile} />
-                                                <DetailRow label="Address" value={projectDetails?.address} />
-                                                <DetailRow label="Referance_web" value={projectDetails?.reference} />
-                                                <DetailRow label="Categories" value={projectDetails?.categories} />
-                                                <DetailRow label="Detail" value={projectDetails?.detailNotes} />
+                                                <DetailRow label="Web_url" value={projectDetails?.minisiteUrl || "N/A"} />
+                                                <DetailRow label="Phone" value={projectDetails?.phone || "N/A"} />
+                                                <DetailRow label="Mobile" value={projectDetails?.mobile || "N/A"} />
+                                                <DetailRow label="Address" value={projectDetails?.address || "N/A"} />
+                                                <DetailRow label="Referance_web" value={projectDetails?.reference || "N/A"} />
+                                                <DetailRow label="Categories" value={projectDetails?.categories || "N/A"} />
+                                                <DetailRow label="Detail" value={projectDetails?.detailNotes || "N/A"} />
                                             </div>
                                         </div>
 
@@ -1483,9 +1483,15 @@ export default function ProductPostingDashboard() {
                                                                         });
                                                                         setMoveTaskModalOpen(true);
                                                                     } else {
-                                                                        setSelectedDoc(row.doc ? { ...row.doc, rawRow: row } : { 
+                                                                        {/* row.doc (when present) only carries {id, documentUrl} —
+                                                                            the document's own id, not the project's — so it never
+                                                                            had projectId at all, which silently disabled the
+                                                                            project-details query below (enabled: !!selectedDoc?.projectId)
+                                                                            and left every field in "Projects Overview & Verification"
+                                                                            blank/N-A even when real project_details data existed. */}
+                                                                        setSelectedDoc(row.doc ? { ...row.doc, projectId: row.id, rawRow: row } : {
                                                                             id: row.id,
-                                                                            projectId: row.id, 
+                                                                            projectId: row.id,
                                                                             projectName: row.project,
                                                                             documentUrl: "",
                                                                             rawRow: row

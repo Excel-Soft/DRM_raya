@@ -25,6 +25,9 @@ export type ApprovalRecord = {
   source: string;
   paymentProofUrl?: string | null;
   items?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
 };
 
 
@@ -44,7 +47,10 @@ const pendingApprovalsUnion = `
            NULL::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           NULL::text as "items"
+           NULL::text as "items",
+           NULL::text as "customerEmail",
+           NULL::text as "customerPhone",
+           NULL::text as "customerAddress"
     from drm.leave_requests
     where LOWER(status::text) = 'pending'
     union all
@@ -61,7 +67,10 @@ const pendingApprovalsUnion = `
            NULL::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           NULL::text as "items"
+           NULL::text as "items",
+           NULL::text as "customerEmail",
+           NULL::text as "customerPhone",
+           NULL::text as "customerAddress"
     from drm.loan_requests
     where LOWER(status::text) = 'pending'
     union all
@@ -78,7 +87,10 @@ const pendingApprovalsUnion = `
            NULL::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           NULL::text as "items"
+           NULL::text as "items",
+           NULL::text as "customerEmail",
+           NULL::text as "customerPhone",
+           NULL::text as "customerAddress"
     from drm.overtime_records
     where LOWER(status::text) = 'pending'
     union all
@@ -95,44 +107,55 @@ const pendingApprovalsUnion = `
            g.member_id::text as "memberId",
            g.package_type::text as "packageName",
            g.payment_proof_url::text as "paymentProofUrl",
-           NULL::text as "items"
+           NULL::text as "items",
+           c.email::text as "customerEmail",
+           c.phone::text as "customerPhone",
+           c.address::text as "customerAddress"
     from drm.gm_entries g
     left join drm.customers c on c.id = g.customer_id
     where g.approval_status IS NULL OR LOWER(g.approval_status) IN ('pending', 'pending_hod')
     union all
     select 'Invoice'::text as type,
-           id::text as id,
-           id::text as "referenceId",
-           created_by_user_id::text as "submittedById",
-           created_at as "createdAt",
-           status::text as status,
+           i.id::text as id,
+           i.id::text as "referenceId",
+           i.created_by_user_id::text as "submittedById",
+           i.created_at as "createdAt",
+           i.status::text as status,
            'invoices'::text as source,
-           COALESCE((SELECT COALESCE(NULLIF(company_name, ''), NULLIF(account_name, '')) FROM drm.customers WHERE id = customer_id), customer_name)::text as "companyName",
+           COALESCE((SELECT COALESCE(NULLIF(company_name, ''), NULLIF(account_name, '')) FROM drm.customers WHERE id = i.customer_id), i.customer_name)::text as "companyName",
            NULL::text as "drmId",
-           total::numeric as "orderDollar",
-           invoice_number::text as "memberId",
+           i.total::numeric as "orderDollar",
+           i.invoice_number::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           items::text as "items"
-    from drm.invoices
-    where LOWER(status::text) IN ('pending', 'waiting')
+           i.items::text as "items",
+           COALESCE(i.customer_email, c.email)::text as "customerEmail",
+           c.phone::text as "customerPhone",
+           COALESCE(i.customer_address, c.address)::text as "customerAddress"
+    from drm.invoices i
+    left join drm.customers c on c.id = i.customer_id
+    where LOWER(i.status::text) IN ('pending', 'waiting')
     union all
     select 'Invoice'::text as type,
-           id::text as id,
-           id::text as "referenceId",
-           sales_exec_id::text as "submittedById",
-           created_at as "createdAt",
-           status::text as status,
+           pp.id::text as id,
+           pp.id::text as "referenceId",
+           pp.sales_exec_id::text as "submittedById",
+           pp.created_at as "createdAt",
+           pp.status::text as status,
            'product_posting_invoices'::text as source,
-           COALESCE((COALESCE(company_name, 'N/A') || ' (' || COALESCE(project_name, 'N/A') || ')'), 'N/A')::text as "companyName",
+           COALESCE((COALESCE(pp.company_name, 'N/A') || ' (' || COALESCE(pp.project_name, 'N/A') || ')'), 'N/A')::text as "companyName",
            NULL::text as "drmId",
-           amount::numeric as "orderDollar",
-           project_name::text as "memberId",
+           pp.amount::numeric as "orderDollar",
+           pp.project_name::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           NULL::text as "items"
-    from drm.product_posting_invoices
-    where LOWER(status::text) IN ('pending_hod', 'pending')
+           NULL::text as "items",
+           c.email::text as "customerEmail",
+           c.phone::text as "customerPhone",
+           c.address::text as "customerAddress"
+    from drm.product_posting_invoices pp
+    left join drm.customers c on c.id = pp.customer_id
+    where LOWER(pp.status::text) IN ('pending_hod', 'pending')
     union all
     select 'Quotation'::text as type,
            id::text as id,
@@ -147,7 +170,10 @@ const pendingApprovalsUnion = `
            NULL::text as "memberId",
            NULL::text as "packageName",
            NULL::text as "paymentProofUrl",
-           NULL::text as "items"
+           NULL::text as "items",
+           email::text as "customerEmail",
+           contact::text as "customerPhone",
+           NULL::text as "customerAddress"
     from drm.quotations
     where LOWER(save_status::text) = 'pending_hod'
   )

@@ -160,7 +160,7 @@ const menuItems: MenuItem[] = [
   {
     title: "PMS", icon: ClipboardList, permKey: "PMS",
     items: [
-      { title: "Task System", url: "/pms/tasks", icon: CheckSquare },
+      { title: "Task System", url: "/pms/tasks", icon: CheckSquare, permKey: "PMS Task System" },
       { title: "Project Report", url: "/pms/status", icon: BarChart3 },
       { title: "Running Projects", url: "/pms/running-projects", icon: DollarSign },
       { title: "Pending Project", url: "/pms/approvals", icon: UserCheck },

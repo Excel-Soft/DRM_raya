@@ -354,15 +354,29 @@ function getPeriodRange(periodRaw: string) {
           (SELECT max(apd.updated_at) FROM drm.project_documents apd WHERE apd.project_id = p.id AND apd.status = 'APPROVED') as "verifiedAt",
           (SELECT remarks FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectionReason",
           (SELECT created_at FROM drm.product_posting_rework_history WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' ORDER BY created_at DESC LIMIT 1) as "rejectedAt",
-          (SELECT id FROM drm.project_documents 
+          (SELECT id FROM drm.project_documents
            WHERE project_id = p.id AND status = 'PENDING'
              AND created_at > COALESCE(
-               (SELECT created_at FROM drm.product_posting_rework_history 
-                WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED' 
+               (SELECT created_at FROM drm.product_posting_rework_history
+                WHERE workflow_id = wf.id AND action = 'DOCUMENT_REJECTED'
                 ORDER BY created_at DESC LIMIT 1),
                '1970-01-01'::timestamptz
              )
-           ORDER BY created_at DESC LIMIT 1) as "reuploadedDocId"
+           ORDER BY created_at DESC LIMIT 1) as "reuploadedDocId",
+          -- Previously-submitted project details, so the upload/re-upload form
+          -- can pre-fill instead of opening blank. project-doc-routes.ts's
+          -- POST /:id/documents does a full-column overwrite of this row (no
+          -- COALESCE), so any field left blank on re-submit gets nulled out —
+          -- pre-filling here is what keeps a re-upload from silently wiping
+          -- data the sales exec already entered on a prior submission.
+          pdet.package_name as "detailPackageName",
+          pdet.minisite_url as "minisiteUrl",
+          pdet.phone as "phone",
+          pdet.mobile as "mobile",
+          pdet.address as "address",
+          pdet.reference as "reference",
+          pdet.categories as "categories",
+          pdet.detail_notes as "detailNotes"
         FROM drm.projects p
         LEFT JOIN drm.customers c ON c.id = p.customer_id
         LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
@@ -371,6 +385,7 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.project_financials fin ON fin.project_id = p.id
         LEFT JOIN drm.project_payments pay ON pay.project_id = p.id
         LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
+        LEFT JOIN drm.project_details pdet ON pdet.project_id = p.id
         -- OnHold is included: a project only lands there via the Listing-Page-QA
         -- dependency gate, which blocks TASK ASSIGNMENT (see
         -- assertProductPostingDependencySatisfied), not the initial document
@@ -483,6 +498,16 @@ function getPeriodRange(periodRaw: string) {
         params.push(endDate.trim());
         extraFilter += ` AND p.created_at < ($${params.length}::date + interval '1 day')`;
       }
+      // Opt-in, sales_executive-only: this endpoint is shared with pms-status.tsx
+      // (needs every status incl. Completed/OnHold), pms-tasks.tsx (needs every
+      // owned project to manage tasks), and pms-setting.tsx — so this can't live
+      // in the general sales_executive roleFilter above without breaking those.
+      // Only pms-running-projects.tsx sends onlyActiveWork=true, specifically to
+      // narrow "Running Projects" down to projects with a task InProgress right
+      // now — status='Active' alone just means "not archived".
+      if (userRole === "sales_executive" && String(req.query.onlyActiveWork).toLowerCase() === "true") {
+        extraFilter += ` AND EXISTS (SELECT 1 FROM drm.tasks t WHERE t.project_id = p.id AND t.status = 'InProgress')`;
+      }
 
       const { rows } = await pool.query(`
         SELECT
@@ -497,6 +522,8 @@ function getPeriodRange(periodRaw: string) {
           COALESCE(fin.total_amount, 0) as "amount",
           i.status as "invoiceStatus",
           (SELECT COUNT(*) FROM drm.tasks t WHERE t.project_id = p.id) as "totalTasks",
+          EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id) as "docUploaded",
+          EXISTS (SELECT 1 FROM drm.project_documents pd WHERE pd.project_id = p.id AND pd.status = 'APPROVED') as "depApproved",
           (SELECT SUM(duration_minutes) FROM drm.task_time_logs tl JOIN drm.tasks t ON tl.task_id = t.id WHERE t.project_id = p.id) as "totalTime",
           (SELECT COALESCE(json_agg(DISTINCT link), '[]'::json)
            FROM (
@@ -664,6 +691,21 @@ function getPeriodRange(periodRaw: string) {
           t.assigned_to_user_id as "assignedToUserId",
           t.created_at as "createdAt",
           t.updated_at as "updatedAt",
+          t.due_date as "dueDate",
+          t.remaining_seconds as "remainingSecondsStored",
+          -- Elapsed time for the CURRENTLY running session, computed in
+          -- Postgres (now() - timer_started_at) rather than left for the
+          -- frontend to derive from Date.now() vs this row's timerStartedAt
+          -- — the backend server and DB were found to run on clocks ~110s
+          -- apart, so any client-side "Date.now() minus a DB timestamp"
+          -- comparison (browser included, since it's the same drift-prone
+          -- local machine in dev) silently corrupts the live countdown.
+          -- The frontend uses this one accurate value as a baseline and
+          -- ticks it forward using only its own local clock deltas.
+          CASE WHEN t.timer_started_at IS NOT NULL
+            THEN GREATEST(0, EXTRACT(EPOCH FROM (now() - t.timer_started_at))::int)
+            ELSE 0
+          END as "currentSessionElapsedSeconds",
           u.full_name as "assigneeName",
           p.name as "projectName",
           -- Why the manager sent this back, when it's currently Blocked —
@@ -672,7 +714,15 @@ function getPeriodRange(periodRaw: string) {
             SELECT notes FROM drm.task_status_history
              WHERE task_id = t.id AND to_status = 'Blocked'
              ORDER BY changed_at DESC LIMIT 1
-          ) END as "rejectionNotes"
+          ) END as "rejectionNotes",
+          -- Product Posting's "N/required" links progress badge — same
+          -- link-row shape task-execution-routes.ts's /:id/complete gate and
+          -- AddLinksModal's "Submitted Links" counter both use (task_files
+          -- rows with no file, just a description).
+          (SELECT count(*)::int FROM drm.task_files tf
+             WHERE tf.task_id = t.id AND tf.file_url IS NULL
+               AND tf.description IS NOT NULL AND tf.description <> ''
+          ) as "submittedLinksCount"
         FROM drm.tasks t
         LEFT JOIN drm.users u ON u.id = t.assigned_to_user_id
         LEFT JOIN drm.projects p ON p.id = t.project_id

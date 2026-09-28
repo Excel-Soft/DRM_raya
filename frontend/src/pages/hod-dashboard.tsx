@@ -275,9 +275,9 @@ export default function HodDashboard() {
       },
       to: {
         name: cleanCompany,
-        phone: "-",
-        email: "-",
-        address: "Address:"
+        phone: item.customerPhone || "-",
+        email: item.customerEmail || "-",
+        address: item.customerAddress || "-"
       },
       items: parsedItems,
       subTotalUsd: calculatedSubTotal,

@@ -1057,16 +1057,29 @@ export function registerSalesRoutes(app: Express) {
           i.customer_name as "client",
           'Manual Invoice' as "serviceTitle",
           i.total as "grandTotal",
-          i.status as "finalStatus",
-          CASE 
-            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved' 
-            WHEN i.status ILIKE '%Reject%' THEN 'Rejected' 
-            ELSE 'Pending' 
+          -- drm.invoices uses its own status vocabulary (Pending -> Sent ->
+          -- Paid, or Rejected/Cancelled), not the product_posting_invoices
+          -- one (PENDING_HOD/PENDING_ACCOUNT/APPROVED/REJECTED) the frontend
+          -- tabs actually filter on — normalize it to that shared vocabulary
+          -- here instead of leaking the raw status through, which previously
+          -- left every HOD-approved-but-not-yet-Account-approved invoice
+          -- ('Sent') matching none of the tab filters and disappearing.
+          CASE
+            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'APPROVED'
+            WHEN i.status = 'Sent' THEN 'PENDING_ACCOUNT'
+            WHEN i.status ILIKE '%Reject%' OR i.status = 'Cancelled' THEN 'REJECTED'
+            ELSE 'PENDING_HOD'
+          END as "finalStatus",
+          CASE
+            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved'
+            WHEN i.status = 'Sent' THEN 'Approved'
+            WHEN i.status ILIKE '%Reject%' OR i.status = 'Cancelled' THEN 'Rejected'
+            ELSE 'Pending'
           END as "hodStatus",
-          CASE 
-            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved' 
-            WHEN i.status ILIKE '%Reject%' THEN 'Rejected' 
-            ELSE 'Pending' 
+          CASE
+            WHEN i.status = 'Paid' OR i.status = 'Approved' THEN 'Approved'
+            WHEN i.status ILIKE '%Reject%' OR i.status = 'Cancelled' THEN 'Rejected'
+            ELSE 'Pending'
           END as "accountStatus",
           i.created_at as "createdAt"
         FROM drm.invoices i

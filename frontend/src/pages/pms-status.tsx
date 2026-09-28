@@ -43,6 +43,50 @@ function extractProvidedLinks(task: any): string[] {
     return [];
 }
 
+// How many links the manager required for this task — task.notes.links (new
+// tasks) or, for tasks assigned before that field existed, a numeric "Links:
+// N" tail on task.description. Returns null when no clean count is
+// available (e.g. legacy tasks where the manager pasted an actual URL into
+// the Links field instead of a count) — callers should hide the raw
+// description tail from the executive either way rather than show it.
+function getRequiredLinksCount(task: any): number | null {
+    try {
+        if (task?.notes) {
+            const n = Number(JSON.parse(task.notes)?.links);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+    } catch (e) { }
+    const match = /links:\s*(\S+)/i.exec(task?.description || "");
+    if (match) {
+        const n = Number(match[1]);
+        if (Number.isFinite(n) && n > 0) return n;
+    }
+    return null;
+}
+
+// Strips a trailing "Links: <value>" tail off the task description — used so
+// the Product Posting executive's own task list never surfaces the raw
+// working-link URL the manager typed at assignment time (see
+// getRequiredLinksCount above for why that value isn't always a clean count).
+function stripLinksTail(description: string | null | undefined): string {
+    if (!description) return "";
+    return description.replace(/\n*\s*links:\s*\S+\s*$/i, "").trim();
+}
+
+// task.rejectionNotes is JSON ({"reason": "..."}) written by
+// pms-transition.service.ts's changeTaskStatus() when a manager rejects a
+// task back to the executive (GET /api/pms/project-tasks/:projectId reads it
+// from task_status_history for the most recent -> Blocked transition).
+function parseRejectionReason(task: any): string {
+    if (!task?.rejectionNotes) return "No reason was provided by the manager.";
+    try {
+        const parsed = JSON.parse(task.rejectionNotes);
+        return parsed?.reason || "No reason was provided by the manager.";
+    } catch {
+        return task.rejectionNotes;
+    }
+}
+
 interface ProjectStatus {
     id: string;
     company: string;
@@ -54,6 +98,8 @@ interface ProjectStatus {
     date: string;
     totalTasks?: number;
     totalTime?: string;
+    docUploaded?: boolean;
+    depApproved?: boolean;
 }
 
 export default function PmsStatus() {
@@ -61,6 +107,7 @@ export default function PmsStatus() {
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [filesModalTask, setFilesModalTask] = useState<any>(null);
     const [finishingTaskId, setFinishingTaskId] = useState<string | null>(null);
+    const [rejectionDetailTask, setRejectionDetailTask] = useState<any>(null);
     const [endTaskConfirmOpen, setEndTaskConfirmOpen] = useState(false);
     const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState(false);
     const [overtimeTaskId, setOvertimeTaskId] = useState<string | null>(null);
@@ -71,6 +118,7 @@ export default function PmsStatus() {
     const [newTaskForm, setNewTaskForm] = useState(NEW_TASK_INITIAL_STATE);
 
     const [elapsedTimes, setElapsedTimes] = useState<Record<string, number>>({});
+    const [tickerBaselines, setTickerBaselines] = useState<Record<string, { serverElapsed: number; capturedAtLocal: number }>>({});
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
@@ -219,28 +267,57 @@ export default function PmsStatus() {
         onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" })
     });
 
-    // Timer ticking effect
+    // Timer ticking: comparing Date.now() (browser) directly against
+    // timerStartedAt (a Postgres timestamp) used to corrupt the live
+    // countdown whenever the two clocks drifted — the dev backend/DB were
+    // found to differ by ~110s. Instead, re-baseline from the server's own
+    // elapsed-so-far (currentSessionElapsedSeconds, computed in Postgres —
+    // see pms-routes.ts) every time fresh task data arrives, then tick that
+    // baseline forward using only local clock deltas (Date.now() against
+    // this same effect's own earlier Date.now() call) — never against a DB
+    // timestamp — so a clock mismatch can no longer leak into the display.
+    useEffect(() => {
+        const now = Date.now();
+        setTickerBaselines((prev) => {
+            const next: Record<string, { serverElapsed: number; capturedAtLocal: number }> = {};
+            displayTasks.forEach((task: any) => {
+                if (task.timerStartedAt) {
+                    next[task.id] = { serverElapsed: task.currentSessionElapsedSeconds || 0, capturedAtLocal: now };
+                }
+            });
+            return next;
+        });
+    }, [displayTasks]);
+
     useEffect(() => {
         const interval = setInterval(() => {
             const newElapsed: Record<string, number> = {};
-            displayTasks.forEach((task: any) => {
-                if (task.timerStartedAt) {
-                    const start = new Date(task.timerStartedAt instanceof Date ? task.timerStartedAt : String(task.timerStartedAt)).getTime();
-                    if (!isNaN(start)) {
-                        newElapsed[task.id] = Math.floor((Date.now() - start) / 1000);
-                    }
-                }
+            Object.entries(tickerBaselines).forEach(([taskId, baseline]) => {
+                newElapsed[taskId] = baseline.serverElapsed + Math.floor((Date.now() - baseline.capturedAtLocal) / 1000);
             });
             setElapsedTimes(newElapsed);
         }, 1000);
         return () => clearInterval(interval);
-    }, [displayTasks]);
+    }, [tickerBaselines]);
 
     const formatElapsed = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = seconds % 60;
         return `${h}:${m}:${s}`;
+    };
+
+    // Time Log History's "Time Spent" — timeSpentSeconds gives second
+    // precision (added because timeSpentMinutes alone rounds every short
+    // session down to "0h 0m", indistinguishable from no time at all);
+    // falls back to minutes*60 for log rows written before that field
+    // existed.
+    const formatSpentTime = (log: any) => {
+        const totalSeconds = log.timeSpentSeconds != null ? log.timeSpentSeconds : (log.timeSpentMinutes || 0) * 60;
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        return `${h}h ${m}m ${s}s`;
     };
 
     const selectedProjectInfo = projects.find(p => p.id === selectedProjectId);
@@ -275,6 +352,12 @@ export default function PmsStatus() {
     const isExecutive = role.includes("executive");
     const isManager = role.includes("manager") && !role.includes("admin");
     const isAdmin = role.includes("admin");
+    // View (Eye) action on the projects table is scoped to just these 4
+    // departments' own roles, per explicit product decision — every other
+    // role (including admin) should not see it on this page.
+    const canViewProjectDetails = ["it_manager", "it_executive", "seo_smm_manager", "seo_smm_executive",
+        "dd_manager", "dd_executive", "product_posting_manager", "product_posting_executive", "posting_executive"]
+        .includes(role);
 
     useEffect(() => {
         if (isManager && !isAdmin) {
@@ -476,26 +559,28 @@ export default function PmsStatus() {
                                             </span>
                                         </TableCell>
                                         <TableCell className="px-4 py-4 text-center">
-                                            <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-tight bg-slate-100 text-slate-600 dark:text-zinc-300 dark:bg-zinc-900">
-                                                {row.status === 'Documents Pending' ? 'Pending' : 'Yes'}
+                                            <span className={`px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-tight ${row.docUploaded ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600 dark:text-zinc-300 dark:bg-zinc-900'}`}>
+                                                {row.docUploaded ? 'Yes' : 'No'}
                                             </span>
                                         </TableCell>
                                         <TableCell className="px-4 py-4 text-center">
-                                            <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-tight bg-emerald-100 text-emerald-700">
-                                                Yes
+                                            <span className={`px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-tight ${row.depApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600 dark:text-zinc-300 dark:bg-zinc-900'}`}>
+                                                {row.depApproved ? 'Yes' : 'No'}
                                             </span>
                                         </TableCell>
                                         <TableCell className="px-4 py-4 text-center">
-                                            <Button 
-                                                variant="ghost" 
-                                                className="h-8 w-8 p-0 hover:bg-slate-100 rounded-full dark:hover:bg-zinc-800"
-                                                onClick={() => {
-                                                    setSelectedProjectId(row.id);
-                                                    setIsDetailsModalOpen(true);
-                                                }}
-                                            >
-                                                <Eye className="h-4 w-4 text-emerald-500" />
-                                            </Button>
+                                            {canViewProjectDetails && (
+                                                <Button
+                                                    variant="ghost"
+                                                    className="h-8 w-8 p-0 hover:bg-slate-100 rounded-full dark:hover:bg-zinc-800"
+                                                    onClick={() => {
+                                                        setSelectedProjectId(row.id);
+                                                        setIsDetailsModalOpen(true);
+                                                    }}
+                                                >
+                                                    <Eye className="h-4 w-4 text-emerald-500" />
+                                                </Button>
+                                            )}
                                         </TableCell>
                                     </TableRow>
                                 ))
@@ -657,16 +742,31 @@ export default function PmsStatus() {
                                             </TableCell>
                                         </TableRow>
                                     ) : displayTasks.map((task: any, idx: number) => {
-                                            let durationText = "8:0";
+                                            let assignedMins = 0;
                                             try {
                                                 if (task.notes) {
-                                                    const metadata = JSON.parse(task.notes);
-                                                    if (metadata.duration) {
-                                                        const mins = parseInt(metadata.duration);
-                                                        durationText = `${Math.floor(mins / 60)}:${mins % 60}`;
-                                                    }
+                                                    assignedMins = parseInt(JSON.parse(task.notes)?.duration) || 0;
                                                 }
                                             } catch (e) {}
+                                            // Tasks assigned before notes.duration existed have no recorded
+                                            // duration at all — fall back to the manager's due date (also
+                                            // set at assignment time) minus the creation time, so "Time"
+                                            // still reflects what was actually assigned instead of always
+                                            // reading 0:0 for every legacy task.
+                                            if (!assignedMins && task.dueDate && task.createdAt) {
+                                                const diffMs = new Date(task.dueDate).getTime() - new Date(task.createdAt).getTime();
+                                                if (diffMs > 0) assignedMins = Math.round(diffMs / 60000);
+                                            }
+                                            const durationText = assignedMins > 0 ? `${Math.floor(assignedMins / 60)}:${assignedMins % 60}` : "0:0";
+
+                                            // Countdown, not a stopwatch: remaining = task.remainingSecondsStored
+                                            // (second-precision, decremented by POST /timers/stop on every
+                                            // pause — task_time_logs is minute-rounded for reporting only and
+                                            // isn't precise enough to resume from exactly where this paused)
+                                            // minus the current running session's live elapsed seconds.
+                                            const baselineSeconds = task.remainingSecondsStored != null ? task.remainingSecondsStored : assignedMins * 60;
+                                            const currentSessionSeconds = task.timerStartedAt ? (elapsedTimes[task.id] || 0) : 0;
+                                            const remainingSeconds = Math.max(0, baselineSeconds - currentSessionSeconds);
 
                                             return (
                                                 <TableRow key={task.id} className="hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors border-0 border-b border-gray-50/50 text-[13px] dark:border-zinc-800">
@@ -683,7 +783,16 @@ export default function PmsStatus() {
                                                             <span className="font-bold text-gray-700 dark:text-zinc-300 uppercase text-[12px]">{task.title || task.name || "Task"}</span>
                                                             <div className="text-[11px] font-medium text-slate-400 flex flex-col">
                                                                 <span>Type: <span className="text-slate-500 uppercase dark:text-zinc-400">{selectedProjectInfo?.project || task.project?.name || "—"}</span></span>
-                                                                <span className="flex items-center gap-1">Detail: <span className="text-slate-500 tracking-tight normal-case line-clamp-1 max-w-[200px] inline-block dark:text-zinc-400">{task.description || "—"}</span></span>
+                                                                {isProductPostingExecutive ? (
+                                                                    <>
+                                                                        <span className="flex items-center gap-1">Detail: <span className="text-slate-500 tracking-tight normal-case line-clamp-1 max-w-[200px] inline-block dark:text-zinc-400">{stripLinksTail(task.description) || "—"}</span></span>
+                                                                        {getRequiredLinksCount(task) !== null && (
+                                                                            <span>Links: <span className="font-extrabold text-[13px] text-slate-700 dark:text-zinc-200">{task.submittedLinksCount ?? 0}/{getRequiredLinksCount(task)}</span></span>
+                                                                        )}
+                                                                    </>
+                                                                ) : (
+                                                                    <span className="flex items-center gap-1">Detail: <span className="text-slate-500 tracking-tight normal-case line-clamp-1 max-w-[200px] inline-block dark:text-zinc-400">{task.description || "—"}</span></span>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </TableCell>
@@ -694,28 +803,33 @@ export default function PmsStatus() {
                                                         {new Date(task.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
-                                                        <button
-                                                            onClick={() => setFilesModalTask(task)}
-                                                            className="w-9 h-9 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100 mx-auto"
-                                                        >
-                                                            <ArrowUpCircle className="h-5 w-5 text-white" />
-                                                        </button>
+                                                        {isExecutive ? (
+                                                            <button
+                                                                onClick={() => setFilesModalTask(task)}
+                                                                disabled={task.status === 'READY_FOR_QA' || task.status === 'Completed'}
+                                                                title={task.status === 'READY_FOR_QA' || task.status === 'Completed' ? "Submitted — no more changes until your manager reviews it" : undefined}
+                                                                className="w-9 h-9 bg-emerald-600 hover:bg-emerald-700 rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg shadow-emerald-100 mx-auto disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                                            >
+                                                                <ArrowUpCircle className="h-5 w-5 text-white" />
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => setFilesModalTask(task)}
+                                                                className="w-9 h-9 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-all mx-auto dark:bg-zinc-800"
+                                                                title="View Details"
+                                                            >
+                                                                <Eye className="h-4 w-4 text-gray-500" />
+                                                            </button>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="px-6 py-5 text-center">
                                                         {task.status === 'Blocked' ? (
-                                                            <span
-                                                                className="bg-rose-50 text-rose-600 px-3 py-1 rounded-md font-bold text-[11px] border border-rose-100 cursor-help"
-                                                                title={(() => {
-                                                                    try {
-                                                                        const parsed = task.rejectionNotes ? JSON.parse(task.rejectionNotes) : null;
-                                                                        return parsed?.reason ? `Rejected: ${parsed.reason}` : "Rejected by manager";
-                                                                    } catch {
-                                                                        return task.rejectionNotes || "Rejected by manager";
-                                                                    }
-                                                                })()}
+                                                            <button
+                                                                onClick={() => setRejectionDetailTask(task)}
+                                                                className="bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1 rounded-md font-bold text-[11px] border border-rose-100 transition-colors"
                                                             >
                                                                 Rejected — needs rework
-                                                            </span>
+                                                            </button>
                                                         ) : task.status === 'READY_FOR_QA' ? (
                                                             <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-md font-bold text-[11px] border border-blue-100 italic">
                                                                 Pending Review
@@ -726,13 +840,21 @@ export default function PmsStatus() {
                                                             </span>
                                                         )}
                                                     </TableCell>
+                                                    {/* Timer/submit controls are the assigned executive's own work
+                                                        surface — a manager (who typically assigned the task, not
+                                                        worked it) must not get a live Play/Stop button for it.
+                                                        Mirrors pms-tasks.tsx's identical isExecutive gate below. */}
+                                                    {isExecutive && (
                                                     <TableCell className="px-6 py-5 text-center">
                                                         <div className="flex items-center justify-center gap-2 relative">
                                                             {task.status !== 'READY_FOR_QA' && task.status !== 'Completed' && (
                                                                 <>
-                                                                    <div className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}>
-                                                                        {task.timerStartedAt ? formatElapsed(elapsedTimes[task.id] || 0) : '0:0:0'}
-                                                                    </div>
+                                                                    <div
+                                                                    className={`absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap ${task.timerStartedAt ? 'bg-emerald-400 text-white animate-pulse' : 'bg-emerald-100 text-emerald-600'} text-[10px] px-2 py-0.5 rounded-full font-black border border-emerald-200/50 shadow-sm transition-colors`}
+                                                                    title="Time remaining out of the manager's assigned budget"
+                                                                >
+                                                                    {formatElapsed(remainingSeconds)}
+                                                                </div>
                                                                     <button
                                                                         className={`w-10 h-10 ${task.timerStartedAt ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-100' : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100'} rounded-full flex items-center justify-center transition-all hover:scale-110 shadow-lg`}
                                                                         onClick={() => handleToggleTimer(task)}
@@ -786,6 +908,12 @@ export default function PmsStatus() {
                                                             )}
                                                         </div>
                                                     </TableCell>
+                                                    )}
+                                                    {!isExecutive && (
+                                                        <TableCell className="px-6 py-5 text-center text-[11px] text-gray-400 font-medium">
+                                                            View Only
+                                                        </TableCell>
+                                                    )}
                                                 </TableRow>
                                             );
                                         })
@@ -820,7 +948,7 @@ export default function PmsStatus() {
                                                 <TableCell className="px-6 py-3 text-center text-gray-500 dark:text-zinc-400">{log.user?.name || "—"}</TableCell>
                                                 <TableCell className="px-6 py-3 text-center">
                                                     <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-full font-bold text-[11px] dark:text-zinc-400 dark:bg-zinc-900">
-                                                        {Math.floor((log.timeSpentMinutes || 0) / 60)}h {(log.timeSpentMinutes || 0) % 60}m
+                                                        {formatSpentTime(log)}
                                                     </span>
                                                 </TableCell>
                                                 <TableCell className="px-6 py-3 text-center text-gray-500 font-medium text-[12px] dark:text-zinc-400">
@@ -836,6 +964,23 @@ export default function PmsStatus() {
                 </DialogContent>
             </Dialog>
                     
+            {/* Rejection reason — click-to-open instead of a hover title so the
+                manager's comment is actually discoverable, not just a
+                tooltip someone has to know to hover over. */}
+            <Dialog open={!!rejectionDetailTask} onOpenChange={(open) => { if (!open) setRejectionDetailTask(null); }}>
+                <DialogContent className="max-w-[500px]">
+                    <DialogHeader>
+                        <DialogTitle className="text-rose-600">Rejected by Manager</DialogTitle>
+                    </DialogHeader>
+                    <p className="text-[14px] text-gray-700 dark:text-zinc-300 whitespace-pre-wrap">
+                        {rejectionDetailTask ? parseRejectionReason(rejectionDetailTask) : ""}
+                    </p>
+                    <div className="flex justify-end pt-2">
+                        <Button variant="outline" onClick={() => setRejectionDetailTask(null)}>Close</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             {/* Submit confirmation — the "+" button opens this directly, no
                 intermediate form. Once submitted, the task moves to
                 READY_FOR_QA and locks (no timer/Start button) until the
@@ -925,7 +1070,7 @@ export default function PmsStatus() {
             {isProductPostingExecutive ? (
                 <AddLinksModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
             ) : (
-                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} />
+                <FilesModal task={filesModalTask} onClose={() => setFilesModalTask(null)} canUpload={isExecutive} />
             )}
         </div>
     );
@@ -1025,8 +1170,17 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
     });
 
     if (!task) return null;
-    const providedLinks = extractProvidedLinks(task);
     const hasValidLink = links.some((l) => l.trim());
+    // Once submitted for review (or fully done), the task is locked — same
+    // rule as FilesModal and the "+" submit button elsewhere: no more work
+    // until the manager reviews it.
+    const isLocked = task.status === 'READY_FOR_QA' || task.status === 'Completed';
+    const requiredCount = getRequiredLinksCount(task);
+    // Once the manager's required count is met, stop taking more — this is
+    // what was letting the executive send a 3rd link against a 2-required
+    // task with no limit at all.
+    const requirementMet = requiredCount !== null && submittedLinks.length >= requiredCount;
+    const canAddMore = !isLocked && !requirementMet;
 
     return (
         <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1037,23 +1191,16 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
 
                 <div className="p-8 space-y-6 bg-white overflow-y-auto dark:bg-zinc-900">
                     <div>
-                        <h3 className="text-[13px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Provided Links</h3>
-                        {providedLinks.length === 0 ? (
-                            <p className="text-[13px] text-gray-400">No links provided by the manager.</p>
+                        <h3 className="text-[13px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Required Links</h3>
+                        {/* Manager sets a required link COUNT at assignment time (task.notes.links),
+                            not actual URLs — only the count is shown here, same as Submitted Links
+                            below, no raw link/URL text exposed to the executive. */}
+                        {getRequiredLinksCount(task) === null ? (
+                            <p className="text-[13px] text-gray-400">No link requirement set by the manager.</p>
                         ) : (
-                            <div className="space-y-1">
-                                {providedLinks.map((link, i) => (
-                                    <a
-                                        key={i}
-                                        href={link.startsWith("http") ? link : `https://${link}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
-                                    >
-                                        {link}
-                                    </a>
-                                ))}
-                            </div>
+                            <p className="text-[13px] text-gray-700 dark:text-zinc-300">
+                                <span className="font-extrabold text-[16px]">{getRequiredLinksCount(task)}</span> link{getRequiredLinksCount(task) === 1 ? "" : "s"} required.
+                            </p>
                         )}
                     </div>
 
@@ -1062,56 +1209,70 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                         {submittedLinks.length === 0 ? (
                             <p className="text-[13px] text-gray-400">No links submitted yet.</p>
                         ) : (
-                            <div className="space-y-1">
-                                {submittedLinks.map((f) => (
-                                    <a
-                                        key={f.id}
-                                        href={(f.description || "").startsWith("http") ? f.description! : `https://${f.description}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="block text-[13px] text-emerald-600 hover:text-emerald-800 underline truncate"
-                                    >
-                                        {f.description}
-                                    </a>
-                                ))}
-                            </div>
+                            <>
+                                <p className="text-[13px] text-emerald-700 dark:text-emerald-500 mb-1.5">
+                                    <span className="font-extrabold text-[16px]">{submittedLinks.length}</span> link{submittedLinks.length === 1 ? "" : "s"} submitted.
+                                </p>
+                                <div className="space-y-1">
+                                    {submittedLinks.map((f) => (
+                                        <a
+                                            key={f.id}
+                                            href={(f.description || "").startsWith("http") ? f.description! : `https://${f.description}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="block text-[13px] text-emerald-600 hover:text-emerald-800 underline truncate"
+                                        >
+                                            {f.description}
+                                        </a>
+                                    ))}
+                                </div>
+                            </>
                         )}
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Add Link(s)</label>
+                    {canAddMore ? (
                         <div className="space-y-2">
-                            {links.map((link, idx) => (
-                                <Input
-                                    key={idx}
-                                    value={link}
-                                    placeholder="https://..."
-                                    onChange={(e) => {
-                                        const next = [...links];
-                                        next[idx] = e.target.value;
-                                        setLinks(next);
-                                    }}
-                                    className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
-                                />
-                            ))}
-                        </div>
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setLinks((prev) => [...prev, ""])}
-                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold"
-                            >
-                                Add Link
-                            </button>
-                            {links.length > 1 && (
+                            <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Add Link(s)</label>
+                            <div className="space-y-2">
+                                {links.map((link, idx) => (
+                                    <Input
+                                        key={idx}
+                                        value={link}
+                                        placeholder="https://..."
+                                        onChange={(e) => {
+                                            const next = [...links];
+                                            next[idx] = e.target.value;
+                                            setLinks(next);
+                                        }}
+                                        className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
+                                    />
+                                ))}
+                            </div>
+                            <div className="flex gap-2">
                                 <button
-                                    onClick={() => setLinks((prev) => prev.slice(0, -1))}
-                                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded text-[13px] font-bold dark:bg-zinc-800 dark:text-zinc-300"
+                                    onClick={() => setLinks((prev) => [...prev, ""])}
+                                    disabled={requiredCount !== null && submittedLinks.length + links.length >= requiredCount}
+                                    className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-2 rounded text-[13px] font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    Remove Link
+                                    Add Link
                                 </button>
-                            )}
+                                {links.length > 1 && (
+                                    <button
+                                        onClick={() => setLinks((prev) => prev.slice(0, -1))}
+                                        className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded text-[13px] font-bold dark:bg-zinc-800 dark:text-zinc-300"
+                                    >
+                                        Remove Link
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className="bg-slate-50 border border-slate-200 text-slate-500 text-[13px] font-semibold rounded-md px-4 py-3 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400">
+                            {isLocked
+                                ? "This task has been submitted for review — no more links can be sent until your manager reviews it."
+                                : "The required number of links has already been submitted."}
+                        </div>
+                    )}
                 </div>
 
                 <div className="p-4 border-t bg-slate-50 flex justify-end gap-3 dark:bg-zinc-900 flex-shrink-0">
@@ -1121,20 +1282,22 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                     >
                         Close
                     </button>
-                    <button
-                        onClick={() => submitMutation.mutate()}
-                        disabled={submitMutation.isPending || !hasValidLink}
-                        className="px-6 py-2 bg-[#008d4c] hover:bg-[#00733e] text-white rounded text-[14px] font-bold shadow-lg disabled:opacity-50 transition-all active:scale-95"
-                    >
-                        {submitMutation.isPending ? "Sending..." : "Send Links"}
-                    </button>
+                    {canAddMore && (
+                        <button
+                            onClick={() => submitMutation.mutate()}
+                            disabled={submitMutation.isPending || !hasValidLink || (requiredCount !== null && submittedLinks.length + links.filter(l => l.trim()).length > requiredCount)}
+                            className="px-6 py-2 bg-[#008d4c] hover:bg-[#00733e] text-white rounded text-[14px] font-bold shadow-lg disabled:opacity-50 transition-all active:scale-95"
+                        >
+                            {submitMutation.isPending ? "Sending..." : "Send Links"}
+                        </button>
+                    )}
                 </div>
             </DialogContent>
         </Dialog>
     );
 }
 
-function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
+function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => void; canUpload: boolean }) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -1182,8 +1345,12 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                     <h2 className="text-[20px] font-bold text-gray-700 dark:text-zinc-300">Files</h2>
                 </div>
 
-                <div className="p-8 grid grid-cols-1 lg:grid-cols-2 gap-10 bg-white overflow-y-auto dark:bg-zinc-900">
-                    {/* Left: upload */}
+                <div className={`p-8 grid grid-cols-1 ${canUpload ? 'lg:grid-cols-2' : ''} gap-10 bg-white overflow-y-auto dark:bg-zinc-900`}>
+                    {/* Left: upload — the assigned executive's own submission
+                        surface. A manager/other viewer opening this via the
+                        "View Details" eye icon must not get a working
+                        upload/send UI for someone else's task. */}
+                    {canUpload && (
                     <div className="space-y-4">
                         {isLocked && (
                             <div className="bg-rose-50 border border-rose-200 text-rose-600 text-[13px] font-semibold rounded-md px-4 py-3">
@@ -1234,6 +1401,7 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
                             {submitMutation.isPending ? "Sending..." : "Send Files"}
                         </Button>
                     </div>
+                    )}
 
                     {/* Right: what's already there */}
                     <div className="space-y-6">
@@ -1285,13 +1453,15 @@ function FilesModal({ task, onClose }: { task: any; onClose: () => void }) {
 
                 <div className="p-4 border-t bg-slate-50 dark:bg-zinc-900 flex items-center justify-end gap-3 flex-shrink-0">
                     <Button variant="outline" className="h-10 px-6" onClick={onClose}>Close</Button>
-                    <Button
-                        className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                        disabled={submitMutation.isPending || isLocked}
-                        onClick={() => submitMutation.mutate()}
-                    >
-                        {submitMutation.isPending ? "Saving..." : "Save"}
-                    </Button>
+                    {canUpload && (
+                        <Button
+                            className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                            disabled={submitMutation.isPending || isLocked}
+                            onClick={() => submitMutation.mutate()}
+                        >
+                            {submitMutation.isPending ? "Saving..." : "Save"}
+                        </Button>
+                    )}
                 </div>
             </DialogContent>
         </Dialog>

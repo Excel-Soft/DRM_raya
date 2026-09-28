@@ -24,9 +24,13 @@ interface RunningProject {
 
 export default function PmsRunningProjects() {
     const { data: projects = [], isLoading } = useQuery<RunningProject[]>({
-        queryKey: ["/api/pms/department-status", { status: "Active" }],
+        // onlyActiveWork narrows this specifically-named "Running Projects"
+        // page to projects with at least one task actually InProgress right
+        // now (sales executives only, server-side) — status=Active alone
+        // just means "not archived", not "has active work happening".
+        queryKey: ["/api/pms/department-status", { status: "Active", onlyActiveWork: true }],
         queryFn: async () => {
-            const res = await fetch(`/api/pms/department-status?status=Active`, { credentials: "include" });
+            const res = await fetch(`/api/pms/department-status?status=Active&onlyActiveWork=true`, { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch running projects");
             return res.json();
         },

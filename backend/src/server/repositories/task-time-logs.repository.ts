@@ -11,6 +11,7 @@ export const taskTimeLogsRepository = {
     const alterSql = `
       alter table task_time_logs
         add column if not exists time_spent_minutes integer,
+        add column if not exists time_spent_seconds integer,
         add column if not exists description text,
         add column if not exists log_date timestamptz default now();
 
@@ -83,6 +84,7 @@ export const taskTimeLogsRepository = {
         taskId: taskTimeLogs.taskId,
         userId: taskTimeLogs.userId,
         timeSpentMinutes: taskTimeLogs.timeSpentMinutes,
+        timeSpentSeconds: taskTimeLogs.timeSpentSeconds,
         description: taskTimeLogs.description,
         logDate: taskTimeLogs.logDate,
         createdAt: taskTimeLogs.createdAt,
@@ -119,6 +121,7 @@ export const taskTimeLogsRepository = {
         taskId: taskTimeLogs.taskId,
         userId: taskTimeLogs.userId,
         timeSpentMinutes: taskTimeLogs.timeSpentMinutes,
+        timeSpentSeconds: taskTimeLogs.timeSpentSeconds,
         description: taskTimeLogs.description,
         logDate: taskTimeLogs.logDate,
         createdAt: taskTimeLogs.createdAt,
@@ -169,6 +172,7 @@ export const taskTimeLogsRepository = {
         taskId: taskTimeLogs.taskId,
         userId: taskTimeLogs.userId,
         timeSpentMinutes: taskTimeLogs.timeSpentMinutes,
+        timeSpentSeconds: taskTimeLogs.timeSpentSeconds,
         description: taskTimeLogs.description,
         logDate: taskTimeLogs.logDate,
         createdAt: taskTimeLogs.createdAt,

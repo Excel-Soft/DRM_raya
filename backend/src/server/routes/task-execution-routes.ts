@@ -7,6 +7,24 @@ import { taskTimeLogsRepository } from "../repositories/task-time-logs.repositor
 import { changeTaskStatus } from "./services/pms-transition.service";
 import { isManagerialRole } from "../utils/role-utils";
 
+// Mirrors the frontend's assigned-time derivation (pms-tasks.tsx /
+// pms-status.tsx): task.notes.duration (minutes) when set at assign-task
+// time, else the gap between due_date and created_at for tasks assigned
+// before that field existed.
+function getAssignedSeconds(row: { notes: string | null; due_date: Date | string | null; created_at: Date | string | null }): number {
+  try {
+    if (row.notes) {
+      const mins = parseInt(JSON.parse(row.notes)?.duration);
+      if (Number.isFinite(mins) && mins > 0) return mins * 60;
+    }
+  } catch { /* notes isn't JSON — no duration to read */ }
+  if (row.due_date && row.created_at) {
+    const diffMs = new Date(row.due_date).getTime() - new Date(row.created_at).getTime();
+    if (diffMs > 0) return Math.round(diffMs / 1000);
+  }
+  return 0;
+}
+
 function actorRoles(req: Request): string[] {
   const u = (req as any).user;
   if (!u) return [];
@@ -136,7 +154,18 @@ router.post("/:id/timers/stop", async (req: Request, res: Response) => {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-    const taskRes = await pool.query(`select id, assigned_to_user_id, timer_started_at from drm.tasks where id = $1`, [req.params.id]);
+    // Elapsed time is computed entirely in Postgres (now() - timer_started_at,
+    // both DB-side) rather than Date.now() [[Node]] - timer_started_at
+    // [[Postgres]] — this backend and the DB run on different hosts with
+    // clocks that were found to drift by ~110s, which was silently
+    // corrupting every timer-stop calculation (the exact source of the
+    // countdown badge jumping instead of resuming from where it paused).
+    const taskRes = await pool.query(
+      `select id, assigned_to_user_id, timer_started_at, notes, due_date, created_at, remaining_seconds,
+              extract(epoch from (now() - timer_started_at))::int as elapsed_seconds
+       from drm.tasks where id = $1`,
+      [req.params.id],
+    );
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     const task = taskRes.rows[0];
     if (task.assigned_to_user_id !== uid) {
@@ -144,16 +173,28 @@ router.post("/:id/timers/stop", async (req: Request, res: Response) => {
     }
 
     if (task.timer_started_at) {
-      const elapsedMinutes = Math.max(0, Math.round((Date.now() - new Date(task.timer_started_at).getTime()) / 60_000));
+      const elapsedSeconds = Math.max(0, task.elapsed_seconds || 0);
+      const elapsedMinutes = Math.max(0, Math.round(elapsedSeconds / 60));
       await taskTimeLogsRepository.create({
         taskId: req.params.id,
         userId: uid,
         timeSpentMinutes: elapsedMinutes,
+        timeSpentSeconds: elapsedSeconds,
         logDate: new Date(task.timer_started_at),
       } as any);
-    }
 
-    await pool.query(`update drm.tasks set timer_started_at = null, updated_at = now() where id = $1`, [req.params.id]);
+      // task_time_logs only stores whole minutes (rounded, used for
+      // reporting elsewhere) — that rounding was also causing the countdown
+      // badge to jump by up to ~30s on resume instead of continuing from
+      // exactly where it was paused. remaining_seconds tracks the budget
+      // with full second precision instead, decremented here and read back
+      // by GET /api/pms/project-tasks/:projectId for the live countdown.
+      const baseline = task.remaining_seconds ?? getAssignedSeconds(task);
+      const newRemaining = Math.max(0, baseline - elapsedSeconds);
+      await pool.query(`update drm.tasks set timer_started_at = null, remaining_seconds = $2, updated_at = now() where id = $1`, [req.params.id, newRemaining]);
+    } else {
+      await pool.query(`update drm.tasks set timer_started_at = null, updated_at = now() where id = $1`, [req.params.id]);
+    }
     res.json({ success: true });
   } catch (error) {
     console.error("Error stopping task timer:", error);
@@ -213,10 +254,13 @@ router.post("/:id/files", (req, res, next) => {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-    const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
+    const taskRes = await pool.query(`select id, assigned_to_user_id, status, notes from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     if (taskRes.rows[0].assigned_to_user_id !== uid) {
       return res.status(403).json({ error: "Only the assigned executive can submit files for this task." });
+    }
+    if (taskRes.rows[0].status === "READY_FOR_QA" || taskRes.rows[0].status === "Completed") {
+      return res.status(409).json({ error: "This task has already been submitted for review.", code: "TASK_LOCKED" });
     }
 
     const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
@@ -224,6 +268,26 @@ router.post("/:id/files", (req, res, next) => {
 
     if (files.length === 0 && !description) {
       return res.status(400).json({ error: "Attach at least one file or add a description." });
+    }
+
+    // Product Posting's link-only submissions (no file, just a description
+    // holding the URL) are capped at the manager's required count — mirrors
+    // pms-tasks.tsx's AddLinksModal client-side cap, but authoritative here.
+    if (files.length === 0) {
+      let requiredLinks = 0;
+      try { requiredLinks = Number(JSON.parse(taskRes.rows[0].notes || "{}")?.links) || 0; } catch { /* not JSON / no links field */ }
+      if (requiredLinks > 0) {
+        const countRes = await pool.query(
+          `select count(*)::int as count from drm.task_files where task_id = $1 and file_url is null and description is not null and description <> ''`,
+          [req.params.id],
+        );
+        if ((countRes.rows[0]?.count || 0) >= requiredLinks) {
+          return res.status(409).json({
+            error: `The required ${requiredLinks} link(s) have already been submitted.`,
+            code: "LINKS_LIMIT_REACHED",
+          });
+        }
+      }
     }
 
     const inserted: any[] = [];
@@ -265,10 +329,30 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
     const uid = userId(req);
     if (!uid) return res.status(401).json({ error: "Not authenticated" });
 
-    const taskRes = await pool.query(`select id, assigned_to_user_id from drm.tasks where id = $1`, [req.params.id]);
+    const taskRes = await pool.query(`select id, assigned_to_user_id, notes from drm.tasks where id = $1`, [req.params.id]);
     if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
     if (taskRes.rows[0].assigned_to_user_id !== uid) {
       return res.status(403).json({ error: "Only the assigned executive can complete this task.", code: "WORKFLOW_OWNERSHIP_FORBIDDEN" });
+    }
+
+    // Product Posting: the manager assigns a required link count in
+    // task.notes.links at assign-task time (product-posting-workflow-routes.ts).
+    // Mirrors the client-side guard in pms-tasks.tsx, but authoritative here
+    // since that one is UI-only and can't stop a direct API call.
+    let requiredLinks = 0;
+    try { requiredLinks = Number(JSON.parse(taskRes.rows[0].notes || "{}")?.links) || 0; } catch { /* not JSON / no links field — no requirement */ }
+    if (requiredLinks > 0) {
+      const linkCountRes = await pool.query(
+        `select count(*)::int as count from drm.task_files where task_id = $1 and file_url is null and description is not null and description <> ''`,
+        [req.params.id],
+      );
+      const submittedCount = linkCountRes.rows[0]?.count || 0;
+      if (submittedCount < requiredLinks) {
+        return res.status(400).json({
+          error: `This task requires ${requiredLinks} link(s) — only ${submittedCount} submitted.`,
+          code: "LINKS_REQUIREMENT_NOT_MET",
+        });
+      }
     }
 
     const linksPosted = Number(req.body?.linksPosted) || 0;
