@@ -20,8 +20,10 @@ interface TaskStatusHistoryRecord {
     company?: string | null;
     timeSpentMinutes?: number;
     sentToQaAt?: string | null;
+    qaReviewedAt?: string | null;
     currentStatus?: string | null;
     qaComment?: string | null;
+    departmentType?: string | null;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
 }
@@ -58,6 +60,11 @@ interface SubmittedFileEntry {
 
 const TASK_HISTORY_KEY = "/api/pms/task-history";
 const PENDING_REVIEW_KEY = "/api/pms/tasks/pending-review";
+
+// Departments that actually run through the QA -> Verification pipeline.
+// Everything else (IT, Software, Service) has no QA step at all — its
+// manager's own approval is the final word ("Closed Task").
+const QA_PIPELINE_DEPARTMENTS = ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"];
 
 function extractSubmittedLinks(notes: string | null): string[] {
     if (!notes) return [];
@@ -109,12 +116,7 @@ export default function PmsTaskHistory() {
             apiRequestJson("PATCH", `/api/pms/task/${taskId}/status`, { status: "Completed" }),
         onSuccess: () => {
             invalidateReview();
-            // Only Product Posting tasks actually go on to QA/Verification —
-            // every other department's approval here is the final step, so
-            // the task moves straight to Complete and Closed Project instead
-            // of sitting in Completed Projects waiting on a "Send to QA" that
-            // will never apply to it.
-            toast({ title: "Approved", description: "The task is complete." });
+            toast({ title: "Approved", description: "The task is complete — finish it from Completed Projects below." });
         },
         onError: (err: any) => {
             toast({ title: "Could not approve task", description: err?.message || "Please try again.", variant: "destructive" });
@@ -129,6 +131,35 @@ export default function PmsTaskHistory() {
         },
         onError: (err: any) => {
             toast({ title: "Could not send to QA", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
+    // QA Manager's own hand-off for a Product Posting task they've approved
+    // here — the downstream step from QA is Verification, not "send it to
+    // QA" (that doesn't make sense when the viewer IS QA).
+    const sendToVerificationMutation = useMutation({
+        mutationFn: async (taskId: string) => apiRequestJson("POST", `/api/pms/tasks/${taskId}/send-to-verification`, {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+            toast({ title: "Sent to Verification" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not send to Verification", description: err?.message || "Please try again.", variant: "destructive" });
+        },
+    });
+
+    // Every non-Product-Posting department has no QA/Verification pipeline
+    // at all — this is their equivalent of "Send to QA": the manager's
+    // deliberate final hand-off that graduates the task to Complete and
+    // Closed Project.
+    const closeTaskMutation = useMutation({
+        mutationFn: async (taskId: string) => apiRequestJson("POST", `/api/pms/tasks/${taskId}/close`, {}),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: [TASK_HISTORY_KEY] });
+            toast({ title: "Task Closed", description: "Moved to Complete and Closed Project." });
+        },
+        onError: (err: any) => {
+            toast({ title: "Could not close task", description: err?.message || "Please try again.", variant: "destructive" });
         },
     });
 
@@ -238,7 +269,9 @@ export default function PmsTaskHistory() {
                 changedAt: record.changedAt ? new Date(record.changedAt).toLocaleString() : "",
                 links: parsedLinks,
                 sentToQaAt: record.sentToQaAt || null,
+                qaReviewedAt: record.qaReviewedAt || null,
                 currentStatus: record.currentStatus || null,
+                departmentType: record.departmentType || null,
             };
         });
     }, [historyRecords]);
@@ -539,10 +572,38 @@ export default function PmsTaskHistory() {
                                         <span className="text-[13px] text-[#6c757d]">{row.vm}</span>
                                     </td>
                                     <td className="px-4 py-3">
-                                        <div className="flex flex-col py-1">
-                                            <span className="text-[14px] font-bold text-[#343a40] leading-tight dark:text-zinc-100">{row.project}</span>
-                                            <span className="text-[11.5px] font-semibold text-[#6c757d] mt-1"><span className="opacity-80">Task:</span> {row.taskDesc}</span>
-                                            <span className="text-[11.5px] font-semibold text-[#878a99]"><span className="opacity-80">Detail:</span> {row.detail}</span>
+                                        <div className="flex items-start gap-2 py-1">
+                                            <div className="flex flex-col">
+                                                <span className="text-[14px] font-bold text-[#343a40] leading-tight dark:text-zinc-100">{row.project}</span>
+                                                <span className="text-[11.5px] font-semibold text-[#6c757d] mt-1"><span className="opacity-80">Task:</span> {row.taskDesc}</span>
+                                                <span className="text-[11.5px] font-semibold text-[#878a99]"><span className="opacity-80">Detail:</span> {row.detail}</span>
+                                            </div>
+                                            {/* The executive's submitted links/files were only viewable
+                                                while a task sat in "Pending My Review" — once approved
+                                                and moved down here, the manager (and QA, which reuses
+                                                this same table for its own Completed Projects) had no
+                                                way to see what was actually submitted. Reuses the exact
+                                                same viewingTask modal + GET /api/tasks/:id/files data
+                                                the Pending My Review "View" button already uses. */}
+                                            <button
+                                                title="View submitted links/files"
+                                                onClick={() => setViewingTask({
+                                                    id: row.taskId,
+                                                    title: row.project,
+                                                    description: null,
+                                                    projectId: "",
+                                                    assigneeId: null,
+                                                    assigneeName: row.name,
+                                                    project: row.project,
+                                                    company: row.company,
+                                                    departmentType: row.departmentType ?? null,
+                                                    submittedAt: row.changedAt,
+                                                    submissionNotes: null,
+                                                })}
+                                                className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                                            >
+                                                <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                            </button>
                                         </div>
                                     </td>
                                     <td className="px-4 py-3 text-center">
@@ -576,7 +637,40 @@ export default function PmsTaskHistory() {
                                             >
                                                 Assign to Exec
                                             </Button>
-                                        ) : row.status !== 'Completed' ? null : row.sentToQaAt ? (
+                                        ) : row.status !== 'Completed' ? null : !QA_PIPELINE_DEPARTMENTS.includes(row.departmentType || '') ? (
+                                            // IT/Software/Service have no QA/Verification pipeline
+                                            // at all — this is their manager's own deliberate final
+                                            // hand-off, straight to Complete and Closed Project.
+                                            <Button
+                                                size="sm"
+                                                className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
+                                                disabled={closeTaskMutation.isPending}
+                                                onClick={() => closeTaskMutation.mutate(row.taskId)}
+                                            >
+                                                Closed Task
+                                            </Button>
+                                        ) : currentRole === 'qa_manager' ? (
+                                            // QA Manager viewing their own Product Posting queue —
+                                            // the next step from here is Verification, not "send to
+                                            // QA" (the viewer already IS QA).
+                                            row.qaReviewedAt ? (
+                                                <span
+                                                    className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-600"
+                                                    title={`Sent to Verification on ${new Date(row.qaReviewedAt).toLocaleString()}`}
+                                                >
+                                                    <CheckCircle2 className="w-3.5 h-3.5" /> Sent
+                                                </span>
+                                            ) : (
+                                                <Button
+                                                    size="sm"
+                                                    className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
+                                                    disabled={sendToVerificationMutation.isPending}
+                                                    onClick={() => sendToVerificationMutation.mutate(row.taskId)}
+                                                >
+                                                    Send to Verification
+                                                </Button>
+                                            )
+                                        ) : row.sentToQaAt ? (
                                             <span
                                                 className="inline-flex items-center justify-center gap-1 text-[11px] font-bold text-emerald-600"
                                                 title={`Sent to QA on ${new Date(row.sentToQaAt).toLocaleString()}`}
@@ -708,9 +802,25 @@ export default function PmsTaskHistory() {
                                         <p className="text-[13px] text-gray-400">No description submitted.</p>
                                     ) : (
                                         <div className="space-y-2">
-                                            {viewingFiles.filter((f) => f.description).map((f) => (
-                                                <p key={f.id} className="text-[13px] text-gray-600 dark:text-zinc-400">{f.description}</p>
-                                            ))}
+                                            {/* Product Posting's link-only submissions (no file — see
+                                                AddLinksModal on Task System) land here as a description
+                                                with no fileUrl; render those as clickable links instead
+                                                of plain text so the manager/QA can actually open them. */}
+                                            {viewingFiles.filter((f) => f.description).map((f) =>
+                                                !f.fileUrl && /^https?:\/\//i.test(f.description || "") ? (
+                                                    <a
+                                                        key={f.id}
+                                                        href={f.description!}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="block text-[13px] text-indigo-500 hover:text-indigo-700 underline truncate"
+                                                    >
+                                                        {f.description}
+                                                    </a>
+                                                ) : (
+                                                    <p key={f.id} className="text-[13px] text-gray-600 dark:text-zinc-400">{f.description}</p>
+                                                )
+                                            )}
                                         </div>
                                     )}
                                 </div>

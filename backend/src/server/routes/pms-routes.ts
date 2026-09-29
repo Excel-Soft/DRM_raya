@@ -289,6 +289,11 @@ function getPeriodRange(periodRaw: string) {
           product_posting: ["PRODUCT_POSTING"],
           software: ["SOFTWARE"],
           service: ["SERVICE"],
+          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
+          // (or Software/Service) — pinned directly rather than derived from
+          // a role-name prefix, since "qa_manager" doesn't share a prefix
+          // with any of these and users.department is usually unset too.
+          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
       };
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
       const deptCandidates = Array.from(new Set([
@@ -435,6 +440,11 @@ function getPeriodRange(periodRaw: string) {
           product_posting: ["PRODUCT_POSTING"],
           software: ["SOFTWARE"],
           service: ["SERVICE"],
+          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
+          // (or Software/Service) — pinned directly rather than derived from
+          // a role-name prefix, since "qa_manager" doesn't share a prefix
+          // with any of these and users.department is usually unset too.
+          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
       };
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
       const deptCandidates = Array.from(new Set([
@@ -583,6 +593,11 @@ function getPeriodRange(periodRaw: string) {
         product_posting: ["PRODUCT_POSTING"],
         software: ["SOFTWARE"],
         service: ["SERVICE"],
+        // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
+        // (or Software/Service) — pinned directly rather than derived from a
+        // role-name prefix, since "qa_manager" doesn't share a prefix with
+        // any of these and users.department is usually unset too.
+        qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
       };
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
       const deptCandidates = Array.from(new Set([
@@ -662,6 +677,104 @@ function getPeriodRange(periodRaw: string) {
     } catch (error) {
       console.error("Error sending task to QA:", error);
       res.status(500).json({ error: "Failed to send task to QA" });
+    }
+  });
+
+  // Departments that actually run through the QA -> Verification pipeline.
+  // Everything else (IT, Software, Service) has no QA step at all — its
+  // manager's own approval is the final word, via /close below.
+  const QA_PIPELINE_DEPARTMENTS = ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"];
+
+  // POST /api/pms/tasks/:id/close — a non-QA-pipeline manager's "Closed
+  // Task" hand-off from "Completed Projects", the equivalent of /send-to-qa
+  // above but for every department with no QA/Verification pipeline at all
+  // (IT, Software, Service). Sets the same verification_reviewed_at column
+  // QA's real pipeline sets, so this task graduates into GET
+  // /api/pms/complete-closed-projects the same way a QA-pipeline task does
+  // once QA + Verification finish it — no separate "closed" concept needed
+  // downstream.
+  app.post("/api/pms/tasks/:id/close", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userRole = req.user.roleId || (req.user as any).role || "";
+      if (!isManagerialRole(userRole)) {
+        return res.status(403).json({ error: "Only a manager can close a task." });
+      }
+
+      const taskRes = await pool.query(
+        `SELECT t.id, t.status, t.verification_reviewed_at, p.department_type
+           FROM drm.tasks t
+           LEFT JOIN drm.projects p ON p.id = t.project_id
+          WHERE t.id = $1`,
+        [req.params.id],
+      );
+      if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+      const task = taskRes.rows[0];
+      if (QA_PIPELINE_DEPARTMENTS.includes(task.department_type)) {
+        return res.status(400).json({ error: "This department closes tasks through QA + Verification, not this button." });
+      }
+      if (task.status !== "Completed") {
+        return res.status(400).json({ error: "Only a Completed task can be closed." });
+      }
+
+      if (task.verification_reviewed_at) {
+        return res.json({ success: true, verificationReviewedAt: task.verification_reviewed_at });
+      }
+
+      const updated = await pool.query(
+        `UPDATE drm.tasks SET verification_reviewed_at = now() WHERE id = $1 RETURNING verification_reviewed_at`,
+        [req.params.id],
+      );
+      res.json({ success: true, verificationReviewedAt: updated.rows[0].verification_reviewed_at });
+    } catch (error) {
+      console.error("Error closing task:", error);
+      res.status(500).json({ error: "Failed to close task" });
+    }
+  });
+
+  // POST /api/pms/tasks/:id/send-to-verification — QA Manager's own
+  // "Completed Projects" hand-off, the QA-pipeline-department counterpart
+  // of /close above. Sets qa_reviewed_at, which is exactly what GET
+  // /api/product-posting/verification/queue (verification-manager-widget.tsx)
+  // already filters on (qa_reviewed_at IS NOT NULL AND
+  // verification_reviewed_at IS NULL) — so this surfaces the task there
+  // without duplicating that queue's own logic.
+  app.post("/api/pms/tasks/:id/send-to-verification", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userRole = req.user.roleId || (req.user as any).role || "";
+      if (!isManagerialRole(userRole)) {
+        return res.status(403).json({ error: "Only a manager can send a task to Verification." });
+      }
+
+      const taskRes = await pool.query(
+        `SELECT t.id, t.status, t.qa_reviewed_at, p.department_type
+           FROM drm.tasks t
+           LEFT JOIN drm.projects p ON p.id = t.project_id
+          WHERE t.id = $1`,
+        [req.params.id],
+      );
+      if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+      const task = taskRes.rows[0];
+      if (!QA_PIPELINE_DEPARTMENTS.includes(task.department_type)) {
+        return res.status(400).json({ error: "This department doesn't go through Verification." });
+      }
+      if (task.status !== "Completed") {
+        return res.status(400).json({ error: "Only a Completed task can be sent to Verification." });
+      }
+
+      if (task.qa_reviewed_at) {
+        return res.json({ success: true, qaReviewedAt: task.qa_reviewed_at });
+      }
+
+      const updated = await pool.query(
+        `UPDATE drm.tasks SET qa_reviewed_at = now() WHERE id = $1 RETURNING qa_reviewed_at`,
+        [req.params.id],
+      );
+      res.json({ success: true, qaReviewedAt: updated.rows[0].qa_reviewed_at });
+    } catch (error) {
+      console.error("Error sending task to verification:", error);
+      res.status(500).json({ error: "Failed to send task to verification" });
     }
   });
 
@@ -2493,6 +2606,11 @@ function getPeriodRange(periodRaw: string) {
           product_posting: ["PRODUCT_POSTING"],
           software: ["SOFTWARE"],
           service: ["SERVICE"],
+          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
+          // (or Software/Service) — pinned directly rather than derived
+          // from a role-name prefix, since "qa_manager" doesn't share a
+          // prefix with any of these and users.department is usually unset.
+          qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
         };
         const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
         const deptCandidates = Array.from(new Set([
@@ -2558,6 +2676,7 @@ function getPeriodRange(periodRaw: string) {
       let companyByTaskId: Record<string, string> = {};
       let minutesByTaskId: Record<string, number> = {};
       let sentToQaByTaskId: Record<string, string | null> = {};
+      let qaReviewedAtByTaskId: Record<string, string | null> = {};
       // The task's CURRENT status, as opposed to `toStatus` above (which is
       // frozen at whatever this specific history row's transition was — e.g.
       // a QA-return row's toStatus is always "Blocked", forever, even after
@@ -2597,7 +2716,7 @@ function getPeriodRange(periodRaw: string) {
             [taskIds],
           ),
           pool.query(
-            `SELECT id AS task_id, sent_to_qa_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
+            `SELECT id AS task_id, sent_to_qa_at, qa_reviewed_at FROM drm.tasks WHERE id = ANY($1::uuid[])`,
             [taskIds],
           ),
           pool.query(
@@ -2628,6 +2747,10 @@ function getPeriodRange(periodRaw: string) {
           acc[row.task_id] = row.sent_to_qa_at;
           return acc;
         }, {});
+        qaReviewedAtByTaskId = qaRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
+          acc[row.task_id] = row.qa_reviewed_at;
+          return acc;
+        }, {});
         currentStatusByTaskId = statusRows.rows.reduce((acc: Record<string, string | null>, row: any) => {
           acc[row.task_id] = row.status;
           return acc;
@@ -2648,6 +2771,7 @@ function getPeriodRange(periodRaw: string) {
         timeSpentMinutes: h.task?.id ? minutesByTaskId[h.task.id] ?? 0 : 0,
         currentStatus: h.task?.id ? currentStatusByTaskId[h.task.id] ?? null : null,
         sentToQaAt: h.task?.id ? sentToQaByTaskId[h.task.id] ?? null : null,
+        qaReviewedAt: h.task?.id ? qaReviewedAtByTaskId[h.task.id] ?? null : null,
         verificationReviewedAt: h.task?.id ? verificationReviewedAtByTaskId[h.task.id] ?? null : null,
         departmentType: h.task?.id ? deptTypeByTaskId[h.task.id] ?? null : null,
       }));
@@ -2688,10 +2812,12 @@ function getPeriodRange(periodRaw: string) {
         const taskId = row.task?.id;
         if (!taskId) continue;
         if (row.currentStatus !== "Completed" && row.currentStatus !== "Blocked") continue;
-        const isProductPosting = row.departmentType === "PRODUCT_POSTING";
-        if (isProductPosting && row.verificationReviewedAt) continue; // PP: fully closed once QA + Verification both reviewed it
-        if (!isProductPosting && row.currentStatus === "Completed") continue; // every other dept: manager approval alone is the final step — no QA/Verification exists for them
-        // both land on /api/pms/complete-closed-projects instead
+        // Product Posting reaches this via QA + Verification; every other
+        // department reaches it via the manager's own "Closed Task" button
+        // (POST /api/pms/tasks/:id/close, below) — either way,
+        // verification_reviewed_at being set means fully closed, graduated
+        // to /api/pms/complete-closed-projects instead of showing here.
+        if (row.verificationReviewedAt) continue;
         const existing = latestByTaskId.get(taskId);
         if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
           latestByTaskId.set(taskId, { ...row, qaComment: latestQaCommentByTaskId.get(taskId)?.reason ?? null });
@@ -2731,6 +2857,11 @@ function getPeriodRange(periodRaw: string) {
         product_posting: ["PRODUCT_POSTING"],
         software: ["SOFTWARE"],
         service: ["SERVICE"],
+        // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
+        // (or Software/Service) — pinned directly rather than derived from a
+        // role-name prefix, since "qa_manager" doesn't share a prefix with
+        // any of these and users.department is usually unset too.
+        qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
       };
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
       const deptCandidates = Array.from(new Set([
@@ -2767,13 +2898,10 @@ function getPeriodRange(periodRaw: string) {
         LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
         LEFT JOIN drm.invoices rinv ON rinv.id = p.invoice_id
         LEFT JOIN drm.users au ON au.id = t.assigned_to_user_id
-        WHERE (
-          (p.department_type = 'PRODUCT_POSTING' AND t.verification_reviewed_at IS NOT NULL)
-          OR (COALESCE(p.department_type, '') <> 'PRODUCT_POSTING' AND t.status = 'Completed')
-        )
+        WHERE t.verification_reviewed_at IS NOT NULL
           AND COALESCE(t.is_deleted, false) = false
           ${deptFilter}
-        ORDER BY COALESCE(t.verification_reviewed_at, t.updated_at) DESC
+        ORDER BY t.verification_reviewed_at DESC
         LIMIT $1
       `, [limitNum]);
 

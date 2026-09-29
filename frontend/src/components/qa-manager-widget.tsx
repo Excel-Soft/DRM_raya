@@ -185,16 +185,6 @@ export function QAManagerWidget() {
         return `fallback:${project?.company || ""}|${project?.project || ""}|${project?.tasker || ""}`;
     };
 
-
-
-    const hideProject = (project: any) => {
-        const key = getProjectKey(project);
-        setHiddenProjectKeys((current) => {
-            if (current.includes(key)) return current;
-            return [...current, key];
-        });
-    };
-
     // Queries (Reusing existing endpoints where possible for dynamic feel)
     // pms-routes.ts's period convention spells "this week" as "WC", not the
     // "WK" this widget's own dropdown uses — remap so the real endpoint gets
@@ -257,6 +247,22 @@ export function QAManagerWidget() {
     });
     const attachedDocuments = projectDocsResponse?.data || [];
 
+    // Real submitted links for the "Links" dialog — the executive's actual
+    // submissions (POST /api/tasks/:id/files from AddLinksModal on Task
+    // System) were never wired up here; this dialog only ever checked
+    // linksProject.raw.evidenceLinks / .links / .qaLinks, none of which any
+    // real write path populates, so it always showed "No evidence links"
+    // regardless of what was actually submitted.
+    const { data: linksFilesResponse } = useQuery({
+        queryKey: [`/api/tasks/${linksProject?.id}/files`],
+        enabled: !!linksProject?.id && isLinksDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/tasks/${linksProject!.id}/files`);
+            return res.json();
+        }
+    });
+    const submittedTaskLinks = (linksFilesResponse?.data || []).filter((f: any) => !f.fileUrl && f.description);
+
     // Real "Important" sidebar counts
     const { data: hodImportantStats } = useQuery({
         queryKey: ["/api/hod/dashboard/important-stats"],
@@ -284,10 +290,15 @@ export function QAManagerWidget() {
     const qaReviewMutation = useMutation({
         mutationFn: async ({ taskId, action, remarks, level }: { taskId: string; action: "complete" | "return"; remarks?: string; level?: string }) =>
             apiRequest("POST", `/api/product-posting/tasks/${taskId}/qa-review`, { action, remarks, level }),
-        onSuccess: (_data, variables) => {
-            if (selectedProject) {
-                hideProject(selectedProject);
-            }
+        onSuccess: () => {
+            // Used to also hideProject(selectedProject) here unconditionally —
+            // that was fine for "complete" (the task legitimately leaves this
+            // queue once qa_reviewed_at is set, so the refetch below already
+            // drops it) but wrong for "return": a returned task is supposed
+            // to reappear in Changing Projects (returnCount > 0), and hiding
+            // it client-side made it vanish from both tables instead. The
+            // refetch below is the real source of truth for both outcomes —
+            // no client-side hiding needed.
             queryClient.invalidateQueries({ queryKey: ["/api/product-posting/qa/queue"] });
             queryClient.invalidateQueries({ queryKey: ["/api/product-posting/verification/queue"] });
             queryClient.invalidateQueries({ queryKey: ["/api/tasks/my-executions"] });
@@ -295,10 +306,6 @@ export function QAManagerWidget() {
             setStatusValue("");
             setLevelValue("");
             setRemarksValue("");
-            if (!variables?.taskId && selectedProject) {
-                // Keep the fallback/mock rows responsive even when they do not have real task IDs.
-                hideProject(selectedProject);
-            }
         }
     });
 
@@ -314,7 +321,11 @@ export function QAManagerWidget() {
         }
     };
 
-    const projectListData = queueRows.slice(0, 50).map((p: any, idx: number) => ({
+    // Blocked rows are currently back with the executive for rework (QA
+    // returned them, sent_to_qa_at cleared) — they belong only in Changing
+    // Projects below until resubmitted, not here too. Without this filter
+    // every returned task showed in both tables simultaneously.
+    const projectListData = queueRows.filter((p: any) => p.status !== 'Blocked').slice(0, 50).map((p: any, idx: number) => ({
         no: idx + 1,
         company: p.companyName || "N/A",
         tasker: p.assignee?.name || "Posting Executive",
@@ -983,6 +994,17 @@ export function QAManagerWidget() {
                             <div className="space-y-4">
                                 {(() => {
                                     const evidenceLinks = (() => {
+                                        // Real submitted links first — this is what the executive
+                                        // actually sent (see submittedTaskLinks above). The other
+                                        // three checks below are legacy fields nothing writes to
+                                        // anymore, kept only as a fallback for any old data shaped
+                                        // that way.
+                                        if (submittedTaskLinks.length > 0) {
+                                            return submittedTaskLinks.map((f: any) => ({
+                                                url: f.description,
+                                                label: null
+                                            }));
+                                        }
                                         if (linksProject?.raw?.evidenceLinks && linksProject.raw.evidenceLinks.length > 0) {
                                             return linksProject.raw.evidenceLinks.map((link: any) => ({
                                                 url: link.url,
