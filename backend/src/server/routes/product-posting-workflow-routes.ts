@@ -14,6 +14,15 @@ function getUserId(req: any): string {
     return req.user?.userId || req.user?.id || "";
 }
 
+// Maps a product_posting_invoices.invoice_type value to its matching
+// /drm/attributes "Service for Quotation" catalog entry (drm.services.name),
+// so project creation can look up the real, admin-configured project_department.
+const INVOICE_TYPE_TO_SERVICE_NAME: Record<string, string> = {
+    LISTING_PAGE: 'Listing Page',
+    MINIWEBSITE: 'Alibaba Minisite',
+    PRODUCT_POSTING: 'Alibaba Product Posting',
+};
+
 // GET /api/product-posting-invoices - List product posting invoices
 router.get("/", async (req: any, res: any) => {
     try {
@@ -194,12 +203,26 @@ router.post("/:id/account-approve", async (req: any, res: any) => {
         if (rows[0]) {
             const invoice = rows[0];
             try {
-                // Determine department type based on invoice type
+                // Fallback guess, used only if the catalog lookup below finds nothing.
                 let deptType = 'PRODUCT_POSTING';
                 if (invoice.invoice_type && String(invoice.invoice_type).toLowerCase().includes('minisite')) {
                     deptType = 'DND';
                 }
-                
+                // Real source of truth: the "Project Department" configured for this
+                // service on the /drm/attributes catalog (drm.services.project_department).
+                const catalogServiceName = invoice.invoice_type
+                    ? INVOICE_TYPE_TO_SERVICE_NAME[String(invoice.invoice_type).toUpperCase()]
+                    : null;
+                if (catalogServiceName) {
+                    const svcRes = await pool.query(
+                        `SELECT project_department FROM drm.services WHERE name = $1 AND project_department IS NOT NULL LIMIT 1`,
+                        [catalogServiceName]
+                    );
+                    if (svcRes.rows[0]?.project_department) {
+                        deptType = svcRes.rows[0].project_department;
+                    }
+                }
+
                 await pool.query(
                     `INSERT INTO drm.projects (
                         invoice_id, name, customer_id, owner_user_id, status, department_type, invoice_type, created_at, updated_at
@@ -207,7 +230,7 @@ router.post("/:id/account-approve", async (req: any, res: any) => {
                         $1, $2, $3, $4, 'Active', $5, $6, now(), now()
                     )`,
                     [
-                        invoice.id, 
+                        invoice.id,
                         invoice.project_name || invoice.invoice_type || 'Product Posting',
                         invoice.customer_id,
                         invoice.sales_exec_id,
@@ -297,11 +320,26 @@ router.post("/:id/generate-project", async (req: any, res: any) => {
         if (!invRes.rows.length) return res.status(404).json({ error: "Invoice not found" });
         const invoice = invRes.rows[0];
         
+        // Fallback guess, used only if the catalog lookup below finds nothing.
         let deptType = 'PRODUCT_POSTING';
         if (invoice.invoice_type && String(invoice.invoice_type).toLowerCase().includes('minisite')) {
             deptType = 'DND';
         }
-        
+        // Real source of truth: the "Project Department" configured for this
+        // service on the /drm/attributes catalog (drm.services.project_department).
+        const genCatalogServiceName = invoice.invoice_type
+            ? INVOICE_TYPE_TO_SERVICE_NAME[String(invoice.invoice_type).toUpperCase()]
+            : null;
+        if (genCatalogServiceName) {
+            const svcRes = await pool.query(
+                `SELECT project_department FROM drm.services WHERE name = $1 AND project_department IS NOT NULL LIMIT 1`,
+                [genCatalogServiceName]
+            );
+            if (svcRes.rows[0]?.project_department) {
+                deptType = svcRes.rows[0].project_department;
+            }
+        }
+
         await pool.query(
             `INSERT INTO drm.projects (
                 invoice_id, name, customer_id, owner_user_id, status, department_type, invoice_type, created_at, updated_at
@@ -309,7 +347,7 @@ router.post("/:id/generate-project", async (req: any, res: any) => {
                 $1, $2, $3, $4, 'Active', $5, $6, now(), now()
             )`,
             [
-                invoice.id, 
+                invoice.id,
                 invoice.project_name || invoice.invoice_type || 'Product Posting',
                 invoice.customer_id,
                 invoice.sales_exec_id,
@@ -317,7 +355,7 @@ router.post("/:id/generate-project", async (req: any, res: any) => {
                 invoice.invoice_type
             ]
         );
-        
+
         return res.json({ success: true, data: { status: 'Active', held: false, linked: true, created: true }});
     } catch (error) {
         console.error("Error in generate-project:", error);

@@ -3170,9 +3170,29 @@ export function registerAccountRoutes(app: Express) {
             // Generate project
             if (upd.rows[0]) {
                 const approvedInv = upd.rows[0];
+                // Fallback guess, used only if the catalog lookup below finds nothing.
                 let deptType = 'PRODUCT_POSTING';
                 if (approvedInv.invoice_type && String(approvedInv.invoice_type).toLowerCase().includes('minisite')) {
                     deptType = 'DND';
+                }
+                // Real source of truth: the "Project Department" configured for this
+                // service on the /drm/attributes catalog (drm.services.project_department).
+                const INVOICE_TYPE_TO_SERVICE_NAME: Record<string, string> = {
+                    LISTING_PAGE: 'Listing Page',
+                    MINIWEBSITE: 'Alibaba Minisite',
+                    PRODUCT_POSTING: 'Alibaba Product Posting',
+                };
+                const catalogServiceName = approvedInv.invoice_type
+                    ? INVOICE_TYPE_TO_SERVICE_NAME[String(approvedInv.invoice_type).toUpperCase()]
+                    : null;
+                if (catalogServiceName) {
+                    const svcRes = await pool.query(
+                        `SELECT project_department FROM drm.services WHERE name = $1 AND project_department IS NOT NULL LIMIT 1`,
+                        [catalogServiceName]
+                    );
+                    if (svcRes.rows[0]?.project_department) {
+                        deptType = svcRes.rows[0].project_department;
+                    }
                 }
                 await pool.query(
                     `INSERT INTO drm.projects (
