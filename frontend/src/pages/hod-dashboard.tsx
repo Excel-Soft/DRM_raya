@@ -230,37 +230,68 @@ export default function HodDashboard() {
     }
 
     if (parsedItems.length === 0) {
-      const pkgName = item.packageName || item.packageType || item.package_type || item.entryType || item.entry_type || extractedPackage || "Product Posting Service";
-      
-      const lowerPkg = pkgName.toLowerCase();
-      let finalItemName = pkgName;
-      let finalQty = 1;
-      let finalDetail = `${cleanCompany} Details`;
+      // Product Posting's auto-generated invoices carry a real, structured
+      // invoice_type (LISTING_PAGE/MINIWEBSITE/PRODUCT_POSTING) — prefer
+      // that over pkgName/extractedPackage below, which parses the FIRST
+      // "(...)" out of companyName and can grab the wrong one when
+      // companyName already has its own embedded parenthetical (e.g.
+      // "Acme (pkwi4283)"), silently showing that code as the item title
+      // instead of a real service name.
+      const INVOICE_TYPE_ITEM: Record<string, { name: string; qty: number; detail: string }> = {
+        // Title/detail wording matches the Product Posting / Minisite /
+        // Listing Page invoice preview elsewhere in the app, per explicit
+        // instruction — same standard line for every auto-generated
+        // invoice of this type.
+        LISTING_PAGE: { name: "Listing Page Service", qty: 1, detail: "One Listing Page" },
+        MINIWEBSITE: { name: "Alibaba Minisite", qty: 1, detail: "Graphically Rich Title Page theme designing" },
+        PRODUCT_POSTING: { name: "Alibaba Product Posting", qty: 100, detail: "product posting 100 per month" },
+      };
+      const typedItem = item.invoiceType ? INVOICE_TYPE_ITEM[item.invoiceType] : null;
 
-      if (lowerPkg.includes("minisite")) {
-        finalItemName = "Alibaba Minisite Service";
-        finalQty = 1;
-        finalDetail = "1";
-      } else if (lowerPkg.includes("listing")) {
-        finalItemName = "Listing Page Service";
-        finalQty = 1;
-        finalDetail = "1";
-      } else if (lowerPkg.includes("product posting")) {
-        finalItemName = "Product Posting Service";
-        finalQty = 100;
-        finalDetail = "100";
-      }
+      if (typedItem) {
+        parsedItems = [
+          {
+            name: typedItem.name,
+            detail: typedItem.detail,
+            price: Number(item.orderDollar) || 0,
+            quantity: typedItem.qty,
+            total: Number(item.orderDollar) || 0
+          }
+        ];
+        calculatedSubTotal = Number(item.orderDollar) || 0;
+      } else {
+        const pkgName = item.packageName || item.packageType || item.package_type || item.entryType || item.entry_type || extractedPackage || "Product Posting Service";
 
-      parsedItems = [
-        {
-          name: finalItemName,
-          detail: finalDetail,
-          price: Number(item.orderDollar) || 0,
-          quantity: finalQty,
-          total: Number(item.orderDollar) || 0
+        const lowerPkg = pkgName.toLowerCase();
+        let finalItemName = pkgName;
+        let finalQty = 1;
+        let finalDetail = `${cleanCompany} Details`;
+
+        if (lowerPkg.includes("minisite")) {
+          finalItemName = "Alibaba Minisite Service";
+          finalQty = 1;
+          finalDetail = "1";
+        } else if (lowerPkg.includes("listing")) {
+          finalItemName = "Listing Page Service";
+          finalQty = 1;
+          finalDetail = "1";
+        } else if (lowerPkg.includes("product posting")) {
+          finalItemName = "Product Posting Service";
+          finalQty = 100;
+          finalDetail = "100";
         }
-      ];
-      calculatedSubTotal = Number(item.orderDollar) || 0;
+
+        parsedItems = [
+          {
+            name: finalItemName,
+            detail: finalDetail,
+            price: Number(item.orderDollar) || 0,
+            quantity: finalQty,
+            total: Number(item.orderDollar) || 0
+          }
+        ];
+        calculatedSubTotal = Number(item.orderDollar) || 0;
+      }
     }
 
     const invoiceData = {
