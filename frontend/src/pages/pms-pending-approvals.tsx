@@ -184,7 +184,7 @@ export default function PmsPendingApprovals() {
             row.status,
             row.hodApprovedAt ? "Verified" : "Waiting",
             row.accountsApprovedAt ? "Verified" : "Waiting",
-            "Product Posting",
+            departmentLabel(row.departmentType),
             row.date ? format(new Date(row.date), "dd-MM-yyyy") : "N/A"
         ]);
 

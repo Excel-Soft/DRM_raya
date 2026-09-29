@@ -74,36 +74,31 @@ router.post("/:id/documents", (req, res, next) => {
         }
 
         // --- Resolve Target Department ---
-        // 1. Use the project's already-assigned department_type (set at invoice approval time).
-        // 2. Only if that is null, try to resolve from the project's service_type in the catalog.
-        // 3. Only if that too is null, try to resolve from the packageName submitted in this form.
-        // This avoids breaking document uploads for existing projects where the packageName
-        // in the form (e.g. "Basic Plus") doesn't match any catalog entry.
+        // 1. Prioritize resolving from the project's service_type in the catalog (Dynamic resolution)
+        // 2. If that fails, try to resolve from the packageName submitted in this form.
+        // 3. If that fails, fall back to the project's already-assigned department_type.
         const projectRow = await pool.query(
             `SELECT department_type, service_type FROM drm.projects WHERE id = $1`,
             [id]
         );
 
-        let projDept: string | null = projectRow.rows[0]?.department_type || null;
-
-        if (!projDept) {
-            // Fallback: resolve from service_type stored on the project
-            const serviceType = projectRow.rows[0]?.service_type;
-            if (serviceType) {
-                const svcCheck = await pool.query(`
-                    SELECT COALESCE(ss.project_department, s_parent.project_department, s.project_department) AS project_department
-                    FROM (SELECT $1::text AS s_name) AS input
-                    LEFT JOIN drm.service_subservices ss ON ss.name = input.s_name
-                    LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
-                    LEFT JOIN drm.services s ON s.name = input.s_name
-                    LIMIT 1
-                `, [serviceType]);
-                projDept = svcCheck.rows[0]?.project_department || null;
-            }
+        let projDept: string | null = null;
+        
+        const serviceType = projectRow.rows[0]?.service_type;
+        if (serviceType) {
+            const svcCheck = await pool.query(`
+                SELECT COALESCE(ss.project_department, s_parent.project_department, s.project_department) AS project_department
+                FROM (SELECT $1::text AS s_name) AS input
+                LEFT JOIN drm.service_subservices ss ON ss.name = input.s_name
+                LEFT JOIN drm.services s_parent ON s_parent.id = ss.service_id
+                LEFT JOIN drm.services s ON s.name = input.s_name
+                LIMIT 1
+            `, [serviceType]);
+            projDept = svcCheck.rows[0]?.project_department || null;
         }
 
         if (!projDept && packageName) {
-            // Last resort: try to resolve from the packageName submitted in the form
+            // 2. Try to resolve from the packageName submitted in the form
             const pkgCheck = await pool.query(`
                 SELECT COALESCE(ss.project_department, s_parent.project_department, s.project_department) AS project_department
                 FROM (SELECT $1::text AS s_name) AS input
@@ -116,8 +111,13 @@ router.post("/:id/documents", (req, res, next) => {
         }
 
         if (!projDept) {
+            // 3. Fall back to the project's already-assigned department_type
+            projDept = projectRow.rows[0]?.department_type || null;
+        }
+
+        if (!projDept) {
             return res.status(400).json({
-                error: "Project Target Department is not assigned so first assigned it"
+                error: "Project Target Department is not assigned to this service. Please assign a department to this service first."
             });
         }
         // ------------------------------------------------
@@ -180,25 +180,29 @@ router.post("/:id/documents", (req, res, next) => {
                 VALUES ($1, $2, $3, 'PENDING', now(), now())
             `, [id, docUrl, req.user.userId]);
 
-            // Ensure workflow exists for product posting and update salesperson_uploaded_at
-            const wfRes = await client.query(`
-                SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
-            `, [id]);
+            // Only create/update Product Posting workflows if the project actually belongs to P&P
+            const isProductPosting = ['PRODUCT_POSTING', '9', 'Product Posting'].includes(projDept);
+            if (isProductPosting) {
+                // Ensure workflow exists for product posting and update salesperson_uploaded_at
+                const wfRes = await client.query(`
+                    SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
+                `, [id]);
 
-            if (wfRes.rows.length === 0) {
-                await client.query(`
-                    INSERT INTO drm.product_posting_workflows (
-                        project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
-                    ) VALUES (
-                        $1, 'PENDING_PROJECT', now(), now(), now()
-                    )
-                `, [id]);
-            } else {
-                await client.query(`
-                    UPDATE drm.product_posting_workflows
-                    SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
-                    WHERE project_id = $1
-                `, [id]);
+                if (wfRes.rows.length === 0) {
+                    await client.query(`
+                        INSERT INTO drm.product_posting_workflows (
+                            project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
+                        ) VALUES (
+                            $1, 'PENDING_PROJECT', now(), now(), now()
+                        )
+                    `, [id]);
+                } else {
+                    await client.query(`
+                        UPDATE drm.product_posting_workflows
+                        SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
+                        WHERE project_id = $1
+                    `, [id]);
+                }
             }
 
             // Change project status to Active if it was Documents Pending, and route to the correct department

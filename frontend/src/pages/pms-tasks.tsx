@@ -124,7 +124,7 @@ export default function PmsTasks() {
     const [overtimeTaskId, setOvertimeTaskId] = useState<string | null>(null);
     const [overtimeForm, setOvertimeForm] = useState({ minutes: "60", reason: "" });
 
-    const NEW_TASK_INITIAL_STATE = { title: "", description: "", assignedToUserId: "unassigned", priority: "Medium", dueDate: "" };
+    const NEW_TASK_INITIAL_STATE = { title: "", description: "", assignedToUserId: "unassigned", priority: "Medium", dueDate: "", duration: "" };
     const [isAddTaskFormOpen, setIsAddTaskFormOpen] = useState(false);
     const [newTaskForm, setNewTaskForm] = useState(NEW_TASK_INITIAL_STATE);
 
@@ -200,6 +200,7 @@ export default function PmsTasks() {
                 assignedToUserId: newTaskForm.assignedToUserId !== "unassigned" ? newTaskForm.assignedToUserId : undefined,
                 priority: newTaskForm.priority,
                 dueDate: newTaskForm.dueDate ? new Date(newTaskForm.dueDate).toISOString() : undefined,
+                notes: newTaskForm.duration ? JSON.stringify({ duration: newTaskForm.duration }) : undefined,
             });
         },
         onSuccess: () => {
@@ -527,7 +528,7 @@ export default function PmsTasks() {
                         {!isExecutive && isAddTaskFormOpen && (
                             <div className="mb-6 bg-white rounded border border-gray-100 shadow-sm p-5 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="space-y-1.5">
+                                    <div className="space-y-1.5 md:col-span-2">
                                         <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Task Title *</label>
                                         <Input
                                             value={newTaskForm.title}
@@ -572,6 +573,17 @@ export default function PmsTasks() {
                                             onChange={(e) => setNewTaskForm((f) => ({ ...f, dueDate: e.target.value }))}
                                             className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
                                             data-testid="input-new-task-due-date"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Allocated Time (Minutes)</label>
+                                        <Input
+                                            type="number"
+                                            min="0"
+                                            value={newTaskForm.duration}
+                                            onChange={(e) => setNewTaskForm((f) => ({ ...f, duration: e.target.value }))}
+                                            placeholder="e.g., 60"
+                                            className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
                                         />
                                     </div>
                                 </div>
