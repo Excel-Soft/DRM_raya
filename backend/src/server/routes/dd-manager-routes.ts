@@ -56,8 +56,9 @@ export function registerDdManagerRoutes(app: Express) {
                 FROM drm.product_posting_workflows wf
                 INNER JOIN drm.projects p ON p.id = wf.project_id
                 LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-                WHERE (p.name ILIKE '%mini%' OR p.name ILIKE '%listing%' OR p.name ILIKE '%product%'
-                       OR inv.project_name ILIKE '%mini%' OR inv.project_name ILIKE '%listing%')
+                WHERE (p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', 'PRODUCT_POSTING', 'Product Posting', '9')
+                       OR p.name ILIKE '%mini%' OR p.name ILIKE '%listing%' OR p.name ILIKE '%product%'
+                       OR inv.project_name ILIKE '%mini%' OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%product%')
             `);
             const phaseCounts = phaseCountsResult.rows[0];
 
@@ -287,9 +288,9 @@ export function registerDdManagerRoutes(app: Express) {
                       -- Kept as an OR fallback rather than removed, in case some
                       -- legacy row has department_type unset but matches by name.
                       AND (
-                        p.department_type IN ('DND', 'DESIGN_DEVELOPMENT')
-                        OR p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%'
-                        OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%'
+                        p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', 'PRODUCT_POSTING', 'Product Posting', '9')
+                        OR p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%product%'
+                        OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%' OR inv.project_name ILIKE '%product%'
                       )
                     ORDER BY wf.updated_at DESC
                     LIMIT 50
