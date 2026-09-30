@@ -36,7 +36,7 @@ export function registerDdManagerRoutes(app: Express) {
                 LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
                 WHERE (p.owner_user_id::text = $1::text
                    OR p.created_by::text = $2::text
-                   OR (wf.current_phase = 'DATA_VERIFY' AND (p.name ILIKE '%mini%' OR p.name ILIKE '%listing%' OR p.name ILIKE '%product%')))
+                   OR (wf.current_phase = 'DATA_VERIFY' AND p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')))
                    ${dateFilterSql}
             `, params);
 
@@ -56,9 +56,7 @@ export function registerDdManagerRoutes(app: Express) {
                 FROM drm.product_posting_workflows wf
                 INNER JOIN drm.projects p ON p.id = wf.project_id
                 LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
-                WHERE (p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', 'PRODUCT_POSTING', 'Product Posting', '9')
-                       OR p.name ILIKE '%mini%' OR p.name ILIKE '%listing%' OR p.name ILIKE '%product%'
-                       OR inv.project_name ILIKE '%mini%' OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%product%')
+                WHERE p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')
             `);
             const phaseCounts = phaseCountsResult.rows[0];
 
@@ -287,11 +285,7 @@ export function registerDdManagerRoutes(app: Express) {
                       -- set by project-doc-routes.ts when documents are sent).
                       -- Kept as an OR fallback rather than removed, in case some
                       -- legacy row has department_type unset but matches by name.
-                      AND (
-                        p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', 'PRODUCT_POSTING', 'Product Posting', '9')
-                        OR p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%' OR p.name ILIKE '%product%'
-                        OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%' OR inv.project_name ILIKE '%product%'
-                      )
+                      AND p.department_type IN ('DND', 'DESIGN_DEVELOPMENT', '10')
                     ORDER BY wf.updated_at DESC
                     LIMIT 50
                 `, [phaseFilter, statusType]);

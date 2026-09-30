@@ -180,9 +180,9 @@ router.post("/:id/documents", (req, res, next) => {
                 VALUES ($1, $2, $3, 'PENDING', now(), now())
             `, [id, docUrl, req.user.userId]);
 
-            // Only create/update Product Posting workflows if the project actually belongs to P&P
-            const isProductPosting = ['PRODUCT_POSTING', '9', 'Product Posting'].includes(projDept);
-            if (isProductPosting) {
+            // Create workflow row for both Product Posting and D&D since both queues rely on this table
+            const isWorkflowDept = ['PRODUCT_POSTING', '9', 'Product Posting', 'DND', 'DESIGN_DEVELOPMENT', '10'].includes(projDept);
+            if (isWorkflowDept) {
                 // Ensure workflow exists for product posting and update salesperson_uploaded_at
                 const wfRes = await client.query(`
                     SELECT id FROM drm.product_posting_workflows WHERE project_id = $1

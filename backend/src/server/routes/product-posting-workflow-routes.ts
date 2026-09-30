@@ -388,7 +388,7 @@ router.get("/manager/project-stats", async (req: any, res: any) => {
                 SUM(CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END)::integer as complete,
                 SUM(CASE WHEN p.status = 'OnHold' THEN 1 ELSE 0 END)::integer as free
             FROM drm.projects p
-            WHERE p.department_type IN ('PRODUCT_POSTING', 'DND')
+            WHERE p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
         `);
         return res.json(rows[0] || { total: 0, pending: 0, complete: 0, free: 0 });
     } catch (error) {
@@ -414,7 +414,9 @@ router.get("/manager/daily-submissions", async (req: any, res: any) => {
                 ) as last_task_title
             FROM drm.product_posting_workflows w
             JOIN drm.users u ON u.id = w.executive_user_id
+            JOIN drm.projects p ON p.id = w.project_id
             WHERE w.executive_submitted_at >= CURRENT_DATE
+              AND p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
             GROUP BY u.name, w.executive_user_id
         `);
         return res.json({ success: true, data: rows });
@@ -445,6 +447,7 @@ router.get("/manager/queue", async (req: any, res: any) => {
             JOIN drm.projects p ON p.id = w.project_id
             LEFT JOIN drm.customers c ON c.id = p.customer_id
             LEFT JOIN drm.product_posting_invoices i ON i.id = p.invoice_id
+            WHERE p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')
             ORDER BY w.updated_at DESC
         `);
 
