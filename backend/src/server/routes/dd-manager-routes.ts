@@ -252,28 +252,34 @@ export function registerDdManagerRoutes(app: Express) {
                     : ["PROJECT_OVERVIEW", "VERIFICATION_COMPLETE"];
                 
                 const ppResult = await pool.query(`
-                    SELECT 
-                        wf.project_id as id,
+                    SELECT
+                        p.id as id,
                         p.project_number as "projectNumber",
                         p.name as "projectName",
                         COALESCE(NULLIF(CASE WHEN p.name LIKE '%•%' THEN NULL ELSE p.name END, ''), inv.project_name, p.name) as "invoiceProject",
                         COALESCE(c.company_name, inv.company_name, p.name) as "company",
                         wf.current_phase as status,
-                        wf.updated_at as "updatedAt",
-                        (SELECT id FROM drm.project_documents WHERE project_id = wf.project_id AND status IN ('PENDING', 'APPROVED') ORDER BY created_at DESC LIMIT 1) as "docId",
-                        (SELECT created_at FROM drm.project_documents WHERE project_id = wf.project_id AND status IN ('PENDING', 'APPROVED') ORDER BY created_at DESC LIMIT 1) as "docCreatedAt"
-                    FROM drm.product_posting_workflows wf
-                    INNER JOIN drm.projects p ON p.id = wf.project_id
+                        COALESCE(wf.updated_at, p.updated_at, p.created_at) as "updatedAt",
+                        (SELECT id FROM drm.project_documents WHERE project_id = p.id AND status IN ('PENDING', 'APPROVED') ORDER BY created_at DESC LIMIT 1) as "docId",
+                        (SELECT created_at FROM drm.project_documents WHERE project_id = p.id AND status IN ('PENDING', 'APPROVED') ORDER BY created_at DESC LIMIT 1) as "docCreatedAt"
+                    FROM drm.projects p
+                    -- LEFT JOIN, not INNER: a document upload that raced/failed partway
+                    -- through creating this workflow row (the exact bug that made
+                    -- #1043/#1044/#1047 invisible here despite being correctly routed
+                    -- to D&D) must not make the project disappear from this queue.
+                    -- The "waiting" OR-branch below treats a missing row the same as
+                    -- PENDING_PROJECT so a real pending document always surfaces.
+                    LEFT JOIN drm.product_posting_workflows wf ON wf.project_id = p.id
                     LEFT JOIN drm.product_posting_invoices inv ON inv.id = p.invoice_id
                     LEFT JOIN drm.customers c ON c.id = COALESCE(p.customer_id, inv.customer_id)
                     WHERE (
                         wf.current_phase = ANY($1::text[])
                         OR (
                             $2::text = 'waiting'
-                            AND wf.current_phase = 'PENDING_PROJECT'
+                            AND (wf.current_phase = 'PENDING_PROJECT' OR wf.current_phase IS NULL)
                             AND EXISTS (
                                 SELECT 1 FROM drm.project_documents pd
-                                WHERE pd.project_id = wf.project_id
+                                WHERE pd.project_id = p.id
                                   AND pd.status = 'PENDING'
                                   AND pd.created_at >= now() - interval '7 days'
                             )
@@ -291,7 +297,7 @@ export function registerDdManagerRoutes(app: Express) {
                         OR p.name ILIKE '%listing%' OR p.name ILIKE '%minisite%'
                         OR inv.project_name ILIKE '%listing%' OR inv.project_name ILIKE '%minisite%'
                       )
-                    ORDER BY wf.updated_at DESC
+                    ORDER BY COALESCE(wf.updated_at, p.updated_at, p.created_at) DESC
                     LIMIT 50
                 `, [phaseFilter, statusType]);
 
