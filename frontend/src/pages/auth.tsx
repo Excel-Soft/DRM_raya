@@ -173,6 +173,7 @@ export default function AuthPage() {
           lead_manager: "/dashboard/lead-manager",
           lead_executive: "/dashboard/lead-executive",
           marketing_manager: "/dashboard/marketing-manager",
+          complaint_manager: "/dashboard/complaint-manager",
         };
         const destination = ROLE_DASHBOARDS[role] || "/dashboard";
         setLocation(destination);

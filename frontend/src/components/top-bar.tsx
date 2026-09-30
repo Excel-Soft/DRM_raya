@@ -129,6 +129,7 @@ export function TopBar({
           seo_smm_manager: "/dashboard/seo-smm",
           seo_smm_executive: "/dashboard/seo-smm-executive",
           marketing_manager: "/dashboard/marketing-manager",
+          complaint_manager: "/dashboard/complaint-manager",
         };
 
         const targetDashboard = roleDashboards[roleKey] || "/";
@@ -226,6 +227,7 @@ export function TopBar({
                   { key: "lead_manager", label: "Lead Manager" },
                   { key: "lead_executive", label: "Lead Executive" },
                   { key: "marketing_manager", label: "Marketing Manager" },
+                  { key: "complaint_manager", label: "Complaint Manager" },
                 ];
 
                 const effectiveManageableRoles = manageableRoles.length > 0 ? manageableRoles : (isAdminBysessionStorage || isImpersonating ? DEFAULT_MANAGEABLE_ROLES : []);
@@ -336,6 +338,7 @@ export function TopBar({
                 { label: "Software Manager", path: "/dashboard/software-manager", roles: ['manager', 'it_manager', 'admin', 'software_manager'] },
                 { label: "Software Executive", path: "/dashboard/software-executive", roles: ['developer', 'admin', 'software_manager', 'software_executive'] },
                 { label: "Marketing Manager", path: "/dashboard/marketing-manager", roles: ['manager', 'marketing_manager', 'admin'] },
+                { label: "Complaint Manager", path: "/dashboard/complaint-manager", roles: ['manager', 'complaint_manager', 'admin'] },
               ];
               return dashboards
                 .filter(d => isAdmin || d.roles.some(r => normalizedRoles.includes(r)))

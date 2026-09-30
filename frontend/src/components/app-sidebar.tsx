@@ -576,6 +576,7 @@ export function AppSidebar() {
     marketing_manager: "/dashboard/marketing-manager",
     lead_manager: "/dashboard/lead-manager",
     lead_executive: "/dashboard/lead-executive",
+    complaint_manager: "/dashboard/complaint-manager",
   };
 
   // ── Filter top-level menu items ─────────────────────────────────────────────

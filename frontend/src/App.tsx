@@ -132,6 +132,7 @@ const AccountManagerDashboard = lazy(() => import("@/pages/account-manager-dashb
 const HodDashboard = lazy(() => import("@/pages/hod-dashboard"));
 const SuperHODDashboard = lazy(() => import("@/pages/super-hod-dashboard"));
 const DDManagerDashboard = lazy(() => import("@/pages/dd-manager-dashboard"));
+const ComplaintManagerDashboard = lazy(() => import("@/pages/complaint-manager-dashboard"));
 const DDExecutiveDashboard = lazy(() => import("@/pages/dd-executive-dashboard"));
 const DeveloperDashboard = lazy(() => import("@/pages/developer-dashboard"));
 const ItManagerDashboard = lazy(() => import("@/pages/it-manager-dashboard"));
@@ -268,6 +269,7 @@ function Router() {
       <Route path="/dashboard/account-manager" component={AccountManagerDashboard} />
       <Route path="/dashboard/sales-executive" component={SalesExecutiveDashboard} />
       <Route path="/dashboard/dd-manager" component={DDManagerDashboard} />
+      <Route path="/dashboard/complaint-manager" component={ComplaintManagerDashboard} />
       <Route path="/dashboard/it-manager" component={ItManagerDashboard} />
       <Route path="/dashboard/it-executive" component={ItExecutiveDashboard} />
       <Route path="/dashboard/seo-smm-executive" component={SeoSmmExecutiveDashboard} />
