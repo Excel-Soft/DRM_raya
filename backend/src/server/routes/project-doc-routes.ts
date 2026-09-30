@@ -180,29 +180,26 @@ router.post("/:id/documents", (req, res, next) => {
                 VALUES ($1, $2, $3, 'PENDING', now(), now())
             `, [id, docUrl, req.user.userId]);
 
-            // Create workflow row for both Product Posting and D&D since both queues rely on this table
-            const isWorkflowDept = ['PRODUCT_POSTING', '9', 'Product Posting', 'DND', 'DESIGN_DEVELOPMENT', '10'].includes(projDept);
-            if (isWorkflowDept) {
-                // Ensure workflow exists for product posting and update salesperson_uploaded_at
-                const wfRes = await client.query(`
-                    SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
-                `, [id]);
+            // All departments (P&P, D&D, IT, SEO/SMM, etc.) now rely on the product_posting_workflows 
+            // table for document upload/rejection history and manager queues.
+            const wfRes = await client.query(`
+                SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
+            `, [id]);
 
-                if (wfRes.rows.length === 0) {
-                    await client.query(`
-                        INSERT INTO drm.product_posting_workflows (
-                            project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
-                        ) VALUES (
-                            $1, 'PENDING_PROJECT', now(), now(), now()
-                        )
-                    `, [id]);
-                } else {
-                    await client.query(`
-                        UPDATE drm.product_posting_workflows
-                        SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
-                        WHERE project_id = $1
-                    `, [id]);
-                }
+            if (wfRes.rows.length === 0) {
+                await client.query(`
+                    INSERT INTO drm.product_posting_workflows (
+                        project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
+                    ) VALUES (
+                        $1, 'PENDING_PROJECT', now(), now(), now()
+                    )
+                `, [id]);
+            } else {
+                await client.query(`
+                    UPDATE drm.product_posting_workflows
+                    SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
+                    WHERE project_id = $1
+                `, [id]);
             }
 
             // Change project status to Active if it was Documents Pending, and route to the correct department
