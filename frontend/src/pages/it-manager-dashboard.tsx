@@ -151,19 +151,22 @@ export default function ItManagerDashboard() {
     // already Approved — reuses the existing, real /api/pms/tasks endpoint
     // (not the broken product-posting-specific assign-task route found
     // elsewhere in this app) so the task actually gets created.
-    const [assignTaskForm, setAssignTaskForm] = useState({ assigneeId: "", title: "" });
+    const [assignTaskForm, setAssignTaskForm] = useState({ assigneeId: "", title: "", duration: "0" });
     const assignTaskMutation = useMutation({
-        mutationFn: async ({ projectId, assigneeId, title }: { projectId: string; assigneeId: string; title: string }) => {
+        mutationFn: async ({ projectId, assigneeId, title, duration }: { projectId: string; assigneeId: string; title: string; duration: string }) => {
             return apiRequestJson("POST", "/api/pms/tasks", {
                 projectId,
                 assignedToUserId: assigneeId,
                 title,
                 description: `IT task for ${selectedItProject?.project ?? "project"}`,
+                // Same notes.duration (minutes) convention task-execution-routes.ts's
+                // getAssignedSeconds reads for the executive's countdown timer.
+                notes: JSON.stringify({ duration: Number(duration) || 0 }),
             });
         },
         onSuccess: () => {
             toast({ title: "Task assigned to executive" });
-            setAssignTaskForm({ assigneeId: "", title: "" });
+            setAssignTaskForm({ assigneeId: "", title: "", duration: "0" });
             setSelectedItProject(null);
         },
         onError: (err) => {
@@ -3073,6 +3076,15 @@ export default function ItManagerDashboard() {
                                                 onChange={(e) => setAssignTaskForm((f) => ({ ...f, title: e.target.value }))}
                                                 className="h-10 text-[13px]"
                                             />
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="1"
+                                                placeholder="Time allotted (minutes)..."
+                                                value={assignTaskForm.duration}
+                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, duration: e.target.value }))}
+                                                className="h-10 text-[13px]"
+                                            />
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <Button
@@ -3082,6 +3094,7 @@ export default function ItManagerDashboard() {
                                                     projectId: selectedItProject.projectId,
                                                     assigneeId: assignTaskForm.assigneeId,
                                                     title: assignTaskForm.title.trim(),
+                                                    duration: assignTaskForm.duration,
                                                 })}
                                             >
                                                 {assignTaskMutation.isPending ? "Assigning..." : "Assign"}
