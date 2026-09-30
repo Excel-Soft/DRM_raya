@@ -3162,6 +3162,21 @@ export function registerAccountRoutes(app: Express) {
 
         try {
           if (approving) {
+            // Same gate as /api/product-posting-invoices/:id/account-approve:
+            // an invoice linked to a GM entry can't be approved here until
+            // that GM entry itself has been approved.
+            if (invoice.gm_id) {
+              const gmRes = await pool.query(
+                  `SELECT approval_status FROM drm.gm_entries WHERE id::text = $1`,
+                  [invoice.gm_id]
+              );
+              const gmApprovalStatus = gmRes.rows[0]?.approval_status;
+              if (gmApprovalStatus !== 'approved') {
+                return res.status(400).json({
+                    error: "This invoice's GM entry has not been approved yet. Approve the GM itself before approving this invoice."
+                });
+              }
+            }
             const upd = await pool.query(
                 `UPDATE drm.product_posting_invoices SET status = 'APPROVED', payment_method = COALESCE($1, payment_method) WHERE id = $2 RETURNING *`,
                 [paymentMethod || null, id]

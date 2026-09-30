@@ -73,43 +73,6 @@ router.post("/:id/documents", (req, res, next) => {
             });
         }
 
-        // Upsert project_details safely without ON CONFLICT (in case of missing unique constraint)
-        const checkDetails = await pool.query(`SELECT id FROM drm.project_details WHERE project_id = $1`, [id]);
-        if (checkDetails.rows.length === 0) {
-            await pool.query(`
-                INSERT INTO drm.project_details (
-                    project_id, package_name, minisite_url, phone, mobile,
-                    address, reference, categories, detail_notes, evidence_url,
-                    created_at, updated_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
-                )
-            `, [
-                id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
-                address || null, reference || null, categories || null, detailNotes || null,
-                evidenceUrl || null
-            ]);
-        } else {
-            await pool.query(`
-                UPDATE drm.project_details SET
-                    package_name = $2,
-                    minisite_url = $3,
-                    phone = $4,
-                    mobile = $5,
-                    address = $6,
-                    reference = $7,
-                    categories = $8,
-                    detail_notes = $9,
-                    evidence_url = $10,
-                    updated_at = now()
-                WHERE project_id = $1
-            `, [
-                id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
-                address || null, reference || null, categories || null, detailNotes || null,
-                evidenceUrl || null
-            ]);
-        }
-
         // --- Resolve Target Department ---
         // 1. Use the project's already-assigned department_type (set at invoice approval time).
         // 2. Only if that is null, try to resolve from the project's service_type in the catalog.
@@ -163,36 +126,93 @@ router.post("/:id/documents", (req, res, next) => {
         // as a fallback for any caller that still posts a URL directly instead
         // of a file (kept for backward compatibility, not used by this page anymore).
         const docUrl = req.file ? `/uploads/project-documents/${req.file.filename}` : (documentUrl || evidenceUrl || 'uploaded-document');
-        await pool.query(`
-            INSERT INTO drm.project_documents (project_id, document_url, uploaded_by_user_id, status, created_at, updated_at)
-            VALUES ($1, $2, $3, 'PENDING', now(), now())
-        `, [id, docUrl, req.user.userId]);
 
-        // Ensure workflow exists for product posting and update salesperson_uploaded_at
-        const wfRes = await pool.query(`
-            SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
-        `, [id]);
+        // Everything below writes state that must land together: a project_documents
+        // row with no matching product_posting_workflows row is exactly the silent
+        // inconsistency that made #1043/#1044 invisible to the D&D manager's queue
+        // (which requires a workflow row to exist) despite the document upload
+        // itself having "succeeded". Wrapping it in one transaction means a failure
+        // partway now rolls everything back and surfaces a real error to retry,
+        // instead of leaving a project stuck in this half-uploaded state again.
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
 
-        if (wfRes.rows.length === 0) {
-            await pool.query(`
-                INSERT INTO drm.product_posting_workflows (
-                    project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
-                ) VALUES (
-                    $1, 'PENDING_PROJECT', now(), now(), now()
-                )
+            // Upsert project_details safely without ON CONFLICT (in case of missing unique constraint)
+            const checkDetails = await client.query(`SELECT id FROM drm.project_details WHERE project_id = $1`, [id]);
+            if (checkDetails.rows.length === 0) {
+                await client.query(`
+                    INSERT INTO drm.project_details (
+                        project_id, package_name, minisite_url, phone, mobile,
+                        address, reference, categories, detail_notes, evidence_url,
+                        created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now()
+                    )
+                `, [
+                    id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
+                    address || null, reference || null, categories || null, detailNotes || null,
+                    evidenceUrl || null
+                ]);
+            } else {
+                await client.query(`
+                    UPDATE drm.project_details SET
+                        package_name = $2,
+                        minisite_url = $3,
+                        phone = $4,
+                        mobile = $5,
+                        address = $6,
+                        reference = $7,
+                        categories = $8,
+                        detail_notes = $9,
+                        evidence_url = $10,
+                        updated_at = now()
+                    WHERE project_id = $1
+                `, [
+                    id, packageName || null, minisiteUrl || null, phone || null, mobile || null,
+                    address || null, reference || null, categories || null, detailNotes || null,
+                    evidenceUrl || null
+                ]);
+            }
+
+            await client.query(`
+                INSERT INTO drm.project_documents (project_id, document_url, uploaded_by_user_id, status, created_at, updated_at)
+                VALUES ($1, $2, $3, 'PENDING', now(), now())
+            `, [id, docUrl, req.user.userId]);
+
+            // Ensure workflow exists for product posting and update salesperson_uploaded_at
+            const wfRes = await client.query(`
+                SELECT id FROM drm.product_posting_workflows WHERE project_id = $1
             `, [id]);
-        } else {
-            await pool.query(`
-                UPDATE drm.product_posting_workflows
-                SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
-                WHERE project_id = $1
-            `, [id]);
+
+            if (wfRes.rows.length === 0) {
+                await client.query(`
+                    INSERT INTO drm.product_posting_workflows (
+                        project_id, current_phase, salesperson_uploaded_at, created_at, updated_at
+                    ) VALUES (
+                        $1, 'PENDING_PROJECT', now(), now(), now()
+                    )
+                `, [id]);
+            } else {
+                await client.query(`
+                    UPDATE drm.product_posting_workflows
+                    SET salesperson_uploaded_at = now(), updated_at = now(), current_phase = 'PENDING_PROJECT'
+                    WHERE project_id = $1
+                `, [id]);
+            }
+
+            // Change project status to Active if it was Documents Pending, and route to the correct department
+            await client.query(`
+                UPDATE drm.projects SET status = 'Active', department_type = $2 WHERE id = $1 AND status = 'Documents Pending'
+            `, [id, projDept]);
+
+            await client.query('COMMIT');
+        } catch (txError) {
+            await client.query('ROLLBACK');
+            throw txError;
+        } finally {
+            client.release();
         }
-
-        // Change project status to Active if it was Documents Pending, and route to the correct department
-        await pool.query(`
-            UPDATE drm.projects SET status = 'Active', department_type = $2 WHERE id = $1 AND status = 'Documents Pending'
-        `, [id, projDept]);
 
         res.status(200).json({ success: true, message: "Document uploaded successfully" });
     } catch (error) {
