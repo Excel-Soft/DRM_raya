@@ -56,11 +56,13 @@ function getConnectionConfig() {
     const password = safeDecode(parsed.password || "");
     validateDbHost(host);
     
-    // Reconstruct connection string with correct search_path
     const searchParams = new URLSearchParams(parsed.search);
     if (!searchParams.has("options")) {
       searchParams.set("options", "-c search_path=drm,public");
     }
+    // Remove sslmode from query string to prevent it from overwriting the explicit ssl config object
+    searchParams.delete("sslmode");
+    searchParams.delete("ssl");
     const connectionString = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}?${searchParams.toString()}`;
     
     return {
@@ -217,15 +219,7 @@ pool.on("error", (err) => {
   }
 });
 
-// Set search_path to 'drm' schema on every new connection
-pool.on("connect", (client) => {
-  client.on("error", (err) => {
-    console.error("[pg-client] error on active client:", err?.message || err);
-  });
-  client.query("SET search_path TO drm, public").catch((err) => {
-    console.error("[pg-client] failed to set search_path:", err?.message || err);
-  });
-});
+// Redundant search_path query removed, handled by connection string options
 
 if (process.env.DEBUG_PG_POOL === "true") {
   pool.on("connect", () => console.info("[pg-pool] connect"));

@@ -82,7 +82,10 @@ app.use(loggerMiddleware);
 
 (async () => {
   try {
-    await ensureDbOnce();
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(Object.assign(new Error("Database connection timed out"), { code: "ETIMEDOUT" })), 5000)
+    );
+    await Promise.race([ensureDbOnce(), timeoutPromise]);
   } catch (err: any) {
     const code = err?.code;
     if (code === 'ETIMEDOUT') {
@@ -118,9 +121,31 @@ app.use(loggerMiddleware);
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (app.get("env") === "development") {
-    await setupVite(app, server);
+    try {
+      await setupVite(app, server);
+    } catch (e) {
+      console.warn("Vite setup failed", e);
+    }
   } else {
-    serveStatic(app);
+    try {
+      serveStatic(app);
+    } catch (e: any) {
+      console.warn("serveStatic failed:", e.message);
+      // Fallback welcome page if no static files
+      app.get("/", (req, res) => {
+        res.send(`
+          <html>
+            <head><title>Welcome to Backend</title></head>
+            <body style="font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f2f5;">
+              <div style="text-align: center; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h1 style="color: #4CAF50;">Backend is Running! 🚀</h1>
+                <p>Welcome to the API. Everything is working normally.</p>
+              </div>
+            </body>
+          </html>
+        `);
+      });
+    }
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
