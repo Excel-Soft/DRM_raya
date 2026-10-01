@@ -17,6 +17,7 @@ import {
   insertRefundGmEntrySchema,
   insertDollarBuyerSchema,
   insertDollarBuyingSchema,
+  insertDollarAdvancePaymentSchema,
 } from "@shared/schema";
 import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import { z } from "zod";
@@ -482,6 +483,24 @@ export function registerAccountRoutes(app: Express) {
         await pool.query(`ALTER TABLE drm.notification_outbox ADD CONSTRAINT notification_outbox_idempotency_key_key UNIQUE (idempotency_key)`);
       } catch (_) { /* unique constraint already exists */ }
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_notification_outbox_status_next_retry ON drm.notification_outbox (status, next_retry_time)`);
+
+      // 9. Dollar Advance Payments (Wallets → Advance Pay)
+      await pool.query(`
+        create table if not exists drm.dollar_advance_payments (
+          id varchar(50) primary key default gen_random_uuid(),
+          company_name text not null,
+          buyer_name text,
+          buyer_reference text,
+          amount numeric(12,2) not null,
+          remaining_amount numeric(12,2) not null,
+          pay_date date,
+          comment text,
+          status text not null default 'pending',
+          created_by_user_id varchar(50),
+          created_at timestamp default now(),
+          updated_at timestamp default now()
+        );
+      `);
 
       console.info("[accounts] schema maintenance completed successfully");
     } catch (err) {
@@ -4693,15 +4712,15 @@ export function registerAccountRoutes(app: Express) {
       const result = await pool.query(`
         INSERT INTO drm.dollar_buying (
           buyer_id, buyer_name, buyer_reference, paypal_email, account_no,
-          cheque_id, payment_method, type, dollar_amount, dollar_rate, 
-          pkr_amount, date, detail, created_by_user_id
+          cheque_id, payment_method, type, dollar_amount, dollar_rate,
+          pkr_amount, date, screenshot_url, detail, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *
       `, [
         data.buyerId, data.buyerName, data.buyerReference, data.paypalEmail, data.accountNo,
         data.chequeId, data.paymentMethod, data.type, data.dollarAmount, data.dollarRate,
-        data.pkrAmount, data.date || new Date(), data.detail, userId
+        data.pkrAmount, data.date || new Date(), data.screenshotUrl, data.detail, userId
       ]);
 
       res.json(result.rows[0]);
@@ -4724,6 +4743,57 @@ export function registerAccountRoutes(app: Express) {
     try {
       // Soft delete
       await pool.query(`UPDATE drm.dollar_buyers SET is_active = false WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete" });
+    }
+  });
+
+  // ===== Dollar Advance Payment Routes (Wallets → Advance Pay) =====
+
+  app.get("/api/account/advance-payments", requireFinancialPermission(FINANCIAL_ACTIONS.advancePaymentView, { roles: FINANCIAL_VIEW_ROLES }), async (_req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT id, company_name, buyer_name, buyer_reference, amount, remaining_amount,
+               pay_date, comment, status, created_at, updated_at
+        FROM drm.dollar_advance_payments
+        ORDER BY created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (err) {
+      console.error("Failed to fetch advance payments:", err);
+      res.status(500).json({ error: "Failed to fetch advance payments" });
+    }
+  });
+
+  app.post("/api/account/advance-payments", requireFinancialPermission(FINANCIAL_ACTIONS.advancePaymentCreate), async (req, res) => {
+    try {
+      const data = insertDollarAdvancePaymentSchema.parse(req.body);
+      const user = req.user as any;
+      const userId = user?.id || user?.userId;
+
+      const result = await pool.query(`
+        INSERT INTO drm.dollar_advance_payments (
+          company_name, buyer_name, buyer_reference, amount, remaining_amount,
+          pay_date, comment, created_by_user_id
+        )
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7)
+        RETURNING *
+      `, [
+        data.companyName, data.buyerName ?? null, data.buyerReference ?? null, data.amount,
+        data.payDate || null, data.comment || null, userId
+      ]);
+
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error("Failed to record advance payment:", err);
+      res.status(400).json({ error: "Invalid data" });
+    }
+  });
+
+  app.delete("/api/account/advance-payments/:id", requireFinancialPermission(FINANCIAL_ACTIONS.advancePaymentDelete, { roles: FINANCIAL_VOID_ROLES }), async (req, res) => {
+    try {
+      await pool.query(`DELETE FROM drm.dollar_advance_payments WHERE id = $1`, [req.params.id]);
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete" });

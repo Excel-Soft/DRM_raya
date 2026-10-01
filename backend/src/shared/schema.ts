@@ -2036,6 +2036,29 @@ export type InsertDollarBuyer = z.infer<typeof insertDollarBuyerSchema>;
 export type DollarBuying = typeof dollarBuying.$inferSelect;
 export type InsertDollarBuying = z.infer<typeof insertDollarBuyingSchema>;
 
+// Dollar Advance Payments (Wallets → Advance Pay)
+export const dollarAdvancePayments = drmSchema.table("dollar_advance_payments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyName: text("company_name").notNull(),
+  buyerName: text("buyer_name"),
+  buyerReference: text("buyer_reference"),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  remainingAmount: decimal("remaining_amount", { precision: 12, scale: 2 }).notNull(),
+  payDate: date("pay_date"),
+  comment: text("comment"),
+  status: text("status").notNull().default("pending"),
+  createdById: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertDollarAdvancePaymentSchema = createInsertSchema(dollarAdvancePayments)
+  .omit({ id: true, remainingAmount: true, status: true, createdAt: true, updatedAt: true, createdById: true })
+  .extend({ payDate: z.coerce.date().optional() });
+
+export type DollarAdvancePayment = typeof dollarAdvancePayments.$inferSelect;
+export type InsertDollarAdvancePayment = z.infer<typeof insertDollarAdvancePaymentSchema>;
+
 // Account Module schemas
 export const insertGmEntrySchema = createInsertSchema(gmEntries).omit({
   id: true,

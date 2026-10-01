@@ -33,6 +33,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Search, FileText, ChevronLeft, ChevronRight, DollarSign, Eye, PlusCircle, X } from "lucide-react";
 import type { GmEntry } from "@shared/schema";
+import { GmEntryInvoiceForm } from "@/components/gm-entry-invoice-form";
 
 const TAX_RATE = 0.05; // 5% tax
 
@@ -41,22 +42,15 @@ export default function AccountInvoices() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedEntry, setSelectedEntry] = useState<GmEntry | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState("Bank");
   const rowsPerPage = 10;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [showForm, setShowForm] = useState(true);
   const [modalMode, setModalMode] = useState<'view' | 'create'>('view');
-  const [projectData, setProjectData] = useState({
-    due: "0",
-    amount: "",
-    method: "Bank",
-    project: ""
-  });
 
   const { data: gmEntries = [], isLoading } = useQuery<GmEntry[]>({
-    queryKey: ["/api/sale/commission-verification"],
+    queryKey: ["/api/account/gm-entries"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/sale/commission-verification");
+      const res = await apiRequest("GET", "/api/account/gm-entries");
       if (!res.ok) throw new Error("Failed to fetch GM entries");
       return res.json();
     }
@@ -156,7 +150,22 @@ export default function AccountInvoices() {
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-slate-500 dark:text-zinc-400">Company Name</Label>
               <div className="relative">
-                <Select value={searchQuery} onValueChange={(v) => { setSearchQuery(v); setCurrentPage(1); }}>
+                <Select
+                    value={searchQuery}
+                    onValueChange={(v) => {
+                        setSearchQuery(v);
+                        setCurrentPage(1);
+                        if (v === "none") return;
+                        const match = gmEntries?.find((gm: any) => {
+                            const val = (gm.companyName || gm.drmId || gm.orderId || gm.id || "").toLowerCase().trim();
+                            return (val || "unknown") === v;
+                        });
+                        if (match) {
+                            setSelectedEntry(match);
+                            setModalMode('create');
+                        }
+                    }}
+                >
                     <SelectTrigger className="w-full text-sm h-11 border-slate-200 dark:border-zinc-800">
                         <SelectValue placeholder="Search Company Through Id/Name" />
                     </SelectTrigger>
@@ -220,21 +229,11 @@ export default function AccountInvoices() {
                   <Table className="border-t border-slate-100 table-fixed w-full dark:border-zinc-800">
                     <TableHeader>
                       <TableRow className="bg-slate-100/50 hover:bg-slate-100/50 border-b-0 dark:bg-zinc-900/80 dark:hover:bg-zinc-900/80">
-                        <TableHead className="w-[40px] font-bold text-slate-700 text-xs py-4 pl-4 truncate dark:text-zinc-400">#</TableHead>
-                        <TableHead className="w-[120px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Drm id</TableHead>
-                        <TableHead className="w-[100px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Created Date</TableHead>
-                        <TableHead className="w-[160px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Company</TableHead>
-                        <TableHead className="w-[100px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Sale Person</TableHead>
-                        <TableHead className="w-[70px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Dollar</TableHead>
-                        <TableHead className="w-[80px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Pkr</TableHead>
-                        <TableHead className="w-[90px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Dollar Rate</TableHead>
-                        <TableHead className="w-[80px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Ex-Disc</TableHead>
-                        <TableHead className="w-[100px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Ex-Disc Pkr</TableHead>
-                        <TableHead className="w-[70px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Package</TableHead>
-                        <TableHead className="w-[70px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Type</TableHead>
-                        <TableHead className="w-[80px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Expire</TableHead>
-                        <TableHead className="w-[80px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Droupout</TableHead>
-                        <TableHead className="w-[80px] font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Status</TableHead>
+                        <TableHead className="w-[60px] font-bold text-slate-700 text-xs py-4 pl-4 truncate dark:text-zinc-400">No</TableHead>
+                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Company</TableHead>
+                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Sale Person</TableHead>
+                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Create</TableHead>
+                        <TableHead className="font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Payment</TableHead>
                         <TableHead className="w-[80px] text-center font-bold text-slate-700 text-xs py-4 truncate dark:text-zinc-400">Action</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -250,47 +249,17 @@ export default function AccountInvoices() {
                           <TableCell className="text-slate-500 text-[11px] font-medium pl-4 py-4 truncate dark:text-zinc-400">
                             {(currentPage - 1) * rowsPerPage + index + 1}
                           </TableCell>
-                          <TableCell className="text-emerald-600 text-[11px] font-bold py-4 truncate">
-                            {entry.drmId || `DRM-${entry.id}`}
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            {format(new Date(entry.createdAt), "M/d/yyyy")}
-                          </TableCell>
                           <TableCell className="text-slate-800 text-[11px] font-bold uppercase py-4 truncate max-w-[150px] dark:text-zinc-100">
                             {entry.companyName}
                           </TableCell>
                           <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
                             {entry.salesPersonName || entry.agentName || "-"}
                           </TableCell>
-                          <TableCell className="text-emerald-600 text-[11px] font-bold py-4 truncate">
-                            {entry.currency === 'USD' ? Number(entry.amount || 0).toFixed(2) : "0.00"}
+                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
+                            {format(new Date(entry.createdAt), "M/d/yyyy")}
                           </TableCell>
                           <TableCell className="text-slate-800 text-[11px] font-bold py-4 truncate dark:text-zinc-100">
-                            {entry.amountPkr ? entry.amountPkr : (entry.currency === 'USD' ? Number(entry.amount || 0) * 277 : (entry.amount || 0))}
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            277.0000
-                          </TableCell>
-                          <TableCell className="text-rose-500 text-[11px] font-bold py-4 truncate">
-                            223.41
-                          </TableCell>
-                          <TableCell className="text-rose-500 text-[11px] font-bold py-4 truncate">
-                            62197.34
-                          </TableCell>
-                          <TableCell className="text-slate-400 text-[11px] font-medium py-4 truncate">
-                            BAS
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            New
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            -
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            0
-                          </TableCell>
-                          <TableCell className="text-slate-500 text-[11px] font-medium py-4 truncate dark:text-zinc-400">
-                            Unpaid
+                            {entry.amountPkr || (Number(entry.amountUsd || 0) * 277).toFixed(2)}
                           </TableCell>
                           <TableCell className="text-center py-4">
                             <div className="flex items-center justify-center gap-2">
@@ -317,7 +286,7 @@ export default function AccountInvoices() {
                                 </button>
                               ) : (
                                 <button
-                                  className="text-rose-500 hover:text-rose-600 transition-colors"
+                                  className="text-emerald-500 hover:text-emerald-600 transition-colors"
                                   title="Remove/Void"
                                 >
                                   <PlusCircle className="h-[14px] w-[14px]" />
@@ -370,7 +339,7 @@ export default function AccountInvoices() {
       </Card>
 
       <Dialog open={!!selectedEntry} onOpenChange={(open) => !open && setSelectedEntry(null)}>
-        <DialogContent className={`${modalMode === 'create' ? 'sm:max-w-[650px]' : 'sm:max-w-4xl'} max-h-[90vh] overflow-y-auto bg-white dark:bg-zinc-900 p-0 border-0`}>
+        <DialogContent className={`${modalMode === 'create' ? 'sm:max-w-[98vw] w-[98vw] h-[94vh] max-h-[94vh]' : 'sm:max-w-4xl max-h-[90vh]'} overflow-y-auto bg-white dark:bg-zinc-900 p-0 border-0`}>
           <DialogHeader className="sr-only">
             <DialogTitle>Invoice Detail</DialogTitle>
           </DialogHeader>
@@ -497,93 +466,11 @@ export default function AccountInvoices() {
           )}
 
           {selectedEntry && modalMode === 'create' && (
-            <div className="bg-white rounded-lg flex flex-col dark:bg-zinc-900">
-              <div className="px-6 py-5 flex justify-between items-center border-b border-slate-100 dark:border-zinc-800">
-                <h2 className="text-xl font-semibold text-slate-700 dark:text-zinc-400">
-                  Create Project — <span className="text-emerald-500 font-medium text-lg">{format(new Date(), "dd-MM-yyyy hh:mm a")}</span>
-                </h2>
-              </div>
-
-              <div className="p-6">
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                  {/* Name */}
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 font-semibold text-sm dark:text-zinc-300">Name</Label>
-                    <Input
-                      value={selectedEntry.companyName.toUpperCase()}
-                      readOnly
-                      className="bg-slate-50 border-slate-200 h-11 text-slate-700 font-medium focus-visible:ring-0 shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
-                    />
-                  </div>
-                  {/* Due */}
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 font-semibold text-sm dark:text-zinc-300">Due</Label>
-                    <Input
-                      type="number"
-                      value={projectData.due}
-                      readOnly
-                      className="bg-slate-50 border-slate-200 h-11 text-slate-700 shadow-sm focus-visible:ring-0 cursor-not-allowed dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"
-                    />
-                  </div>
-                  
-                  {/* Amount */}
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 font-semibold text-sm dark:text-zinc-300">Amount</Label>
-                    <Input
-                      type="number"
-                      placeholder=""
-                      value={projectData.amount}
-                      onChange={(e) => setProjectData({ ...projectData, amount: e.target.value })}
-                      className="border-slate-200 h-11 text-slate-700 shadow-sm focus-visible:ring-emerald-500 dark:border-zinc-800 dark:text-zinc-400"
-                    />
-                  </div>
-                  {/* Method */}
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 font-semibold text-sm dark:text-zinc-300">Method</Label>
-                    <Select
-                      value={projectData.method}
-                      onValueChange={(v) => setProjectData({ ...projectData, method: v })}
-                    >
-                      <SelectTrigger className="h-11 border-slate-200 shadow-sm focus:ring-emerald-500 dark:border-zinc-800">
-                        <SelectValue placeholder="Choose ..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Bank">Bank Transfer</SelectItem>
-                        <SelectItem value="Cash">Cash</SelectItem>
-                        <SelectItem value="Online">Online Payment</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Project */}
-                  <div className="space-y-2">
-                    <Label className="text-slate-600 font-semibold text-sm dark:text-zinc-300">Project</Label>
-                    <Input
-                      value={projectData.project}
-                      onChange={(e) => setProjectData({ ...projectData, project: e.target.value })}
-                      className="border-slate-200 h-11 text-slate-700 shadow-sm focus-visible:ring-emerald-500 dark:border-zinc-800 dark:text-zinc-400"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-6 pt-4 bg-white border-t border-slate-50 flex justify-end gap-3 mt-8 dark:bg-zinc-900 dark:border-zinc-800">
-                <Button
-                  variant="ghost"
-                  onClick={() => setSelectedEntry(null)}
-                  className="bg-slate-100 text-slate-800 hover:bg-slate-200 px-6 h-10 font-semibold rounded-md shadow-sm dark:text-zinc-100 dark:bg-zinc-900"
-                >
-                  Close
-                </Button>
-                <Button
-                  onClick={handleConfirmInvoice}
-                  disabled={markPaidMutation.isPending}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 h-10 font-semibold rounded-md shadow-sm"
-                >
-                  {markPaidMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
+            <GmEntryInvoiceForm
+              entry={selectedEntry}
+              onClose={() => setSelectedEntry(null)}
+              onSaved={() => queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] })}
+            />
           )}
         </DialogContent>
       </Dialog>

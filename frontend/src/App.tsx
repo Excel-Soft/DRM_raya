@@ -114,6 +114,8 @@ const OnlineForm = lazy(() => import("@/pages/online-form"));
 const FbPost = lazy(() => import("@/pages/fb-post"));
 const DelayProjectsNewPage = lazy(() => import("./pages/drm/delay-projects-new"));
 const DollarSystem = lazy(() => import("@/pages/dollar-system"));
+const DollarBuying = lazy(() => import("@/pages/dollar-buying"));
+const DollarAdvancePayment = lazy(() => import("@/pages/dollar-advance-payment"));
 const UpcomingProjectPage = lazy(() => import("@/pages/drm/upcoming-project"));
 const SocialMedia = lazy(() => import("@/pages/social-media"));
 const VasSystem = lazy(() => import("@/pages/vas-system"));
@@ -427,6 +429,8 @@ function Router() {
       <Route path="/account/invoices" component={AccountInvoices} />
       <Route path="/account/ab-report" component={AbReport} />
       <Route path="/account/dollar-system" component={DollarSystem} />
+      <Route path="/account/dollar-buying" component={DollarBuying} />
+      <Route path="/account/dollar-advance-payment" component={DollarAdvancePayment} />
       <Route path="/account/ledger" component={AccountLedger} />
       <Route path="/office/expenses" component={OfficeExpenses} />
       <Route path="/office/vas" component={OfficeVasPage} />

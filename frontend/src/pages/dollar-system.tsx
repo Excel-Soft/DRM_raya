@@ -25,13 +25,27 @@ import {
   User,
   Loader2
 } from "lucide-react";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { useSidebar } from "@/components/ui/sidebar";
+import { useLocation } from "wouter";
 
 export default function DollarSystem() {
+    const [, setLocation] = useLocation();
+
+    // Collapse the sidebar while this page is open for a full-width table
+    // view, restoring whatever state it was in before on navigating away.
+    const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
+    useEffect(() => {
+        const wasOpen = sidebarOpen;
+        setSidebarOpen(false);
+        return () => setSidebarOpen(wasOpen);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const [fullSearchTerm, setFullSearchTerm] = useState("");
     const [fullStartDate, setFullStartDate] = useState("");
     const [fullEndDate, setFullEndDate] = useState("");
@@ -433,7 +447,17 @@ export default function DollarSystem() {
                             </div>
                             <div className="grid grid-cols-4 gap-1">
                                 {["Receive", "Send", "Balance", "Advance Pay"].map((btn) => (
-                                    <button key={btn} className="bg-[#00a65a] text-white text-[9px] font-bold py-2 rounded-sm shadow-sm uppercase tracking-tighter">{btn}</button>
+                                    <button
+                                        key={btn}
+                                        onClick={
+                                            btn === "Receive" ? () => setLocation("/account/dollar-buying") :
+                                            btn === "Advance Pay" ? () => setLocation("/account/dollar-advance-payment") :
+                                            undefined
+                                        }
+                                        className="bg-[#00a65a] text-white text-[9px] font-bold py-2 rounded-sm shadow-sm uppercase tracking-tighter"
+                                    >
+                                        {btn}
+                                    </button>
                                 ))}
                             </div>
                         </div>

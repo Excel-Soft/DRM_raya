@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { GmApprovalCard } from "@/components/gm-approval-card";
 import { AccountsGmSummaryWidget } from "@/components/accounts-gm-summary-widget";
@@ -82,6 +82,7 @@ import { format, isToday, isSameMonth } from "date-fns";
 import { AccountApprovalModal } from "@/components/account-approval-modal";
 
 const DASHBOARD_PAGE_SIZE = 10;
+const MONTHLY_TASK_PAGE_SIZE = 5;
 
 export default function AccountManagerDashboard() {
     const { toast } = useToast();
@@ -450,6 +451,40 @@ export default function AccountManagerDashboard() {
         setCreateProjectPage(1);
     }, [filterType]);
 
+    // "Monthly Task" tab — recurring account bills/rent (Account Monthly Task
+    // attribute category managed at /drm/attributes), not invoices.
+    const monthlyTaskQuery = useQuery({
+        queryKey: ["/api/attributes", "Account Monthly Task"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/attributes/${encodeURIComponent("Account Monthly Task")}`);
+            if (!res.ok) throw new Error("Failed to fetch");
+            return res.json();
+        },
+        enabled: filterType === 'monthly-task',
+    });
+    const monthlyTaskItems = Array.isArray(monthlyTaskQuery.data) ? monthlyTaskQuery.data : [];
+
+    // Only surface tasks whose recurring day-of-month falls within the next 7
+    // days (rolling into next month once this month's date has passed) — a
+    // week's notice so the Account Manager can see it and pay it in time.
+    const upcomingMonthlyTaskItems = useMemo(() => {
+        const today = new Date();
+        const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        return monthlyTaskItems
+            .map((item: any) => {
+                const day = parseInt(item.dateLabel, 10);
+                if (!Number.isFinite(day) || day < 1 || day > 31) return null;
+                let due = new Date(todayMidnight.getFullYear(), todayMidnight.getMonth(), day);
+                if (due < todayMidnight) {
+                    due = new Date(todayMidnight.getFullYear(), todayMidnight.getMonth() + 1, day);
+                }
+                const daysUntil = Math.round((due.getTime() - todayMidnight.getTime()) / 86400000);
+                return { ...item, daysUntil };
+            })
+            .filter((item: any): item is any => item !== null && item.daysUntil <= 7)
+            .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
+    }, [monthlyTaskItems]);
+
     // Pending quotations/invoices forwarded by HOD
     const pendingQuotationsQuery = useQuery({
         queryKey: ["account-pending-quotations"],
@@ -657,6 +692,15 @@ export default function AccountManagerDashboard() {
         createProjectCurrentPage * DASHBOARD_PAGE_SIZE
     );
 
+    // "Monthly Task" tab shares the same page counter as the table above (only
+    // one of the two is ever visible at a time) but shows 5 rows at a time.
+    const monthlyTaskTotalPages = Math.max(1, Math.ceil(upcomingMonthlyTaskItems.length / MONTHLY_TASK_PAGE_SIZE));
+    const monthlyTaskCurrentPage = Math.min(createProjectPage, monthlyTaskTotalPages);
+    const monthlyTaskPagedItems = upcomingMonthlyTaskItems.slice(
+        (monthlyTaskCurrentPage - 1) * MONTHLY_TASK_PAGE_SIZE,
+        monthlyTaskCurrentPage * MONTHLY_TASK_PAGE_SIZE
+    );
+
     // "Invoice" (Customer Monthly) section: paginate recent invoices
     const invoiceItemsRaw = Array.isArray(recentInvoicesQuery.data) ? recentInvoicesQuery.data : [];
     const invoiceItems = invoiceItemsRaw.filter((item: any) => {
@@ -780,7 +824,12 @@ export default function AccountManagerDashboard() {
                                         onClick={() => setFilterType('monthly-task')}
                                         className={filterType === 'monthly-task' ? 'bg-emerald-600 hover:bg-emerald-700 h-10 px-6 rounded-md' : 'text-slate-600 dark:text-slate-300 h-10 px-4'}
                                     >
-                                        Monthly Task
+                                        <span className="flex items-center gap-1.5">
+                                            Monthly Task
+                                            <span className="flex items-center justify-center bg-rose-500 text-white w-5 h-5 rounded-full text-[10px] font-bold">
+                                                {upcomingMonthlyTaskItems.length}
+                                            </span>
+                                        </span>
                                     </Button>
                                 </div>
                                 <div
@@ -795,6 +844,70 @@ export default function AccountManagerDashboard() {
                             </div>
                         </CardHeader>
                         <CardContent className="p-0">
+                          {filterType === 'monthly-task' ? (
+                            <>
+                            <Table>
+                                <TableHeader className="bg-slate-100/50">
+                                    <TableRow>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Role Title</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Branch</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Date</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Due In</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {monthlyTaskQuery.isLoading ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="text-center text-slate-400 py-8">Loading...</TableCell>
+                                        </TableRow>
+                                    ) : upcomingMonthlyTaskItems.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={4} className="text-center text-slate-400 py-8">Nothing due in the next 7 days</TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        monthlyTaskPagedItems.map((item: any) => (
+                                            <TableRow key={item.id}>
+                                                <TableCell className="font-medium text-slate-700 dark:text-zinc-300">{item.name}</TableCell>
+                                                <TableCell className="text-slate-600 dark:text-zinc-400">{item.branch || "-"}</TableCell>
+                                                <TableCell className="text-rose-500 font-semibold">{item.dateLabel || "-"}</TableCell>
+                                                <TableCell className="font-semibold text-emerald-600">
+                                                    {item.daysUntil === 0 ? "Today" : item.daysUntil === 1 ? "Tomorrow" : `In ${item.daysUntil} days`}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                            {upcomingMonthlyTaskItems.length > 0 && (
+                                <div className="flex items-center justify-between px-6 py-3 border-t">
+                                    <p className="text-xs text-slate-500 dark:text-zinc-400">
+                                        Page {monthlyTaskCurrentPage} of {monthlyTaskTotalPages} · {upcomingMonthlyTaskItems.length} entries
+                                    </p>
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setCreateProjectPage((p) => Math.max(1, p - 1))}
+                                            disabled={monthlyTaskCurrentPage <= 1}
+                                        >
+                                            <ChevronLeft className="h-4 w-4 mr-1" />
+                                            Previous
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setCreateProjectPage((p) => Math.min(monthlyTaskTotalPages, p + 1))}
+                                            disabled={monthlyTaskCurrentPage >= monthlyTaskTotalPages}
+                                        >
+                                            Next
+                                            <ChevronRight className="h-4 w-4 ml-1" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                            </>
+                          ) : (
+                            <>
                             <Table>
                                 <TableHeader className="bg-slate-100/50">
                                     <TableRow>
@@ -964,6 +1077,8 @@ export default function AccountManagerDashboard() {
                                     </Button>
                                 </div>
                             </div>
+                            </>
+                          )}
                         </CardContent>
                     </Card>
 
