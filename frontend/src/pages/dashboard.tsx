@@ -7,6 +7,8 @@ import {
 } from "@/components/ui/popover";
 import { Link } from "wouter";
 import { Breadcrumb } from "@/components/breadcrumb";
+import { ComplaintBoxWidget } from "@/components/complaint-box-widget";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -748,6 +750,10 @@ export default function Dashboard() {
           </div>
 
           <div className="space-y-3 min-w-0 dashboard-col">
+            <PromotionBannerWidget />
+
+            <ComplaintBoxWidget />
+
             <Card className="overflow-hidden dashboard-card">
               <CardHeader className={denseHeaderPlain}>
                 <CardTitle>Highlights</CardTitle>

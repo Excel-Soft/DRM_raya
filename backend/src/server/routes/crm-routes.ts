@@ -105,7 +105,7 @@ router.get("/customers", async (req, res) => {
 router.get("/customers/search", async (req, res) => {
   try {
     const q = ((req.query.q as string) || (req.query.search as string) || "").trim();
-    const limit = Math.min(20, Number(req.query.limit) || 10);
+    const limit = Math.min(100, Number(req.query.limit) || 10);
     const poolOnly = req.query.poolOnly === "true";
     const userId = (req as any).user?.userId;
 
@@ -135,8 +135,13 @@ router.get("/customers/search", async (req, res) => {
         companyName: customers.companyName,
         accountName: customers.accountName,
         drmId: customers.drmId,
+        // The role of the customer's assigned owner (account manager / sales
+        // executive / etc.) — surfaced so callers like the complaint-manager
+        // "Add Ticket" company picker can show it next to the name.
+        ownerRole: sql<string | null>`coalesce(${users.roleId}, ${users.role})`,
       })
       .from(customers)
+      .leftJoin(users, eq(customers.ownerUserId, users.id))
       .where(customerCondition)
       .orderBy(desc(customers.createdAt))
       .limit(limit);
@@ -164,7 +169,7 @@ router.get("/customers/search", async (req, res) => {
       for (const g of gmRaw) {
         const key = (g.companyName || "").toLowerCase();
         if (key && !seen.has(key)) {
-          results.push({ id: g.id, companyName: g.companyName, accountName: g.companyName, drmId: g.drmId });
+          results.push({ id: g.id, companyName: g.companyName, accountName: g.companyName, drmId: g.drmId, ownerRole: null });
           seen.add(key);
           if (results.length >= limit) break;
         }
@@ -210,6 +215,7 @@ router.get("/customers/search", async (req, res) => {
             companyName: `${displayName} (Temp)`,
             accountName: t.email ? `${t.email} (Temp)` : `${displayName} (Temp)`,
             drmId: t.drmId,
+            ownerRole: null,
           });
           seen.add(key);
           if (results.length >= limit) break;

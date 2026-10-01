@@ -137,6 +137,15 @@ export default function SeoSmmExecutiveDashboard() {
     const promotions: Promotion[] = promotionsRes?.data ?? [];
     const activeBanner = promotions[bannerIndex % Math.max(promotions.length, 1)];
 
+    // Auto-advance every 4s when there's more than one banner to slide through.
+    useEffect(() => {
+        if (promotions.length <= 1) return;
+        const id = setInterval(() => {
+            setBannerIndex((i) => (i + 1) % promotions.length);
+        }, 4000);
+        return () => clearInterval(id);
+    }, [promotions.length]);
+
     // Real portfolio-design catalogue (the same data /portfolio-view lists) —
     // the "Portfolio"/"Add Portfolio" Important tiles now link there instead
     // of the customer-pool pages, so their counts come from here too rather

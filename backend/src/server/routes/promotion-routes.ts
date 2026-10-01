@@ -128,6 +128,9 @@ export async function ensurePromotionTable(): Promise<void> {
       deleted_at timestamptz
     )
   `);
+  // Optional role targeting — null means "static"/company-wide (shows to any
+  // role); a specific role string restricts the banner to just that role.
+  await pool.query(`ALTER TABLE drm.promotions ADD COLUMN IF NOT EXISTS target_role text`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_promotions_status ON drm.promotions (status)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_promotions_created_by ON drm.promotions (created_by)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_promotions_created_at ON drm.promotions (created_at)`);
@@ -143,6 +146,7 @@ function mapRow(r: any) {
     discount: r.discount ?? null,
     bannerUrl: r.banner_url ?? null,
     mediaType: r.media_type ?? null,
+    targetRole: r.target_role ?? null,
     startDate: r.start_date ?? null,
     endDate: r.end_date ?? null,
     isActive: r.is_active,
@@ -190,18 +194,25 @@ export async function registerPromotionRoutes(app: Express) {
       // strict creator/department scoping so unrelated departments' already-
       // approved rows don't pollute what's meant to be a scoped review list.
       const isBannerScope = req.query.scope === "banner";
+      // Role targeting for the banner carousel only — null target_role means
+      // "static"/company-wide (shows to anyone); a specific target_role only
+      // shows to that role. Not applied outside scope=banner (the HOD/admin
+      // review queues still need to see every row regardless of targeting).
+      const callerRole = normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId || "");
       const allowed = await getAllowedCreatorIds(req);
       if (allowed !== null) {
         if (allowed.length === 0) {
           if (isBannerScope) {
-            where.push(`(p.status = 'approved' AND p.is_active = true)`);
+            params.push(callerRole);
+            where.push(`(p.status = 'approved' AND p.is_active = true AND (p.target_role IS NULL OR p.target_role = $${params.length}))`);
           } else {
             return res.json({ data: [], total: 0, page, pageSize });
           }
         } else {
           params.push(allowed);
           if (isBannerScope) {
-            where.push(`(p.created_by::text = ANY($${params.length}::text[]) OR (p.status = 'approved' AND p.is_active = true))`);
+            params.push(callerRole);
+            where.push(`(p.created_by::text = ANY($${params.length - 1}::text[]) OR (p.status = 'approved' AND p.is_active = true AND (p.target_role IS NULL OR p.target_role = $${params.length})))`);
           } else {
             where.push(`p.created_by::text = ANY($${params.length}::text[])`);
           }
@@ -264,8 +275,8 @@ export async function registerPromotionRoutes(app: Express) {
       const { rows } = await pool.query(
         `INSERT INTO drm.promotions
           (package_id, package_name, title, sub_title, discount, banner_url, media_type,
-           start_date, end_date, is_active, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           start_date, end_date, is_active, created_by, target_role)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING *`,
         [
           b.packageId ? String(b.packageId) : null,
@@ -279,6 +290,8 @@ export async function registerPromotionRoutes(app: Express) {
           b.endDate && !isNaN(new Date(String(b.endDate)).getTime()) ? String(b.endDate) : null,
           b.isActive === undefined ? true : Boolean(b.isActive),
           getUserId(req) ?? null,
+          // null/empty = "static" company-wide banner; a role string restricts it.
+          b.targetRole ? normalizeRole(String(b.targetRole)) : null,
         ],
       );
       await audit(req, "drm.promotion.create", rows[0]?.id, { title });
@@ -325,6 +338,7 @@ export async function registerPromotionRoutes(app: Express) {
       if (b.discount !== undefined) addSet("discount", b.discount ? String(b.discount) : null);
       if (b.bannerUrl !== undefined) addSet("banner_url", b.bannerUrl ? String(b.bannerUrl) : null);
       if (b.mediaType !== undefined) addSet("media_type", b.mediaType ? String(b.mediaType) : null);
+      if (b.targetRole !== undefined) addSet("target_role", b.targetRole ? normalizeRole(String(b.targetRole)) : null);
       if (b.startDate !== undefined) addSet("start_date", b.startDate ? String(b.startDate) : null);
       if (b.endDate !== undefined) addSet("end_date", b.endDate ? String(b.endDate) : null);
       if (b.isActive !== undefined) addSet("is_active", Boolean(b.isActive));

@@ -10,6 +10,8 @@ import { ThemeProvider, useTheme } from "@/components/theme-provider";
 import { AssistantProvider } from "@/contexts/assistant-context";
 import { ScreenContextProvider } from "@/contexts/screen-context";
 import { AIAssistantButton } from "@/components/ai-assistant-button";
+import { TicketAssignmentPopup } from "@/components/ticket-assignment-popup";
+import { TicketReviewPopup } from "@/components/ticket-review-popup";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useRouteProtection } from "@/hooks/useRouteProtection";
 
@@ -626,6 +628,8 @@ function AppContent() {
               {renderBody()}
             </SidebarProvider>
             <AIAssistantButton />
+            {authStatus === "authed" && <TicketAssignmentPopup />}
+            {authStatus === "authed" && <TicketReviewPopup />}
             <Toaster />
           </AssistantProvider>
         </ScreenContextProvider>

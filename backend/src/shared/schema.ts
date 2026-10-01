@@ -65,7 +65,7 @@ export const PRODUCT_POSTING_PHASE_LABELS: Record<(typeof PRODUCT_POSTING_PHASE_
 
 // Support enums
 export const supportChannelEnum = drmSchema.enum("support_channel", ["whatsapp", "web", "email", "phone"]);
-export const supportTicketStatusEnum = drmSchema.enum("support_ticket_status", ["Open", "InProgress", "Resolved", "Failed"]);
+export const supportTicketStatusEnum = drmSchema.enum("support_ticket_status", ["Open", "InProgress", "Resolved", "Failed", "Closed"]);
 export const supportPriorityEnum = drmSchema.enum("support_priority", ["Low", "Medium", "High"]);
 export const supportMessageFromEnum = drmSchema.enum("support_message_from", ["customer", "agent", "system"]);
 
@@ -797,6 +797,14 @@ export const supportTickets = drmSchema.table("support_tickets", {
   status: supportTicketStatusEnum("status").notNull().default("Open"),
   priority: supportPriorityEnum("priority").notNull().default("Medium"),
   assignedToUserId: varchar("assigned_to_user_id").references(() => users.id),
+  // Tracks whether the assignee has acknowledged this assignment — the
+  // sticky "new ticket assigned" popup (shown app-wide on every dashboard
+  // until resolved) stays up while this is "pending".
+  assignmentStatus: text("assignment_status").notNull().default("pending"), // pending | accepted | rejected
+  // Tracks the submit-for-review step: the assignee's "Submit" (Complaint Box
+  // widget) sets this to "pending", which pops a sticky approval modal for
+  // the ticket's creator (the complaint manager) until they approve it.
+  reviewStatus: text("review_status").notNull().default("none"), // none | pending | approved
   dataSend: integer("data_send").notNull().default(0), // 0 = not sent, 1 = sent
   externalReference: text("external_reference"),
   isDeleted: boolean("is_deleted").default(false),

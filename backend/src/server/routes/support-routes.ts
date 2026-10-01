@@ -3,10 +3,9 @@ import { authMiddleware, requireRole } from "../middleware/auth.middleware";
 import { ticketsRepository } from "../repositories/tickets.repository";
 import { supportMessagesRepository } from "../repositories/support-messages.repository";
 import { channelConfigRepository } from "../repositories/channel-config.repository";
-import { 
-  insertSupportTicketSchema, 
-  insertSupportMessageSchema,
-  insertSupportChannelConfigSchema 
+import {
+  insertSupportTicketSchema,
+  insertSupportChannelConfigSchema
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -18,11 +17,134 @@ export function registerSupportRoutes(app: Express) {
 
   // Auth is enforced globally in `server/routes.ts` (or via MOCK_AUTH when enabled).
   app.use("/api/support", authMiddleware);
+
+  // ===== MY-ASSIGNMENT ENDPOINTS (any authenticated role) =====
+  // A ticket can be assigned to any staff member regardless of role (the
+  // "Person" picker in Add Ticket searches all users), so the sticky
+  // assignment popup + accept/reject actions must work for every role too —
+  // registered BEFORE the requireRole gate below (which is scoped to the
+  // ticket-management roles only) so they're not blocked by it. Each handler
+  // is ownership-scoped (assignedToUserId = the caller) at the repository
+  // layer, so this is safe to leave open to any authenticated user.
+
+  // GET /api/support/tickets/my-assignments/pending - tickets assigned to me
+  // that I haven't accepted/rejected yet (drives the sticky popup).
+  app.get("/api/support/tickets/my-assignments/pending", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const tickets = await ticketsRepository.findPendingAssignmentsForUser(userId);
+      res.json(tickets);
+    } catch (error) {
+      console.error("Error fetching pending assignments:", error);
+      res.status(500).json({ error: "Failed to fetch pending assignments" });
+    }
+  });
+
+  // GET /api/support/tickets/my-assignments/accepted - tickets assigned to
+  // me that I've accepted (drives the "Complaint Box" widget).
+  app.get("/api/support/tickets/my-assignments/accepted", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const tickets = await ticketsRepository.findAcceptedForUser(userId);
+      res.json(tickets);
+    } catch (error) {
+      console.error("Error fetching accepted assignments:", error);
+      res.status(500).json({ error: "Failed to fetch accepted assignments" });
+    }
+  });
+
+  // POST /api/support/tickets/:id/accept - I accept my own pending assignment
+  app.post("/api/support/tickets/:id/accept", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const updated = await ticketsRepository.acceptAssignment(req.params.id, userId);
+      if (!updated) return res.status(404).json({ error: "Ticket not found or not assigned to you" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error accepting assignment:", error);
+      res.status(500).json({ error: "Failed to accept assignment" });
+    }
+  });
+
+  // POST /api/support/tickets/:id/reject - I reject my own pending assignment.
+  // An optional `reason` is saved as a real message on the ticket thread so
+  // the complaint manager can see why it was rejected when they open it.
+  app.post("/api/support/tickets/:id/reject", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const updated = await ticketsRepository.rejectAssignment(req.params.id, userId);
+      if (!updated) return res.status(404).json({ error: "Ticket not found or not assigned to you" });
+
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+      if (reason) {
+        await supportMessagesRepository.create({
+          ticketId: req.params.id,
+          senderUserId: userId,
+          message: `[Rejected assignment] ${reason}`,
+        });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Error rejecting assignment:", error);
+      res.status(500).json({ error: "Failed to reject assignment" });
+    }
+  });
+
+  // POST /api/support/tickets/:id/submit - I mark my accepted ticket done
+  // (InProgress -> Resolved), e.g. from the Complaint Box widget.
+  app.post("/api/support/tickets/:id/submit", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const updated = await ticketsRepository.submitForReview(req.params.id, userId);
+      if (!updated) return res.status(404).json({ error: "Ticket not found or not assigned to you" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error submitting ticket:", error);
+      res.status(500).json({ error: "Failed to submit ticket" });
+    }
+  });
+
+  // GET /api/support/tickets/my-submissions/pending-review - tickets I
+  // created that the assignee has submitted, awaiting my approval (drives
+  // the sticky approval popup for the complaint manager).
+  app.get("/api/support/tickets/my-submissions/pending-review", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const tickets = await ticketsRepository.findPendingReviewForCreator(userId);
+      res.json(tickets);
+    } catch (error) {
+      console.error("Error fetching pending reviews:", error);
+      res.status(500).json({ error: "Failed to fetch pending reviews" });
+    }
+  });
+
+  // POST /api/support/tickets/:id/approve - I (the creator) approve a
+  // submitted ticket.
+  app.post("/api/support/tickets/:id/approve", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const userId = (req.user as any).userId || (req.user as any).id;
+      const updated = await ticketsRepository.approveReview(req.params.id, userId);
+      if (!updated) return res.status(404).json({ error: "Ticket not found or not created by you" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error approving ticket:", error);
+      res.status(500).json({ error: "Failed to approve ticket" });
+    }
+  });
+
   // Phase 11 — restrict to the roles the seeded permission row
   // ("Support Module API", server/seed-settings.ts) already implies; before
   // this, any authenticated user of any role could call these endpoints
   // once the module flag was enabled.
-  app.use("/api/support", requireRole("sales_executive", "assistant_manager", "manager", "hod", "admin"));
+  app.use("/api/support", requireRole("sales_executive", "assistant_manager", "manager", "hod", "admin", "complaint_manager"));
 
   // ===== TICKET ENDPOINTS =====
 
@@ -234,22 +356,25 @@ export function registerSupportRoutes(app: Express) {
   });
 
   // POST /api/support/messages - Create message
+  // (Not insertSupportMessageSchema/Drizzle's supportMessages shape — the live
+  // table drifted from that definition; see support-messages.repository.ts.)
   app.post("/api/support/messages", async (req, res) => {
     try {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // Validate request body
-      const validated = insertSupportMessageSchema.parse(req.body);
-
-      const message = await supportMessagesRepository.create(validated);
-
-      res.status(201).json(message);
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      const ticketId = String(req.body?.ticketId ?? "").trim();
+      const message = String(req.body?.message ?? req.body?.body ?? "").trim();
+      if (!ticketId || !message) {
+        return res.status(400).json({ error: "Validation failed", details: "ticketId and message are required" });
       }
+      const userId = (req.user as any).userId || (req.user as any).id;
+
+      const created = await supportMessagesRepository.create({ ticketId, senderUserId: userId, message });
+
+      res.status(201).json(created);
+    } catch (error) {
       console.error("Error creating message:", error);
       res.status(500).json({ error: "Failed to create message" });
     }

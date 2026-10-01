@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest, apiRequestJson } from "@/lib/queryClient";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { ItAssetManagementSection } from "@/components/it-asset-management-section";
+import { ComplaintBoxWidget } from "@/components/complaint-box-widget";
 import { Server, CheckCircle, Archive, AlertTriangle, ChevronRight, Play, CheckSquare } from "lucide-react";
 
 interface AssetStats {
@@ -120,6 +121,15 @@ export default function ItExecutiveDashboard() {
     });
     const promotions: Promotion[] = promotionsRes?.data ?? [];
     const activeBanner = promotions[bannerIndex % Math.max(promotions.length, 1)];
+
+    // Auto-advance every 4s when there's more than one banner to slide through.
+    useEffect(() => {
+        if (promotions.length <= 1) return;
+        const id = setInterval(() => {
+            setBannerIndex((i) => (i + 1) % promotions.length);
+        }, 4000);
+        return () => clearInterval(id);
+    }, [promotions.length]);
 
     const distributionByType = new Map((stats?.distribution ?? []).map((d) => [d.assetType, d.count]));
     const maxDistributionCount = Math.max(1, ...DISTRIBUTION_ORDER.map((t) => distributionByType.get(t) ?? 0));
@@ -307,6 +317,8 @@ export default function ItExecutiveDashboard() {
                             ))}
                         </div>
                     </Card>
+
+                    <ComplaintBoxWidget />
                 </div>
 
                 {/* Right column (4 cols): Promotion Banners, Projects Overview, Important, Asset Distribution */}

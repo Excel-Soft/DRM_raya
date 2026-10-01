@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 
 import { Breadcrumb } from "@/components/breadcrumb";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -1759,36 +1760,9 @@ export default function ProductPostingDashboard() {
 
                         {/* ── RIGHT COLUMN ── */}
                         <div className="space-y-2 min-w-0 overflow-hidden">
-                            {/* Professional Promotional Banner */}
-                            <Card className="overflow-hidden border-none shadow-lg group">
-                                <div
-                                    className="relative h-32 p-4 flex flex-col justify-end bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
-                                    style={{ backgroundImage: "url('/promo_banner.png')" }}
-                                >
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-                                    <div className="relative z-10">
-                                        <div className="flex items-center gap-1.5 mb-1">
-                                            <Award className="w-3.5 h-3.5 text-amber-400" />
-                                            <p style={{ fontSize: "10px", fontWeight: 600 }} className="text-amber-400 uppercase tracking-[0.1em]">Premium Partner</p>
-                                        </div>
-                                        <h3 style={{ fontSize: "14px", fontWeight: 800 }} className="text-white leading-tight">
-                                            WebExcels Elite Solutions
-                                        </h3>
-                                    </div>
-                                </div>
-                                <CardContent className="p-4 bg-white dark:bg-zinc-900">
-                                    <p style={{ fontSize: "12px", lineHeight: "1.5" }} className="text-gray-600 font-medium dark:text-zinc-300">
-                                        Experience the next generation of Alibaba Product Posting & Digital Strategy.
-                                    </p>
-                                    <Button
-                                        className="mt-3 w-full h-9 bg-[#1a7a4a] hover:bg-[#145d39] text-white rounded-lg shadow-md transition-all flex items-center justify-center gap-2 group/btn"
-                                        style={{ fontSize: "12px", fontWeight: 600 }}
-                                    >
-                                        Explore Elite Services
-                                        <TrendingUp className="w-4 h-4 transition-transform group-hover/btn:translate-x-1 group-hover/btn:-translate-y-1" />
-                                    </Button>
-                                </CardContent>
-                            </Card>
+                            {/* Promotion Banner — real, dynamic (was a hardcoded static
+                                /promo_banner.png with a non-functional button) */}
+                            <PromotionBannerWidget />
 
 
                             {/* Team / Management Commission Share (MD-20) */}

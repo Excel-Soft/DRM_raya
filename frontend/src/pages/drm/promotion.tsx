@@ -10,18 +10,27 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
+import { apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 interface PromotionFormRow {
     id: string;
     title: string;
-    package: string;
     discount: string;
     startDate: string;
     endDate: string;
     banner: File | null;
     message: string;
+    targetRole: string;
+}
+
+interface RoleOption {
+    id: string;
+    name: string;
+}
+
+function formatRoleLabel(role: string): string {
+    return role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 interface Promotion {
@@ -40,6 +49,7 @@ interface Promotion {
     reason: string | null;
     createdByName: string | null;
     createdAt: string | null;
+    targetRole: string | null;
 }
 
 interface PromotionListResponse {
@@ -48,16 +58,6 @@ interface PromotionListResponse {
     page: number;
     pageSize: number;
 }
-
-const STATIC_PACKAGE_LABELS: Record<string, string> = {
-    "verified-supplier": "Verified Supplier",
-    "rc-up": "Rc-Up",
-    "kap": "KAP",
-    "ggs-pro": "GGS Pro",
-    "kwa-kap": "KWA-KAP",
-    "china-trip": "China Trip",
-    "kwa-pro": "Kwa-Pro",
-};
 
 function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -85,12 +85,12 @@ export default function PromotionPage() {
         {
             id: '1',
             title: '',
-            package: 'choose',
             discount: '0.00',
             startDate: '',
             endDate: '',
             banner: null,
-            message: ''
+            message: '',
+            targetRole: ''
         }
     ]);
 
@@ -102,26 +102,16 @@ export default function PromotionPage() {
 
     const oldPromotions = promotionsData?.data ?? [];
 
-    // Query for GM packages
-    const { data: packagesData } = useQuery<{ packages: any[] }>({
-        queryKey: ["gm-packages"],
-        queryFn: async () => {
-            const res = await apiRequest("GET", "/api/gm-packages");
-            return res.json();
-        },
-        staleTime: 5 * 60 * 1000,
+    // Real roles list (same endpoint the super-admin Roles UI uses) — lets a
+    // banner be targeted to one specific role instead of showing app-wide.
+    const { data: rolesData } = useQuery<RoleOption[]>({
+        queryKey: ["/api/settings/roles"],
+        queryFn: () => apiRequestJson<RoleOption[]>("GET", "/api/settings/roles"),
     });
-    const packages = packagesData?.packages || [];
+    const roleOptions = rolesData ?? [];
 
     function invalidate() {
         queryClient.invalidateQueries({ queryKey: ["/api/drm/promotions"] });
-    }
-
-    function resolvePackageName(value: string): string | null {
-        if (!value || value === 'choose') return null;
-        const pkg = packages.find((p) => String(p.id) === value);
-        if (pkg) return pkg.name ?? null;
-        return STATIC_PACKAGE_LABELS[value] ?? value;
     }
 
     const createMutation = useMutation({
@@ -135,14 +125,13 @@ export default function PromotionPage() {
                 }
                 await apiRequestJson("POST", "/api/drm/promotions", {
                     title: row.title.trim(),
-                    packageId: row.package && row.package !== 'choose' ? row.package : null,
-                    packageName: resolvePackageName(row.package),
                     subTitle: row.message.trim() || null,
                     discount: row.discount ? String(row.discount) : null,
                     startDate: row.startDate || null,
                     endDate: row.endDate || null,
                     bannerUrl,
                     mediaType,
+                    targetRole: row.targetRole || null,
                 });
             }
         },
@@ -151,12 +140,12 @@ export default function PromotionPage() {
             setRows([{
                 id: Date.now().toString(),
                 title: '',
-                package: 'choose',
                 discount: '0.00',
                 startDate: '',
                 endDate: '',
                 banner: null,
-                message: ''
+                message: '',
+                targetRole: ''
             }]);
             invalidate();
         },
@@ -170,6 +159,17 @@ export default function PromotionPage() {
         onSuccess: () => invalidate(),
         onError: (e: any) =>
             toast({ title: "Error", description: e?.message || "Failed to update", variant: "destructive" }),
+    });
+
+    const targetRoleMutation = useMutation({
+        mutationFn: ({ id, targetRole }: { id: string; targetRole: string | null }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}`, { targetRole }),
+        onSuccess: () => {
+            toast({ title: "Target role updated" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to update target role", variant: "destructive" }),
     });
 
     const approveMutation = useMutation({
@@ -207,12 +207,12 @@ export default function PromotionPage() {
         setRows([...rows, {
             id: Date.now().toString(),
             title: '',
-            package: 'choose',
             discount: '0.00',
             startDate: '',
             endDate: '',
             banner: null,
-            message: ''
+            message: '',
+            targetRole: ''
         }]);
     };
 
@@ -271,31 +271,6 @@ export default function PromotionPage() {
                                             />
                                         </div>
 
-                                        {/* Package */}
-                                        <div className="space-y-2">
-                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Package</label>
-                                            <Select value={row.package} onValueChange={(val) => updateRow(row.id, 'package', val)}>
-                                                <SelectTrigger className="w-full border-gray-300 rounded h-[38px] text-sm dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
-                                                    <SelectValue />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="choose">Choose...</SelectItem>
-                                                    {packages.map((pkg) => (
-                                                        <SelectItem key={pkg.id} value={pkg.id}>
-                                                            {pkg.name} ({pkg.orderDollar ?? pkg.priceUsd} $)
-                                                        </SelectItem>
-                                                    ))}
-                                                    <SelectItem value="verified-supplier">Verified Supplier</SelectItem>
-                                                    <SelectItem value="rc-up">Rc-Up</SelectItem>
-                                                    <SelectItem value="kap">KAP</SelectItem>
-                                                    <SelectItem value="ggs-pro">GGS Pro</SelectItem>
-                                                    <SelectItem value="kwa-kap">KWA-KAP</SelectItem>
-                                                    <SelectItem value="china-trip">China Trip</SelectItem>
-                                                    <SelectItem value="kwa-pro">Kwa-Pro</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-
                                         {/* Discount */}
                                         <div className="space-y-2">
                                             <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">$ Discount</label>
@@ -307,6 +282,22 @@ export default function PromotionPage() {
                                                 placeholder="0.00"
                                                 className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-[#00a65a] dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100"
                                             />
+                                        </div>
+
+                                        {/* Target Role */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Target Role</label>
+                                            <Select value={row.targetRole || "static"} onValueChange={(val) => updateRow(row.id, 'targetRole', val === "static" ? "" : val)}>
+                                                <SelectTrigger className="w-full border-gray-300 rounded h-[38px] text-sm dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="static">Static (All Roles)</SelectItem>
+                                                    {roleOptions.map((r) => (
+                                                        <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
                                     </div>
 
@@ -461,6 +452,25 @@ export default function PromotionPage() {
                                         {/* Date Range */}
                                         <div className="text-xs text-gray-500 dark:text-zinc-400">
                                             {formatDate(promo.startDate)} <span className="font-semibold">To</span> {formatDate(promo.endDate)}
+                                        </div>
+
+                                        {/* Target Role — manage who this banner shows to */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-400">Target Role</label>
+                                            <Select
+                                                value={promo.targetRole || "static"}
+                                                onValueChange={(val) => targetRoleMutation.mutate({ id: promo.id, targetRole: val === "static" ? null : val })}
+                                            >
+                                                <SelectTrigger className="w-full border-gray-300 rounded h-8 text-xs dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="static">Static (All Roles)</SelectItem>
+                                                    {roleOptions.map((r) => (
+                                                        <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
                                         </div>
 
                                         {/* Actions */}
