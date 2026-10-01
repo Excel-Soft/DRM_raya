@@ -30,6 +30,7 @@ const ROLE_LABELS: Record<string, string> = {
   [ROLES.LEAD_MANAGER]: "Lead Manager",
   [ROLES.LEAD_EXECUTIVE]: "Lead Executive",
   [ROLES.MARKETING_MANAGER]: "Marketing Manager",
+  [ROLES.COMPLAINT_MANAGER]: "Complaint Manager",
 };
 
 // {key, label}[] — the shape rbac-routes.ts's GET /me/navigation handler expects

@@ -44,6 +44,7 @@ export const ROLES = {
   LEAD_MANAGER: "lead_manager",
   LEAD_EXECUTIVE: "lead_executive",
   MARKETING_MANAGER: "marketing_manager",
+  COMPLAINT_MANAGER: "complaint_manager",
 } as const;
 
 export type RoleKey = (typeof ROLES)[keyof typeof ROLES] | string;
