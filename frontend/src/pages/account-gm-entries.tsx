@@ -42,6 +42,16 @@ interface GmEntry {
   approvalStatus: string | null;
   accountManagerStatus: string | null;
   hodStatus: string | null;
+  alibabaStatus: string | null;
+  packagePrice: string | null;
+  discount: string | null;
+  abDiscount: string | null;
+  extraDiscount: string | null;
+  extraDiscountDollar: string | null;
+  extraDiscountPkr: string | null;
+  totalDiscount: string | null;
+  paymentProofUrl: string | null;
+  payDate: string | null;
   isLoan: boolean;
   isPartialPayment: boolean;
   notes: string | null;
@@ -107,8 +117,8 @@ export default function AccountGmEntries() {
   const [topTab, setTopTab] = useState<TopTab>("home");
 
   // ── status filter — match effective statuses from backend
-  type StatusFilter = "all" | "Pending" | "HOD Approved" | "Approved" | "HOD Rejected" | "Account Rejected" | "Withdrawn";
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  type StatusFilter = "Approved" | "HOD Rejected" | "Account Rejected";
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("Approved");
 
   // ── Controls
   const [searchQuery, setSearchQuery] = useState("");
@@ -288,45 +298,60 @@ export default function AccountGmEntries() {
   // ── Filter logic ──────────────────────────────────────────────────────────
   const allEntries: GmEntry[] = (rawData?.data || []).map((e: any) => ({
     ...e,
-    companyName: e.company,
-    packageType: e.package,
-    entryType: e.type,
-    amountUsd: e.orderDollar,
-    amountPkr: e.pkr,
+    companyName: e.company || e.companyName,
+    packageType: e.package || e.packageType,
+    entryType: e.type || e.entryType,
+    amountUsd: e.orderDollar || e.amountUsd,
+    amountPkr: e.pkr || e.amountPkr,
     accountManagerStatus: e.accountManagerStatus,
     hodStatus: e.hodStatus,
+    alibabaStatus: e.alibabaStatus || e.alibaba_status,
+    packagePrice: e.packagePrice || e.package_price,
+    discount: e.discount,
+    abDiscount: e.abDiscount || e.alibaba_discount_usd,
+    extraDiscount: e.extraDiscount || e.extra_discount_usd || e.extraDiscountDollar,
+    extraDiscountDollar: e.extraDiscountDollar || e.extra_discount_hod,
+    extraDiscountPkr: e.extraPkrDiscount || e.extraDiscountPkr || e.extra_discount_pkr,
+    totalDiscount: e.totalDiscount || (Number(e.abDiscount || e.alibaba_discount_usd || 0) + Number(e.extraDiscount || e.extra_discount_usd || e.extraDiscountDollar || 0)).toString(),
+    paymentProofUrl: e.paymentProofUrl || e.payment_proof_url,
+    payDate: e.paymentDate || e.payDate || e.pay_date,
+    createdAt: e.createdAt || e.created_at,
   }));
 
-  const homeCount = allEntries.filter(e => !e.isLoan && !e.isPartialPayment).length;
-  const loanCount = allEntries.filter(e => e.isLoan).length;
-  const partialCount = allEntries.filter(e => e.isPartialPayment).length;
+  const isVisibleStatus = (e: GmEntry) => {
+    const isApproved = e.status === "Approved" || e.accountManagerStatus === "approved" || (e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending");
+    const isHodRejected = e.hodStatus === "rejected";
+    const isAcctRejected = e.accountManagerStatus === "rejected";
+    return isApproved || isHodRejected || isAcctRejected;
+  };
 
-  const hodApprovedCount = allEntries.filter(e => e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending").length;
-  const pendingCount = allEntries.filter(e => e.approvalStatus === "pending_hod").length;
-  const hodRejectedCount = allEntries.filter(e => e.hodStatus === "rejected").length;
-  const acctRejectedCount = allEntries.filter(e => e.accountManagerStatus === "rejected").length;
-  const withdrawnCount = allEntries.filter(e => e.status === "Withdrawn").length;
+  const homeCount = allEntries.filter(e => !e.isLoan && !e.isPartialPayment && isVisibleStatus(e)).length;
+  const loanCount = allEntries.filter(e => e.isLoan && isVisibleStatus(e)).length;
+  const partialCount = allEntries.filter(e => e.isPartialPayment && isVisibleStatus(e)).length;
+
+  const baseEntries = useMemo(() => {
+    const f = allEntries.filter(isVisibleStatus);
+    if (topTab === "loan") return f.filter(e => e.isLoan);
+    if (topTab === "partial") return f.filter(e => e.isPartialPayment);
+    return f.filter(e => !e.isLoan && !e.isPartialPayment);
+  }, [allEntries, topTab]);
+
+  const approvedCount = baseEntries.filter(e => e.status === "Approved" || e.accountManagerStatus === "approved" || (e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending")).length;
+  const hodRejectedCount = baseEntries.filter(e => e.hodStatus === "rejected").length;
+  const acctRejectedCount = baseEntries.filter(e => e.accountManagerStatus === "rejected").length;
 
   const filteredEntries = useMemo(() => {
-    let f = [...allEntries];
+    let f = [...baseEntries];
 
-    // top tab filter
-    if (topTab === "loan") f = f.filter(e => e.isLoan);
-    if (topTab === "partial") f = f.filter(e => e.isPartialPayment);
+    // (Top tab filtering is already handled by baseEntries)
 
     // status filter
-    if (statusFilter !== "all") {
-      if (statusFilter === "HOD Approved") {
-        f = f.filter(e => e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending");
-      } else if (statusFilter === "Pending") {
-        f = f.filter(e => e.approvalStatus === "pending_hod");
-      } else if (statusFilter === "HOD Rejected") {
-        f = f.filter(e => e.hodStatus === "rejected");
-      } else if (statusFilter === "Account Rejected") {
-        f = f.filter(e => e.accountManagerStatus === "rejected");
-      } else if (statusFilter === "Withdrawn") {
-        f = f.filter(e => e.status === "Withdrawn");
-      }
+    if (statusFilter === "Approved") {
+      f = f.filter(e => e.status === "Approved" || e.accountManagerStatus === "approved" || (e.approvalStatus === "pending_managers" && e.accountManagerStatus === "pending"));
+    } else if (statusFilter === "HOD Rejected") {
+      f = f.filter(e => e.hodStatus === "rejected");
+    } else if (statusFilter === "Account Rejected") {
+      f = f.filter(e => e.accountManagerStatus === "rejected");
     }
 
     // search
@@ -372,10 +397,10 @@ export default function AccountGmEntries() {
     setEditDialogOpen(true);
   };
 
-  // ── Row background (similar to screenshot — blue for all approved)
+  // ── Row background (Professional styling)
   const rowBg = (i: number) => i % 2 === 0
-    ? "bg-[#cce5ff] hover:bg-[#b3d7ff] dark:bg-zinc-900/40 dark:hover:bg-zinc-800/60"
-    : "bg-[#d9eeff] hover:bg-[#c0e0ff] dark:bg-zinc-900/20 dark:hover:bg-zinc-800/40";
+    ? "bg-white hover:bg-blue-50/50 dark:bg-zinc-900 dark:hover:bg-zinc-800/60"
+    : "bg-slate-50 hover:bg-blue-50/50 dark:bg-zinc-900/50 dark:hover:bg-zinc-800/40";
 
   const fmtUsd = (v: string | null) => v ? `$ ${parseFloat(v).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "-";
   const fmtPkr = (v: string | null) => v ? Math.round(parseFloat(v)).toLocaleString() : "-";
@@ -389,16 +414,7 @@ export default function AccountGmEntries() {
           CREATE GM <span className="text-gray-400 font-light">/ </span>
         </h1>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              const users = allUsers?.users || [];
-              if (users.length > 0) openTeamDialog(users[0]);
-            }}
-            className="flex items-center gap-1.5 text-sm border border-blue-400 text-blue-600 rounded px-3 py-1 hover:bg-blue-50 transition-colors"
-          >
-            <Users className="h-4 w-4" />
-            Manage Team
-          </button>
+
           <button
             onClick={() => setDialogOpen(true)}
             className="flex items-center gap-1.5 text-sm bg-green-600 text-white rounded px-3 py-1 hover:bg-green-700 transition-colors"
@@ -409,59 +425,58 @@ export default function AccountGmEntries() {
         </div>
       </div>
 
-      {/* ── Top Tabs: Home | Loan | Partial Payment ── */}
-      <div className="flex border-b border-gray-200 bg-white dark:bg-zinc-900 dark:border-zinc-800">
+      {/* ── Top Tabs: Full GM | LOAN GM | Partial GM ── */}
+      <div className="flex flex-wrap border-b border-gray-200 overflow-x-auto dark:border-zinc-800">
         {([
-          { key: "home", label: "Home", count: homeCount },
-          { key: "loan", label: "Loan", count: loanCount },
-          { key: "partial", label: "Partial Payment", count: partialCount },
-        ] as const).map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => { setTopTab(tab.key); setCurrentPage(1); }}
-            className={`flex items-center gap-2 px-8 py-2.5 text-sm font-medium border-b-2 transition-colors ${topTab === tab.key
-              ? "border-green-600 text-green-700 dark:text-green-400"
-              : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          { key: "home", label: "Full GM", count: homeCount },
+          { key: "loan", label: "LOAN GM", count: loanCount },
+          { key: "partial", label: "Partial GM", count: partialCount },
+        ] as const).map(tab => {
+          const isActive = topTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => { setTopTab(tab.key as TopTab); setCurrentPage(1); }}
+              className={`flex-1 min-w-[120px] py-2.5 text-sm font-semibold flex items-center justify-center gap-2 transition-colors border-r border-gray-200 last:border-r-0 ${
+                isActive 
+                  ? "bg-blue-600 text-white" 
+                  : "bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-400 hover:bg-slate-50"
               }`}
-          >
-            {tab.label}
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${topTab === tab.key ? "bg-green-600 text-white" : "bg-blue-500 text-white"
+            >
+              {tab.label}
+              <span className={`text-xs font-bold px-2 py-0.5 rounded shadow-sm ${
+                isActive ? "bg-white text-blue-700" : "bg-blue-500 text-white"
               }`}>
-              {tab.count}
-            </span>
-          </button>
-        ))}
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Status Buttons ── */}
       <div className="flex flex-wrap border-b border-gray-200 overflow-x-auto dark:border-zinc-800">
         {([
-          { key: "all", label: "All Entries", count: allEntries.length, color: "blue" },
-          { key: "HOD Approved", label: "HOD Approved", count: hodApprovedCount, color: "indigo" },
-          { key: "Pending", label: "Pending", count: pendingCount, color: "amber" },
-          { key: "HOD Rejected", label: "HOD Rejected", count: hodRejectedCount, color: "red" },
+          { key: "Approved", label: "Approved", count: approvedCount, color: "emerald" },
+          { key: "HOD Rejected", label: "HOD Rejected", count: hodRejectedCount, color: "rose" },
           { key: "Account Rejected", label: "Account Rejected", count: acctRejectedCount, color: "orange" },
-          { key: "Withdrawn", label: "Withdrawn", count: withdrawnCount, color: "gray" },
         ] as const).map(tab => {
           const isActive = statusFilter === tab.key;
           const colorMap: Record<string, { active: string; badge: string }> = {
-            blue: { active: "bg-blue-600 text-white", badge: isActive ? "bg-white text-blue-700" : "bg-blue-500 text-white" },
-            indigo: { active: "bg-indigo-600 text-white", badge: isActive ? "bg-white text-indigo-700" : "bg-indigo-500 text-white" },
-            amber: { active: "bg-amber-500 text-white", badge: isActive ? "bg-white text-amber-700" : "bg-amber-500 text-white" },
-            red: { active: "bg-red-600 text-white", badge: isActive ? "bg-white text-red-700" : "bg-red-500 text-white" },
+            emerald: { active: "bg-emerald-600 text-white", badge: isActive ? "bg-white text-emerald-700" : "bg-emerald-500 text-white" },
+            rose: { active: "bg-rose-600 text-white", badge: isActive ? "bg-white text-rose-700" : "bg-rose-500 text-white" },
             orange: { active: "bg-orange-600 text-white", badge: isActive ? "bg-white text-orange-700" : "bg-orange-500 text-white" },
-            gray: { active: "bg-gray-600 text-white", badge: isActive ? "bg-white text-gray-700" : "bg-gray-500 text-white" },
           };
           const c = colorMap[tab.color];
           return (
             <button
               key={tab.key}
               onClick={() => { setStatusFilter(tab.key as StatusFilter); setCurrentPage(1); }}
-              className={`flex-1 min-w-[120px] py-2 text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors border-r border-gray-200 last:border-r-0 ${isActive ? c.active : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-400 hover:bg-gray-50"
+              className={`flex-1 min-w-[120px] py-2 text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors border-r border-gray-200 last:border-r-0 ${isActive ? c.active : "bg-white dark:bg-zinc-900 text-slate-600 dark:text-zinc-400 hover:bg-slate-50"
                 }`}
             >
               {tab.label}
-              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${c.badge}`}>{tab.count}</span>
+              <span className={`text-xs font-bold px-1.5 py-0.5 rounded shadow-sm ${c.badge}`}>{tab.count}</span>
             </button>
           );
         })}
@@ -500,9 +515,9 @@ export default function AccountGmEntries() {
         ) : (
           <table className="w-full text-xs min-w-[1200px] border-collapse">
             <thead>
-              <tr className="bg-gray-100 text-gray-700 dark:bg-zinc-900 dark:text-zinc-400">
-                {["No", "Drm Id", "Member Id", "Order Id", "Company", "Sale Person", "Add By", "Package", "Type", "Status", "Dollar", "Customer Dollar", "Dollar Rate", "Pkr", "Screen", ""].map(h => (
-                  <th key={h} className="px-2 py-2 text-left font-semibold whitespace-nowrap border border-gray-200 dark:border-zinc-800">
+              <tr className="bg-slate-100/80 text-slate-700 dark:bg-zinc-900 dark:text-zinc-400 border-y border-slate-200 dark:border-zinc-800 shadow-sm">
+                {["No", "DRM ID", "Member id", "Order id", "Company", "Sale Person", "Added by", "Package", "Type", "Dollar", "Order Dollar", "Customer Dollar", "Dollar Rate", "PKR", "Screenshot", "Discount", "Extra $ discount", "Extra PKR Discount", "Total Discount", "Status", "Create date", "Account status", "HOD status", "Alibaba Status", "Pay Date", "Action"].map(h => (
+                  <th key={h} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">
                     {h}
                   </th>
                 ))}
@@ -514,122 +529,146 @@ export default function AccountGmEntries() {
                   <td colSpan={15} className="text-center py-12 text-gray-400">No entries found</td>
                 </tr>
               ) : paginatedEntries.map((entry, i) => (
-                <tr key={entry.id} className={`${rowBg(i)} border-b border-blue-200 dark:border-zinc-800 text-gray-800 dark:text-zinc-200`}>
-                  <td className="px-2 py-1.5 font-medium border border-blue-200 dark:border-zinc-800">
+                <tr key={entry.id} className={`${rowBg(i)} border-b border-slate-200 dark:border-zinc-800 text-slate-700 dark:text-zinc-200 transition-colors`}>
+                  <td className="px-3 py-2 font-medium">
                     {(currentPage - 1) * pageSize + i + 1}
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 whitespace-nowrap">
-                    <div className="flex items-center gap-1">
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5 font-medium text-slate-900 dark:text-slate-100">
                       {entry.drmId}
-                      {entry.isLoan && <span className="bg-amber-400 text-white text-[10px] px-1 rounded">L</span>}
-                      {entry.isPartialPayment && <span className="bg-purple-400 text-white text-[10px] px-1 rounded">P</span>}
+                      {entry.isLoan && <span className="bg-amber-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">L</span>}
+                      {entry.isPartialPayment && <span className="bg-purple-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">P</span>}
                     </div>
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-[11px] max-w-[100px] truncate" title={entry.memberId || ""}>{entry.memberId || ""}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-[11px] max-w-[130px] truncate" title={entry.orderId || ""}>{entry.orderId || ""}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 max-w-[160px] truncate font-medium" title={entry.companyName}>{entry.companyName}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800">
-                    <div className="flex items-center gap-1">
-                      <span>{entry.salesPersonName || "—"}</span>
-                      {entry.salesPersonName && (
-                        <button
-                          onClick={() => {
-                            const users = allUsers?.users || [];
-                            const found = users.find(u => (u.fullName || u.name || "").toLowerCase() === entry.salesPersonName?.toLowerCase());
-                            if (found) openTeamDialog(found);
-                            else toast({ title: "User not found", description: `"${entry.salesPersonName}" not in system` });
-                          }}
-                          title="Manage team"
-                          className="text-blue-600 hover:text-blue-800 opacity-60 hover:opacity-100 transition-opacity"
-                        >
-                          <UserCog className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
+                  <td className="px-3 py-2 text-[11px] max-w-[100px] truncate text-slate-500" title={entry.memberId || ""}>{entry.memberId || "—"}</td>
+                  <td className="px-3 py-2 text-[11px] max-w-[130px] truncate text-slate-500" title={entry.orderId || ""}>{entry.orderId || "—"}</td>
+                  <td className="px-3 py-2 max-w-[160px] truncate font-semibold text-slate-800 dark:text-slate-200" title={entry.companyName}>{entry.companyName}</td>
+                  <td className="px-3 py-2 truncate max-w-[120px]" title={entry.salesPersonName || ""}>
+                    {entry.salesPersonName || "—"}
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800">{entry.addedByName || "—"}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 whitespace-nowrap">{entry.packageType}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800">
-                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${typeBg[entry.entryType] || "bg-gray-400 text-white"}`}>
-                      {entry.entryType}
+                  <td className="px-3 py-2 truncate max-w-[120px]" title={entry.addedByName || ""}>{entry.addedByName || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap font-medium text-slate-600">{entry.packageType || "—"}</td>
+                  <td className="px-3 py-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shadow-sm ${typeBg[entry.entryType] || "bg-slate-400 text-white"}`}>
+                      {entry.entryType || "—"}
                     </span>
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 whitespace-nowrap">
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-slate-600">{fmtUsd(entry.packagePrice || entry.amountUsd)}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-semibold text-slate-800">{fmtUsd(entry.amountUsd)}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-slate-600">{fmtUsd(entry.customerDollar)}</td>
+                  <td className="px-3 py-2 text-right font-medium text-slate-500">{entry.dollarRate || "—"}</td>
+                  <td className="px-3 py-2 text-right font-bold text-slate-800">{fmtPkr(entry.amountPkr)}</td>
+                  <td className="px-3 py-2 text-center">
+                    {entry.paymentProofUrl ? (
+                      <button
+                        onClick={() => window.open(entry.paymentProofUrl || "", "_blank")}
+                        className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-1.5 rounded-full transition-colors"
+                        title="View Screenshot"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.abDiscount) || entry.discount || "—"}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtUsd(entry.extraDiscount) || "—"}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap text-slate-600">{fmtPkr(entry.extraDiscountPkr) || "—"}</td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap font-medium text-slate-700">{fmtUsd(entry.totalDiscount) || "—"}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
                     {(() => {
                       const s = entry.status;
-                      // 'Rejected' = account manager rejected — show as Account Rejected
                       const isAcctRejected = s === "Account Rejected" || s === "Rejected";
-                      const label = isAcctRejected ? "Account Rejected" : s;
+                      const label = isAcctRejected ? "Account Rejected" : (s || "—");
                       const cls =
-                        s === "Approved" ? "bg-green-500 text-white" :
+                        s === "Approved" ? "bg-emerald-500 text-white" :
                           s === "HOD Approved" ? "bg-indigo-500 text-white" :
                             s === "Pending" ? "bg-amber-500 text-white" :
-                              s === "HOD Rejected" ? "bg-red-600 text-white" :
-                                isAcctRejected ? "bg-orange-600 text-white" :
-                                  s === "Withdrawn" ? "bg-gray-500 text-white" :
-                                    "bg-gray-400 text-white";
-                      return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cls}`}>{label}</span>;
+                              s === "HOD Rejected" ? "bg-rose-500 text-white" :
+                                isAcctRejected ? "bg-orange-500 text-white" :
+                                  s === "Withdrawn" ? "bg-slate-500 text-white" :
+                                    "bg-slate-400 text-white";
+                      return <span className={`text-[10px] font-bold px-2 py-1 rounded-full shadow-sm ${cls}`}>{label}</span>;
                     })()}
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-right whitespace-nowrap font-medium">{fmtUsd(entry.amountUsd)}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-right whitespace-nowrap">{fmtUsd(entry.customerDollar)}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-right">{entry.dollarRate || "—"}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-right font-medium">{fmtPkr(entry.amountPkr)}</td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800 text-center">
-                    <button
-                      onClick={() => toast({ title: "Screen View", description: entry.companyName })}
-                      className="text-blue-500 hover:text-blue-700"
-                    >
-                      <Monitor className="h-4 w-4" />
-                    </button>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-500">
+                    {entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : "—"}
                   </td>
-                  <td className="px-2 py-1.5 border border-blue-200 dark:border-zinc-800">
-                    <div className="flex items-center gap-1">
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
+                    {entry.accountManagerStatus || "—"}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
+                    {entry.hodStatus || "—"}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
+                    {entry.alibabaStatus || "—"}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-600">
+                    {entry.payDate ? new Date(entry.payDate).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex items-center gap-1.5">
                       {/* ── Approve / Reject (only for HOD Approved entries) ── */}
                       {(entry.approvalStatus === "pending_managers" && entry.accountManagerStatus === "pending") && (
                         <button
                           onClick={() => setApproveModalEntry(entry)}
                           title="Account Approve"
-                          className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded bg-green-100 text-green-700 border border-green-300 hover:bg-green-600 hover:text-white transition-colors"
+                          className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-colors shadow-sm"
                         >
-                          <CheckCircle className="h-3 w-3" />
-                          Account Approve
+                          <CheckCircle className="h-3.5 w-3.5" />
+                          Approve
                         </button>
                       )}
-                      {/* ── Patch 5 Stage 3: payment receipts (Partial GM's instalments,
-                          or a Full GM's single confirming receipt) / loan terms ── */}
+                      {/* ── Patch 5 Stage 3: payment receipts / loan terms ── */}
                       {!entry.isLoan && (
                         <button
                           onClick={() => { setStage3Entry(entry); setPartialDialogOpen(true); }}
-                          className="text-purple-500 hover:text-purple-700 transition-colors"
+                          className="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 p-1.5 rounded-md transition-colors"
                           title={entry.isPartialPayment ? "Partial payment receipts" : "Payment receipt"}
                         >
-                          <Wallet className="h-3.5 w-3.5" />
+                          <Wallet className="h-4 w-4" />
                         </button>
                       )}
                       {entry.isLoan && (
                         <button
                           onClick={() => { setStage3Entry(entry); setLoanDialogOpen(true); }}
-                          className="text-amber-600 hover:text-amber-800 transition-colors"
+                          className="text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 p-1.5 rounded-md transition-colors"
                           title="Loan terms & admin approval"
                         >
-                          <Landmark className="h-3.5 w-3.5" />
+                          <Landmark className="h-4 w-4" />
                         </button>
                       )}
                       {/* ── Normal actions ── */}
-                      <button onClick={() => handleViewEntry(entry)} className="text-gray-500 hover:text-blue-600 transition-colors dark:text-zinc-400" title="View">
-                        <Eye className="h-3.5 w-3.5" />
+                      <button onClick={() => handleViewEntry(entry)} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 p-1.5 rounded-md transition-colors" title="View">
+                        <Eye className="h-4 w-4" />
                       </button>
-                      {entry.status !== "Approved" && (
-                        <>
-                          <button onClick={() => handleEditEntry(entry)} className="text-gray-500 hover:text-green-600 transition-colors dark:text-zinc-400" title="Edit">
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button onClick={() => deleteMutation.mutate(entry.id)} disabled={deleteMutation.isPending} className="text-gray-500 hover:text-red-600 transition-colors dark:text-zinc-400" title="Delete">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </>
-                      )}
+                      {(() => {
+                        const isFullyApproved = entry.hodStatus?.toLowerCase() === "approved" && entry.accountManagerStatus?.toLowerCase() === "approved";
+                        const isApprovedTab = statusFilter === "Approved";
+                        const disableDelete = isApprovedTab || isFullyApproved || deleteMutation.isPending;
+                        const disableEdit = isFullyApproved;
+
+                        return (
+                          <>
+                            <button
+                              onClick={() => !disableEdit && handleEditEntry(entry)}
+                              disabled={disableEdit}
+                              className={`p-1.5 rounded-md transition-colors ${disableEdit ? "text-slate-400 bg-slate-100 cursor-not-allowed" : "text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100"}`}
+                              title={disableEdit ? "Cannot edit fully approved entry" : "Edit"}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => !disableDelete && deleteMutation.mutate(entry.id)}
+                              disabled={disableDelete}
+                              className={`p-1.5 rounded-md transition-colors ${disableDelete ? "text-slate-400 bg-slate-100 cursor-not-allowed" : "text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100"}`}
+                              title={disableDelete ? (isApprovedTab ? "Delete disabled in Approved tab" : "Cannot delete fully approved entry") : "Delete"}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </>
+                        );
+                      })()}
                     </div>
                   </td>
                 </tr>
