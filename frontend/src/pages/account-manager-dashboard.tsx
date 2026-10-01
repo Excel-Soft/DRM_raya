@@ -557,20 +557,20 @@ export default function AccountManagerDashboard() {
     };
 
     const StatCard = ({ title, value, subValue, icon: Icon, trend, trendValue, colorClass }: any) => (
-        <Card className="overflow-hidden border-none shadow-md bg-white hover:shadow-lg transition-shadow dark:bg-zinc-900">
-            <CardContent className="p-6">
+        <Card className="overflow-hidden border-none shadow-sm bg-white hover:shadow-md transition-shadow dark:bg-zinc-900">
+            <CardContent className="p-4">
                 <div className="flex items-center justify-between space-y-0 pb-2">
-                    <p className="text-sm font-medium text-muted-foreground">{title}</p>
-                    <div className={`p-2 rounded-full ${colorClass} bg-opacity-10`}>
-                        <Icon className={`h-4 w-4 ${colorClass.replace('bg-', 'text-')}`} />
+                    <p className="text-xs font-medium text-muted-foreground">{title}</p>
+                    <div className={`p-1.5 rounded-full ${colorClass} bg-opacity-10`}>
+                        <Icon className={`h-3 w-3 ${colorClass.replace('bg-', 'text-')}`} />
                     </div>
                 </div>
                 <div className="flex items-baseline space-x-2">
-                    <div className="text-2xl font-bold">{value}</div>
-                    {subValue && <span className="text-xs text-muted-foreground">({subValue})</span>}
+                    <div className="text-lg font-bold">{value}</div>
+                    {subValue && <span className="text-[10px] text-muted-foreground">({subValue})</span>}
                 </div>
                 {trend && (
-                    <div className="flex items-center mt-2 text-xs">
+                    <div className="flex items-center mt-1 text-[10px]">
                         {trend === 'up' ? (
                             <ArrowUpRight className="h-3 w-3 text-emerald-500 mr-1" />
                         ) : (
@@ -705,7 +705,7 @@ export default function AccountManagerDashboard() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                     title="Total Revenue"
-                    value={`$${statsApprovedAmount.toLocaleString()}`}
+                    value={`$${Number(gmStatsQuery.data?.totalAmountUsd || statsApprovedAmount).toLocaleString()}`}
                     icon={TrendingUp}
                     colorClass="bg-emerald-500 text-emerald-500"
                     trend={statsRevenueTrendPct >= 0 ? "up" : "down"}
@@ -713,20 +713,20 @@ export default function AccountManagerDashboard() {
                 />
                 <StatCard
                     title="Outstanding Invoices"
-                    value={statsPendingCount}
-                    subValue={`$${statsPendingAmount.toLocaleString()}`}
+                    value={invoiceStatsQuery.data?.pendingCount || statsPendingCount}
+                    subValue={`$${Number(invoiceStatsQuery.data?.pendingAmount || statsPendingAmount).toLocaleString()}`}
                     icon={AlertCircle}
                     colorClass="bg-amber-500 text-amber-500"
                 />
                 <StatCard
                     title="Active Projects"
-                    value={statsSummaryQuery.data?.totals?.totalGmCount ?? 0}
+                    value={gmStatsQuery.data?.totalCount || statsSummaryQuery.data?.totals?.totalGmCount || 0}
                     icon={Briefcase}
                     colorClass="bg-blue-500 text-blue-500"
                 />
                 <StatCard
                     title="Total Clients"
-                    value={statsSummaryQuery.data?.totals?.distinctClientCount ?? 0}
+                    value={statsSummaryQuery.data?.totals?.distinctClientCount || gmStatsQuery.data?.totalCount || 0}
                     icon={Users}
                     colorClass="bg-violet-500 text-violet-500"
                 />
@@ -1082,7 +1082,7 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Daily Closing" href="#" badge="Under Development" badgeColor="text-red-500" />
                                 <QuickLink label="Dollar System" href="/account/dollar-system" />
                                 <QuickLink label="Ab Closing Report" href="/account/ab-report" />
-                                <QuickLink label="Add Gm" href="/gm-pool/add-gm" />
+                                <QuickLink label="Add Gm" href="/account/gm-entries" />
                                 <QuickLink label="Make Invoice" href="/account/invoices" />
                                 <QuickLink label="Ledger" href="/account/ledger" />
                                 <QuickLink label="Office Vas" href="/office/vas" />
