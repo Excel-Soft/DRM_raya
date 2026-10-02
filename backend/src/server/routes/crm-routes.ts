@@ -14,7 +14,7 @@ import {
   gmPoolEntries,
   insertCustomerSchema,
 } from "@shared/schema";
-import { eq, and, or, ilike, gte, lte, desc, asc, sql } from "drizzle-orm";
+import { eq, and, or, ilike, gte, lte, desc, asc, sql, getTableColumns } from "drizzle-orm";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES } from "./middleware/financial-permission";
 import { resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
 
@@ -79,8 +79,14 @@ router.get("/customers", async (req, res) => {
     const orderColumn = CUSTOMER_SORTABLE_COLUMNS[validSortBy];
     const [countResult, customerList] = await Promise.all([
       db.select({ count: sql<number>`count(*)::int` }).from(customers).where(whereClause),
-      db.select()
+      db.select({
+          ...getTableColumns(customers),
+          // Real name for the "Added By" / "Added by" columns — callers
+          // previously showed the raw createdBy UUID with no way to resolve it.
+          createdByName: users.fullName,
+        })
         .from(customers)
+        .leftJoin(users, eq(customers.createdBy, users.id))
         .where(whereClause)
         .orderBy(sortOrder === "asc" ? asc(orderColumn) : desc(orderColumn))
         .limit(pageSize)

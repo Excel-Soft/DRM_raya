@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { LeadImportDialog } from "@/components/lead-import-dialog";
 import { getAuthHeader } from "@/lib/queryClient";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 
 const OVERRIDE_ROLES = ["admin", "super_admin", "superadmin", "sales_manager"];
 
@@ -280,16 +281,7 @@ export default function MarketingManagerDashboard() {
               <CardTitle className="text-[16px] font-bold text-gray-700 dark:text-zinc-400">Promotion Baners</CardTitle>
             </CardHeader>
             <CardContent className="p-4 bg-slate-50 dark:bg-zinc-900">
-              <div className="relative w-full h-32 rounded overflow-hidden shadow group">
-                <img src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80" alt="Promotion Banner" className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-black/10"></div>
-                <div className="absolute left-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white cursor-pointer p-1">
-                  &lt;
-                </div>
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white cursor-pointer p-1">
-                  &gt;
-                </div>
-              </div>
+              <PromotionBannerWidget />
             </CardContent>
           </Card>
 

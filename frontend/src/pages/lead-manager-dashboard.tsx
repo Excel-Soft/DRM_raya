@@ -25,6 +25,7 @@ import React, { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { useToast } from "@/hooks/use-toast";
 
 // Same company type list used by the standalone Add Customer page (client/src/pages/add-customer.tsx),
@@ -172,14 +173,21 @@ export default function LeadManagerDashboard() {
     queryKey: ["/api/customers?pageSize=1000"],
   });
   const allLeads = customersData?.customers || [];
-  const filteredLeads = allLeads.filter((lead) => 
-    !leadSearch || 
+
+  // Cleared for now (per request) — the "Follow Lead" block (Today Follow /
+  // Distribute tabs) should show no rows until this is revisited.
+  const followLeadItems: any[] = [];
+
+  const filteredLeads = allLeads.filter((lead) =>
+    !leadSearch ||
     lead.companyName?.toLowerCase().includes(leadSearch.toLowerCase()) ||
     lead.country?.toLowerCase().includes(leadSearch.toLowerCase()) ||
     lead.city?.toLowerCase().includes(leadSearch.toLowerCase()) ||
-    lead.createdBy?.toLowerCase().includes(leadSearch.toLowerCase()) ||
+    lead.createdByName?.toLowerCase().includes(leadSearch.toLowerCase()) ||
     lead.ownerUserId?.toLowerCase().includes(leadSearch.toLowerCase())
-  );
+  // Trimmed to the first 2 entries for now (per request) — the rest are
+  // hidden here until this is revisited.
+  ).slice(0, 2);
   const leadsTotalPages = Math.max(1, Math.ceil(filteredLeads.length / LEADS_PAGE_SIZE));
   const currentLeadsPage = Math.min(leadsPage, leadsTotalPages);
   const pagedLeads = filteredLeads.slice(
@@ -920,7 +928,7 @@ export default function LeadManagerDashboard() {
   // --- DASHBOARD HOME VIEW ---
   return (
     <div className="contents">
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f5f8f7_0%,#eef4f2_100%)] p-6">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f5f8f7_0%,#eef4f2_100%)] dark:bg-[linear-gradient(180deg,#09090b_0%,#000000_100%)] p-6">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-6">
         <div className="rounded-[22px] border border-white/70 bg-white px-6 py-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-sm dark:bg-zinc-900">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -955,7 +963,7 @@ export default function LeadManagerDashboard() {
              </CardHeader>
              <CardContent className="grid grid-cols-1 gap-4 p-5 md:grid-cols-3">
               {([ ["Total Lead", Users, totalLeadsCount], ["Distribute", ArrowRightLeft, distributeLeadsCount], ["Distributed", Tag, distributedLeadsCount] ] as [string, React.ElementType, number][]).map(([l, Icon, count], i) => (
-                <div key={i} className="group relative overflow-hidden rounded-[22px] border border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfa_100%)] p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800">
+                <div key={i} className="group relative overflow-hidden rounded-[22px] border border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfa_100%)] dark:bg-[linear-gradient(180deg,#27272a_0%,#1c1c1f_100%)] p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800">
                   <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#00a65a] via-[#37c982] to-[#8be0b3] opacity-80" />
                   <div className="flex items-center gap-4">
                   <div className="flex-1 space-y-2">
@@ -1008,12 +1016,12 @@ export default function LeadManagerDashboard() {
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading Queue...</TableCell>
                     </TableRow>
-                  ) : (followActiveTab === "follow" ? allLeads.filter((l: any) => l.ownerUserId) : allLeads.filter((l: any) => !l.ownerUserId)).length === 0 ? (
+                  ) : (followActiveTab === "follow" ? followLeadItems.filter((l: any) => l.ownerUserId) : followLeadItems.filter((l: any) => !l.ownerUserId)).length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">No leads in queue.</TableCell>
                     </TableRow>
                   ) : (
-                    (followActiveTab === "follow" ? allLeads.filter((l: any) => l.ownerUserId) : allLeads.filter((l: any) => !l.ownerUserId)).slice(0, 10).map((lead: any, i: number) => (
+                    (followActiveTab === "follow" ? followLeadItems.filter((l: any) => l.ownerUserId) : followLeadItems.filter((l: any) => !l.ownerUserId)).slice(0, 10).map((lead: any, i: number) => (
                       <TableRow key={lead.id} className="hover:bg-slate-50 border-b border-slate-100 text-slate-600 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                         <TableCell className="px-4 py-3 text-[13px]">{i + 1}</TableCell>
                         <TableCell className="px-4 py-3 text-[13px] text-[#00a65a] font-bold dark:text-zinc-400">{lead.companyName}</TableCell>
@@ -1093,7 +1101,7 @@ export default function LeadManagerDashboard() {
                         <TableRow key={lead.id} className="h-16 hover:bg-[#f8fbfa] dark:hover:bg-zinc-800">
                           <TableCell>{(currentLeadsPage - 1) * LEADS_PAGE_SIZE + idx + 1}</TableCell>
                           <TableCell className="text-emerald-600 font-bold whitespace-nowrap">{lead.companyName}</TableCell>
-                          <TableCell><Badge className="bg-blue-100 text-blue-700 border-none max-w-[100px] truncate">{lead.createdBy || "System"}</Badge></TableCell>
+                          <TableCell><Badge className="bg-blue-100 text-blue-700 border-none max-w-[100px] truncate">{lead.createdByName || "System"}</Badge></TableCell>
                           <TableCell className="whitespace-nowrap text-slate-600 dark:text-zinc-300"><Clock className="inline w-3.5 h-3.5 mr-1" />{createDate.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</TableCell>
                           <TableCell><Badge className="bg-emerald-100 text-emerald-700 border-none">{createDate.toLocaleDateString()}</Badge></TableCell>
                           <TableCell className="text-slate-500 dark:text-zinc-400">{lead.country || "-"}</TableCell>
@@ -1151,33 +1159,7 @@ export default function LeadManagerDashboard() {
           <Card className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] dark:bg-zinc-900">
             <CardHeader className="py-4 px-5 border-b border-slate-100 font-bold text-[16px] text-slate-800 dark:text-zinc-100 dark:border-zinc-800">Promotion Baners</CardHeader>
             <div className="p-4">
-              <div className="relative overflow-hidden rounded-[20px] bg-[linear-gradient(135deg,#10203a_0%,#1f4f76_45%,#0ea5a4_100%)] px-6 py-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
-                <div className="absolute -right-12 -top-12 h-36 w-36 rounded-full bg-white blur-2xl dark:bg-zinc-900" />
-                <div className="absolute -bottom-14 left-24 h-32 w-32 rounded-full bg-emerald-300/20 blur-2xl" />
-                <div className="relative flex min-h-[170px] flex-col justify-between">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[11px] font-black uppercase tracking-[0.28em] text-cyan-100/85">Lead Growth</p>
-                      <h3 className="mt-3 max-w-[220px] text-[28px] font-bold leading-tight text-white">Expand branch pipeline with smarter follow-up.</h3>
-                    </div>
-                    <div className="rounded-full border border-white/15 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-white/85 dark:bg-zinc-900">
-                      Priority
-                    </div>
-                  </div>
-                  <div className="flex items-end justify-between gap-4">
-                    <div className="space-y-2">
-                      <p className="text-[13px] text-cyan-50/80">Track conversions, distribute leads faster, and keep daily actions visible.</p>
-                      <div className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-[12px] font-semibold text-white backdrop-blur-sm dark:bg-zinc-900">
-                        Better coordination
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-white/80">
-                      <span className="text-4xl leading-none">‹</span>
-                      <span className="text-4xl leading-none">›</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <PromotionBannerWidget />
             </div>
           </Card>
 
@@ -1204,7 +1186,7 @@ export default function LeadManagerDashboard() {
                       setCurrentView(id as "dashboard" | "duplication" | "add-customer" | "temporary" | "view-uae" | "add-uae" | "followup-report" | "project-report");
                     }
                   }}
-                  className="flex items-center justify-between h-11 px-4 rounded-[14px] bg-[linear-gradient(180deg,#fafcfc_0%,#f2f6f5_100%)] hover:bg-emerald-50/60 group font-bold text-[13px] text-slate-700 transition-all border border-slate-100 outline-none cursor-pointer shadow-sm hover:-translate-y-0.5 hover:border-emerald-100 dark:border-zinc-800 dark:text-zinc-400"
+                  className="flex items-center justify-between h-11 px-4 rounded-[14px] bg-[linear-gradient(180deg,#fafcfc_0%,#f2f6f5_100%)] dark:bg-[linear-gradient(180deg,#27272a_0%,#1c1c1f_100%)] hover:bg-emerald-50/60 group font-bold text-[13px] text-slate-700 transition-all border border-slate-100 outline-none cursor-pointer shadow-sm hover:-translate-y-0.5 hover:border-emerald-100 dark:border-zinc-800 dark:text-zinc-400"
                 >
                   <span className="truncate">{l}</span>
                   <div className="w-1.5 h-2.5 border-r-2 border-b-2 border-slate-400 group-hover:border-[#00a65a] rotate-[-45deg] scale-x-50 translate-y-[-1px] dark:border-zinc-800" />
@@ -1218,7 +1200,7 @@ export default function LeadManagerDashboard() {
                <span className="font-bold text-[16px] text-slate-800 dark:text-zinc-100">Upload Leads</span>
                <PlusCircle onClick={() => setShowUploadModal(true)} className="w-4 h-4 text-emerald-500 cursor-pointer hover:text-emerald-700 transition-colors" />
              </div>
-             <CardContent className="p-5 flex items-center gap-4 bg-[linear-gradient(180deg,#fbfcff_0%,#f8fbff_100%)]">
+             <CardContent className="p-5 flex items-center gap-4 bg-[linear-gradient(180deg,#fbfcff_0%,#f8fbff_100%)] dark:bg-[linear-gradient(180deg,#27272a_0%,#1c1c1f_100%)]">
                <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center font-bold text-lg">X</div>
                <div className="flex-1 min-w-0"><p className="text-[14px] font-bold text-slate-800 dark:text-zinc-100">Template.xlsx</p><p className="text-[12px] text-slate-400">Size : 133 KB</p></div>
                <a href="/api/leads/template" download="Template.xlsx" title="Download Template">
@@ -1230,10 +1212,10 @@ export default function LeadManagerDashboard() {
           <Card className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] dark:bg-zinc-900">
              <CardHeader className="py-4 px-5 border-b border-slate-100 font-bold text-[16px] text-slate-800 dark:text-zinc-100 dark:border-zinc-800">Important</CardHeader>
              <div className="grid grid-cols-2 gap-3 p-4">
-              {[ ["Notice", "0"], ["Complaints", "30(5800)", "text-slate-700"], ["Event", "38"], ["Login Time", "05:29 PM"] ].map(([l, v, c], i) => (
-                <div key={i} className="flex items-center justify-between rounded-[14px] bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f6_100%)] px-4 py-3 shadow-sm">
+              {[ ["Notice", "0"], ["Complaints", "30(5800)", "text-slate-700 dark:text-zinc-100"], ["Event", "38"], ["Login Time", "05:29 PM"] ].map(([l, v, c], i) => (
+                <div key={i} className="flex items-center justify-between rounded-[14px] bg-[linear-gradient(180deg,#f7f9fb_0%,#eef3f6_100%)] dark:bg-[linear-gradient(180deg,#27272a_0%,#1c1c1f_100%)] px-4 py-3 shadow-sm">
                   <span className="text-[14px] font-medium text-slate-500 dark:text-zinc-400">{l}</span>
-                  <span className={`text-[14px] font-bold italic ${c || "text-slate-900"}`}>{v}</span>
+                  <span className={`text-[14px] font-bold italic ${c || "text-slate-900 dark:text-zinc-100"}`}>{v}</span>
                 </div>
               ))}
              </div>
@@ -1281,7 +1263,7 @@ export default function LeadManagerDashboard() {
                 <Table>
                   <TableHeader className="bg-white dark:bg-zinc-900">
                     <TableRow className="h-10 hover:bg-transparent">
-                      {["Company", "Added By", "Time", "Date", "Status"].map((head) => (
+                      {["Company", "Source", "Time", "Date", "Status"].map((head) => (
                         <TableHead key={head} className="font-bold text-[13px] text-slate-700 whitespace-nowrap dark:text-zinc-400">{head}</TableHead>
                       ))}
                     </TableRow>
@@ -1289,13 +1271,13 @@ export default function LeadManagerDashboard() {
                   <TableBody>
                     {isLoadingCustomers ? (
                       <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-500 dark:text-zinc-400">Loading leads...</TableCell></TableRow>
-                    ) : allLeads.slice(0, 5).length === 0 ? (
+                    ) : allLeads.slice(0, 2).length === 0 ? (
                       <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-500 dark:text-zinc-400">No leads added today.</TableCell></TableRow>
                     ) : (
-                      allLeads.slice(0, 5).map((lead: any) => (
+                      allLeads.slice(0, 2).map((lead: any) => (
                         <TableRow key={lead.id} className="hover:bg-slate-50 border-b border-slate-100 dark:hover:bg-zinc-800 dark:border-zinc-800">
                            <TableCell className="px-4 py-3 text-[13px] text-[#00a65a] font-bold dark:text-zinc-400">{lead.companyName}</TableCell>
-                           <TableCell className="px-4 py-3 text-[13px] text-slate-600 dark:text-zinc-300">{lead.createdBy || "System"}</TableCell>
+                           <TableCell className="px-4 py-3 text-[13px] text-slate-600 dark:text-zinc-300">{lead.source || "-"}</TableCell>
                            <TableCell className="px-4 py-3 text-[13px] text-slate-600 dark:text-zinc-300">{new Date(lead.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</TableCell>
                            <TableCell className="px-4 py-3 text-[13px] text-slate-600 dark:text-zinc-300">{new Date(lead.createdAt).toLocaleDateString()}</TableCell>
                            <TableCell className="px-4 py-3 text-[13px] text-slate-600 dark:text-zinc-300"><Badge className="bg-emerald-100 text-emerald-700 border-none font-bold">New</Badge></TableCell>

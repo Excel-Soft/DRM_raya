@@ -17,6 +17,7 @@ import {
     DialogClose,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 
 // Removing static mock data and using dynamic queries
 
@@ -532,28 +533,7 @@ export default function ReceptionDashboard() {
                     {/* Promotion Baners */}
                     <div className="bg-white rounded-[10px] shadow-sm border border-slate-100 p-5 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[14px] font-bold text-slate-700 mb-4 dark:text-zinc-400">Promotion Baners</h3>
-                        <div className="block w-full rounded overflow-hidden relative group cursor-pointer aspect-[3/1] bg-[#fca5a5] dark:bg-zinc-900">
-                            {/* Minimalistic plant image mock */}
-                            <div className="absolute inset-0 bg-gradient-to-r from-[#fca5a5] to-[#fecaca] opacity-80" />
-                            <div className="absolute inset-0 flex justify-center items-end pb-0">
-                                <svg viewBox="0 0 100 100" className="w-[80%] h-[150%] text-[#453c30] -mb-10 opacity-70 dark:text-zinc-400" preserveAspectRatio="none">
-                                    <path d="M50 100 Q 40 50 10 20 Q 50 70 50 100" fill="currentColor" />
-                                    <path d="M50 100 Q 60 40 90 20 Q 50 60 50 100" fill="currentColor" />
-                                    <path d="M50 100 L 50 10 L 55 100" fill="currentColor" />
-                                    <path d="M50 100 Q 30 50 20 10 Q 45 70 48 100" fill="currentColor" />
-                                    <path d="M50 100 Q 70 30 80 5 Q 55 50 52 100" fill="currentColor" />
-                                </svg>
-                            </div>
-
-                            {/* Left Arrow Overlay */}
-                            <div className="absolute left-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white transition-colors">
-                                <ChevronLeft className="h-8 w-8 stroke-[1.5]" />
-                            </div>
-                            {/* Right Arrow Overlay */}
-                            <div className="absolute right-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white transition-colors">
-                                <ChevronRight className="h-8 w-8 stroke-[1.5]" />
-                            </div>
-                        </div>
+                        <PromotionBannerWidget />
                     </div>
 
                     {/* Projects Overview */}

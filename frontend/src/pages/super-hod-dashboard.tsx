@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { LoanAdminQueuePanel } from "@/components/gm/LoanAdminQueuePanel";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -1226,15 +1227,7 @@ export default function SuperHODDashboard() {
                         {/* Promotion Baners */}
                         <div className="space-y-3">
                             <h2 className="text-sm font-bold text-slate-800 tracking-tight dark:text-zinc-100">Promotion Baners</h2>
-                            <Card className="border-none shadow-sm overflow-hidden relative group">
-                                <div className="aspect-[16/7] bg-emerald-50 flex items-center justify-center">
-                                    <img
-                                        src="https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=400"
-                                        alt="Promotion"
-                                        className="object-cover w-full h-full opacity-80 group-hover:scale-105 transition-transform duration-500"
-                                    />
-                                </div>
-                            </Card>
+                            <PromotionBannerWidget />
                         </div>
 
                         {/* Today Meeting */}

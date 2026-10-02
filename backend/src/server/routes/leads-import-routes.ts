@@ -16,6 +16,7 @@ import {
 } from "../utils/duplicate-policy";
 import { ActivityLogService } from "./services/activity-service";
 import { ensureServicesSchema } from "../repositories/services.repository";
+import { shouldSkipLeadAutoOwnership } from "../utils/role-utils";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -327,6 +328,13 @@ export function registerLeadsImportRoutes(app: Express) {
       if (rows.length > 5000) return res.status(400).json({ error: "Too many rows (max 5000 per import)" });
 
       const role = (req.user as any).role as string | undefined;
+      // Non-managers own what they upload (matches /api/customers/add and
+      // /api/sales/customers) — otherwise an uploaded lead with no explicit
+      // "Assigned User" column lands in the Public pool, invisible to the
+      // executive who just imported it. Managers (and Lead Executives, who
+      // feed the pipeline for a Lead Manager to distribute) keep the
+      // Public-pool default since they're importing for someone else, not themselves.
+      const isUploaderManager = shouldSkipLeadAutoOwnership((req.user as any).activeRoleId || (req.user as any).roleId || role);
       const overrideAllowed = wantsOverride && canOverrideDuplicates(role);
       if (wantsOverride && !canOverrideDuplicates(role)) {
         return res.status(403).json({ error: "Your role is not permitted to override duplicate leads." });
@@ -392,14 +400,15 @@ export function registerLeadsImportRoutes(app: Express) {
           continue;
         }
 
-        // Resolve optional assigned user (by email or name).
-        let ownerUserId: string | null = null;
+        // Resolve optional assigned user (by email or name); otherwise the
+        // uploader owns the row unless they're a manager (see isUploaderManager above).
+        let ownerUserId: string | null = isUploaderManager ? null : req.user.userId;
         if (data.assignedUser) {
           const u = await pool.query(
             `select id from drm.users where lower(trim(email)) = lower(trim($1)) or lower(trim(name)) = lower(trim($1)) limit 1`,
             [data.assignedUser],
           );
-          ownerUserId = u.rows[0]?.id ?? null;
+          if (u.rows[0]?.id) ownerUserId = u.rows[0].id;
         }
 
         try {

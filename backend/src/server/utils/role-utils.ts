@@ -132,3 +132,14 @@ export function isManagerialRole(role?: string | null): boolean {
 
   return managerTerms.some(term => n.toLowerCase().includes(term));
 }
+
+// A Lead Executive's job is to feed the pipeline for a Lead Manager to
+// distribute to Sales Executives — unlike other non-managerial roles (e.g.
+// sales_executive), what they add/import should NOT auto-assign to
+// themselves, or it never reaches the Lead Manager's unowned Distribute queue.
+// Used by /api/customers/add, /api/sales/customers, and the bulk leads
+// importer wherever they'd otherwise default ownerUserId to the creator.
+export function shouldSkipLeadAutoOwnership(role?: string | null): boolean {
+  if (!role) return false;
+  return isManagerialRole(role) || normalizeRole(role) === ROLES.LEAD_EXECUTIVE;
+}

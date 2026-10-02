@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { apiRequest, throwIfResNotOk } from "@/lib/queryClient";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -4249,16 +4250,7 @@ export default function SoftwareManagerDashboard() {
               <div className="w-1 h-4 rounded-full bg-gradient-to-b from-violet-400 to-purple-600" />
               <span className="font-bold text-[13px] text-slate-800 dark:text-zinc-100">Promotion Banners</span>
             </div>
-            <div className="relative bg-gradient-to-br from-[#c93b8f] via-[#9b3fce] to-[#5b21b6] h-44 flex items-center justify-center overflow-hidden">
-              <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full bg-white dark:bg-zinc-900" />
-              <div className="absolute -bottom-8 -left-8 w-40 h-40 rounded-full bg-white dark:bg-zinc-900" />
-              <div className="absolute top-4 left-6 right-6 text-white/20 text-[7px] leading-[1.6] font-mono">
-                Lorem ipsum dolor sit amet consectetur adipiscing elit. Pellentesque a lacoreet est sit dapibus ullamcorper magna nam pretium erat aocean volutpat ornare et malesuada.
-              </div>
-              <Button className="relative z-10 bg-[#e2354e] hover:bg-[#c82d42] text-white font-bold text-xs h-9 px-6 rounded-xl border-none shadow-lg hover:shadow-xl transition-all dark:bg-zinc-900">
-                READ MORE
-              </Button>
-            </div>
+            <PromotionBannerWidget />
           </div>
 
           {/* PROJECTS OVERVIEW */}

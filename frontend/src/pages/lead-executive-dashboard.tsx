@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { 
   Users, 
   ArrowRightLeft, 
@@ -370,6 +371,10 @@ export default function LeadExecutiveDashboard() {
   const allLeads = customersData?.customers || [];
   const incompleteLeads = allLeads.filter((l: any) => !l.companyName || !l.email || !l.phone || !l.city || l.email === "-" || l.phone === "-");
 
+  // Cleared for now (per request) — the "Follow Lead" block (Today Follow /
+  // Distribute tabs) should show no rows until this is revisited.
+  const followLeadItems: any[] = [];
+
   // Data Quality Filters applied on top of the Incomplete Data list — wired to the
   // real customer fields (companyType, city, phone/mobile, website already exist on the schema).
   const filteredIncompleteLeads = incompleteLeads.filter((l: any) => {
@@ -405,6 +410,16 @@ export default function LeadExecutiveDashboard() {
     queryKey: ["/api/dashboard/followups?pageSize=50"],
   });
   const expectedClients = followupsRes?.data?.items || [];
+
+  // "Important" widget — real sources (was a hardcoded ["Notice","0"] /
+  // ["Complaints","61(11150)"] / ["Event","67"] list). No Complaints tile here —
+  // support tickets aren't part of the lead executive/lead manager flow.
+  const noticesQuery = useQuery<Array<{ status: string }>>({ queryKey: ["/api/notice-board"] });
+  const eventsQuery = useQuery<{ data: any[]; total: number }>({ queryKey: ["/api/events"] });
+  const importantStats = {
+    notices: (noticesQuery.data || []).filter((n) => n.status === "Active").length,
+    events: eventsQuery.data?.total ?? 0,
+  };
 
   const services = [
     "Mobile Responsive Website", "E-Commerce Store", "Alibaba Services", 
@@ -548,7 +563,7 @@ export default function LeadExecutiveDashboard() {
           <div className="xl:col-span-4"><Card className="border-none shadow-md rounded-lg bg-white overflow-hidden dark:bg-zinc-900"><CardHeader className="py-4 px-6 border-b border-slate-100 dark:border-zinc-800"><CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">Primary Detail</CardTitle></CardHeader><CardContent className="p-6 space-y-5">{[ ["Title *", "select", "title"], ["Person Full Name *", "Enter Person name", "personName"], ["CNIC *", "123456789", "cnic"], ["NTN *", "Enter NTN", "ntn"], ["Website *", "www.name.com", "website"], ["Email *", "Enter Company E-mail", "email"], ["Mobile No (03001234567) *", "Enter company mobile no", "mobile"], ["Designation *", "select", "designation"] ].map(([l, p, k], i) => ( <div key={i} className="space-y-1.5"><label className="text-xs font-bold text-slate-600 tracking-tight dark:text-zinc-300">{l}</label>{p === "select" ? ( <div className="relative"><select value={addCustomerData[k] || ""} onChange={e => setAddCustomerData({...addCustomerData, [k]: e.target.value})} className="w-full h-10 border border-slate-200 rounded px-3 text-sm appearance-none outline-none dark:border-zinc-800"><option value="">Choose...</option><option value="Option A">Option A</option></select><ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" /></div> ) : ( <Input value={addCustomerData[k] || ""} onChange={e => setAddCustomerData({...addCustomerData, [k]: e.target.value})} placeholder={p} className="h-10 border-slate-200 rounded px-3 text-sm dark:border-zinc-800" /> )}</div> ))}<div className="space-y-1.5"><label className="text-xs font-bold text-slate-600 tracking-tight dark:text-zinc-300">Your Comment*</label><textarea value={addCustomerData.comment || ""} onChange={e => setAddCustomerData({...addCustomerData, comment: e.target.value})} className="w-full h-32 border border-slate-200 rounded p-3 text-sm outline-none resize-none focus:border-emerald-500 dark:border-zinc-800" /></div></CardContent></Card></div>
           <div className="xl:col-span-4 space-y-6"><Card className="border-none shadow-md rounded-lg bg-white overflow-hidden dark:bg-zinc-900"><CardHeader className="py-4 px-6 border-b border-slate-100 dark:border-zinc-800"><CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">Lead Detail</CardTitle></CardHeader><CardContent className="p-6 space-y-5">{[ ["RC Link*", "select", "rcLink"], ["Source *", "select", "source"], ["Status*", "select", "status"], ["Grade*", "select", "grade"] ].map(([l, p, k], i) => { 
             let options = <><option value="New">New</option><option value="A (Hot)">A (Hot)</option><option value="Facebook">Facebook</option></>;
-            if (k === "source") options = <><option value="Facebook">Facebook</option><option value="Google">Google</option><option value="Direct">Direct</option><option value="Referral">Referral</option></>;
+            if (k === "source") options = <><option value="Facebook">Facebook</option><option value="LinkedIn">LinkedIn</option><option value="Google">Google</option><option value="Direct">Direct</option><option value="Referral">Referral</option></>;
             else if (k === "status") options = <><option value="New">New</option><option value="Renew">Renew</option><option value="Expire">Expire</option></>;
             else if (k === "grade") options = <><option value="A (Hot)">A (Hot)</option><option value="B (Warm)">B (Warm)</option><option value="C (Cold)">C (Cold)</option></>;
             else if (k === "rcLink") options = <><option value="Yes">Yes</option><option value="No">No</option></>;
@@ -916,7 +931,7 @@ export default function LeadExecutiveDashboard() {
   // --- DASHBOARD HOME VIEW ---
   return (
     <div className="contents">
-    <div className="min-h-screen bg-[linear-gradient(180deg,#f5f8f7_0%,#eef4f2_100%)] p-6">
+    <div className="min-h-screen bg-[linear-gradient(180deg,#f5f8f7_0%,#eef4f2_100%)] dark:bg-[linear-gradient(180deg,#09090b_0%,#000000_100%)] p-6">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-6">
         {/* Breadcrumb Header */}
         <div className="rounded-[22px] border border-white/70 bg-white px-6 py-5 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-sm dark:bg-zinc-900">
@@ -949,7 +964,7 @@ export default function LeadExecutiveDashboard() {
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-4 p-5 md:grid-cols-3">
                 {([ ["Total Lead", Users, totalLeadsCount], ["Distribute", ArrowRightLeft, distributeLeadsCount], ["Distributed", Tag, distributedLeadsCount] ] as [string, React.ElementType, number][]).map(([l, Icon, count], i) => (
-                  <div key={i} className="group relative overflow-hidden rounded-[22px] border border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfa_100%)] p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800">
+                  <div key={i} className="group relative overflow-hidden rounded-[22px] border border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfa_100%)] dark:bg-[linear-gradient(180deg,#27272a_0%,#1c1c1f_100%)] p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)] transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)] dark:border-zinc-800">
                     <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#00a65a] via-[#37c982] to-[#8be0b3] opacity-80" />
                     <div className="flex items-center gap-4">
                     <div className="flex-1 space-y-2">
@@ -1005,10 +1020,10 @@ export default function LeadExecutiveDashboard() {
                       <TableBody>
                         {isLoadingCustomers ? (
                           <TableRow><TableCell colSpan={6} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading Queue...</TableCell></TableRow>
-                        ) : allLeads.filter((l: any) => l.ownerUserId && l.status !== "To Distribute").length === 0 ? (
+                        ) : followLeadItems.filter((l: any) => l.ownerUserId && l.status !== "To Distribute").length === 0 ? (
                           <TableRow><TableCell colSpan={6} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">No leads in queue.</TableCell></TableRow>
                         ) : (
-                          allLeads.filter((l: any) => l.ownerUserId && l.status !== "To Distribute").slice(0, 10).map((lead: any, i: number) => (
+                          followLeadItems.filter((l: any) => l.ownerUserId && l.status !== "To Distribute").slice(0, 10).map((lead: any, i: number) => (
                             <TableRow key={lead.id} className="hover:bg-slate-50 border-b border-slate-100 text-slate-600 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                               <TableCell className="px-4 py-3 text-[12px] font-bold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
                               <TableCell className="px-4 py-3 text-[12px] text-[#00a65a] font-bold whitespace-nowrap dark:text-zinc-400">{lead.companyName}</TableCell>
@@ -1053,15 +1068,15 @@ export default function LeadExecutiveDashboard() {
                         <TableBody>
                           {isLoadingCustomers ? (
                             <TableRow><TableCell colSpan={7} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">Loading leads...</TableCell></TableRow>
-                          ) : allLeads.filter((l: any) => l.ownerUserId && l.status === "To Distribute").length === 0 ? (
+                          ) : followLeadItems.filter((l: any) => l.ownerUserId && l.status === "To Distribute").length === 0 ? (
                             <TableRow><TableCell colSpan={7} className="text-center py-6 text-slate-500 font-bold dark:text-zinc-400">No leads available for distribution.</TableCell></TableRow>
                           ) : (
-                            allLeads.filter((l: any) => l.ownerUserId && l.status === "To Distribute").slice(0, 10).map((lead: any, i: number) => (
+                            followLeadItems.filter((l: any) => l.ownerUserId && l.status === "To Distribute").slice(0, 10).map((lead: any, i: number) => (
                               <TableRow key={lead.id} className="hover:bg-slate-50 border-b border-slate-100 text-slate-600 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                                 <TableCell className="px-4 py-3 text-[12px] font-bold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
                                 <TableCell className="px-4 py-3 text-[12px] text-[#00a65a] font-bold whitespace-nowrap dark:text-zinc-400">{lead.companyName}</TableCell>
                                 <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">Distribute</TableCell>
-                                <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">{lead.createdBy || "System"}</TableCell>
+                                <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">{lead.createdByName || "System"}</TableCell>
                                 <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">{lead.city || "Unknown"}</TableCell>
                                 <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">{new Date(lead.createdAt).toLocaleDateString()}</TableCell>
                                 <TableCell className="px-4 py-3 text-[12px] whitespace-nowrap">
@@ -1134,7 +1149,7 @@ export default function LeadExecutiveDashboard() {
                   <Table>
                     <TableHeader>
                       <TableRow className="border-none hover:bg-transparent">
-                        {["Company", "Added By", "Time", "Date", "Status"].map((h) => (
+                        {["Company", "Source", "Time", "Date", "Status"].map((h) => (
                           <TableHead key={h} className="h-10 text-[12px] font-bold text-slate-700 whitespace-nowrap px-2 dark:text-zinc-400">{h}</TableHead>
                         ))}
                       </TableRow>
@@ -1142,13 +1157,13 @@ export default function LeadExecutiveDashboard() {
                     <TableBody>
                       {isLoadingCustomers ? (
                         <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-500 dark:text-zinc-400">Loading leads...</TableCell></TableRow>
-                      ) : allLeads.slice(0, 5).length === 0 ? (
+                      ) : allLeads.slice(0, 2).length === 0 ? (
                         <TableRow><TableCell colSpan={5} className="text-center py-4 text-slate-500 dark:text-zinc-400">No leads added today.</TableCell></TableRow>
                       ) : (
-                        allLeads.slice(0, 5).map((lead: any) => (
+                        allLeads.slice(0, 2).map((lead: any) => (
                           <TableRow key={lead.id} className="hover:bg-slate-50 border-b border-slate-100 text-slate-600 dark:hover:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-800">
                              <TableCell className="px-3 py-3 text-[12px] text-[#00a65a] font-bold whitespace-nowrap dark:text-zinc-400">{lead.companyName}</TableCell>
-                             <TableCell className="px-3 py-3 text-[12px] whitespace-nowrap">{lead.createdBy || "System"}</TableCell>
+                             <TableCell className="px-3 py-3 text-[12px] whitespace-nowrap">{lead.source || "-"}</TableCell>
                              <TableCell className="px-3 py-3 text-[12px] whitespace-nowrap">{new Date(lead.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</TableCell>
                              <TableCell className="px-3 py-3 text-[12px] whitespace-nowrap">{new Date(lead.createdAt).toLocaleDateString()}</TableCell>
                              <TableCell className="px-3 py-3 text-[12px] whitespace-nowrap"><Badge className="bg-emerald-100 text-emerald-700 border-none">New</Badge></TableCell>
@@ -1166,25 +1181,9 @@ export default function LeadExecutiveDashboard() {
           {/* Right Column */}
           <div className="xl:col-span-4 flex flex-col gap-5">
             
-            {/* Promotion Baners */}
-            <Card className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] dark:bg-zinc-900">
-              <CardHeader className="py-4 px-5 border-b border-slate-100 dark:border-zinc-800">
-                <CardTitle className="text-[16px] font-bold text-[#243b53] dark:text-zinc-100">Promotion Baners</CardTitle>
-              </CardHeader>
-              <div className="p-4">
-                <div className="relative overflow-hidden rounded-[16px] h-32 cursor-pointer group">
-                  <img
-                    src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&q=80&w=600"
-                    alt="Promotion Banner"
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-black/20 flex items-center justify-between px-4">
-                    <ChevronRight className="w-8 h-8 text-white/70 rotate-180 hover:text-white transition-colors" />
-                    <ChevronRight className="w-8 h-8 text-white/70 hover:text-white transition-colors" />
-                  </div>
-                </div>
-              </div>
-            </Card>
+            {/* Promotion Baners — real, dynamic (was a hardcoded static
+                unsplash photo with non-functional arrows) */}
+            <PromotionBannerWidget />
 
             {/* Projects Overview */}
             <Card className="overflow-hidden rounded-[24px] border border-white/80 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.06)] dark:bg-zinc-900">
@@ -1248,7 +1247,11 @@ export default function LeadExecutiveDashboard() {
                 <CardTitle className="text-[16px] font-bold text-[#243b53] dark:text-zinc-100">Important</CardTitle>
               </CardHeader>
               <div className="grid grid-cols-2 gap-2 p-4 pt-3">
-                {[ ["Notice", "0"], ["Complaints", "61(11150)"], ["Event", "67"], ["Login Time", "06:22 PM"] ].map(([l, v], i) => (
+                {[
+                  ["Notice", noticesQuery.isLoading ? "-" : String(importantStats.notices)],
+                  ["Event", eventsQuery.isLoading ? "-" : String(importantStats.events)],
+                  ["Login Time", new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })],
+                ].map(([l, v], i) => (
                   <div key={i} className="flex items-center justify-between rounded-md bg-[#f1f5f9] px-3 py-2 text-[12px] dark:bg-zinc-800">
                     <span className="font-semibold text-slate-600 truncate dark:text-zinc-300">{l}</span>
                     <span className="font-bold text-slate-800 tabular-nums italic ml-2 shrink-0 dark:text-zinc-100">{v}</span>
@@ -1291,7 +1294,7 @@ export default function LeadExecutiveDashboard() {
             <div className="space-y-2">
               <label className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">Source</label>
               <div className="relative">
-                <select 
+                <select
                   value={uploadSource}
                   onChange={(e) => setUploadSource(e.target.value)}
                   className="w-full h-11 border border-slate-200 rounded-lg px-3 text-sm appearance-none outline-none bg-white text-slate-500 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800"
@@ -1308,11 +1311,11 @@ export default function LeadExecutiveDashboard() {
             </div>
             <div className="space-y-2">
               <label className="text-[13px] font-bold text-slate-700 dark:text-zinc-400">File</label>
-              <input 
-                type="file" 
-                accept=".xlsx,.xls,.csv" 
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
                 onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-slate-300 file:text-sm file:font-bold file:bg-white file:text-slate-700 hover:file:bg-slate-50 dark:file:bg-zinc-800 dark:file:text-zinc-300 border border-slate-200 rounded-lg cursor-pointer dark:text-zinc-400 dark:border-zinc-800" 
+                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border file:border-slate-300 file:text-sm file:font-bold file:bg-white file:text-slate-700 hover:file:bg-slate-50 dark:file:bg-zinc-800 dark:file:text-zinc-300 border border-slate-200 rounded-lg cursor-pointer dark:text-zinc-400 dark:border-zinc-800"
               />
             </div>
           </div>

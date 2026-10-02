@@ -18,6 +18,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
 export default function ItManagerDashboard() {
@@ -2256,21 +2257,10 @@ export default function ItManagerDashboard() {
                     </div>
                 </div>
 
-                {/* Promotion Banners (4 Cols) */}
+                {/* Promotion Banners (4 Cols) — real, dynamic */}
                 <div className="col-span-12 lg:col-span-4">
                     <h2 className="text-[16px] font-bold text-slate-700 mb-4 dark:text-zinc-400">Promotion Baners</h2>
-                    <Card className="overflow-hidden border-none shadow-sm rounded-[10px] relative h-[90px] group">
-                        <img
-                            src="https://img.freepik.com/free-photo/young-women-hugging-each-other-smiling_23-2148181676.jpg"
-                            alt="Promotion Banner"
-                            className="w-full h-full object-cover"
-                        />
-                        {/* Chevrons overlay */}
-                        <div className="absolute inset-0 flex items-center justify-between px-2 bg-gradient-to-t from-black/10 to-transparent">
-                            <div className="w-6 h-6 flex items-center justify-center text-white/70 hover:text-white cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"><ChevronRight className="rotate-180" /></div>
-                            <div className="w-6 h-6 flex items-center justify-center text-white/70 hover:text-white cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"><ChevronRight /></div>
-                        </div>
-                    </Card>
+                    <PromotionBannerWidget />
                 </div>
             </div>
 

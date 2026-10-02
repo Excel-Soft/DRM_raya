@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
+import { PromotionBannerWidget } from "@/components/promotion-banner-widget";
 import { apiRequest } from "@/lib/queryClient";
 import CheckDuplicationPage from "@/pages/CheckDuplicationPage";
 import ServicePrivatePool from "@/pages/service-private-pool";
@@ -488,11 +489,7 @@ export default function ServiceManagerDashboard() {
                     {/* Promotion Baners */}
                     <div className="bg-white backdrop-blur-xl rounded-2xl border border-white/60 shadow-[0_4px_24px_rgba(0,0,0,0.03)] relative overflow-hidden p-6 dark:bg-zinc-900">
                         <h3 className="text-[15px] font-bold text-[#475569] mb-4 dark:text-zinc-400">Promotion Baners</h3>
-                        <div className="h-32 w-full bg-[#fcd5ce] rounded shadow-inner overflow-hidden relative flex items-center justify-center dark:bg-zinc-900">
-                            <div className="absolute inset-0 opacity-50 dark:opacity-90 bg-[url('https://images.unsplash.com/photo-1550989460-0adf9ea622e2?ixlib=rb-4.0.3&auto=format&fit=crop&w=600&q=80')] bg-cover bg-center mix-blend-multiply dark:mix-blend-normal"></div>
-                            <ChevronLeft className="absolute left-2 text-white/70 h-8 w-8 cursor-pointer hover:text-white" />
-                            <ChevronRight className="absolute right-2 text-white/70 h-8 w-8 cursor-pointer hover:text-white" />
-                        </div>
+                        <PromotionBannerWidget />
                     </div>
 
                     {/* Current Month Achievement */}

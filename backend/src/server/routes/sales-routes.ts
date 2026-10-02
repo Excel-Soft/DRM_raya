@@ -21,7 +21,7 @@ import { customers, targetSystemDailyTargets, targetSystemUserTargets, users, se
 import crypto from "crypto";
 import { ensureBvReportsSchema } from "../repositories/bv-reports.repository";
 import { generateDrmId, resolveOrCreateCanonicalDrmId } from "../utils/drm-id-utils";
-import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
+import { isManagerialRole, normalizeRole, ROLES, shouldSkipLeadAutoOwnership } from "../utils/role-utils";
 import { assertCanEditCustomer } from "../utils/ownership";
 import { sendError, ApiError } from "../utils/api-error";
 import { recordAssignment, getAssignmentHistory } from "../utils/assignment-history";
@@ -2806,7 +2806,7 @@ export function registerSalesRoutes(app: Express) {
             businessLine: businessLine || null,
             abType: abType || null,
             drmId,
-            ownerUserId: isManagerialRole(((req.user as any).activeRoleId || req.user.roleId)) ? null : req.user.userId,
+            ownerUserId: shouldSkipLeadAutoOwnership((req.user as any).activeRoleId || req.user.roleId) ? null : req.user.userId,
             createdBy: req.user.userId,
             designation: req.body.designation || null,
             personName: req.body.personName || null,
@@ -4458,7 +4458,11 @@ export function registerSalesRoutes(app: Express) {
         serviceTypes: req.body.serviceTypes || [],
         businessLine: req.body.businessLine,
         drmId,
-        ownerUserId: isManagerialRole(((req.user as any).activeRoleId || req.user.roleId)) ? undefined : req.user.userId,
+        // customersRepository.create() only treats an explicit `null` as "no
+        // owner" (it defaults bare `undefined` back to the creator — see its
+        // `ownerUserId !== undefined ? ... : userId` fallback), so this must
+        // pass `null`, not `undefined`, to actually land in the unowned pool.
+        ownerUserId: shouldSkipLeadAutoOwnership((req.user as any).activeRoleId || req.user.roleId) ? null : req.user.userId,
       }, req.user.userId);
 
       res.status(201).json(customer);
