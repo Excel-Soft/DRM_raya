@@ -285,7 +285,8 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists approved_at timestamptz,
           add column if not exists hod_status text,
           add column if not exists accountant_status text,
-          add column if not exists sales_person_id uuid
+          add column if not exists sales_person_id uuid,
+          add column if not exists renwal integer
       `);
 
 
@@ -4247,7 +4248,7 @@ export function registerAccountRoutes(app: Express) {
         buyingDateWhere = ` AND date >= $1 AND date <= $2`;
       }
 
-      // 1. Wallet Balances & Stats — real computed values (Phase 8)
+      // 1. Wallet Balances & Stats — real computed values
       const statsRes = await pool.query(`
         WITH gm_approved AS (
           SELECT
@@ -4284,12 +4285,19 @@ export function registerAccountRoutes(app: Express) {
                  COALESCE(SUM(amount_pkr), 0) as ab_paid_pkr
           FROM drm.ab_payments
           WHERE status = 'paid' AND coalesce(is_deleted,false) = false
+        ),
+        partial_recovery AS (
+          SELECT COALESCE(SUM(amount_usd), 0) as partial_rec_usd
+          FROM drm.gm_entries
+          WHERE coalesce(is_deleted, false) = false
+            AND coalesce(is_partial_payment, false) = true
+            AND status = 'Approved'
         )
         SELECT
-          -- Available cash: dollars received from customers
+          -- Available cash: dollars received from customers (current quarter)
           (full_usd + partial_usd)                          AS "availableCash",
           (full_pkr + partial_pkr)                          AS "availableCashPkr",
-          -- Loan balance
+          -- Loan balance (last quarter)
           loan_usd                                          AS "availableLoan",
           loan_pkr                                          AS "availableLoanPkr",
           -- Dollar buying pool
@@ -4304,22 +4312,37 @@ export function registerAccountRoutes(app: Express) {
           -- Recovered amounts
           cash_rec                                          AS "cashRecovered",
           dollar_rec                                        AS "dollarRecovered",
+          -- Partial dollars recovery (installment recovery)
+          partial_rec_usd                                   AS "partialDollarsRecovery",
           -- AB paid
           ab_paid_usd                                       AS "abPaidUsd",
           ab_paid_pkr                                       AS "abPaidPkr"
-        FROM gm_approved, gm_pending, buy_stats, refund_stats, ab_paid
+        FROM gm_approved, gm_pending, buy_stats, refund_stats, ab_paid, partial_recovery
       `);
       const walletStats = statsRes.rows[0];
 
-      // 2. Full Payments
+      // 2. Full Payments — columns matching PHP: #, Drm id, Created Date, Company, Sale Person, Dollar, Cus Dollar, Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, Package, Type, Expire, Dropout, Status, Action
       const fullPayments = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date",
                company_name as "company", sales_person_name as "salePerson",
-               amount_usd as "dollar", amount_pkr as "pkr",
+               amount_usd as "dollar",
+               COALESCE(customer_dollar, amount_usd) as "customerDollar",
+               amount_pkr as "pkr",
                dollar_rate as "rate",
-               extra_discount_usd as "exDisc", alibaba_discount_usd as "abDisc",
+               COALESCE(extra_discount_usd, 0) as "exDisc",
+               COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
                member_id as "memberId", order_id as "orderId",
-               package_type as "package", entry_type as "type",
+               package_type as "package",
+               CASE
+                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
+                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  ELSE 'New'
+                END as "type",
+               expiry_date as "expireDate",
+               dropout as "dropout",
+               status,
                proof_url as "proofUrl", notes
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false
@@ -4329,13 +4352,28 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
-      // 3. Partial Payments
+      // 3. Partial Payments — columns matching PHP datatable
       const partialPayments = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date",
                company_name as "company", sales_person_name as "salePerson",
-               amount_usd as "dollar", amount_pkr as "pkr",
-               package_type as "package", gm_type as "type",
+               amount_usd as "dollar",
+               COALESCE(customer_dollar, amount_usd) as "customerDollar",
+               amount_pkr as "pkr",
+               dollar_rate as "rate",
+               COALESCE(extra_discount_usd, 0) as "exDisc",
+               COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
                member_id as "memberId", order_id as "orderId",
+               package_type as "package",
+               CASE
+                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
+                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  ELSE 'New'
+                END as "type",
+               expiry_date as "expireDate",
+               dropout as "dropout",
+               status,
                proof_url as "proofUrl", notes
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false
@@ -4344,26 +4382,99 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
-      // 4. Loan Payments
+      // 4. Loan Payments — columns matching PHP: #, Drm id, Joining Date, Company, Sale Person, Dollar, Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, loan Amount, Package, Type, Expire, Dropout, Status, Action
       const loans = await pool.query(`
         SELECT id, drm_id as "drmId", created_at as "date",
                company_name as "company", sales_person_name as "salePerson",
-               amount_usd as "dollar", amount_pkr as "pkr",
+               amount_usd as "dollar",
+               amount_pkr as "pkr",
+               dollar_rate as "rate",
+               COALESCE(extra_discount_usd, 0) as "exDisc",
+               COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
+               amount_usd as "loanAmount",
                member_id as "memberId", order_id as "orderId",
-               package_type as "package", is_loan, entry_type,
+               package_type as "package",
+               CASE
+                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
+                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  ELSE 'New'
+                END as "type",
+               expiry_date as "expireDate",
+               dropout as "dropout",
+               status, is_loan, entry_type,
                proof_url as "proofUrl", notes
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false AND coalesce(is_loan,false) = true ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
-      // 5. Recent Transactions
-      const transactions = await pool.query(`
-        SELECT id, company_name as "name", created_at as "date",
-               notes as "email", amount_usd as "amount", dollar_rate as "rate"
+      // 5. Daily Transactions segmented by type (matching PHP 5-tab structure: Balance, Buy, Sell, Martini, Not Used)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      // Balance tab: all dollar_buying entries
+      const txBalance = await pool.query(`
+        SELECT id, buyer_name as "name", date, paypal_email as "email",
+               dollar_amount as "amount", dollar_rate as "rate", 'balance' as "txType"
+        FROM drm.dollar_buying
+        WHERE coalesce(is_deleted, false) = false
+        ORDER BY date DESC LIMIT 20
+      `);
+
+      // Buy tab: dollar purchases today
+      const txBuy = await pool.query(`
+        SELECT id, buyer_name as "name", date, paypal_email as "email",
+               dollar_amount as "amount", dollar_rate as "rate", 'buy' as "txType"
+        FROM drm.dollar_buying
+        WHERE date >= $1 AND date < $2
+        ORDER BY id DESC
+      `, [today, tomorrow]);
+
+      // Sell tab: gm_entries paid today
+      const txSell = await pool.query(`
+        SELECT id, company_name as "name", created_at as "date", notes as "email",
+               amount_usd as "amount", dollar_rate as "rate", 'sell' as "txType"
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false
-        ORDER BY created_at DESC LIMIT 10
+          AND created_at >= $1 AND created_at < $2
+          AND status = 'Approved'
+        ORDER BY id DESC
+      `, [today, tomorrow]);
+
+      // Martini tab: gm_entries not yet shown on AB
+      const txMartini = await pool.query(`
+        SELECT id, company_name as "name", created_at as "date", notes as "email",
+               amount_usd as "amount", dollar_rate as "rate", 'martini' as "txType"
+        FROM drm.gm_entries
+        WHERE coalesce(is_deleted, false) = false
+          AND status = 'Approved'
+          AND coalesce(is_partial_payment, false) = false
+          AND coalesce(is_loan, false) = false
+          AND NOT EXISTS (
+            SELECT 1 FROM drm.ab_payments ap
+            WHERE ap.gm_drm_id = drm.gm_entries.drm_id
+            AND coalesce(ap.is_deleted,false) = false
+          )
+        ORDER BY id DESC LIMIT 20
+      `);
+
+      // Not Used tab: dollar_buying entries not linked to any gm payment
+      const txNotUsed = await pool.query(`
+        SELECT db.id, db.buyer_name as "name", db.date, db.paypal_email as "email",
+               db.dollar_amount as "amount", db.dollar_rate as "rate", 'notUsed' as "txType"
+        FROM drm.dollar_buying db
+        WHERE coalesce(db.is_deleted, false) = false
+          AND (db.gm_id IS NULL OR NOT EXISTS (
+            SELECT 1 FROM drm.gm_entries ge
+            WHERE ge.id::text = db.gm_id::text
+            AND coalesce(ge.is_deleted, false) = false
+            AND ge.status = 'Approved'
+          ))
+        ORDER BY db.date DESC LIMIT 20
       `);
 
       // 6. Pending Approvals
@@ -4379,7 +4490,7 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
-      // 7. Paid Alibaba — JOIN against real ab_payments (Phase 8: no more hardcoded IDs)
+      // 7. Paid Alibaba — JOIN against real ab_payments
       const alibabaPayments = await pool.query(`
         SELECT
           g.id,
@@ -4478,6 +4589,15 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY date DESC LIMIT 50
       `, params);
 
+      // Compile daily transaction counts and sums by type
+      const dailyTxSummary = {
+        balance: { count: txBalance.rows.length, sum: txBalance.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txBalance.rows },
+        buy:     { count: txBuy.rows.length,     sum: txBuy.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),     items: txBuy.rows },
+        sell:    { count: txSell.rows.length,    sum: txSell.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0),    items: txSell.rows },
+        martini: { count: txMartini.rows.length, sum: txMartini.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txMartini.rows },
+        notUsed: { count: txNotUsed.rows.length, sum: txNotUsed.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txNotUsed.rows },
+      };
+
       res.json({
         walletStats,
         fullPayments: fullPayments.rows,
@@ -4494,7 +4614,8 @@ export function registerAccountRoutes(app: Express) {
         pendingApprovals: pendingApprovals.rows,
         alibabaPayments: alibabaPayments.rows,
         abLiabilities,
-        transactions: transactions.rows,
+        transactions: txBalance.rows, // legacy fallback: balance tab items
+        dailyTxSummary,
         counts: {
           full: fullPayments.rows.length,
           partial: partialPayments.rows.length,
