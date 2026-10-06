@@ -97,16 +97,16 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
                 <div className="flex gap-1.5 items-center justify-center">
                   <button 
                     type="button" 
-                    onClick={() => onDollarModal ? onDollarModal(item) : (onAttach && onAttach(item))} 
-                    title="Dollar Allocation / Pay Alibaba"
+                    onClick={() => onDollarModal ? onDollarModal(item, false) : (onAttach && onAttach(item))} 
+                    title="Dollar Allocation / Pay Alibaba (Standard)"
                     className="w-5 h-5 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer"
                   >
                     <DollarSign size={11} strokeWidth={2.8} />
                   </button>
                   <button 
                     type="button" 
-                    onClick={() => onView(item)} 
-                    title="View Details"
+                    onClick={() => onDollarModal ? onDollarModal(item, true) : (onView && onView(item))} 
+                    title="Dollar Allocation / Pay Alibaba (Temp Payment)"
                     className="w-5 h-5 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer"
                   >
                     <Info size={11} strokeWidth={2.8} />
@@ -237,11 +237,56 @@ export default function DollarSystem() {
     }
   };
 
-  const openDollarModal = (item: any) => {
+  const openDollarModal = (item: any, isTemp: boolean = false) => {
     const targetDollar = parseFloat(item.dollar || item.customerDollar || 1357);
     const rateVal = parseFloat(item.rate || 277.16);
 
-    const initialSlots = [
+    const initialSlots = isTemp ? [
+      {
+        id: "0",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2026-01-17",
+        email: "wloureiro2023@gmail.com",
+        rate: 277.00,
+        totalShort: "null",
+        dollars: 900,
+        useDollar: 900
+      },
+      {
+        id: "1",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2026-01-12",
+        email: "handyholdem0@gmail.com",
+        rate: 280.00,
+        totalShort: "null",
+        dollars: 100,
+        useDollar: 100
+      },
+      {
+        id: "15",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2025-09-15",
+        email: "sportsexceedinc@gmail.com",
+        rate: 284.00,
+        totalShort: "null",
+        dollars: 58.44,
+        useDollar: 58.44
+      },
+      {
+        id: "16",
+        checked: false,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2025-09-15",
+        email: "sportsexceedinc@gmail.com",
+        rate: 284.00,
+        totalShort: "null",
+        dollars: 58.44,
+        useDollar: 58.44
+      }
+    ] : [
       {
         id: "0",
         checked: true,
@@ -280,9 +325,10 @@ export default function DollarSystem() {
     setDollarModalItem(item);
     setDollarSlots(initialSlots);
     setDollarForm({
-      memberId: item.memberId ? item.memberId : item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz",
-      orderId: item.orderId ? item.orderId : `P${Date.now().toString().slice(0, 16)}`,
-      sliderMin: 0,
+      isTemp: isTemp,
+      memberId: isTemp ? "pk19023484233uoqz" : (item.memberId ? item.memberId : item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz"),
+      orderId: isTemp ? "P2610031311163635" : (item.orderId ? item.orderId : `P${Date.now().toString().slice(0, 16)}`),
+      sliderMin: isTemp ? 2 : 0,
       sliderMax: 100,
       removeUnselected: true,
       dollar: String(targetDollar.toFixed(2)),
@@ -498,12 +544,26 @@ export default function DollarSystem() {
           <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[95vh] flex flex-col border border-gray-200 dark:border-zinc-800" onClick={e=>e.stopPropagation()}>
             
             {/* Modal Header */}
-            <div className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-10">
-              <div className="flex flex-wrap items-center gap-x-8 gap-y-1 text-base font-bold text-gray-800 dark:text-zinc-100 uppercase tracking-tight">
-                <span>{dollarModalItem.company || "ROYAL TRADERS"} PKR: <span className="text-[#e74c3c] font-black">{dollarModalItem.pkr ? Number(dollarModalItem.pkr).toLocaleString() : "320000"}</span></span>
-                <span>Dollar Rate: <span className="text-[#e74c3c] font-black">{dollarModalItem.rate || "277.16"}</span></span>
+            <div className={cn("px-6 py-4 flex items-center justify-between sticky top-0 z-10 transition-colors",
+              dollarForm.isTemp 
+                ? "bg-[#f59e0b] text-gray-900 border-b border-amber-600/30" 
+                : "bg-white dark:bg-zinc-900 text-gray-800 dark:text-zinc-100 border-b border-gray-100 dark:border-zinc-800"
+            )}>
+              <div className="flex flex-wrap items-center gap-x-8 gap-y-1 text-base font-bold uppercase tracking-tight">
+                <span className={dollarForm.isTemp ? "text-gray-900" : "text-gray-800 dark:text-zinc-100"}>
+                  {dollarModalItem.company || "ROYAL TRADERS"} PKR: <span className="text-[#e74c3c] font-black">{dollarModalItem.pkr ? Number(dollarModalItem.pkr).toLocaleString() : "320000"}</span>
+                </span>
+                <span className={dollarForm.isTemp ? "text-gray-900" : "text-gray-800 dark:text-zinc-100"}>
+                  Dollar Rate: <span className="text-[#e74c3c] font-black">{dollarModalItem.rate || "277.16"}</span>
+                </span>
               </div>
-              <button onClick={()=>setDollarModalItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200 transition-colors p-1" title="Close">
+              <button 
+                onClick={()=>setDollarModalItem(null)} 
+                className={cn("transition-colors p-1",
+                  dollarForm.isTemp ? "text-gray-900 hover:text-black" : "text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"
+                )} 
+                title="Close"
+              >
                 <X size={20}/>
               </button>
             </div>
