@@ -1,5 +1,19 @@
 <?php
 
+if (!class_exists('PHPExcel_IOFactory')) {
+    class PHPExcel_IOFactory {
+        public static function load($pFilename) { return new self(); }
+        public static function createReader($readerType = '') { return new self(); }
+        public static function identify($pFilename) { return ''; }
+        public function getActiveSheet() { return $this; }
+        public function toArray($nullValue = null, $calculateFormulas = true, $formatData = true, $returnCellRef = false) { return []; }
+    }
+}
+
+if (!function_exists('GET')) {
+    function GET(...$args) { return null; }
+}
+
 if (isset($_GET['change-country'])) {
     $role0 = $_GET['change-country'];
     $role0Sep = explode("=", $role0);
@@ -11010,6 +11024,7 @@ function daybook($cm, $user)
 
         $run = mysqli_query($con, $qury);
     }
+    return $run;
 }
 
 
@@ -36072,7 +36087,7 @@ if (isset($_POST['phone_edit_company'])) {
     $result = mysqli_query($con, $query);
     $cot = mysqli_num_rows($result);
     if (!$result) {
-        die('Query failed: ' . mysql_error());
+        die('Query failed: ' . mysqli_error($con));
     }
     $row = mysqli_fetch_assoc($result);
     if ($cot > 0) {
@@ -36087,7 +36102,7 @@ if (isset($_POST['mobile_edit_company'])) {
     $result = mysqli_query($con, $query);
     $cot = mysqli_num_rows($result);
     if (!$result) {
-        die('Query failed: ' . mysql_error());
+        die('Query failed: ' . mysqli_error($con));
     }
     $row = mysqli_fetch_assoc($result);
     if ($cot > 0) {
@@ -36102,7 +36117,7 @@ if (isset($_POST['email_edit_company'])) {
     $result = mysqli_query($con, $query);
     $cot = mysqli_num_rows($result);
     if (!$result) {
-        die('Query failed: ' . mysql_error());
+        die('Query failed: ' . mysqli_error($con));
     }
     $row = mysqli_fetch_assoc($result);
     if ($cot > 0) {
@@ -38339,6 +38354,7 @@ function webxl_com_history($com_id, $title, $detail, $addBy)
     $query = "INSERT INTO `webxl_com_history` (`com_id`, `tilte`, `detail`, `addBy`, `create_date`) VALUES
     ('$com_id','$title','$detail','$addBy','$datetime')";
     $runu = mysqli_query($con, $query);
+    return $runu;
 }
 function webxl_gmaccount_history($com_id, $title, $addBy)
 {
@@ -38356,6 +38372,7 @@ function webxl_gmaccount_history($com_id, $title, $addBy)
     $run2 = mysqli_query($con, $query2);
 
     // mysqli_close($con);
+    return $runu;
 }
 
 function allReceptionClientsInMeetingMonthlyDateWaise($tema, $start, $end)
