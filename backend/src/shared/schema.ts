@@ -1941,7 +1941,7 @@ export const officeExpenses = drmSchema.table("office_expenses", {
   chequeNumber: text("cheque_number"),
   fileUrl: text("file_url"),
   detail: text("detail"),
-  expenseDate: timestamp("expense_date").notNull().defaultNow(),
+  expenseDate: date("expense_date", { mode: 'string' }).notNull().defaultNow(),
   createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

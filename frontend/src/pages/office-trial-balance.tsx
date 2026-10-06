@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, Fragment } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Search, ChevronDown, X, Download, AlertTriangle } from "lucide-react";
@@ -136,32 +136,184 @@ interface TrialBalanceResponse {
 
 interface AppliedFilters {
   accountingHeads: string[];
-  branch: string;
+  parentHeads: string[];
+  childHeads: string[];
+  branch: string[];
   startDate: string;
   endDate: string;
   includeZeroBalance: boolean;
 }
 
-function buildParams(f: AppliedFilters): string {
+function buildParams(f: AppliedFilters, dbAccountHeads: any[]): string {
   const p = new URLSearchParams();
-  if (f.accountingHeads.length) p.set("accountType", f.accountingHeads.join(","));
-  if (f.branch.trim()) p.set("branch", f.branch.trim());
+  
+  if (f.accountingHeads.length) {
+    const categories = Array.from(new Set(f.accountingHeads.map(id => dbAccountHeads.find(h => h.id === id)?.category).filter(Boolean)));
+    if (categories.length) p.set("accountType", categories.join(","));
+  }
+  
+  if (f.branch.length) {
+    p.set("branch", f.branch.join(","));
+  }
   if (f.startDate) p.set("startDate", f.startDate);
   if (f.endDate) p.set("endDate", f.endDate);
   if (f.includeZeroBalance) p.set("includeZeroBalance", "true");
   return p.toString();
 }
 
-function money(value: string | null | undefined): string {
-  const n = parseFloat(value ?? "") || 0;
-  if (n === 0) return "";
+function money(value: string | number | null | undefined): string {
+  const n = typeof value === "string" ? parseFloat(value) : (value || 0);
+  if (n === 0) return "0.00";
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function HierarchicalView({ dbAccountHeads, rows, applied, totals }: { dbAccountHeads: any[], rows: TrialBalanceRow[], applied: AppliedFilters | null, totals: any }) {
+  const includeZeroBalance = applied?.includeZeroBalance || false;
+  const tbMap = new Map<string, number>();
+  for (const r of rows) {
+    const dr = parseFloat(r.closingDebit) || 0;
+    const cr = parseFloat(r.closingCredit) || 0;
+    const isDebitNormal = ["Assets", "Expenses"].includes(r.category || "");
+    const net = isDebitNormal ? dr - cr : cr - dr;
+    tbMap.set(r.accountHeadId, net);
+  }
+
+  const childrenMap = new Map<string, any[]>();
+  for (const h of dbAccountHeads) {
+    if (h.parentAccountId) {
+      if (!childrenMap.has(h.parentAccountId)) childrenMap.set(h.parentAccountId, []);
+      childrenMap.get(h.parentAccountId)!.push(h);
+    }
+  }
+
+  const buildTree = (node: any): any => {
+    const children = (childrenMap.get(node.id) || []).map(buildTree);
+    const ownAmount = tbMap.get(node.id) || 0;
+    const childrenAmount = children.reduce((sum, c) => sum + c.totalAmount, 0);
+    const totalAmount = ownAmount + childrenAmount;
+    return { ...node, children, totalAmount };
+  };
+
+  const roots = dbAccountHeads
+    .filter(h => !h.parentAccountId)
+    .filter(h => applied?.accountingHeads?.length ? applied.accountingHeads.includes(h.id) : true)
+    .map(buildTree);
+  
+  // Prune the tree based on parent and child filters if applied
+  if (applied?.parentHeads?.length) {
+    for (const r of roots) {
+      if (r.children) {
+        r.children = r.children.filter((c: any) => applied.parentHeads.includes(c.id));
+      }
+    }
+  }
+  
+  if (applied?.childHeads?.length) {
+    for (const r of roots) {
+      if (r.children) {
+        for (const c of r.children) {
+          if (c.children) {
+            c.children = c.children.filter((cc: any) => applied.childHeads.includes(cc.id));
+          }
+        }
+      }
+    }
+  }
+
+  // Recalculate totals after pruning
+  const recalcTotals = (node: any): number => {
+    let childSum = 0;
+    if (node.children) {
+      for (const c of node.children) {
+        childSum += recalcTotals(c);
+      }
+    }
+    const ownAmount = tbMap.get(node.id) || 0;
+    node.totalAmount = ownAmount + childSum;
+    return node.totalAmount;
+  };
+  
+  for (const r of roots) {
+    recalcTotals(r);
+  }
+
+  let globalRowNum = 0;
+
+  const renderNode = (node: any, level: number = 0): React.ReactNode => {
+    if (!includeZeroBalance && Math.abs(node.totalAmount) < 0.01) return null;
+
+    globalRowNum++;
+    const currentNum = globalRowNum;
+    
+    let bgClass = "bg-white dark:bg-zinc-900";
+    if (level === 0) bgClass = "bg-[#cfe2ff] hover:bg-[#cfe2ff] dark:bg-blue-900/40 text-blue-900 dark:text-blue-100 font-semibold";
+    else if (level === 1) bgClass = "bg-[#d1ecf1] hover:bg-[#d1ecf1] dark:bg-cyan-900/30 text-cyan-900 dark:text-cyan-100 font-medium";
+
+    const hasChildren = node.children && node.children.length > 0;
+
+    return (
+      <Fragment key={node.id}>
+        <TableRow className={`${bgClass} border-b border-slate-200 dark:border-zinc-800`}>
+          <TableCell className="text-[13px]">{currentNum}</TableCell>
+          {level === 0 && (
+            <>
+              <TableCell className="text-[13px]">{node.code}</TableCell>
+              <TableCell colSpan={3} className="text-[13px] uppercase">{node.name}</TableCell>
+            </>
+          )}
+          {level === 1 && (
+            <>
+              <TableCell></TableCell>
+              <TableCell className="text-[13px]">{node.code}</TableCell>
+              <TableCell colSpan={2} className="text-[13px]">{node.name}</TableCell>
+            </>
+          )}
+          {level >= 2 && (
+            <>
+              <TableCell></TableCell>
+              <TableCell></TableCell>
+              <TableCell colSpan={2} className="text-[13px]">{node.code ? `${node.code} - ` : ''}{node.name}</TableCell>
+            </>
+          )}
+          <TableCell className="text-center text-[13px]">-</TableCell>
+          <TableCell className="text-right text-[13px] font-bold">{money(node.totalAmount)}</TableCell>
+        </TableRow>
+        {hasChildren && node.children.map((c: any) => renderNode(c, level + 1))}
+        {level === 0 && (
+          <TableRow className="h-[5px] bg-[#f8f9fa] dark:bg-zinc-950 border-none hover:bg-[#f8f9fa]">
+            <TableCell colSpan={7} className="p-0"></TableCell>
+          </TableRow>
+        )}
+      </Fragment>
+    );
+  };
+
+  const totalAssetsExp = roots.filter(r => ["Assets", "Expenses"].includes(r.category)).reduce((sum, r) => sum + r.totalAmount, 0);
+  const totalLiabEqRev = roots.filter(r => !["Assets", "Expenses"].includes(r.category)).reduce((sum, r) => sum + r.totalAmount, 0);
+  // In a balanced TB, Assets + Expenses = Liab + Equity + Revenue. 
+  // We will just show the total of Debits (or whichever is bigger) as the Grand Total for visual purposes.
+  const grandTotal = Math.max(totalAssetsExp, totalLiabEqRev);
+
+  return (
+    <>
+      {roots.map(r => renderNode(r, 0))}
+      {totals && (
+        <TableRow className="bg-[#e9ecef] dark:bg-zinc-800 font-bold border-t-2 border-slate-300">
+          <TableCell colSpan={5} className="text-right text-[13px] font-bold">Grand Total (Balanced):</TableCell>
+          <TableCell className="text-center text-[13px] font-bold">-</TableCell>
+          <TableCell className="text-right text-[13px] font-bold text-green-700 dark:text-green-400">{money(grandTotal)}</TableCell>
+        </TableRow>
+      )}
+    </>
+  );
 }
 
 export default function OfficeTrialBalance() {
   const { toast } = useToast();
   const [accountingHeads, setAccountingHeads] = useState<string[]>([]);
-  const [branch, setBranch] = useState("");
+  const [parentHeads, setParentHeads] = useState<string[]>([]);
+  const [childHeads, setChildHeads] = useState<string[]>([]);
+  const [branch, setBranch] = useState<string[]>([]);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [includeZeroBalance, setIncludeZeroBalance] = useState(false);
@@ -189,19 +341,19 @@ export default function OfficeTrialBalance() {
     error,
   } = useQuery<TrialBalanceResponse>({
     queryKey: ["/api/office/trial-balance", applied],
-    queryFn: () => apiRequestJson<TrialBalanceResponse>("GET", `/api/office/trial-balance?${buildParams(applied!)}`),
-    enabled: applied !== null,
+    queryFn: () => apiRequestJson<TrialBalanceResponse>("GET", `/api/office/trial-balance?${buildParams(applied!, dbAccountHeads)}`),
+    enabled: applied !== null && dbAccountHeads.length > 0,
   });
 
   const handleGenerate = () => {
-    setApplied({ accountingHeads, branch, startDate, endDate, includeZeroBalance });
+    setApplied({ accountingHeads, parentHeads, childHeads, branch, startDate, endDate, includeZeroBalance });
   };
 
   const handleExport = async () => {
-    const filters = applied ?? { accountingHeads, branch, startDate, endDate, includeZeroBalance };
+    const filters = applied ?? { accountingHeads, parentHeads, childHeads, branch, startDate, endDate, includeZeroBalance };
     setExporting(true);
     try {
-      const res = await apiRequest("GET", `/api/office/trial-balance/export?${buildParams(filters)}`);
+      const res = await apiRequest("GET", `/api/office/trial-balance/export?${buildParams(filters, dbAccountHeads)}`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(extractApiError(body, res.status));
@@ -242,54 +394,80 @@ export default function OfficeTrialBalance() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
               <div className="space-y-2">
                 <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                  Accounting Head (Category)
+                  Select Accounting Head <span className="text-red-500">*</span>
                 </Label>
                 <MultiSelect
-                  options={ACCOUNTING_HEAD_OPTIONS}
+                  options={dbAccountHeads.filter(h => !h.parentAccountId).map(h => ({ label: `${h.code} - ${h.name}`, value: h.id }))}
                   selected={accountingHeads}
-                  onChange={setAccountingHeads}
+                  onChange={(vals) => {
+                    setAccountingHeads(vals);
+                    setParentHeads([]);
+                    setChildHeads([]);
+                  }}
                 />
               </div>
 
               <div className="space-y-2">
                 <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                  Branch
+                  Select Parent Head
                 </Label>
-                <Input
-                  list="tb-branch-options"
-                  value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
-                  placeholder="All branches"
-                  className="w-full text-sm"
+                <MultiSelect
+                  options={dbAccountHeads.filter(h => h.parentAccountId && (accountingHeads.length === 0 || accountingHeads.includes(h.parentAccountId))).map(h => ({ label: `${h.code} - ${h.name}`, value: h.id }))}
+                  selected={parentHeads}
+                  onChange={(vals) => {
+                    setParentHeads(vals);
+                    setChildHeads([]);
+                  }}
                 />
-                <datalist id="tb-branch-options">
-                  {branchOptions.map((b) => (
-                    <option key={b} value={b} />
-                  ))}
-                </datalist>
               </div>
 
               <div className="space-y-2">
                 <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                  Start Date
+                  Select Child Head
+                </Label>
+                <MultiSelect
+                  options={dbAccountHeads.filter(h => h.parentAccountId && parentHeads.includes(h.parentAccountId)).map(h => ({ label: `${h.code} - ${h.name}`, value: h.id }))}
+                  selected={childHeads}
+                  onChange={setChildHeads}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  Select Office <span className="text-red-500">*</span>
+                </Label>
+                <MultiSelect
+                  options={branchOptions.map(b => ({ label: b, value: b }))}
+                  selected={branch}
+                  onChange={setBranch}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  Start Date <span className="text-red-500">*</span>
                 </Label>
                 <Input
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                   className="w-full text-sm"
+                  required
                 />
               </div>
 
               <div className="space-y-2">
                 <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                  End Date
+                  End Date <span className="text-red-500">*</span>
                 </Label>
                 <Input
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="w-full text-sm"
+                  required
                 />
               </div>
             </div>
@@ -351,69 +529,43 @@ export default function OfficeTrialBalance() {
 
               <div className="w-full border border-slate-100 rounded overflow-hidden">
                 <Table>
-                  <TableHeader className="bg-slate-50 dark:bg-zinc-800">
+                  <TableHeader className="bg-slate-100 dark:bg-zinc-800">
                     <TableRow className="hover:bg-transparent">
-                      <TableHead className="text-xs font-bold">Code</TableHead>
-                      <TableHead className="text-xs font-bold">Account</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Opening Dr</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Opening Cr</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Period Dr</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Period Cr</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Closing Dr</TableHead>
-                      <TableHead className="text-xs font-bold text-right">Closing Cr</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[5%]">S.No</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[12%]">Parent Code</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[25%]">Parent Head</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[12%]">Child Code</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[25%]">Child Head</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[8%] text-center">Transactions</TableHead>
+                      <TableHead className="text-[13px] font-bold text-slate-700 w-[13%] text-right">Total Amount (PKR)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading || isFetching ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8 text-slate-500 text-sm">Loading trial balance…</TableCell>
+                        <TableCell colSpan={7} className="text-center py-8 text-slate-500 text-sm">Loading report…</TableCell>
                       </TableRow>
                     ) : isError ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8 text-rose-600 text-sm">
+                        <TableCell colSpan={7} className="text-center py-8 text-rose-600 text-sm">
                           {error instanceof Error ? error.message : "Failed to build the trial balance."}
                         </TableCell>
                       </TableRow>
                     ) : rows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-8 text-slate-500 text-sm">No accounts match these filters.</TableCell>
+                        <TableCell colSpan={7} className="text-center py-8 text-slate-500 text-sm">No records found for the selected criteria.</TableCell>
                       </TableRow>
                     ) : (
-                      <>
-                        {rows.map((r) => (
-                          <TableRow key={r.accountHeadId} className="border-b border-slate-100">
-                            <TableCell className="text-sm font-mono text-slate-600">{r.code}</TableCell>
-                            <TableCell className="text-sm text-slate-700">{r.name}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(r.openingDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(r.openingCredit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(r.periodDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(r.periodCredit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums font-medium">{money(r.closingDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums font-medium">{money(r.closingCredit)}</TableCell>
-                          </TableRow>
-                        ))}
-                        {totals && (
-                          <TableRow className="bg-slate-50 dark:bg-zinc-800 font-bold border-t-2 border-slate-200">
-                            <TableCell className="text-sm" colSpan={2}>Totals</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.openingDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.openingCredit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.periodDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.periodCredit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.closingDebit)}</TableCell>
-                            <TableCell className="text-sm text-right tabular-nums">{money(totals.closingCredit)}</TableCell>
-                          </TableRow>
-                        )}
-                      </>
+                      <HierarchicalView 
+                        dbAccountHeads={dbAccountHeads} 
+                        rows={rows} 
+                        applied={applied}
+                        totals={totals}
+                      />
                     )}
                   </TableBody>
                 </Table>
               </div>
-
-              {report && report.pagination.total > rows.length && (
-                <p className="text-xs text-slate-500">
-                  Showing {rows.length} of {report.pagination.total} accounts (page {report.pagination.page} of {report.pagination.totalPages}).
-                </p>
-              )}
             </CardContent>
           </Card>
         )}

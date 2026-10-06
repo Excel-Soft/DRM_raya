@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { db } from "../db";
 import { 
-  accountHeads, officeExpenses, officeVas, cheques, businessCustomers, invoices, customers,
+  accountHeads, officeExpenses, officeVas, cheques, businessCustomers, invoices, customers, users,
   ledgerEntries, journalVouchers, journalVoucherLines,
   insertAccountHeadSchema, insertOfficeExpenseSchema, insertOfficeVasSchema,
   insertChequeSchema, insertBusinessCustomerSchema
@@ -124,6 +124,47 @@ function buildAccountHeadConditions(query: Request["query"]) {
   }
   return conditions;
 }
+
+router.get("/account-heads/next-code", requireFinancialPermission(FINANCIAL_ACTIONS.accountHeadView, { roles: STAGE2_FINANCIAL_ROLES }), async (req: Request, res: Response) => {
+  try {
+    const parentId = (req.query.parentId as string) || null;
+    const level = parseInt((req.query.level as string) || "1", 10);
+    
+    let maxCodeStr = "";
+    
+    if (!parentId || parentId === "null") {
+      const result = await db.select({ maxCode: sql<string>`MAX(code)` }).from(accountHeads).where(sql`parent_account_id IS NULL`);
+      maxCodeStr = result[0]?.maxCode || "";
+      let nextCode = 10000;
+      if (maxCodeStr) {
+         nextCode = parseInt(maxCodeStr, 10) + 5000;
+      }
+      return res.json({ nextCode: String(nextCode) });
+    } else {
+      const parentResult = await db.select({ code: accountHeads.code }).from(accountHeads).where(eq(accountHeads.id, parentId)).limit(1);
+      if (!parentResult || parentResult.length === 0) {
+        return sendError(res, badRequest("Invalid parentId"));
+      }
+      const parentCode = parseInt(parentResult[0].code, 10);
+      
+      const result = await db.select({ maxCode: sql<string>`MAX(code)` }).from(accountHeads).where(eq(accountHeads.parentAccountId, parentId));
+      maxCodeStr = result[0]?.maxCode || "";
+      
+      let nextCode = 0;
+      if (level === 2) {
+        nextCode = maxCodeStr ? parseInt(maxCodeStr, 10) + 100 : parentCode + 100;
+      } else if (level === 3) {
+        nextCode = maxCodeStr ? parseInt(maxCodeStr, 10) + 1 : parentCode + 1;
+      } else {
+        nextCode = maxCodeStr ? parseInt(maxCodeStr, 10) + 1 : parentCode + 1;
+      }
+      return res.json({ nextCode: String(nextCode) });
+    }
+  } catch (error) {
+    console.error("Error fetching next code:", error);
+    sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch next code" });
+  }
+});
 
 // List — backward-compatible array shape (consumed by chart-of-accounts.tsx and
 // office-trial-balance.tsx). Optional filters: category, type, status, parent, q.
@@ -484,7 +525,7 @@ router.get("/trial-balance", requireFinancialPermission(FINANCIAL_ACTIONS.trialB
     );
 
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
-    const limit = Math.min(1000, Math.max(1, parseInt(String(req.query.limit ?? "200"), 10) || 200));
+    const limit = Math.min(10000, Math.max(1, parseInt(String(req.query.limit ?? "10000"), 10) || 10000));
     const total = result.rows.length;
     const startIdx = (page - 1) * limit;
     const paged = result.rows.slice(startIdx, startIdx + limit);
@@ -591,10 +632,10 @@ router.get("/expenses", async (req: Request, res: Response) => {
     let conditions = [];
     
     if (startDate) {
-      conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string)));
+      conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string).toISOString().split('T')[0]));
     }
     if (endDate) {
-      conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string)));
+      conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string).toISOString().split('T')[0]));
     }
     if (office) {
       const officeArray = (office as string).split(",").filter(Boolean);
@@ -609,11 +650,31 @@ router.get("/expenses", async (req: Request, res: Response) => {
       }
     }
     
-    const results = await db.select().from(officeExpenses)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(officeExpenses.createdAt));
+    const results = await db.select({
+      expense: officeExpenses,
+      createdByName: sql<string>`COALESCE(${users.fullName}, ${users.username}, 'System')`,
+      accountHeadName: accountHeads.name,
+      accountHeadCode: accountHeads.code
+    })
+    .from(officeExpenses)
+    .leftJoin(users, sql`${officeExpenses.createdByUserId} = CAST(${users.id} AS VARCHAR)`)
+    .leftJoin(accountHeads, sql`${officeExpenses.expenseHead} = ${accountHeads.id}::text`)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(officeExpenses.createdAt));
     
-    res.json(results);
+    const mapped = results.map(row => {
+      let headName = row.expense.expenseHead;
+      if (row.accountHeadName) {
+        headName = row.accountHeadCode ? `${row.accountHeadCode} - ${row.accountHeadName}` : row.accountHeadName;
+      }
+      return {
+        ...row.expense,
+        expenseHead: headName,
+        createdByName: row.createdByName
+      };
+    });
+    
+    res.json(mapped);
   } catch (error) {
     console.error("Error fetching expenses:", error);
     sendApiError(res, { status: 500, code: "INTERNAL_ERROR", message: "Failed to fetch expenses" });
@@ -630,10 +691,10 @@ router.get(
       const conditions = [];
 
       if (startDate) {
-        conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string)));
+        conditions.push(gte(officeExpenses.expenseDate, new Date(startDate as string).toISOString().split('T')[0]));
       }
       if (endDate) {
-        conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string)));
+        conditions.push(lte(officeExpenses.expenseDate, new Date(endDate as string).toISOString().split('T')[0]));
       }
       if (office) {
         const officeArray = (office as string).split(",").filter(Boolean);
@@ -648,9 +709,25 @@ router.get(
         }
       }
 
-      const results = await db.select().from(officeExpenses)
+      const results = await db.select({
+        expense: officeExpenses,
+        accountHeadName: accountHeads.name,
+        accountHeadCode: accountHeads.code
+      }).from(officeExpenses)
+        .leftJoin(accountHeads, sql`${officeExpenses.expenseHead} = ${accountHeads.id}::text`)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(desc(officeExpenses.createdAt));
+
+      const rows = results.map(r => {
+        let headName = r.expense.expenseHead;
+        if (r.accountHeadName) {
+          headName = r.accountHeadCode ? `${r.accountHeadCode} - ${r.accountHeadName}` : r.accountHeadName;
+        }
+        return {
+          ...r.expense,
+          expenseHead: headName
+        };
+      });
 
       const count = sendCsvExport(res, {
         module: "office_expenses",
@@ -663,9 +740,9 @@ router.get(
           { header: "Voucher Number", value: (r) => r.voucherNumber },
           { header: "Cheque Number", value: (r) => r.chequeNumber },
           { header: "Detail", value: (r) => r.detail },
-          { header: "Expense Date", value: (r) => r.expenseDate?.toISOString?.() ?? r.expenseDate },
+          { header: "Expense Date", value: (r) => r.expenseDate },
         ],
-        rows: results,
+        rows,
       });
 
       await AuditLogService.record({
@@ -730,8 +807,21 @@ router.post(
 
       assertPositiveAmount(amount, "amount");
 
+      let parsedExpenseHead = expenseHead;
+      if (expenseHead && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expenseHead)) {
+        const headMatch = await db.select().from(accountHeads).where(
+          or(
+            eq(accountHeads.name, expenseHead),
+            sql`${accountHeads.code} || ' - ' || ${accountHeads.name} = ${expenseHead}`
+          )
+        ).limit(1);
+        if (headMatch.length > 0) {
+          parsedExpenseHead = headMatch[0].id;
+        }
+      }
+
       const [result] = await db.insert(officeExpenses).values({
-        expenseHead,
+        expenseHead: parsedExpenseHead,
         office,
         amount,
         currency,
@@ -739,7 +829,7 @@ router.post(
         chequeNumber,
         fileUrl,
         detail,
-        expenseDate,
+        expenseDate: expenseDate.toISOString().split('T')[0],
         createdByUserId: userId || undefined,
       }).returning();
 
@@ -755,6 +845,25 @@ router.post(
         });
       } catch (auditErr) {
         console.warn("Audit log record skipped:", auditErr);
+      }
+
+      try {
+        await db.insert(ledgerEntries).values({
+          accountHeadId: parsedExpenseHead,
+          entryType: "Debit",
+          amount: amount,
+          currency: currency,
+          date: expenseDate,
+          entryDate: expenseDate,
+          description: detail || `Office Expense - ${office}`,
+          category: "Expenses",
+          referenceId: result.id,
+          referenceType: "office_expense",
+          branch: office,
+          createdByUserId: userId,
+        });
+      } catch (err) {
+        console.error("Failed to insert ledger entry for expense:", err);
       }
 
       res.status(201).json(result);
@@ -785,13 +894,27 @@ router.patch(
         throw new ApiError(400, "VALIDATION_ERROR", "No editable fields were provided.");
       }
       if (updates.amount !== undefined) assertPositiveAmount(updates.amount, "amount");
+      let ledgerExpenseDate: Date | undefined;
       if (updates.expenseDate !== undefined) {
-        updates.expenseDate = assertValidDate(updates.expenseDate, "expenseDate");
+        ledgerExpenseDate = assertValidDate(updates.expenseDate, "expenseDate");
+        updates.expenseDate = ledgerExpenseDate.toISOString().split('T')[0];
       }
 
       const [before] = await db.select().from(officeExpenses).where(eq(officeExpenses.id, id)).limit(1);
       if (!before) {
         throw new ApiError(404, "NOT_FOUND", "Expense not found.");
+      }
+
+      if (updates.expenseHead && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(updates.expenseHead as string)) {
+        const headMatch = await db.select().from(accountHeads).where(
+          or(
+            eq(accountHeads.name, updates.expenseHead as string),
+            sql`${accountHeads.code} || ' - ' || ${accountHeads.name} = ${updates.expenseHead}`
+          )
+        ).limit(1);
+        if (headMatch.length > 0) {
+          updates.expenseHead = headMatch[0].id;
+        }
       }
 
       const [updated] = await db
@@ -810,6 +933,22 @@ router.patch(
         after: { amount: updated.amount, currency: updated.currency, expenseHead: updated.expenseHead, office: updated.office, expenseDate: updated.expenseDate, detail: updated.detail },
         req,
       });
+
+      try {
+        await db.update(ledgerEntries)
+          .set({
+            amount: updated.amount,
+            currency: updated.currency,
+            date: updated.expenseDate ? new Date(updated.expenseDate) : undefined,
+            entryDate: updated.expenseDate ? new Date(updated.expenseDate) : undefined,
+            description: updated.detail || `Office Expense - ${updated.office}`,
+            accountHeadId: updated.expenseHead,
+            branch: updated.office
+          })
+          .where(and(eq(ledgerEntries.referenceId, id), eq(ledgerEntries.referenceType, "office_expense")));
+      } catch (err) {
+        console.error("Failed to update ledger entry for expense:", err);
+      }
 
       res.json(updated);
     } catch (error) {
@@ -838,6 +977,13 @@ router.delete(
         before: deleted ? { amount: deleted.amount, currency: deleted.currency, expenseHead: deleted.expenseHead } : undefined,
         req,
       });
+
+      try {
+        await db.delete(ledgerEntries)
+          .where(and(eq(ledgerEntries.referenceId, id), eq(ledgerEntries.referenceType, "office_expense")));
+      } catch (err) {
+        console.error("Failed to delete ledger entry for expense:", err);
+      }
 
       res.json({ success: true });
     } catch (error) {
@@ -874,11 +1020,13 @@ router.get("/vas", async (req: Request, res: Response) => {
       .orderBy(desc(invoices.issueDate));
       
     const mapped = results.map(inv => {
-      let method = "-";
-      try {
-        const p = JSON.parse(inv.notes || '{}');
-        method = p.paymentMethod || "-";
-      } catch (e) {}
+      let method = inv.paymentMethod || "";
+      if (!method && inv.notes) {
+        try {
+          const p = JSON.parse(inv.notes);
+          if (p.paymentMethod) method = p.paymentMethod;
+        } catch (e) {}
+      }
       
       return {
         id: inv.id,

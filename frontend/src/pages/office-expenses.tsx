@@ -36,9 +36,12 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiRequestJson, mutationRequest, queryClient } from "@/lib/queryClient";
-import { Trash2, Pencil, FileSpreadsheet, FileText, ChevronDown } from "lucide-react";
+import { Trash2, Pencil, FileSpreadsheet, FileText, ChevronDown, Check, Plus, Minus } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 import { utils, writeFile } from "xlsx";
-import type { OfficeExpense } from "@shared/schema";
+import type { OfficeExpense, AccountHead } from "@shared/schema";
 
 const OFFICES = [
   "Karachi",
@@ -50,18 +53,7 @@ const OFFICES = [
 ];
 const EXPENSE_HEADS = ["Rent", "Utilities", "Salaries", "Office Supplies", "Travel", "Marketing", "Maintenance", "Miscellaneous"];
 
-const TRANSACTIONAL_HEADS = [
-  "10101-1 - Petty Cash",
-  "10101-2 - Cash on Hand",
-  "10101-3 - Cash at Bank - Checking",
-  "10101-4 - Cash in Bank - Savings",
-  "10101-5 - Foreign Currency Accounts",
-  "10103-1 - Advance Salary Paid to Employee",
-  "10201-1 - Land",
-  "10201-2 - Buildings",
-  "10201-3 - Machinery and Equipment",
-  "10201-4 - Leasehold Improvements"
-];
+
 
 const MultiSelectDropdown = ({ options, selected, onChange, placeholder }: { options: string[], selected: string[], onChange: (val: string[]) => void, placeholder: string }) => {
   return (
@@ -106,6 +98,50 @@ const MultiSelectDropdown = ({ options, selected, onChange, placeholder }: { opt
   );
 };
 
+const SearchableSelect = ({ options, value, onChange, placeholder = "Select..." }: { options: string[], value: string, onChange: (val: string) => void, placeholder?: string }) => {
+  const [open, setOpen] = useState(false);
+  const selectedLabel = options.find(o => o === value) || value;
+  
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between h-10 border-gray-300 text-gray-600 rounded-[4px] font-normal px-3 bg-transparent hover:bg-transparent hover:text-gray-600">
+          <span className="truncate">{selectedLabel || placeholder}</span>
+          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search heads..." />
+          <CommandList>
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup className="max-h-60 overflow-y-auto">
+              {options.map((opt) => (
+                <CommandItem
+                  key={opt}
+                  value={opt}
+                  onSelect={(currentValue) => {
+                    onChange(opt);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === opt ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  {opt}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
 export default function OfficeExpenses() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -115,15 +151,25 @@ export default function OfficeExpenses() {
   // Temporary filter states (bound to inputs)
   const [tempStartDate, setTempStartDate] = useState("");
   const [tempEndDate, setTempEndDate] = useState("");
-  const [tempFilterOffice, setTempFilterOffice] = useState<string[]>([]);
-  const [tempAccountingHead, setTempAccountingHead] = useState<string[]>([]);
+  const [tempFilterOffice, setTempFilterOffice] = useState<string[]>(["all"]);
+  const [tempAccountingHead, setTempAccountingHead] = useState<string[]>(["all"]);
+  const [tempParentHead, setTempParentHead] = useState<string[]>(["all"]);
+  const [tempChildHead, setTempChildHead] = useState<string[]>(["all"]);
+  const [tempTransactionalHead, setTempTransactionalHead] = useState<string[]>(["all"]);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // Applied filter states (used for fetching)
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [filterOffice, setFilterOffice] = useState<string[]>([]);
-  const [filterAccountingHead, setFilterAccountingHead] = useState<string[]>([]);
+  const [filterOffice, setFilterOffice] = useState<string[]>(["all"]);
+  const [filterAccountingHead, setFilterAccountingHead] = useState<string[]>(["all"]);
+  const [filterParentHead, setFilterParentHead] = useState<string[]>(["all"]);
+  const [filterChildHead, setFilterChildHead] = useState<string[]>(["all"]);
+  const [filterTransactionalHead, setFilterTransactionalHead] = useState<string[]>(["all"]);
+
+  // Fetch current role to determine delete permissions
+  const currentRole = sessionStorage.getItem("userRole") || "";
+  const isAdmin = ["admin", "super_admin", "adm"].includes(currentRole.toLowerCase());
 
   const [formData, setFormData] = useState({
     expenseHead: "",
@@ -135,6 +181,7 @@ export default function OfficeExpenses() {
     detail: "",
     fileName: "",
     fileUrl: "",
+    files: [] as {name: string, url: string}[],
     expenseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
   });
 
@@ -142,12 +189,28 @@ export default function OfficeExpenses() {
   if (startDate) queryParams.set("startDate", startDate);
   if (endDate) queryParams.set("endDate", endDate);
   if (filterOffice.length > 0 && !filterOffice.includes("all")) queryParams.set("office", filterOffice.join(","));
-  if (filterAccountingHead.length > 0 && !filterAccountingHead.includes("all")) queryParams.set("accountingHead", filterAccountingHead.join(","));
+  
+  const allFilteredHeads = [
+    ...filterAccountingHead, ...filterParentHead, ...filterChildHead, ...filterTransactionalHead
+  ].filter(h => h !== "all");
+  
+  if (allFilteredHeads.length > 0) {
+    queryParams.set("accountingHead", allFilteredHeads.join(","));
+  }
 
-  const { data: expenses = [], isLoading, isError } = useQuery<OfficeExpense[]>({
-    queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), filterAccountingHead.join(",")],
-    queryFn: () => apiRequestJson<OfficeExpense[]>("GET", `/api/office/expenses?${queryParams.toString()}`),
+  const { data: expenses = [], isLoading, isError } = useQuery<(OfficeExpense & {createdByName?: string})[]>({
+    queryKey: ["/api/office/expenses", startDate, endDate, filterOffice.join(","), allFilteredHeads.join(",")],
+    queryFn: () => apiRequestJson<(OfficeExpense & {createdByName?: string})[]>("GET", `/api/office/expenses?${queryParams.toString()}`),
   });
+
+  const { data: accountHeads = [] } = useQuery<AccountHead[]>({
+    queryKey: ["/api/office/account-heads"],
+    queryFn: () => apiRequestJson<AccountHead[]>("GET", "/api/office/account-heads"),
+  });
+
+  const transactionalHeads = useMemo(() => {
+    return accountHeads.filter(h => h.type === "Transactional" || h.type === "Sub-Transactional").map(h => h.name).sort();
+  }, [accountHeads]);
 
   const { data: cheques = [] } = useQuery<any[]>({
     queryKey: ["/api/office/cheques"],
@@ -225,6 +288,7 @@ export default function OfficeExpenses() {
       detail: "",
       fileName: "",
       fileUrl: "",
+      files: [],
       expenseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     });
   };
@@ -239,6 +303,8 @@ export default function OfficeExpenses() {
       return;
     }
 
+    const finalFileUrl = formData.files && formData.files.length > 0 ? JSON.stringify(formData.files) : undefined;
+
     const payload = {
       expenseHead: formData.expenseHead,
       office: formData.office,
@@ -247,7 +313,7 @@ export default function OfficeExpenses() {
       voucherNumber: formData.voucherNumber || undefined,
       chequeNumber: formData.chequeNumber || undefined,
       detail: formData.detail || undefined,
-      fileUrl: formData.fileUrl || undefined,
+      fileUrl: finalFileUrl,
       expenseDate: formData.expenseDate ? new Date(formData.expenseDate).toISOString() : new Date().toISOString(),
     };
 
@@ -265,6 +331,20 @@ export default function OfficeExpenses() {
   };
 
   const openEdit = (expense: OfficeExpense) => {
+    let parsedFiles: {name: string, url: string}[] = [];
+    if (expense.fileUrl) {
+      try {
+        const parsed = JSON.parse(expense.fileUrl);
+        if (Array.isArray(parsed)) {
+          parsedFiles = parsed;
+        } else {
+          parsedFiles = [{ name: "Attached File", url: expense.fileUrl }];
+        }
+      } catch {
+        parsedFiles = [{ name: "Attached File", url: expense.fileUrl }];
+      }
+    }
+
     setEditingId(expense.id);
     setFormData({
       expenseHead: expense.expenseHead || "",
@@ -275,7 +355,9 @@ export default function OfficeExpenses() {
       chequeNumber: expense.chequeNumber || "",
       detail: expense.detail || "",
       fileName: "",
-      fileUrl: expense.fileUrl || "",
+      fileUrl: "",
+      files: parsedFiles,
+      expenseDate: expense.expenseDate ? format(new Date(expense.expenseDate), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     });
     setDialogOpen(true);
   };
@@ -285,19 +367,28 @@ export default function OfficeExpenses() {
     setEndDate(tempEndDate);
     setFilterOffice(tempFilterOffice);
     setFilterAccountingHead(tempAccountingHead);
+    setFilterParentHead(tempParentHead);
+    setFilterChildHead(tempChildHead);
+    setFilterTransactionalHead(tempTransactionalHead);
     setCurrentPage(1);
   };
 
   const handleClearFilters = () => {
     setTempStartDate("");
     setTempEndDate("");
-    setTempFilterOffice([]);
-    setTempAccountingHead([]);
+    setTempFilterOffice(["all"]);
+    setTempAccountingHead(["all"]);
+    setTempParentHead(["all"]);
+    setTempChildHead(["all"]);
+    setTempTransactionalHead(["all"]);
 
     setStartDate("");
     setEndDate("");
-    setFilterOffice([]);
-    setFilterAccountingHead([]);
+    setFilterOffice(["all"]);
+    setFilterAccountingHead(["all"]);
+    setFilterParentHead(["all"]);
+    setFilterChildHead(["all"]);
+    setFilterTransactionalHead(["all"]);
     setCurrentPage(1);
   };
 
@@ -307,28 +398,21 @@ export default function OfficeExpenses() {
     currentPage * rowsPerPage
   );
 
-  // Head filter options derived from real expenseHead values present in the data
-  // (unioned with any currently-selected head so the selection stays visible).
-  const headFilterOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const e of expensesList) {
-      if (e.expenseHead) set.add(e.expenseHead);
-    }
-    for (const h of tempAccountingHead) {
-      if (h && h !== "all") set.add(h);
-    }
-    return Array.from(set).sort();
-  }, [expensesList, tempAccountingHead]);
+  // Head filter options derived from accountHeads API
+  const accountingHeadOptions = useMemo(() => Array.from(new Set(accountHeads.map(h => h.category || "General").filter(Boolean))).sort(), [accountHeads]);
+  const parentHeadOptions = useMemo(() => accountHeads.filter(h => h.type === "Parent").map(h => h.name).sort(), [accountHeads]);
+  const childHeadOptions = useMemo(() => accountHeads.filter(h => h.type === "Child").map(h => h.name).sort(), [accountHeads]);
+  // transactionalHeads is already defined above
 
   // Create/Edit dialog option lists: the standard enumeration unioned with the
   // real values already in the data, plus the row's current value when editing
   // (so an existing expense whose head/office is not in the static list keeps it).
   const dialogHeadOptions = useMemo(() => {
-    const set = new Set<string>(TRANSACTIONAL_HEADS);
+    const set = new Set<string>(transactionalHeads);
     for (const e of expensesList) if (e.expenseHead) set.add(e.expenseHead);
     if (formData.expenseHead) set.add(formData.expenseHead);
-    return Array.from(set);
-  }, [expensesList, formData.expenseHead]);
+    return Array.from(set).sort();
+  }, [expensesList, formData.expenseHead, transactionalHeads]);
 
   const dialogOfficeOptions = useMemo(() => {
     const set = new Set<string>(OFFICES);
@@ -417,16 +501,43 @@ export default function OfficeExpenses() {
 
           <div className="grid grid-cols-1 md:grid-cols-4 gap-x-6 gap-y-5">
             <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Head</Label>
+              <Label className="text-[13px] font-normal text-gray-700">Select Accounting Head<span className="text-red-500">*</span></Label>
               <MultiSelectDropdown
-                options={headFilterOptions}
+                options={accountingHeadOptions}
                 selected={tempAccountingHead}
                 onChange={setTempAccountingHead}
-                placeholder="All heads"
+                placeholder="Select one or more options"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-[13px] font-normal text-gray-700">Select Office</Label>
+              <Label className="text-[13px] font-normal text-gray-700">Select Parent Head<span className="text-red-500">*</span></Label>
+              <MultiSelectDropdown
+                options={parentHeadOptions}
+                selected={tempParentHead}
+                onChange={setTempParentHead}
+                placeholder="Select one or more options"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px] font-normal text-gray-700">Select Child Head<span className="text-red-500">*</span></Label>
+              <MultiSelectDropdown
+                options={childHeadOptions}
+                selected={tempChildHead}
+                onChange={setTempChildHead}
+                placeholder="Select one or more options"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px] font-normal text-gray-700">Select Transactional Head<span className="text-red-500">*</span></Label>
+              <MultiSelectDropdown
+                options={transactionalHeads}
+                selected={tempTransactionalHead}
+                onChange={setTempTransactionalHead}
+                placeholder="Select one or more options"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px] font-normal text-gray-700">Select Office<span className="text-red-500">*</span></Label>
               <MultiSelectDropdown
                 options={OFFICES}
                 selected={tempFilterOffice}
@@ -545,10 +656,31 @@ export default function OfficeExpenses() {
                         {formatCurrency(expense.amount, expense.currency)}
                       </TableCell>
                       <TableCell className="text-[13px] text-gray-700 py-2.5">
-                        System
+                        {expense.createdByName || "System"}
                       </TableCell>
                       <TableCell className="text-[13px] text-gray-700 py-2.5 text-center">
-                        -
+                        {(() => {
+                          if (!expense.fileUrl) return "-";
+                          try {
+                            const parsed = JSON.parse(expense.fileUrl);
+                            if (Array.isArray(parsed)) {
+                              return (
+                                <div className="flex flex-wrap items-center justify-center gap-1">
+                                  {parsed.map((file, idx) => (
+                                    <a key={idx} href={file.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
+                                      <FileText className="w-3 h-3" /> {idx + 1}
+                                    </a>
+                                  ))}
+                                </div>
+                              );
+                            }
+                          } catch {}
+                          return (
+                            <a href={expense.fileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
+                              <FileText className="w-3 h-3" /> 1
+                            </a>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-center py-2.5">
                         <div className="flex items-center justify-center gap-1">
@@ -563,10 +695,16 @@ export default function OfficeExpenses() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
-                            onClick={() => deleteMutation.mutate(expense.id)}
+                            className="h-6 w-6 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-transparent"
+                            disabled={!isAdmin}
+                            onClick={() => {
+                              if (!isAdmin) return;
+                              if (window.confirm("Are you sure you want to delete this expense?")) {
+                                deleteMutation.mutate(expense.id);
+                              }
+                            }}
                           >
-                            <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                            <Trash2 className={`h-3.5 w-3.5 ${isAdmin ? 'text-red-500' : 'text-gray-400'}`} />
                           </Button>
                         </div>
                       </TableCell>
@@ -599,22 +737,12 @@ export default function OfficeExpenses() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="space-y-1.5">
                   <Label className="text-[13px] font-medium text-gray-700">Select Transactional Head:</Label>
-                  <Select
+                  <SearchableSelect
+                    options={dialogHeadOptions}
                     value={formData.expenseHead}
-                    onValueChange={(v) => setFormData({ ...formData, expenseHead: v })}
-                  >
-                    <SelectTrigger className="h-10 border-gray-300 text-gray-600 rounded-[4px]">
-                      <SelectValue placeholder="Choose..." />
-                    </SelectTrigger>
-                    <SelectContent className="p-0">
-                      <div className="px-3 py-2 border-b border-gray-100 text-[13px] text-gray-500 cursor-text">
-                        |Choose...
-                      </div>
-                      {dialogHeadOptions.map((h) => (
-                        <SelectItem key={h} value={h} className="py-2 text-[13px] text-gray-700">{h}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    onChange={(v) => setFormData({ ...formData, expenseHead: v })}
+                    placeholder="Choose..."
+                  />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-[13px] font-medium text-gray-700">Amount:</Label>
@@ -709,18 +837,43 @@ export default function OfficeExpenses() {
 
               <div className="space-y-1.5">
                 <Label className="text-[13px] font-medium text-gray-700">Bill/Invoice:</Label>
+                {formData.files && formData.files.map((file, idx) => (
+                  <div key={idx} className="flex relative items-center mb-2">
+                    <div className="bg-[#f4f6f9] border border-r-0 border-gray-300 text-gray-600 px-4 py-2 text-[13px] rounded-l shrink-0 h-10 flex items-center pointer-events-none">
+                      File {idx + 1}
+                    </div>
+                    <div className="border border-y border-gray-300 px-3 py-2 text-[13px] text-gray-500 flex-1 h-10 flex items-center bg-white dark:bg-zinc-900 truncate">
+                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="hover:underline truncate w-full text-blue-500">{file.name}</a>
+                    </div>
+                    <Button 
+                      type="button" 
+                      variant="destructive"
+                      className="rounded-l-none h-10 rounded-r shrink-0 w-12"
+                      onClick={() => {
+                        const newFiles = [...formData.files];
+                        newFiles.splice(idx, 1);
+                        setFormData(prev => ({ ...prev, files: newFiles }));
+                      }}
+                    >
+                      <Minus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+                
                 <div className="flex relative">
                   <input 
                     type="file" 
-                    id="expense-file-upload"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    value=""
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) {
-                        setFormData(prev => ({ ...prev, fileName: file.name }));
                         const reader = new FileReader();
                         reader.onloadend = () => {
-                          setFormData(prev => ({ ...prev, fileUrl: reader.result as string }));
+                          setFormData(prev => ({ 
+                            ...prev, 
+                            files: [...(prev.files || []), { name: file.name, url: reader.result as string }] 
+                          }));
                         };
                         reader.readAsDataURL(file);
                       }
@@ -728,15 +881,13 @@ export default function OfficeExpenses() {
                     accept=".jpg,.jpeg,.png,.gif,.bmp,.webp,.pdf,.xls,.xlsx"
                   />
                   <div className="bg-[#f4f6f9] border border-r-0 border-gray-300 text-gray-600 px-4 py-2 text-[13px] rounded-l shrink-0 h-10 flex items-center pointer-events-none">
-                    Choose Files
+                    Choose File
                   </div>
                   <div className="border border-gray-300 px-3 py-2 text-[13px] text-gray-500 flex-1 h-10 flex items-center bg-white dark:bg-zinc-900 truncate pointer-events-none">
-                    {formData.fileName || "No file chosen"}
+                    Click to add a file
                   </div>
                   <div className="bg-[#2bc185] hover:bg-[#25a873] flex items-center justify-center w-12 rounded-r shrink-0 h-10 border border-[#2bc185] pointer-events-none">
-                    <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+                    <Plus className="w-5 h-5 text-white" />
                   </div>
                 </div>
                 <div className="text-[12px] text-[#f26e6e] mt-1.5 leading-[1.3]">
