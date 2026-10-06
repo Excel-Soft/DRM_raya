@@ -238,9 +238,14 @@ export default function DollarSystem() {
   };
 
   const openDollarModal = (item: any, isTemp: boolean = false) => {
-    const targetDollar = parseFloat(item.dollar || item.customerDollar || 1357);
-    const rateVal = parseFloat(item.rate || 277.16);
+    const targetDollar = parseFloat(item.dollar || item.customerDollar || 0) || 1357;
+    const rateVal = parseFloat(item.rate || 0) || 277.16;
+    const pkrVal = item.pkr ? Number(item.pkr) : Math.round(targetDollar * rateVal);
+    const memberIdVal = item.memberId || (item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz");
+    const orderIdVal = item.orderId || (item.drmId ? `P${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}` : `P${Date.now().toString().slice(0, 16)}`);
+    const dateVal = item.date ? safeDate(item.date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
+    const remaining = targetDollar;
     const initialSlots = isTemp ? [
       {
         id: "0",
@@ -251,7 +256,7 @@ export default function DollarSystem() {
         rate: 277.00,
         totalShort: "null",
         dollars: 900,
-        useDollar: 900
+        useDollar: Math.min(900, Math.max(0, Math.round(remaining * 100) / 100))
       },
       {
         id: "1",
@@ -262,7 +267,7 @@ export default function DollarSystem() {
         rate: 280.00,
         totalShort: "null",
         dollars: 100,
-        useDollar: 100
+        useDollar: Math.min(100, Math.max(0, Math.round(Math.max(0, remaining - 900) * 100) / 100))
       },
       {
         id: "15",
@@ -273,18 +278,18 @@ export default function DollarSystem() {
         rate: 284.00,
         totalShort: "null",
         dollars: 58.44,
-        useDollar: 58.44
+        useDollar: Math.min(58.44, Math.max(0, Math.round(Math.max(0, remaining - 1000) * 100) / 100))
       },
       {
         id: "16",
-        checked: false,
+        checked: remaining > 1058.44,
         buyerName: "SYED HURR ABBAS",
         buyDate: "2025-09-15",
         email: "sportsexceedinc@gmail.com",
         rate: 284.00,
         totalShort: "null",
         dollars: 58.44,
-        useDollar: 58.44
+        useDollar: Math.min(58.44, Math.max(0, Math.round(Math.max(0, remaining - 1058.44) * 100) / 100))
       }
     ] : [
       {
@@ -296,7 +301,7 @@ export default function DollarSystem() {
         rate: 278.92,
         totalShort: 1150,
         dollars: 51,
-        useDollar: 51
+        useDollar: Math.min(51, Math.max(0, Math.round(remaining * 100) / 100))
       },
       {
         id: "1",
@@ -307,7 +312,7 @@ export default function DollarSystem() {
         rate: 277.20,
         totalShort: 1100,
         dollars: 1083,
-        useDollar: Math.min(1083, Math.max(0, Math.round(targetDollar - 51)))
+        useDollar: Math.min(1083, Math.max(0, Math.round(Math.max(0, remaining - 51) * 100) / 100))
       },
       {
         id: "2",
@@ -318,25 +323,25 @@ export default function DollarSystem() {
         rate: 277.00,
         totalShort: 4190,
         dollars: 1175,
-        useDollar: Math.max(0, Math.round(targetDollar - (51 + Math.min(1083, Math.max(0, Math.round(targetDollar - 51))))))
+        useDollar: Math.min(1175, Math.max(0, Math.round(Math.max(0, remaining - 1134) * 100) / 100))
       }
     ];
 
-    setDollarModalItem(item);
+    setDollarModalItem({ ...item, pkr: pkrVal, rate: rateVal });
     setDollarSlots(initialSlots);
     setDollarForm({
       isTemp: isTemp,
-      memberId: isTemp ? "pk19023484233uoqz" : (item.memberId ? item.memberId : item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz"),
-      orderId: isTemp ? "P2610031311163635" : (item.orderId ? item.orderId : `P${Date.now().toString().slice(0, 16)}`),
+      memberId: memberIdVal,
+      orderId: orderIdVal,
       sliderMin: isTemp ? 2 : 0,
       sliderMax: 100,
       removeUnselected: true,
       dollar: String(targetDollar.toFixed(2)),
       dollarRate: String(rateVal.toFixed(2)),
       pkrAmount: "0.00",
-      date: format(new Date(), "yyyy-MM-dd"),
+      date: dateVal,
       type: item.type || "New",
-      detail: item.notes || ""
+      detail: item.notes || item.detail || ""
     });
   };
 
