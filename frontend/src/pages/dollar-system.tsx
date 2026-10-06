@@ -4,7 +4,31 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2 } from "lucide-react";
+import { 
+  Search, 
+  Wallet, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  ArrowDown, 
+  ChevronDown, 
+  Calendar, 
+  Send, 
+  Eye, 
+  FileText, 
+  X, 
+  FileSpreadsheet, 
+  ArrowRight, 
+  Loader2,
+  RefreshCw,
+  CreditCard,
+  CheckCircle2,
+  Filter,
+  DollarSign,
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
+  Download
+} from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -13,9 +37,6 @@ import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLocation } from "wouter";
 
-// PHP columns: #, Drm id, Created Date, Company, Sale Person, Dollar, Cus Dollar,
-//              Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, Package, [loan Amount,] Type,
-//              Expire, Droupout, Status, Action
 function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   if (!val) return fallback;
   if (typeof val === "string" && !/^\d{4}/.test(val) && !/^\d{1,2}[\/-]\d{1,2}/.test(val)) {
@@ -30,102 +51,217 @@ function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   }
 }
 
-function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
-  const colCount = isLoan ? 18 : 17;
-  const tw = isLoan ? "1900px" : "1800px";
-  return (
-    <div style={{display:"block",width:"100%",overflowX:"auto",overflowY:"visible",paddingBottom:"16px"}} className="custom-scrollbar">
-      <table style={{width:tw,tableLayout:"fixed",minWidth:tw}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
-        <thead className="bg-[#f39c12] text-white font-bold text-[11px] shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
-          <tr>
-            <th className="py-2.5 px-2 border-r border-white/20 text-center w-[45px]">#</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Drm id</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Created Date</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[220px]">Company</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Sale Person</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Dollar</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Cus Dollar</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">Pkr</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Dollar Rate</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[80px]">Ex-Disc</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Ex-Disc Pkr</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Package</th>
-            {isLoan && <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">loan Amount</th>}
-            <th className="py-2.5 px-2 border-r border-white/20 w-[80px]">Type</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">Expire</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Droupout</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Status</th>
-            <th className="py-2.5 px-2 text-center w-[65px]">Action</th>
-          </tr>
-        </thead>
-        <tbody className="bg-white font-bold dark:bg-zinc-900">
-          {items.length > 0 ? items.map((item, i) => (
-            <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
-              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-              <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>{item.drmId || "-"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{safeDate(item.date, "yyyy-MM-dd")}</td>
-              <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 truncate" title={item.company}>{item.company || "-"}</td>
-              <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 truncate">{item.salePerson || "-"}</td>
-              <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || "0"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">$ {item.customerDollar || item.dollar || "0"}</td>
-              <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{Number(item.pkr || 0).toLocaleString()}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.rate || "-"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDisc || "0"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDiscPkr || "0"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.package || "-"}</td>
-              {isLoan && <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.loanAmount || item.dollar || "0"}</td>}
-              <td className="p-2.5 border-r">
-                {item.type ? (
-                  <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
-                    item.type==="New" ? "bg-emerald-100 text-emerald-700" :
-                    item.type==="Rc"  ? "bg-blue-100 text-blue-700" :
-                    item.type==="Ec"  ? "bg-red-100 text-red-700" :
-                    item.type==="Rc-Up" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600"
-                  )}>{item.type}</Badge>
-                ) : "-"}
-              </td>
-              <td className="p-2.5 border-r text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(item.expireDate, "yyyy-MM-dd")}</td>
-              <td className="p-2.5 border-r text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(item.dropout, "yyyy-MM-dd", "None")}</td>
-              <td className="p-2.5 border-r">
-                <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
-                  item.status==="Approved" ? "bg-emerald-100 text-emerald-700" :
-                  item.status==="Pending"  ? "bg-yellow-100 text-yellow-700" :
-                  item.status==="Rejected" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"
-                )}>{item.status || "-"}</Badge>
-              </td>
-              <td className="p-2.5 text-center">
-                <div className="flex gap-1 items-center justify-center">
-                  <button onClick={() => onAttach(item)} title="Attach"><FileText size={14} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button>
-                  <button onClick={() => onView(item)} title="View"><Eye size={14} className="text-[#00a65a] cursor-pointer dark:text-zinc-400"/></button>
-                </div>
-              </td>
-            </tr>
-          )) : (
-            <tr><td colSpan={colCount} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No data available in table</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+function exportToCsv(filename: string, rows: any[]) {
+  if (!rows || !rows.length) return;
+  const separator = ",";
+  const keys = Object.keys(rows[0]);
+  const csvContent =
+    keys.join(separator) +
+    "\n" +
+    rows
+      .map(row => {
+        return keys
+          .map(k => {
+            let cell = row[k] === null || row[k] === undefined ? "" : String(row[k]);
+            cell = cell.replace(/"/g, '""');
+            if (cell.search(/("|,|\n)/g) >= 0) {
+              cell = `"${cell}"`;
+            }
+            return cell;
+          })
+          .join(separator);
+      })
+      .join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.setAttribute("href", url);
+  link.setAttribute("download", `${filename}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
-function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, onClear, onExcel }) {
+function ModernPaymentTable({ 
+  items = [], 
+  isLoan = false, 
+  onView, 
+  onAttach,
+  page = 1,
+  pageSize = 10,
+  onPageChange
+}: any) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   return (
-    <div className="flex flex-wrap items-center gap-2 bg-gray-50/50 dark:bg-zinc-900 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
-      <div className="relative w-60">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
-        <Input placeholder="Search..." value={searchTerm} onChange={(e) => onSearch(e.target.value)} className="h-9 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" />
+    <div className="space-y-4">
+      <div className="overflow-x-auto rounded-xl border border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm custom-scrollbar">
+        <table className="w-full text-left text-xs whitespace-nowrap border-collapse">
+          <thead>
+            <tr className="border-b border-slate-100 dark:border-zinc-800 bg-slate-50/75 dark:bg-zinc-800/50 text-slate-500 dark:text-zinc-400 font-semibold text-[11px]">
+              <th className="py-3 px-3 text-center w-10">#</th>
+              <th className="py-3 px-4">Drm id</th>
+              <th className="py-3 px-4">Created Date</th>
+              <th className="py-3 px-4 min-w-[220px]">Company</th>
+              <th className="py-3 px-4">Sale Person</th>
+              <th className="py-3 px-4 font-bold text-slate-700 dark:text-zinc-200">Dollar</th>
+              <th className="py-3 px-4">Cus Dollar</th>
+              <th className="py-3 px-4">Pkr</th>
+              <th className="py-3 px-4">Dollar Rate</th>
+              <th className="py-3 px-4">Exchange Rate</th>
+              {isLoan && <th className="py-3 px-4">Loan Amount</th>}
+              <th className="py-3 px-4">Type</th>
+              <th className="py-3 px-4 text-center">Status</th>
+              <th className="py-3 px-3 text-center w-16">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-zinc-800/60 font-medium">
+            {paginatedItems.length > 0 ? (
+              paginatedItems.map((item: any, idx: number) => {
+                const globalIndex = (currentPage - 1) * pageSize + idx + 1;
+                return (
+                  <tr 
+                    key={item.id || idx} 
+                    className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/40 transition-colors"
+                  >
+                    <td className="py-3.5 px-3 text-center font-normal text-slate-400">{globalIndex}</td>
+                    <td className="py-3.5 px-4 font-bold italic text-[#00a65a] dark:text-emerald-400 uppercase tracking-tight">
+                      {item.drmId || "-"}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-500 dark:text-zinc-400">
+                      {safeDate(item.date, "yyyy-MM-dd")}
+                    </td>
+                    <td className="py-3.5 px-4 font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-tight max-w-[280px] truncate" title={item.company}>
+                      {item.company || "-"}
+                    </td>
+                    <td className="py-3.5 px-4 italic text-slate-500 dark:text-zinc-400">
+                      {item.salePerson || "-"}
+                    </td>
+                    <td className="py-3.5 px-4 font-extrabold text-slate-900 dark:text-zinc-100">
+                      $ {Number(item.dollar || 0).toFixed(2)}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-600 dark:text-zinc-300">
+                      $ {Number(item.customerDollar || item.dollar || 0).toFixed(2)}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-600 dark:text-zinc-300 font-semibold">
+                      {Number(item.pkr || 0).toLocaleString()}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-500 dark:text-zinc-400">
+                      {item.rate ? Number(item.rate).toFixed(4) : "-"}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-500 dark:text-zinc-400">
+                      {item.exDisc ? Number(item.exDisc).toFixed(4) : "78.0000"}
+                    </td>
+                    {isLoan && (
+                      <td className="py-3.5 px-4 font-extrabold text-slate-900 dark:text-zinc-100">
+                        $ {Number(item.loanAmount || item.dollar || 0).toFixed(2)}
+                      </td>
+                    )}
+                    <td className="py-3.5 px-4">
+                      {item.type ? (
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-md text-[10px] font-bold uppercase inline-block",
+                          item.type === "New" ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60" :
+                          item.type === "Rc"  ? "bg-blue-50 text-blue-700 border border-blue-200/60" :
+                          item.type === "Ec"  ? "bg-purple-50 text-purple-700 border border-purple-200/60" :
+                          "bg-slate-100 text-slate-600 border border-slate-200"
+                        )}>
+                          {item.type}
+                        </span>
+                      ) : "-"}
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <span className={cn(
+                        "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold",
+                        item.status === "Approved" || !item.status || item.status === "Paid"
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200/60 dark:bg-emerald-950/30 dark:text-emerald-400"
+                          : item.status === "Pending"
+                          ? "bg-amber-50 text-amber-700 border border-amber-200/60 dark:bg-amber-950/30 dark:text-amber-400"
+                          : "bg-rose-50 text-rose-700 border border-rose-200/60 dark:bg-rose-950/30 dark:text-rose-400"
+                      )}>
+                        <span className={cn(
+                          "w-1.5 h-1.5 rounded-full",
+                          item.status === "Approved" || !item.status || item.status === "Paid" ? "bg-emerald-500" :
+                          item.status === "Pending" ? "bg-amber-500" : "bg-rose-500"
+                        )} />
+                        {item.status === "Approved" ? "Paid" : item.status || "Paid"}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button 
+                          onClick={() => onAttach(item)} 
+                          title="Attach"
+                          className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                          <FileText size={14} className={item.proofUrl ? "text-[#00a65a]" : "text-slate-400"} />
+                        </button>
+                        <button 
+                          onClick={() => onView(item)} 
+                          title="View Details"
+                          className="p-1 rounded hover:bg-emerald-50 text-emerald-600 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={isLoan ? 14 : 13} className="py-12 text-center text-slate-400 font-medium italic">
+                  No records available
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
-      <div className="relative">
-        <Input type="date" value={startDate} onChange={(e) => onStart(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800 pr-8" />
-        <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
+
+      {/* Pagination & Summary footer */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-1 text-xs text-slate-500">
+        <div>
+          Showing {items.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{" "}
+          {Math.min(currentPage * pageSize, items.length)} of {items.length} entries
+        </div>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+              <button
+                key={p}
+                onClick={() => onPageChange(p)}
+                className={cn(
+                  "w-7 h-7 flex items-center justify-center rounded-lg text-xs font-bold transition-colors",
+                  currentPage === p
+                    ? "bg-[#00a65a] text-white shadow-sm"
+                    : "border border-slate-200 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800"
+                )}
+              >
+                {p}
+              </button>
+            ))}
+            <button
+              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-slate-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        )}
       </div>
-      <div className="relative">
-        <Input type="date" value={endDate} onChange={(e) => onEnd(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800 pr-8" />
-        <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
-      </div>
-      <Button onClick={onClear} className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-6 h-9 rounded-md font-bold text-xs uppercase">Clear Filter</Button>
-      {onExcel && <Button onClick={onExcel} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 h-9 rounded-md font-bold text-xs uppercase flex items-center gap-1"><FileSpreadsheet size={14}/> Export Excel</Button>}
     </div>
   );
 }
@@ -133,22 +269,32 @@ function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, o
 export default function DollarSystem() {
   const [, setLocation] = useLocation();
   const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
-  useEffect(() => { const w = sidebarOpen; setSidebarOpen(false); return () => setSidebarOpen(w); }, []);
+  useEffect(() => { 
+    const w = sidebarOpen; 
+    setSidebarOpen(false); 
+    return () => setSidebarOpen(w); 
+  }, []);
 
-  const [quarterFilter, setQuarterFilter] = useState("CQ");
-  const [fullSearch, setFullSearch] = useState(""); const [fullStart, setFullStart] = useState(""); const [fullEnd, setFullEnd] = useState("");
-  const [partialSearch, setPartialSearch] = useState(""); const [partialStart, setPartialStart] = useState(""); const [partialEnd, setPartialEnd] = useState("");
-  const [loanSearch, setLoanSearch] = useState(""); const [loanStart, setLoanStart] = useState(""); const [loanEnd, setLoanEnd] = useState("");
-  const [pendSearch, setPendSearch] = useState(""); const [pendStart, setPendStart] = useState(""); const [pendEnd, setPendEnd] = useState("");
-  const [abSearch, setAbSearch] = useState(""); const [abStart, setAbStart] = useState(""); const [abEnd, setAbEnd] = useState("");
-  const [fullTypeFilter, setFullTypeFilter] = useState("all");
-  const [loanTypeFilter, setLoanTypeFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("Current");
   const [activeTab, setActiveTab] = useState("full");
   const [activeTxTab, setActiveTxTab] = useState("balance");
-  const [viewItem, setViewItem] = useState(null);
-  const [attachItem, setAttachItem] = useState(null);
+
+  // Filters
+  const [searchTerm, setSearchTerm] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+
+  // Pagination states
+  const [fullPage, setFullPage] = useState(1);
+  const [partialPage, setPartialPage] = useState(1);
+  const [loanPage, setLoanPage] = useState(1);
+
+  // Modals
+  const [viewItem, setViewItem] = useState<any>(null);
+  const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
-  const fileRef = useRef(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["/api/account/dollar-system/list"],
@@ -163,601 +309,657 @@ export default function DollarSystem() {
   const alibabaPayments = data?.alibabaPayments || [];
   const abLiabilities = data?.abLiabilities || {};
   const dts = data?.dailyTxSummary || {
-    balance:{count:0,sum:0,items:[]}, buy:{count:0,sum:0,items:[]},
-    sell:{count:0,sum:0,items:[]}, martini:{count:0,sum:0,items:[]}, notUsed:{count:0,sum:0,items:[]}
+    balance: { count: 0, sum: 0, items: [] },
+    buy: { count: 0, sum: 0, items: [] },
+    sell: { count: 0, sum: 0, items: [] },
+    martini: { count: 0, sum: 0, items: [] },
+    notUsed: { count: 0, sum: 0, items: [] }
   };
-  const counts = data?.counts || { full:0, partial:0, pending:0, temp:0 };
+  const counts = data?.counts || { full: 0, partial: 0, pending: 0, temp: 0 };
 
-  const flt = (arr, search, s, e) => arr.filter(item => {
-    if (search) {
-      const t = search.toLowerCase();
-      if (!Object.values(item).some(v => String(v||"").toLowerCase().includes(t))) return false;
+  const filterList = (arr: any[]) => arr.filter((item: any) => {
+    if (searchTerm) {
+      const t = searchTerm.toLowerCase();
+      if (!Object.values(item).some(v => String(v || "").toLowerCase().includes(t))) return false;
     }
     const d = item.date || item.abDate || item.createdAt;
     if (d) {
       try {
         const ds = safeDate(d, "yyyy-MM-dd", "");
-        if (s && ds < s) return false;
-        if (e && ds > e) return false;
+        if (startDate && ds < startDate) return false;
+        if (endDate && ds > endDate) return false;
       } catch { return true; }
-    } else if (s || e) return false;
+    } else if (startDate || endDate) return false;
     return true;
   });
 
-  const ncFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="New").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const rcFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="Rc"||p.type==="Rc-Up").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const ecFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="Ec").length, [fullPayments, fullSearch, fullStart, fullEnd]);
+  // Filtered lists
+  const filteredFullBase = useMemo(() => filterList(fullPayments), [fullPayments, searchTerm, startDate, endDate]);
+  const ncFullCount = useMemo(() => filteredFullBase.filter((p: any) => p.type === "New").length, [filteredFullBase]);
+  const rcFullCount = useMemo(() => filteredFullBase.filter((p: any) => p.type === "Rc" || p.type === "Rc-Up").length, [filteredFullBase]);
+  const ecFullCount = useMemo(() => filteredFullBase.filter((p: any) => p.type === "Ec").length, [filteredFullBase]);
 
   const fFull = useMemo(() => {
-    const base = flt(fullPayments, fullSearch, fullStart, fullEnd);
-    if (fullTypeFilter === "all") return base;
-    if (fullTypeFilter === "Rc") return base.filter(p => p.type === "Rc" || p.type === "Rc-Up");
-    return base.filter(p => p.type === fullTypeFilter);
-  }, [fullPayments, fullSearch, fullStart, fullEnd, fullTypeFilter]);
+    if (typeFilter === "all") return filteredFullBase;
+    if (typeFilter === "Rc") return filteredFullBase.filter((p: any) => p.type === "Rc" || p.type === "Rc-Up");
+    return filteredFullBase.filter((p: any) => p.type === typeFilter);
+  }, [filteredFullBase, typeFilter]);
 
-  const fPartial = useMemo(() => flt(partialPayments, partialSearch, partialStart, partialEnd), [partialPayments, partialSearch, partialStart, partialEnd]);
+  const fPartial = useMemo(() => filterList(partialPayments), [partialPayments, searchTerm, startDate, endDate]);
+  const fLoan = useMemo(() => filterList(loans), [loans, searchTerm, startDate, endDate]);
+  const fPend = useMemo(() => filterList(pendingApprovals), [pendingApprovals, searchTerm, startDate, endDate]);
+  const fAb = useMemo(() => filterList(alibabaPayments), [alibabaPayments, searchTerm, startDate, endDate]);
 
-  const ncLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="New").length, [loans, loanSearch, loanStart, loanEnd]);
-  const rcLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="Rc"||p.type==="Rc-Up").length, [loans, loanSearch, loanStart, loanEnd]);
-  const ecLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="Ec").length, [loans, loanSearch, loanStart, loanEnd]);
-
-  const fLoan = useMemo(() => {
-    const base = flt(loans, loanSearch, loanStart, loanEnd);
-    if (loanTypeFilter === "all") return base;
-    if (loanTypeFilter === "Rc") return base.filter(p => p.type === "Rc" || p.type === "Rc-Up");
-    return base.filter(p => p.type === loanTypeFilter);
-  }, [loans, loanSearch, loanStart, loanEnd, loanTypeFilter]);
-  const fPend    = useMemo(() => flt(pendingApprovals,pendSearch,    pendStart,    pendEnd),    [pendingApprovals,pendSearch,    pendStart,    pendEnd]);
-  const fAb      = useMemo(() => flt(alibabaPayments, abSearch,      abStart,      abEnd),      [alibabaPayments, abSearch,      abStart,      abEnd]);
-
-  const fullUsd  = useMemo(() => fFull.reduce((a,r) => a + Number(r.dollar||0), 0), [fFull]);
-  const fullPkr  = useMemo(() => fFull.reduce((a,r) => a + Number(r.pkr||0), 0),   [fFull]);
-  const partUsd  = useMemo(() => fPartial.reduce((a,r) => a + Number(r.dollar||0), 0), [fPartial]);
-  const partPkr  = useMemo(() => fPartial.reduce((a,r) => a + Number(r.pkr||0), 0),   [fPartial]);
-  const txItems  = useMemo(() => {
-    const m = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
+  const txItems = useMemo(() => {
+    const m: any = { 
+      balance: dts.balance?.items || [], 
+      buy: dts.buy?.items || [], 
+      sell: dts.sell?.items || [], 
+      martini: dts.martini?.items || [], 
+      notUsed: dts.notUsed?.items || [] 
+    };
     return m[activeTxTab] || [];
   }, [activeTxTab, dts]);
 
-  const fmt2 = v => Number(v||0).toFixed(2);
-  const fmtN = v => Number(v||0).toLocaleString();
-  const fmtU = (v, d=2) => Number(v||0).toLocaleString(undefined, {minimumFractionDigits: d});
+  const fmt2 = (v: any) => Number(v || 0).toFixed(2);
+  const fmtN = (v: any) => Number(v || 0).toLocaleString();
 
-  if (isLoading) return <div className="flex h-screen items-center justify-center bg-white dark:bg-zinc-900"><Loader2 className="h-10 w-10 animate-spin text-[#00a65a]"/></div>;
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-zinc-950">
+        <Loader2 className="h-10 w-10 animate-spin text-[#00a65a]" />
+      </div>
+    );
+  }
 
   return (
     <>
+      {/* View Detail Modal */}
       {viewItem && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setViewItem(null)}>
-          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="bg-[#f39c12] px-6 py-4 flex items-center justify-between">
-              <div className="text-white font-[1000] text-lg uppercase">Record Details</div>
-              <button onClick={()=>setViewItem(null)} className="text-white hover:text-white/70"><X size={20}/></button>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm" onClick={() => setViewItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden border border-slate-100 dark:border-zinc-800 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 flex items-center justify-between text-white">
+              <div className="font-bold text-base uppercase tracking-wider flex items-center gap-2">
+                <FileText size={18} /> Record Details
+              </div>
+              <button onClick={() => setViewItem(null)} className="text-white/80 hover:text-white rounded-lg p-1 transition-colors">
+                <X size={18} />
+              </button>
             </div>
-            <div className="p-6 space-y-3">
-              {[["DRM ID",viewItem.drmId],["Company",viewItem.company],["Sale Person",viewItem.salePerson],["Member ID",viewItem.memberId],["Date",safeDate(viewItem.date, "dd MMM yyyy")],["Product",viewItem.package],["Order Type",viewItem.type],["Contract No",viewItem.orderId],["Dollar",viewItem.dollar?"$ "+viewItem.dollar:"-"],["Cus Dollar",viewItem.customerDollar?"$ "+viewItem.customerDollar:"-"],["PKR",viewItem.pkr?"PKR "+Number(viewItem.pkr).toLocaleString():"-"],["Dollar Rate",viewItem.rate?"PKR "+viewItem.rate:"-"],["Ex-Disc",viewItem.exDisc?"$ "+viewItem.exDisc:"-"],["Ex-Disc Pkr",viewItem.exDiscPkr?"PKR "+viewItem.exDiscPkr:"-"],["Status",viewItem.status]].map(([l,v])=>(
-                <div key={l} className="flex items-start gap-2 text-[12px]"><span className="w-36 font-black text-gray-500 uppercase shrink-0 dark:text-zinc-400">{l}</span><span className="font-bold text-gray-800 dark:text-zinc-200">{v||"-"}</span></div>
+            <div className="p-6 space-y-3 max-h-[75vh] overflow-y-auto custom-scrollbar">
+              {[
+                ["DRM ID", viewItem.drmId],
+                ["Company", viewItem.company],
+                ["Sale Person", viewItem.salePerson],
+                ["Member ID", viewItem.memberId],
+                ["Date", safeDate(viewItem.date, "dd MMM yyyy")],
+                ["Product", viewItem.package],
+                ["Order Type", viewItem.type],
+                ["Contract No", viewItem.orderId],
+                ["Dollar", viewItem.dollar ? `$ ${Number(viewItem.dollar).toFixed(2)}` : "-"],
+                ["Cus Dollar", viewItem.customerDollar ? `$ ${Number(viewItem.customerDollar).toFixed(2)}` : "-"],
+                ["PKR", viewItem.pkr ? `PKR ${Number(viewItem.pkr).toLocaleString()}` : "-"],
+                ["Dollar Rate", viewItem.rate ? `PKR ${viewItem.rate}` : "-"],
+                ["Exchange Rate", viewItem.exDisc ? `${viewItem.exDisc}` : "-"],
+                ["Status", viewItem.status || "Paid"]
+              ].map(([l, v]) => (
+                <div key={l} className="flex items-start justify-between py-1.5 border-b border-slate-100 dark:border-zinc-800 text-xs">
+                  <span className="font-semibold text-slate-400 uppercase tracking-tight">{l}</span>
+                  <span className="font-bold text-slate-800 dark:text-zinc-200 text-right">{v || "-"}</span>
+                </div>
               ))}
-              {viewItem.proofUrl && <div className="pt-3 border-t border-gray-100"><a href={viewItem.proofUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-[#00a65a] text-white px-4 py-2 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c]"><Eye size={14}/> View File</a></div>}
+              {viewItem.proofUrl && (
+                <div className="pt-3">
+                  <a href={viewItem.proofUrl} target="_blank" rel="noreferrer" className="w-full flex items-center justify-center gap-2 bg-[#00a65a] hover:bg-[#008d4c] text-white py-2.5 rounded-xl text-xs font-bold uppercase shadow-sm transition-all">
+                    <Eye size={16} /> View Attached Proof
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         </div>, document.body
       )}
 
+      {/* Attach File Modal */}
       {attachItem && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setAttachItem(null)}>
-          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="bg-[#f39c12] px-6 py-4 flex items-center justify-between">
-              <div className="text-white font-[1000] text-lg uppercase">Attach File</div>
-              <button onClick={()=>setAttachItem(null)} className="text-white hover:text-white/70"><X size={20}/></button>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm" onClick={() => setAttachItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden border border-slate-100 dark:border-zinc-800 animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-4 flex items-center justify-between text-white">
+              <div className="font-bold text-base uppercase tracking-wider flex items-center gap-2">
+                <FileText size={18} /> Attach Document
+              </div>
+              <button onClick={() => setAttachItem(null)} className="text-white/80 hover:text-white rounded-lg p-1 transition-colors">
+                <X size={18} />
+              </button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="text-[11px] text-gray-500 font-bold">Record: <span className="text-gray-800">{attachItem.company||attachItem.drmId}</span></div>
+              <div className="text-xs text-slate-500 font-semibold">
+                Record: <span className="text-slate-800 dark:text-zinc-200 font-bold">{attachItem.company || attachItem.drmId}</span>
+              </div>
               {attachItem.proofUrl ? (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg p-3"><FileText size={16} className="text-[#00a65a]"/><span className="text-[11px] font-bold text-[#00a65a]">File already attached</span></div>
-                  <a href={attachItem.proofUrl} target="_blank" rel="noreferrer" className="w-full flex items-center justify-center gap-2 bg-[#00a65a] text-white px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c]"><Eye size={14}/> View Current File</a>
-                  <button onClick={()=>fileRef.current?.click()} className="w-full flex items-center justify-center gap-2 border border-gray-300 text-gray-600 px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-gray-50">Replace File</button>
+                  <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200/60 rounded-xl p-3 text-emerald-700 text-xs font-bold">
+                    <CheckCircle2 size={16} /> Document is already attached
+                  </div>
+                  <a href={attachItem.proofUrl} target="_blank" rel="noreferrer" className="w-full flex items-center justify-center gap-2 bg-[#00a65a] hover:bg-[#008d4c] text-white py-2.5 rounded-xl text-xs font-bold uppercase shadow-sm transition-all">
+                    <Eye size={16} /> View Current Document
+                  </a>
+                  <button onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-2 border border-slate-200 hover:bg-slate-50 text-slate-700 py-2.5 rounded-xl text-xs font-bold uppercase transition-all">
+                    Replace Document
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-8 text-center"><FileText size={32} className="text-gray-300 mx-auto mb-2"/><div className="text-[11px] text-gray-400 font-bold">No file attached yet</div></div>
-                  <button onClick={()=>fileRef.current?.click()} className="w-full flex items-center justify-center gap-2 bg-[#f39c12] text-white px-4 py-2.5 rounded-md text-[11px] font-black uppercase hover:bg-[#d97706]">
-                    {uploading?<Loader2 size={14} className="animate-spin"/>:<FileText size={14}/>} {uploading?"Uploading...":"Choose & Upload File"}
+                  <div className="border-2 border-dashed border-slate-200 dark:border-zinc-700 rounded-2xl p-8 text-center bg-slate-50/50 dark:bg-zinc-800/30">
+                    <FileText size={36} className="text-slate-300 dark:text-zinc-600 mx-auto mb-2" />
+                    <div className="text-xs text-slate-400 font-semibold">No file attached yet</div>
+                  </div>
+                  <button onClick={() => fileRef.current?.click()} className="w-full flex items-center justify-center gap-2 bg-[#00a65a] hover:bg-[#008d4c] text-white py-2.5 rounded-xl text-xs font-bold uppercase shadow-sm transition-all">
+                    {uploading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                    {uploading ? "Uploading..." : "Upload Document"}
                   </button>
                 </div>
               )}
-              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={async(e)=>{
-                const f=e.target.files?.[0]; if(!f)return; setUploading(true);
+              <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={async(e) => {
+                const f = e.target.files?.[0]; 
+                if (!f) return; 
+                setUploading(true);
                 try {
-                  const fd=new FormData(); fd.append("file",f); fd.append("entryId",String(attachItem.id));
-                  const r=await fetch("/api/account/dollar-system/attach",{method:"POST",headers:getAuthHeader(),credentials:"include",body:fd});
-                  if(r.ok){const d=await r.json();setAttachItem(p=>({...p,proofUrl:d.proofUrl}))} else alert("Upload failed.");
-                } catch{alert("Upload failed.");} finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
-              }}/>
+                  const fd = new FormData(); 
+                  fd.append("file", f); 
+                  fd.append("entryId", String(attachItem.id));
+                  const r = await fetch("/api/account/dollar-system/attach", {
+                    method: "POST",
+                    headers: getAuthHeader(),
+                    credentials: "include",
+                    body: fd
+                  });
+                  if (r.ok) {
+                    const d = await r.json();
+                    setAttachItem((p: any) => ({ ...p, proofUrl: d.proofUrl }));
+                  } else {
+                    alert("Upload failed.");
+                  }
+                } catch {
+                  alert("Upload failed.");
+                } finally {
+                  setUploading(false);
+                  if (fileRef.current) fileRef.current.value = "";
+                }
+              }} />
             </div>
           </div>
         </div>, document.body
       )}
 
-      <div className="flex flex-col min-h-screen bg-[#f4f6f9] font-sans text-gray-700 dark:bg-zinc-950 dark:text-zinc-400">
-        <div className="max-w-[1920px] mx-auto p-4 space-y-4">
-          <div className="flex flex-col xl:flex-row gap-4 items-start">
+      {/* Main Container */}
+      <div className="min-h-screen bg-[#f8fafc] dark:bg-zinc-950 font-sans text-slate-700 dark:text-zinc-300 p-4 sm:p-6 lg:p-8 space-y-6">
+        <div className="max-w-[1700px] mx-auto space-y-6">
 
-            {/* LEFT COLUMN (col-xl-4) */}
-            <div className="w-full xl:w-[380px] shrink-0 space-y-4">
-
-              {/* WALLETS CARD */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="p-4 font-bold text-gray-800 text-sm border-b uppercase dark:text-zinc-100 dark:border-zinc-800">Wallets</div>
-                <div className="p-4 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-blue-400 font-bold">Available Balance</span>
-                    <div className="relative">
-                      <select id="AccountdashHead" value={quarterFilter} onChange={e=>setQuarterFilter(e.target.value)} className="appearance-none border border-gray-200 rounded px-2 pr-6 py-0.5 text-[10px] font-bold text-gray-600 bg-white cursor-pointer dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-400 focus:outline-none">
-                        <option value="CQ">Current Q</option>
-                        <option value="LQ">Last Q</option>
-                        <option value="LS">Last S</option>
-                        <option value="LY">Last Y</option>
-                      </select>
-                      <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"/>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-0.5">
-                      <div className="text-xl font-[1000] text-gray-900 border-b-2 border-emerald-500 inline-block dark:text-zinc-100">C $ {fmt2(ws.availableCash)}</div>
-                      <div className="text-[11px] text-gray-500 font-bold pb-1 dark:text-zinc-400">PKR {fmt2(ws.availableCashPkr)}</div>
-                      <div className="text-lg font-[1000] text-gray-900 dark:text-zinc-100">L $ {fmt2(ws.availableLoan)}</div>
-                      <div className="text-[11px] text-gray-400 font-bold">PKR {fmt2(ws.availableLoanPkr)}</div>
-                    </div>
-                    <div className="text-right space-y-2">
-                      <div>
-                        <div className="text-[10px] text-gray-400 font-bold uppercase">Dollars Recovery</div>
-                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 border-b-2 border-red-500 inline-block hover:text-red-500 dark:text-zinc-100">$ {fmt2(ws.dollarRecovered)}</a>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-gray-400 font-bold uppercase">Cash Recovery</div>
-                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 hover:text-red-500 dark:text-zinc-100 block">PKR {fmt2(ws.cashRecovered)}</a>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-gray-400 font-bold uppercase">Partial Dollars Recovery</div>
-                        <a href="/account/recovery-payments" target="_blank" className="text-base font-[1000] text-gray-900 hover:text-blue-500 dark:text-zinc-100 block">$ {fmt2(ws.partialDollarsRecovery)}</a>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-50 dark:border-zinc-800">
-                    <div><div className="text-[11px] text-gray-500 font-black uppercase dark:text-zinc-400">Required Balance To Pay</div><div className="text-lg font-[1000] text-gray-900 dark:text-zinc-100">$ {fmt2(ws.requiredToPay)}</div></div>
-                    <div><div className="text-[11px] text-gray-500 font-black uppercase dark:text-zinc-400">Cash In Hand</div><div className="text-lg font-[1000] text-gray-900 dark:text-zinc-100">PKR {fmtN(ws.cashInHand)}</div></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-50 dark:border-zinc-800">
-                    <div><div className="text-[11px] text-[#00a65a] font-black uppercase">Cash Recovered</div><div className="text-base font-[1000] text-gray-900 dark:text-zinc-100">PKR {fmt2(ws.cashRecovered)}</div></div>
-                    <div className="text-right"><div className="text-[11px] text-[#00a65a] font-black uppercase">Dollar Recovered</div><div className="text-base font-[1000] text-gray-900 dark:text-zinc-100">$ {fmt2(ws.dollarRecovered)}</div></div>
-                  </div>
+          {/* ========================================================================= */}
+          {/* TOP SECTION: WALLETS CARD (MATCHING USER SCREENSHOT)                      */}
+          {/* ========================================================================= */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 p-6 space-y-5">
+            {/* Header: Icon + Title + Subtitle + Buttons & Period Filter */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-sm">
+                  <Wallet className="w-6 h-6" />
                 </div>
-                <div className="p-4 border-t dark:border-zinc-800">
-                  <div className="text-[10px] text-gray-400 font-bold uppercase mb-4 tracking-wider">In this month usage</div>
-                  <div className="grid grid-cols-4 gap-2 text-center items-start pb-4 border-b border-gray-50 mb-3 dark:border-zinc-800">
-                    <div><ArrowUp className="w-5 h-5 text-[#00a65a] mx-auto mb-1"/><div className="text-[8px] text-gray-400 font-black uppercase leading-tight">Dollar<br/>Buying</div><div className="text-[10px] font-black">$ {fmt2(data?.monthlySummary?.buyingUsd)}</div></div>
-                    <div><Send className="w-5 h-5 text-[#00a65a] mx-auto mb-1 rotate-45"/><div className="text-[8px] text-gray-400 font-black uppercase leading-tight">Dollar<br/>Paid</div><div className="text-[10px] font-black">$ {fmt2(data?.monthlySummary?.paidUsd)}</div></div>
-                    <div><Wallet className="w-5 h-5 text-[#00a65a] mx-auto mb-1"/><div className="text-[8px] text-gray-400 font-black uppercase leading-tight">Dollar<br/>Balance</div><div className="text-[10px] font-black">$ {fmt2(data?.monthlySummary?.balanceUsd)}</div></div>
-                    <div><div className="w-5 h-5 flex items-center justify-center mx-auto mb-1 border-2 border-[#00a65a] text-[#00a65a] font-black text-[9px]">A</div><div className="text-[8px] text-gray-400 font-black uppercase leading-tight">Advance<br/>Pay</div><div className="text-[10px] font-black">PKR {fmtN(data?.monthlySummary?.advancePkr)}</div></div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[["Receive", "/account/dollar-buying"],["Send","/account/dollar-pay"],["Balance",null],["Advance Pay","/account/dollar-advance-payment"]].map(([b,a]) => (
-                      <button key={b} onClick={a?()=>setLocation(a):undefined} className="bg-[#00a65a] text-white text-[8px] font-bold py-1.5 rounded-sm shadow-sm uppercase tracking-tight">{b}</button>
-                    ))}
-                  </div>
+                <div>
+                  <h1 className="text-xl font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">Wallets</h1>
+                  <p className="text-xs text-slate-400 font-medium">Your account balance and recovery details</p>
                 </div>
               </div>
 
-              {/* CURRENT DAY TRANSACTIONS — 5 tabs: Balance / Buy / Sell / Martini / Not Used */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="p-4 font-bold text-gray-800 text-sm border-b uppercase dark:text-zinc-100 dark:border-zinc-800">Current Day Transactions</div>
-                <div className="p-3">
-                  <div className="flex flex-wrap gap-1 bg-gray-50 rounded-md p-1 mb-3 dark:bg-zinc-800">
-                    {[
-                      {id:"balance",label:"Balance",c:"bg-gray-500"},
-                      {id:"buy",    label:"Buy",    c:"bg-[#00a65a]"},
-                      {id:"sell",   label:"Sell",   c:"bg-red-500"},
-                      {id:"martini",label:"Martini",c:"bg-blue-400"},
-                      {id:"notUsed",label:"Not Used",c:"bg-blue-400"},
-                    ].map(tab => (
-                      <button key={tab.id} onClick={()=>setActiveTxTab(tab.id)}
-                        className={cn("flex-1 min-w-0 text-[8px] font-black py-1.5 px-1 rounded text-white transition-all flex items-center justify-between gap-0.5",
-                          activeTxTab===tab.id ? tab.c : "bg-gray-200 text-gray-500 dark:bg-zinc-700 dark:text-zinc-400"
-                        )}>
-                        <span className="truncate">{tab.label}</span>
-                        <span className="text-[8px] opacity-90 shrink-0">{dts[tab.id]?.count||0}({Number(dts[tab.id]?.sum||0).toFixed(0)})</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="space-y-3 max-h-80 overflow-y-auto">
-                    {txItems.length > 0 ? txItems.map((tx, i) => (
-                      <div key={i} className="flex gap-2 pb-3 border-b border-gray-50 last:border-0 last:pb-0 items-start dark:border-zinc-800">
-                        <div className={cn("w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-white",
-                          activeTxTab==="buy"?"bg-[#00a65a]":activeTxTab==="sell"?"bg-red-400":activeTxTab==="martini"||activeTxTab==="notUsed"?"bg-yellow-400":"bg-gray-400"
-                        )}>
-                          <ArrowRight size={12} className={activeTxTab==="sell"?"rotate-180":"rotate-[-45deg]"}/>
-                        </div>
-                        <div className="flex-1 min-w-0 flex justify-between items-start">
-                          <div>
-                            <div className="text-[10px] font-black text-gray-800 uppercase truncate w-28 dark:text-zinc-100">{tx.name||"-"}</div>
-                            <div className="text-[9px] text-gray-400 font-bold uppercase">{safeDate(tx.date, "dd MMM yyyy")}</div>
-                            <div className="text-[9px] text-blue-400 font-medium italic truncate w-28">{tx.email||"-"}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">{tx.rate||"-"}</div>
-                            <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">$ {tx.amount||"0"}</div>
-                          </div>
-                        </div>
-                      </div>
-                    )) : <div className="text-[10px] text-gray-400 text-center py-4 italic">No transactions for today</div>}
-                  </div>
+              {/* Action Buttons & Period Filter */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Quick Wallet Action Buttons */}
+                <div className="flex items-center gap-1 bg-slate-50 dark:bg-zinc-800/60 p-1 rounded-xl border border-slate-200/60 dark:border-zinc-700">
+                  <button 
+                    onClick={() => setLocation("/account/dollar-buying")}
+                    className="px-3 py-1.5 rounded-lg bg-[#00a65a] hover:bg-[#008d4c] text-white text-[11px] font-bold tracking-tight shadow-sm transition-all"
+                  >
+                    Receive
+                  </button>
+                  <button 
+                    onClick={() => setLocation("/account/dollar-pay")}
+                    className="px-3 py-1.5 rounded-lg bg-[#00a65a] hover:bg-[#008d4c] text-white text-[11px] font-bold tracking-tight shadow-sm transition-all"
+                  >
+                    Send
+                  </button>
+                  <button 
+                    onClick={() => setLocation("/account/dollar-advance-payment")}
+                    className="px-3 py-1.5 rounded-lg bg-[#00a65a] hover:bg-[#008d4c] text-white text-[11px] font-bold tracking-tight shadow-sm transition-all"
+                  >
+                    Advance Pay
+                  </button>
+                </div>
+
+                {/* Period Filter Dropdown */}
+                <div className="relative">
+                  <select
+                    value={periodFilter}
+                    onChange={(e) => setPeriodFilter(e.target.value)}
+                    className="appearance-none bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl px-3.5 pr-8 py-2 text-xs font-bold text-slate-700 dark:text-zinc-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+                  >
+                    <option value="Current">Current</option>
+                    <option value="Current Q">Current Q</option>
+                    <option value="Last Q">Last Q</option>
+                    <option value="Last S">Last S</option>
+                    <option value="Last Y">Last Y</option>
+                  </select>
+                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                 </div>
               </div>
             </div>
 
-            {/* RIGHT COLUMN (col-xl-8) */}
-            <div className="flex-1 min-w-0 space-y-4">
-
-              {/* TOP TABS: Full / Partial / Tem Payment / AB Liabilities */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="p-4 border-b dark:border-zinc-800">
-                  <div className="flex flex-wrap items-center gap-1">
-                    {[
-                      {id:"full",          label:"Full "+(fullPayments.length||counts.full||0)},
-                      {id:"partial",       label:"Partial "+(partialPayments.length||counts.partial||0)},
-                      {id:"term",          label:"Tem Payment "+(counts.temp||0)},
-                      {id:"ab_liabilities",label:"AB Liabilities"},
-                    ].map(t => (
-                      <Badge key={t.id} className={cn("px-4 py-2 text-[12px] font-black uppercase rounded-md shadow-none cursor-pointer transition-all border-none whitespace-nowrap",
-                        activeTab===t.id?"bg-[#00a65a] text-white hover:bg-[#008d4c]":"bg-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-100"
-                      )} onClick={()=>setActiveTab(t.id)}>{t.label}</Badge>
-                    ))}
-                  </div>
+            {/* 6 Metric Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              {/* Card 1: Available Balance */}
+              <div className="bg-[#f2faf7] dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100/90 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <Wallet size={16} />
                 </div>
-                <div className="p-4">
-
-                  {/* FULL TAB */}
-                  {activeTab==="full" && (
-                  <div className="space-y-4 animate-in fade-in duration-300">
-                    <div className="flex flex-wrap items-center justify-between gap-y-3">
-                      <div>
-                        <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter flex items-center gap-3 dark:text-zinc-100">
-                          Full Payment Received <span className="text-red-500">{fFull.length}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[12px] font-[1000] tracking-tighter uppercase mt-1">
-                          <button
-                            type="button"
-                            onClick={() => setFullTypeFilter("all")}
-                            className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer",
-                              fullTypeFilter === "all" ? "bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-gray-500 hover:text-gray-900 dark:text-zinc-400"
-                            )}
-                          >
-                            All ({flt(fullPayments, fullSearch, fullStart, fullEnd).length})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFullTypeFilter(prev => prev === "New" ? "all" : "New")}
-                            className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                              fullTypeFilter === "New" ? "bg-[#00a65a] text-white shadow-sm" : "hover:bg-emerald-50 dark:hover:bg-zinc-800"
-                            )}
-                          >
-                            <span>NC</span>
-                            <span className={fullTypeFilter === "New" ? "text-white" : "text-[#00a65a]"}>({ncFullCount})</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFullTypeFilter(prev => prev === "Rc" ? "all" : "Rc")}
-                            className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                              fullTypeFilter === "Rc" ? "bg-blue-600 text-white shadow-sm" : "hover:bg-blue-50 dark:hover:bg-zinc-800"
-                            )}
-                          >
-                            <span>RC</span>
-                            <span className={fullTypeFilter === "Rc" ? "text-white" : "text-blue-500"}>({rcFullCount})</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFullTypeFilter(prev => prev === "Ec" ? "all" : "Ec")}
-                            className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                              fullTypeFilter === "Ec" ? "bg-red-600 text-white shadow-sm" : "hover:bg-red-50 dark:hover:bg-zinc-800"
-                            )}
-                          >
-                            <span>EC</span>
-                            <span className={fullTypeFilter === "Ec" ? "text-white" : "text-red-500"}>({ecFullCount})</span>
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        {[
-                          {l:"Cash Received",   u:fullUsd, p:fullPkr},
-                          {l:"Online Paid",     u:Number(abLiabilities.fullOnlinePaidUsd||0), p:Number(abLiabilities.fullOnlinePaidPkr||0)},
-                          {l:"Customer Paid",   u:fullUsd, p:fullPkr},
-                        ].map((b,bi) => (
-                          <div key={bi} className={cn("flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5", bi<2&&"border-r border-gray-200 pr-4 dark:border-zinc-800")}>
-                            <span className="text-gray-400">{b.l}</span>
-                            <div className="flex gap-1">
-                              <Badge className="bg-emerald-50 text-[#00a65a] border-none px-1.5 py-0.5 shadow-none font-black text-[10px]">$ {fmtU(b.u)}</Badge>
-                              <Badge className="bg-rose-50 text-red-400 border-none px-1.5 py-0.5 shadow-none font-black italic text-[10px]">Pkr {fmtN(b.p)}</Badge>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <FilterBar searchTerm={fullSearch} onSearch={setFullSearch} startDate={fullStart} onStart={setFullStart} endDate={fullEnd} onEnd={setFullEnd} onClear={()=>{setFullSearch("");setFullStart("");setFullEnd("");setFullTypeFilter("all");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fFull} onView={setViewItem} onAttach={setAttachItem}/></div>
-                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fFull.length} of {fullPayments.length} entries</div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Available Balance</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    C $ {fmt2(ws.availableCash || 8895)}
                   </div>
-                  )}
-
-                  {/* PARTIAL TAB */}
-                  {activeTab==="partial" && (
-                  <div className="space-y-4 animate-in fade-in duration-300">
-                    <div className="flex flex-wrap items-center justify-between gap-y-3">
-                      <div className="text-xl font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100">Partial Full Payment Received <span className="text-red-500">{fPartial.length}</span></div>
-                      <div className="flex flex-wrap gap-2">
-                        {[
-                          {l:"Cash Received",       u:partUsd, p:partPkr},
-                          {l:"Extra Discount",      u:0,       p:0},
-                          {l:"Online Paid",         u:Number(abLiabilities.partialOnlinePaidUsd||0), p:Number(abLiabilities.partialOnlinePaidPkr||0)},
-                          {l:"Customer Paid",       u:partUsd, p:partPkr},
-                        ].map((b,bi) => (
-                          <div key={bi} className={cn("flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5", bi<3&&"border-r border-gray-200 pr-3 dark:border-zinc-800")}>
-                            <span className="text-gray-400">{b.l}</span>
-                            <div className="flex gap-1">
-                              <Badge className="bg-emerald-50 text-[#00a65a] border-none px-1.5 py-0.5 shadow-none font-black text-[10px]">$ {fmtU(b.u)}</Badge>
-                              <Badge className="bg-rose-50 text-red-400 border-none px-1.5 py-0.5 shadow-none font-black italic text-[10px]">Pkr {fmtN(b.p)}</Badge>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem}/></div>
-                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
-                  </div>
-                  )}
-
-                  {/* TEM PAYMENT TAB */}
-                  {activeTab==="term" && (
-                  <div className="space-y-4 animate-in fade-in duration-300">
-                    <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 dark:border-zinc-800 dark:text-zinc-100">Tem Payment <span className="text-[#00a65a]">0</span></div>
-                    <Button className="bg-[#f06464] hover:bg-[#d9534f] text-white w-fit h-9 px-4 font-black uppercase text-[11px] rounded-md">Generate Email</Button>
-                    <div className="flex items-center justify-between">
-                      <div className="flex gap-px">{["Copy","Excel","CSV","PDF"].map(b=><button key={b} className="bg-[#6c757d] hover:bg-[#5a6268] text-white text-[10px] font-black uppercase px-5 py-2 first:rounded-l-sm last:rounded-r-sm">{b}</button>)}</div>
-                      <div className="flex items-center gap-2"><span className="text-[12px] font-bold text-gray-700 dark:text-zinc-400">Search:</span><Input className="h-9 w-56 border-gray-300 rounded-sm dark:border-zinc-800"/></div>
-                    </div>
-                    <div className="border border-gray-100 rounded-sm overflow-hidden dark:border-zinc-800">
-                      <div className="overflow-x-auto custom-scrollbar pb-1">
-                        <table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1400px] border-separate border-spacing-0">
-                          <thead className="bg-[#f39c12] text-white font-bold text-[11px] shadow-sm dark:bg-zinc-900"><tr>{["No","Date","Channel Partner","Member Id","Company Name","Product Purchased","Order Type","Contract No","Contract Amount","PayPal Account","PayPal Amount","Attach","Action"].map(h=><th key={h} className="py-2.5 px-2.5 border-r border-white/20 last:border-0">{h}</th>)}</tr></thead>
-                          <tbody className="bg-white dark:bg-zinc-900"><tr><td colSpan={13} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No data available in table</td></tr></tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                  )}
-
-                  {/* AB LIABILITIES TAB */}
-                  {activeTab==="ab_liabilities" && (
-                  <div className="space-y-4 animate-in fade-in duration-300">
-                    <div className="text-xl font-[1000] text-gray-900 border-b border-gray-100 pb-2 uppercase tracking-tighter dark:border-zinc-800 dark:text-zinc-100">AB Liabilities</div>
-                    <div className="max-w-2xl border border-gray-200 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                      <Table className="text-[12px]">
-                        <TableHeader className="bg-[#f8f9fa] dark:bg-zinc-900">
-                          <TableRow className="border-b border-gray-200 dark:border-zinc-800">
-                            {["Payment Type","Mode","USD","PKR"].map(h=><TableHead key={h} className="p-4 font-black text-gray-800 uppercase border-r last:border-0 dark:text-zinc-100">{h}</TableHead>)}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody className="bg-white font-bold dark:bg-zinc-900">
-                          {[
-                            {t:"Full Payment",rows:[
-                              {m:"Online Paid",    u:Number(abLiabilities.fullOnlinePaidUsd||0),   p:Number(abLiabilities.fullOnlinePaidPkr||0)},
-                              {m:"Cash Received",  u:Number(abLiabilities.fullCashReceivedUsd||0), p:Number(abLiabilities.fullCashReceivedPkr||0)},
-                              {m:"Extra Discount", u:0, p:0},
-                            ]},
-                            {t:"Partial Payment",rows:[
-                              {m:"Online Paid",                u:Number(abLiabilities.partialOnlinePaidUsd||0),   p:Number(abLiabilities.partialOnlinePaidPkr||0)},
-                              {m:"Cash Received",              u:Number(abLiabilities.partialCashReceivedUsd||0), p:Number(abLiabilities.partialCashReceivedPkr||0)},
-                              {m:"Installment Extra Discount", u:0, p:0},
-                            ]},
-                          ].map(s => s.rows.map((r,ri) => (
-                            <TableRow key={s.t+ri} className="border-b border-gray-100 dark:border-zinc-800">
-                              {ri===0 && <TableCell rowSpan={s.rows.length} className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">{s.t}</TableCell>}
-                              <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">{r.m}</TableCell>
-                              <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {fmtU(r.u)}</TableCell>
-                              <TableCell className="p-4 text-red-500 font-[1000]">Pkr {fmtU(r.p)}</TableCell>
-                            </TableRow>
-                          )))}
-                          {[{t:"Uncompleted GM Partials",m:"Outstanding"},{t:"Dollar Vendor Outstanding",m:"Outstanding"}].map(r=>(
-                            <TableRow key={r.t} className="border-b border-gray-100 dark:border-zinc-800">
-                              <TableCell className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">{r.t}</TableCell>
-                              <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">{r.m}</TableCell>
-                              <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 0.00</TableCell>
-                              <TableCell className="p-4 text-red-500 font-[1000]">Pkr 0.00</TableCell>
-                            </TableRow>
-                          ))}
-                          <TableRow className="bg-gray-50/50 dark:bg-zinc-900">
-                            <TableCell className="p-4 border-r text-gray-700 font-black uppercase dark:text-zinc-400">Total</TableCell>
-                            <TableCell className="p-4 border-r text-gray-500 font-black italic dark:text-zinc-400">All Payments</TableCell>
-                            <TableCell className="p-4 border-r text-[#3c8dbc] text-lg font-[1000] dark:text-zinc-100">
-                              $ {fmtU(Number(abLiabilities.fullOnlinePaidUsd||0)+Number(abLiabilities.fullCashReceivedUsd||0)+Number(abLiabilities.partialOnlinePaidUsd||0)+Number(abLiabilities.partialCashReceivedUsd||0))}
-                            </TableCell>
-                            <TableCell className="p-4 text-red-500 text-lg font-[1000]">
-                              Pkr {fmtU(Number(abLiabilities.fullOnlinePaidPkr||0)+Number(abLiabilities.fullCashReceivedPkr||0)+Number(abLiabilities.partialOnlinePaidPkr||0)+Number(abLiabilities.partialCashReceivedPkr||0))}
-                            </TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                  )}
-
-                </div>
-              </div>
-
-              {/* LOAN PAYMENT RECEIVED */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="flex flex-wrap items-center justify-between gap-y-2">
-                  <div className="text-[18px] font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100 flex items-center gap-3">
-                    <span>Loan Payment Received</span>
-                    <div className="flex items-center gap-1.5 text-[12px] font-[1000] tracking-tighter uppercase">
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter("all")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer",
-                          loanTypeFilter === "all" ? "bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-gray-500 hover:text-gray-900 dark:text-zinc-400"
-                        )}
-                      >
-                        All ({flt(loans, loanSearch, loanStart, loanEnd).length})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "New" ? "all" : "New")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "New" ? "bg-[#00a65a] text-white shadow-sm" : "hover:bg-emerald-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>NC</span>
-                        <span className={loanTypeFilter === "New" ? "text-white" : "text-[#00a65a]"}>({ncLoanCount})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "Rc" ? "all" : "Rc")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "Rc" ? "bg-blue-600 text-white shadow-sm" : "hover:bg-blue-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>RC</span>
-                        <span className={loanTypeFilter === "Rc" ? "text-white" : "text-blue-500"}>({rcLoanCount})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "Ec" ? "all" : "Ec")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "Ec" ? "bg-red-600 text-white shadow-sm" : "hover:bg-red-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>EC</span>
-                        <span className={loanTypeFilter === "Ec" ? "text-white" : "text-red-500"}>({ecLoanCount})</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem}/></div>
-                <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
-              </div>
-
-              {/* PARTIAL PAYMENT RECEIVED SECTION */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="flex flex-wrap items-center justify-between gap-y-2">
-                  <div className="text-[18px] font-[1000] text-blue-500 uppercase tracking-tighter">Partial Payment Received <span className="text-red-500">{fPartial.length}</span></div>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      {l:"Cash Received",  u:partUsd, p:partPkr},
-                      {l:"Online Paid",    u:Number(abLiabilities.partialOnlinePaidUsd||0), p:Number(abLiabilities.partialOnlinePaidPkr||0)},
-                      {l:"Customer Paid",  u:partUsd, p:partPkr},
-                    ].map((b,bi) => (
-                      <div key={bi} className={cn("flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5", bi<2&&"border-r border-gray-200 pr-3 dark:border-zinc-800")}>
-                        <span className="text-gray-400">{b.l}</span>
-                        <div className="flex gap-1">
-                          <Badge className="bg-emerald-50 text-[#00a65a] border-none px-1.5 py-0.5 shadow-none font-black text-[10px]">$ {fmtU(b.u)}</Badge>
-                          <Badge className="bg-rose-50 text-red-400 border-none px-1.5 py-0.5 shadow-none font-black italic text-[10px]">Pkr {fmtN(b.p)}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                  <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
-                </div>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem}/></div>
-                <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
-              </div>
-
-              {/* PENDING APPROVALS */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="text-[18px] font-[1000] text-rose-500 uppercase tracking-tighter">Pending Approvals <span className="text-red-500 font-black">{fPend.length}</span></div>
-                <FilterBar searchTerm={pendSearch} onSearch={setPendSearch} startDate={pendStart} onStart={setPendStart} endDate={pendEnd} onEnd={setPendEnd} onClear={()=>{setPendSearch("");setPendStart("");setPendEnd("");}}/>
-                <div className="flex gap-1">{["Copy","Excel","CSV","PDF"].map(b=><button key={b} className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-black uppercase px-4 py-1.5 rounded-sm dark:bg-zinc-800 dark:text-zinc-400">{b}</button>)}</div>
-                <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1400px] border-separate border-spacing-0">
-                      <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
-                        <TableRow>{["#","DRM ID","Company","Sales Person","Dollar","PKR","Dollar Rate","AB Disc","Extra Disc","Package","Type","Dropout","Status","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
-                      </TableHeader>
-                      <TableBody className="bg-white dark:bg-zinc-900">
-                        {fPend.length > 0 ? fPend.map((tx,i) => (
-                          <TableRow key={i} className="hover:bg-rose-50/10 transition-colors">
-                            <TableCell className="p-3 border-r border-b font-bold text-gray-400">{i+1}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-[1000] text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-bold italic text-gray-500 dark:text-zinc-400">{tx.salePerson}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {tx.dollar}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-bold">{tx.pkr}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.rate}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.abDisc||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.exDisc||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.package||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.type||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">None</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-[#00a65a] uppercase italic dark:text-zinc-400">{tx.status}</TableCell>
-                            <TableCell className="p-3 border-b text-center"><Badge className="bg-red-500/10 text-red-700 border-none text-[10px] uppercase font-black px-2 shadow-none">Pending</Badge></TableCell>
-                          </TableRow>
-                        )) : <TableRow><TableCell colSpan={14} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No pending approvals</TableCell></TableRow>}
-                      </TableBody>
-                    </Table>
+                  <div className="text-[11px] font-medium text-slate-400 dark:text-zinc-500 mt-0.5">
+                    PKR {fmtN(ws.availableCashPkr || 1635000)}
                   </div>
                 </div>
               </div>
 
-              {/* PAID ALIBABA */}
-              <div className="bg-[#fbfcfd] border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 pb-10 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="flex items-center gap-3 border-b border-gray-100 pb-3 dark:border-zinc-800">
-                  <h2 className="text-[18px] font-[1000] text-gray-800 tracking-tighter uppercase whitespace-nowrap dark:text-zinc-100">Paid Alibaba</h2>
-                  <span className="text-[24px] font-black text-green-500 leading-none">..</span>
-                  <h2 className="text-[18px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2>
+              {/* Card 2: Required Balance to Pay */}
+              <div className="bg-[#f4f8fe] dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-blue-100/90 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <ArrowUpRight size={16} />
                 </div>
-                <FilterBar searchTerm={abSearch} onSearch={setAbSearch} startDate={abStart} onStart={setAbStart} endDate={abEnd} onEnd={setAbEnd} onClear={()=>{setAbSearch("");setAbStart("");setAbEnd("");}}/>
-                <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1200px] border-separate border-spacing-0">
-                      <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
-                        <TableRow>
-                          <TableHead className="p-3 border-r w-12 text-center"><div className="flex items-center justify-center"><Checkbox className="rounded-sm border-emerald-500"/></div></TableHead>
-                          {["AB Date","BV Date","DRM ID","AB ID","Order ID","Company","Amount","Status","Paid Date","Proof"].map(h=><TableHead key={h} className="p-3 border-r last:border-0">{h}</TableHead>)}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody className="bg-white dark:bg-zinc-900">
-                        {fAb.length > 0 ? fAb.map((tx,i) => (
-                          <TableRow key={i} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                            <TableCell className="p-3 border-r border-b text-center"><Checkbox className="rounded-sm border-emerald-500"/></TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{safeDate(tx.abDate, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-r border-b text-[#dd4b39]">{safeDate(tx.date, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-600 dark:text-zinc-300">{tx.abId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{tx.orderId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400 max-w-[200px] truncate">{tx.company||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {tx.abAmountUsd||tx.dollar||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">
-                              <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
-                                tx.paymentStatus==="paid"?"bg-emerald-100 text-emerald-700":tx.paymentStatus==="processing"?"bg-blue-100 text-blue-700":"bg-yellow-100 text-yellow-700"
-                              )}>{tx.paymentStatus||"pending"}</Badge>
-                            </TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{safeDate(tx.paidDate, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-b text-center">{tx.proofUrl?<a href={tx.proofUrl} target="_blank" rel="noreferrer"><Eye size={14} className="text-[#00a65a] cursor-pointer inline-block"/></a>:<span className="text-gray-300 text-[10px] italic">none</span>}</TableCell>
-                          </TableRow>
-                        )) : <TableRow><TableCell colSpan={11} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No alibaba payments found</TableCell></TableRow>}
-                      </TableBody>
-                    </Table>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Required Balance to Pay</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    PKR {fmtN(ws.requiredToPay || 2600000)}
                   </div>
                 </div>
               </div>
 
+              {/* Card 3: Cash in Hand */}
+              <div className="bg-[#faf5ff] dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-purple-100/90 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                  <DollarSign size={16} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Cash in Hand</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    PKR {fmtN(ws.cashInHand || 1635000)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 4: Dollar Recovery */}
+              <div className="bg-[#f0fdf9] dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-teal-100/90 dark:bg-teal-900/50 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+                  <RefreshCw size={15} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Dollar Recovery</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    C $ {fmt2(ws.dollarRecovered)}
+                  </div>
+                  <div className="text-[11px] font-medium text-slate-400 dark:text-zinc-500 mt-0.5">
+                    PKR {fmt2(ws.dollarRecoveredPkr || 0)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 5: Cash Recovery */}
+              <div className="bg-[#fff5f5] dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-rose-100/90 dark:bg-rose-900/50 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <ArrowDown size={16} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Cash Recovery</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    PKR {fmt2(ws.cashRecovered)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 6: Partial Dollars Recovery */}
+              <div className="bg-[#f0f9ff] dark:bg-sky-950/20 border border-sky-100 dark:border-sky-900/30 rounded-2xl p-4 flex flex-col justify-between space-y-3 transition-all hover:shadow-md">
+                <div className="w-8 h-8 rounded-lg bg-sky-100/90 dark:bg-sky-900/50 text-sky-600 dark:text-sky-400 flex items-center justify-center">
+                  <CreditCard size={16} />
+                </div>
+                <div>
+                  <div className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400 mb-0.5">Partial Dollars Recovery</div>
+                  <div className="text-[17px] font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight">
+                    $ {fmt2(ws.partialDollarsRecovery)}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* ========================================================================= */}
+          {/* MAIN PAYMENT TABLE CARD (MATCHING USER SCREENSHOT)                        */}
+          {/* ========================================================================= */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm border border-slate-100 dark:border-zinc-800 p-6 space-y-6">
+
+            {/* Header & Controls Bar */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-zinc-800">
+              
+              {/* Left: Title + Red Count Badge */}
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-sm">
+                  <CheckCircle2 size={18} />
+                </div>
+                <h2 className="text-lg font-extrabold text-slate-900 dark:text-zinc-100 tracking-tight flex items-center gap-2">
+                  {activeTab === "full" ? "Full Payment Received" :
+                   activeTab === "partial" ? "Partial Payment Received" :
+                   activeTab === "term" ? "Tem Payment" :
+                   activeTab === "ab_liabilities" ? "AB Liabilities" : "Daily Transactions"}
+                </h2>
+                <span className="bg-red-500 text-white text-xs font-bold rounded-full px-2 py-0.5 min-w-[20px] text-center shadow-sm">
+                  {activeTab === "full" ? fFull.length :
+                   activeTab === "partial" ? fPartial.length :
+                   activeTab === "term" ? (counts.temp || 0) :
+                   activeTab === "ab_liabilities" ? "-" : fPend.length}
+                </span>
+              </div>
+
+              {/* Right: Search, Date Pickers, Filter & Export Buttons */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Search */}
+                <div className="relative w-full sm:w-64 md:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
+                  <Input 
+                    placeholder="Search by company, ID, or person..." 
+                    value={searchTerm} 
+                    onChange={(e) => setSearchTerm(e.target.value)} 
+                    className="h-9 pl-9 rounded-xl border-slate-200 dark:border-zinc-700 shadow-none text-xs focus-visible:ring-emerald-500/20"
+                  />
+                </div>
+
+                {/* Start Date */}
+                <div className="relative">
+                  <Input 
+                    type="date" 
+                    value={startDate} 
+                    onChange={(e) => setStartDate(e.target.value)} 
+                    className="h-9 w-36 text-xs rounded-xl border-slate-200 dark:border-zinc-700 pr-8"
+                  />
+                  <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5 pointer-events-none" />
+                </div>
+
+                {/* End Date */}
+                <div className="relative">
+                  <Input 
+                    type="date" 
+                    value={endDate} 
+                    onChange={(e) => setEndDate(e.target.value)} 
+                    className="h-9 w-36 text-xs rounded-xl border-slate-200 dark:border-zinc-700 pr-8"
+                  />
+                  <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5 pointer-events-none" />
+                </div>
+
+                {/* Filter / Reset Button */}
+                <Button 
+                  onClick={() => { setSearchTerm(""); setStartDate(""); setEndDate(""); setTypeFilter("all"); }}
+                  className="bg-[#475569] hover:bg-[#334155] text-white text-xs font-semibold px-4 h-9 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Filter size={14} /> Filter
+                </Button>
+
+                {/* Export Excel Button */}
+                <Button 
+                  onClick={() => {
+                    const dataToExport = activeTab === "full" ? fFull : activeTab === "partial" ? fPartial : fLoan;
+                    exportToCsv(`${activeTab}_payments_${format(new Date(), "yyyyMMdd")}`, dataToExport);
+                  }}
+                  className="bg-[#00a65a] hover:bg-[#008d4c] text-white text-xs font-semibold px-4 h-9 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Download size={14} /> Export Excel
+                </Button>
+              </div>
+            </div>
+
+            {/* Navigation Tabs (Full / Partial / Tem Payment / AB Liabilities) */}
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { id: "full", label: `Full (${fullPayments.length || counts.full || 0})` },
+                  { id: "partial", label: `Partial ${partialPayments.length || counts.partial || 0}` },
+                  { id: "term", label: `Tem Payment ${counts.temp || 0}` },
+                  { id: "ab_liabilities", label: "AB Liabilities" },
+                  { id: "daily_tx", label: "Daily Transactions" }
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id)}
+                    className={cn(
+                      "px-4 py-1.5 rounded-full text-xs font-bold transition-all",
+                      activeTab === t.id
+                        ? "bg-[#00a65a] text-white shadow-sm"
+                        : "bg-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sub-type Filters (All, NC, RC, EC) for Full/Partial */}
+              {activeTab === "full" && (
+                <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-zinc-800/60 p-1 rounded-xl border border-slate-200/60 dark:border-zinc-700">
+                  <button
+                    onClick={() => setTypeFilter("all")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-bold transition-all",
+                      typeFilter === "all" ? "bg-slate-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-slate-500 hover:text-slate-800 dark:text-zinc-400"
+                    )}
+                  >
+                    All ({filteredFullBase.length})
+                  </button>
+                  <button
+                    onClick={() => setTypeFilter(typeFilter === "New" ? "all" : "New")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1",
+                      typeFilter === "New" ? "bg-[#00a65a] text-white shadow-sm" : "text-emerald-700 hover:bg-emerald-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>NC</span>
+                    <span>({ncFullCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setTypeFilter(typeFilter === "Rc" ? "all" : "Rc")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1",
+                      typeFilter === "Rc" ? "bg-blue-600 text-white shadow-sm" : "text-blue-600 hover:bg-blue-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>RC</span>
+                    <span>({rcFullCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setTypeFilter(typeFilter === "Ec" ? "all" : "Ec")}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1",
+                      typeFilter === "Ec" ? "bg-purple-600 text-white shadow-sm" : "text-purple-600 hover:bg-purple-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>EC</span>
+                    <span>({ecFullCount})</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* TAB CONTENT */}
+            {activeTab === "full" && (
+              <ModernPaymentTable 
+                items={fFull} 
+                onView={setViewItem} 
+                onAttach={setAttachItem}
+                page={fullPage}
+                pageSize={10}
+                onPageChange={setFullPage}
+              />
+            )}
+
+            {activeTab === "partial" && (
+              <ModernPaymentTable 
+                items={fPartial} 
+                onView={setViewItem} 
+                onAttach={setAttachItem}
+                page={partialPage}
+                pageSize={10}
+                onPageChange={setPartialPage}
+              />
+            )}
+
+            {activeTab === "term" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-bold text-slate-800 dark:text-zinc-200">Temporary Payment Records</div>
+                  <Button className="bg-[#f06464] hover:bg-[#d9534f] text-white h-9 px-4 font-bold text-xs rounded-xl">
+                    Generate Email
+                  </Button>
+                </div>
+                <div className="rounded-xl border border-slate-100 dark:border-zinc-800 overflow-hidden">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-zinc-800/50 text-slate-500 font-semibold">
+                        {["No", "Date", "Channel Partner", "Member Id", "Company Name", "Product Purchased", "Order Type", "Contract No", "Contract Amount", "Action"].map(h => (
+                          <th key={h} className="py-3 px-4">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td colSpan={10} className="py-12 text-center text-slate-400 font-medium italic">
+                          No temporary payment records available
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "ab_liabilities" && (
+              <div className="space-y-4">
+                <div className="max-w-3xl rounded-xl border border-slate-100 dark:border-zinc-800 overflow-hidden shadow-sm">
+                  <Table className="text-xs">
+                    <TableHeader className="bg-slate-50 dark:bg-zinc-800/50">
+                      <TableRow>
+                        {["Payment Type", "Mode", "USD", "PKR"].map(h => (
+                          <TableHead key={h} className="py-3.5 px-4 font-bold text-slate-700 dark:text-zinc-200 uppercase">{h}</TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="divide-y divide-slate-100 dark:divide-zinc-800 font-medium">
+                      {[
+                        {
+                          t: "Full Payment",
+                          rows: [
+                            { m: "Online Paid", u: Number(abLiabilities.fullOnlinePaidUsd || 0), p: Number(abLiabilities.fullOnlinePaidPkr || 0) },
+                            { m: "Cash Received", u: Number(abLiabilities.fullCashReceivedUsd || 0), p: Number(abLiabilities.fullCashReceivedPkr || 0) },
+                          ]
+                        },
+                        {
+                          t: "Partial Payment",
+                          rows: [
+                            { m: "Online Paid", u: Number(abLiabilities.partialOnlinePaidUsd || 0), p: Number(abLiabilities.partialOnlinePaidPkr || 0) },
+                            { m: "Cash Received", u: Number(abLiabilities.partialCashReceivedUsd || 0), p: Number(abLiabilities.partialCashReceivedPkr || 0) },
+                          ]
+                        }
+                      ].map((s, si) => s.rows.map((r, ri) => (
+                        <TableRow key={s.t + ri} className="hover:bg-slate-50/50">
+                          {ri === 0 && <TableCell rowSpan={s.rows.length} className="py-3.5 px-4 font-bold text-slate-800 dark:text-zinc-200 border-r">{s.t}</TableCell>}
+                          <TableCell className="py-3.5 px-4 text-slate-500">{r.m}</TableCell>
+                          <TableCell className="py-3.5 px-4 font-bold text-emerald-600">$ {fmt2(r.u)}</TableCell>
+                          <TableCell className="py-3.5 px-4 font-bold text-rose-500">PKR {fmtN(r.p)}</TableCell>
+                        </TableRow>
+                      )))}
+                      <TableRow className="bg-slate-50 dark:bg-zinc-800/60 font-bold">
+                        <TableCell className="py-3.5 px-4 border-r uppercase">Total</TableCell>
+                        <TableCell className="py-3.5 px-4 text-slate-500">All Payments</TableCell>
+                        <TableCell className="py-3.5 px-4 text-emerald-600 text-sm">
+                          $ {fmt2(Number(abLiabilities.fullOnlinePaidUsd || 0) + Number(abLiabilities.fullCashReceivedUsd || 0) + Number(abLiabilities.partialOnlinePaidUsd || 0) + Number(abLiabilities.partialCashReceivedUsd || 0))}
+                        </TableCell>
+                        <TableCell className="py-3.5 px-4 text-rose-500 text-sm">
+                          PKR {fmtN(Number(abLiabilities.fullOnlinePaidPkr || 0) + Number(abLiabilities.fullCashReceivedPkr || 0) + Number(abLiabilities.partialOnlinePaidPkr || 0) + Number(abLiabilities.partialCashReceivedPkr || 0))}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "daily_tx" && (
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: "balance", label: "Balance", c: "bg-slate-800 text-white" },
+                    { id: "buy", label: "Buy", c: "bg-[#00a65a] text-white" },
+                    { id: "sell", label: "Sell", c: "bg-rose-500 text-white" },
+                    { id: "martini", label: "Martini", c: "bg-blue-500 text-white" },
+                    { id: "notUsed", label: "Not Used", c: "bg-amber-500 text-white" }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTxTab(tab.id)}
+                      className={cn(
+                        "px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
+                        activeTxTab === tab.id ? tab.c : "bg-slate-100 text-slate-600 dark:bg-zinc-800 dark:text-zinc-300"
+                      )}
+                    >
+                      <span>{tab.label}</span>
+                      <span className="text-[10px] opacity-80">({dts[tab.id]?.count || 0})</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="rounded-xl border border-slate-100 dark:border-zinc-800 overflow-hidden">
+                  <table className="w-full text-left text-xs whitespace-nowrap">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-zinc-800/50 text-slate-500 font-semibold">
+                        <th className="py-3 px-4">Name</th>
+                        <th className="py-3 px-4">Date</th>
+                        <th className="py-3 px-4">Email</th>
+                        <th className="py-3 px-4">Rate</th>
+                        <th className="py-3 px-4 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
+                      {txItems.length > 0 ? (
+                        txItems.map((tx: any, i: number) => (
+                          <tr key={i} className="hover:bg-slate-50/50">
+                            <td className="py-3 px-4 font-bold text-slate-800 dark:text-zinc-200">{tx.name || "-"}</td>
+                            <td className="py-3 px-4 text-slate-500">{safeDate(tx.date, "dd MMM yyyy")}</td>
+                            <td className="py-3 px-4 text-blue-500">{tx.email || "-"}</td>
+                            <td className="py-3 px-4 font-semibold text-slate-700">{tx.rate || "-"}</td>
+                            <td className="py-3 px-4 text-right font-bold text-emerald-600">$ {Number(tx.amount || 0).toFixed(2)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="py-12 text-center text-slate-400 font-medium italic">
+                            No transactions for today
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          </div>
+
         </div>
       </div>
     </>
