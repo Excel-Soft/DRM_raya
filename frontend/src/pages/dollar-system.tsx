@@ -181,6 +181,62 @@ export default function DollarSystem() {
     detail: "",
   });
 
+  const sliderTrackRef = useRef<HTMLDivElement>(null);
+  const [activeThumb, setActiveThumb] = useState<"min" | "max" | null>(null);
+
+  const handleSliderChange = (type: "min" | "max", val: number) => {
+    const cleanVal = Math.max(0, Math.min(500, Math.round(val)));
+    setDollarForm((prev: any) => {
+      if (type === "min") {
+        const newMin = Math.min(cleanVal, prev.sliderMax ?? 500);
+        return { ...prev, sliderMin: newMin };
+      } else {
+        const newMax = Math.max(cleanVal, prev.sliderMin ?? 0);
+        return { ...prev, sliderMax: newMax };
+      }
+    });
+  };
+
+  const startDragging = (thumb: "min" | "max", e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setActiveThumb(thumb);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!activeThumb || !sliderTrackRef.current) return;
+    const rect = sliderTrackRef.current.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const val = Math.round(pos * 500);
+    handleSliderChange(activeThumb, val);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (activeThumb) {
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      setActiveThumb(null);
+    }
+  };
+
+  const handleTrackPointerDown = (e: React.PointerEvent) => {
+    if (!sliderTrackRef.current) return;
+    const rect = sliderTrackRef.current.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const val = Math.round(pos * 500);
+    const distMin = Math.abs(val - (dollarForm.sliderMin ?? 0));
+    const distMax = Math.abs(val - (dollarForm.sliderMax ?? 100));
+    if (distMin < distMax) {
+      handleSliderChange("min", val);
+      startDragging("min", e);
+    } else {
+      handleSliderChange("max", val);
+      startDragging("max", e);
+    }
+  };
+
   const openDollarModal = (item: any) => {
     const targetDollar = parseFloat(item.dollar || item.customerDollar || 1357);
     const rateVal = parseFloat(item.rate || 277.16);
@@ -479,48 +535,99 @@ export default function DollarSystem() {
                 </div>
 
                 {/* Range Slider Section */}
-                <div className="pt-2 pb-2">
-                  <div className="relative pt-6 pb-2">
-                    {/* Floating Badges */}
-                    <div className="absolute top-0 left-0">
-                      <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">0</span>
-                    </div>
-                    <div className="absolute top-0 left-[20%] -translate-x-1/2">
-                      <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">100</span>
-                    </div>
-                    <div className="absolute top-0 right-0">
-                      <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">500</span>
-                    </div>
+                {(() => {
+                  const minP = Math.min(100, Math.max(0, ((dollarForm.sliderMin ?? 0) / 500) * 100));
+                  const maxP = Math.min(100, Math.max(0, ((dollarForm.sliderMax ?? 100) / 500) * 100));
+                  return (
+                    <div 
+                      className="pt-2 pb-2 select-none"
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPointerCancel={handlePointerUp}
+                    >
+                      <div className="relative pt-7 pb-2">
+                        {/* Floating Min Badge */}
+                        <div 
+                          className="absolute top-0 transition-all pointer-events-none"
+                          style={{ left: `${minP}%`, transform: "translateX(-50%)" }}
+                        >
+                          <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap">
+                            {dollarForm.sliderMin ?? 0}
+                          </span>
+                        </div>
 
-                    {/* Slider Track */}
-                    <div className="h-1.5 bg-gray-200 dark:bg-zinc-700 rounded-full relative my-3">
-                      <div className="w-[20%] bg-[#00a65a] h-full rounded-full" />
-                      {/* Diamond Pins */}
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-black rotate-45 shadow cursor-pointer" />
-                      <div className="absolute left-[20%] top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-black rotate-45 shadow cursor-pointer" />
-                    </div>
+                        {/* Floating Max Badge */}
+                        <div 
+                          className="absolute top-0 transition-all pointer-events-none"
+                          style={{ left: `${maxP}%`, transform: "translateX(-50%)" }}
+                        >
+                          <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap">
+                            {dollarForm.sliderMax ?? 100}
+                          </span>
+                        </div>
 
-                    {/* Scale Numbers & Ticks */}
-                    <div className="flex justify-between text-[10px] text-gray-400 font-semibold pt-1">
-                      <span>0</span>
-                      <span>125</span>
-                      <span>250</span>
-                      <span>375</span>
-                      <span>500</span>
-                    </div>
-                  </div>
+                        {/* End Limit Badge 500 */}
+                        <div className="absolute top-0 right-0 pointer-events-none">
+                          <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
+                            500
+                          </span>
+                        </div>
 
-                  {/* Remove Unselected Slot Checkbox */}
-                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 cursor-pointer select-none mt-2">
-                    <input 
-                      type="checkbox" 
-                      checked={dollarForm.removeUnselected} 
-                      onChange={e => handleRemoveUnselectedToggle(e.target.checked)} 
-                      className="rounded border-gray-300 text-[#00a65a] focus:ring-[#00a65a] w-4 h-4 cursor-pointer" 
-                    />
-                    <span>Uncheck The Box For Remove The Unselected Slot</span>
-                  </label>
-                </div>
+                        {/* Slider Track */}
+                        <div 
+                          ref={sliderTrackRef}
+                          onPointerDown={handleTrackPointerDown}
+                          className="h-2 bg-gray-200 dark:bg-zinc-700 rounded-full relative my-3 cursor-pointer group"
+                        >
+                          {/* Active Highlight Bar */}
+                          <div 
+                            className="bg-[#00a65a] h-full rounded-full pointer-events-none absolute"
+                            style={{ 
+                              left: `${minP}%`, 
+                              width: `${Math.max(0, maxP - minP)}%` 
+                            }} 
+                          />
+
+                          {/* Left Diamond Handle */}
+                          <div 
+                            onPointerDown={(e) => startDragging("min", e)}
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-black rotate-45 shadow hover:scale-125 active:scale-125 transition-transform cursor-grab active:cursor-grabbing z-20"
+                            style={{ left: `${minP}%` }}
+                            title={`Min: ${dollarForm.sliderMin ?? 0}`}
+                          />
+
+                          {/* Right Diamond Handle */}
+                          <div 
+                            onPointerDown={(e) => startDragging("max", e)}
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-black rotate-45 shadow hover:scale-125 active:scale-125 transition-transform cursor-grab active:cursor-grabbing z-20"
+                            style={{ left: `${maxP}%` }}
+                            title={`Max: ${dollarForm.sliderMax ?? 100}`}
+                          />
+                        </div>
+
+                        {/* Scale Numbers & Ticks */}
+                        <div className="flex justify-between text-[10px] text-gray-400 font-semibold pt-1">
+                          <span>0</span>
+                          <span>125</span>
+                          <span>250</span>
+                          <span>375</span>
+                          <span>500</span>
+                        </div>
+                      </div>
+
+                      {/* Remove Unselected Slot Checkbox */}
+                      <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 cursor-pointer select-none mt-2">
+                        <input 
+                          type="checkbox" 
+                          checked={dollarForm.removeUnselected} 
+                          onChange={e => handleRemoveUnselectedToggle(e.target.checked)} 
+                          className="rounded border-gray-300 text-[#00a65a] focus:ring-[#00a65a] w-4 h-4 cursor-pointer" 
+                        />
+                        <span>Uncheck The Box For Remove The Unselected Slot</span>
+                      </label>
+                    </div>
+                  );
+                })()}
 
                 {/* Buyer Slots Repeater List */}
                 <div className="space-y-3 pt-1">
