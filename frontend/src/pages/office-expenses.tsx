@@ -135,6 +135,7 @@ export default function OfficeExpenses() {
     detail: "",
     fileName: "",
     fileUrl: "",
+    expenseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
   });
 
   const queryParams = new URLSearchParams();
@@ -158,7 +159,7 @@ export default function OfficeExpenses() {
   );
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof formData) =>
+    mutationFn: (data: any) =>
       mutationRequest("POST", "/api/office/expenses", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/office/expenses"] });
@@ -173,7 +174,7 @@ export default function OfficeExpenses() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: typeof formData }) =>
+    mutationFn: ({ id, data }: { id: string; data: any }) =>
       mutationRequest("PATCH", `/api/office/expenses/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/office/expenses"] });
@@ -224,6 +225,7 @@ export default function OfficeExpenses() {
       detail: "",
       fileName: "",
       fileUrl: "",
+      expenseDate: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
     });
   };
 
@@ -236,10 +238,23 @@ export default function OfficeExpenses() {
       toast({ title: "Error", description: "Amount must be greater than 0", variant: "destructive" });
       return;
     }
+
+    const payload = {
+      expenseHead: formData.expenseHead,
+      office: formData.office,
+      amount: formData.amount,
+      currency: formData.currency || "PKR",
+      voucherNumber: formData.voucherNumber || undefined,
+      chequeNumber: formData.chequeNumber || undefined,
+      detail: formData.detail || undefined,
+      fileUrl: formData.fileUrl || undefined,
+      expenseDate: formData.expenseDate ? new Date(formData.expenseDate).toISOString() : new Date().toISOString(),
+    };
+
     if (editingId) {
-      updateMutation.mutate({ id: editingId, data: formData });
+      updateMutation.mutate({ id: editingId, data: payload });
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate(payload);
     }
   };
 
@@ -650,6 +665,8 @@ export default function OfficeExpenses() {
                   <Label className="text-[13px] font-medium text-gray-700">Creation Date:</Label>
                   <Input
                     type="datetime-local"
+                    value={formData.expenseDate}
+                    onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
                     className="h-10 border-gray-300 rounded-[4px] text-[13px] text-gray-600"
                   />
                 </div>
