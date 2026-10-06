@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -123,10 +124,16 @@ export default function OfficeVasPage() {
                         {entry.companyName}
                       </TableCell>
                       <TableCell className="text-center text-[13px] text-gray-700 py-3">
-                        {formatCurrency(entry.amount, entry.currency)}
+                        {formatCurrency(entry.amount, "PKR")}
                       </TableCell>
-                      <TableCell className="text-center text-[13px] text-gray-700 py-3">
-                        {entry.method}
+                      <TableCell className="text-center py-3">
+                        {entry.method && entry.method !== "-" ? (
+                          <Badge variant="secondary" className="font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200">
+                            {entry.method}
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-center text-[13px] text-gray-700 py-3">
                         {entry.vasDate ? format(new Date(entry.vasDate), "dd-MM-yyyy") : "-"}

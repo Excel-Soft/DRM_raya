@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,9 @@ import {
   Download,
   Search,
   RotateCcw,
+  ChevronDown,
+  ChevronRight,
+  Loader2
 } from "lucide-react";
 import type { AccountHead } from "@shared/schema";
 
@@ -60,7 +63,6 @@ const ACCOUNT_TYPES: Record<string, string[]> = {
 };
 
 const NORMAL_BALANCES = ["Debit", "Credit"] as const;
-const PAGE_SIZE = 20;
 const ALL = "__all__";
 const NONE = "__none__";
 
@@ -79,7 +81,6 @@ const fmtAmount = (value: unknown): string => {
   });
 };
 
-/** Pull a human-readable message out of the standard error envelope. */
 async function readError(res: Response, fallback: string): Promise<string> {
   try {
     const body = await res.json();
@@ -140,16 +141,20 @@ function buildFilterParams(filters: FilterState): string {
   return params.toString();
 }
 
+type TreeNode = AccountHead & { children: TreeNode[], level: number, isMatch: boolean };
+
 export default function ChartOfAccounts() {
   const { toast } = useToast();
 
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
-  const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  
+  const [autoCodeLoading, setAutoCodeLoading] = useState(false);
 
   const {
     data: accountHeads = [],
@@ -163,13 +168,6 @@ export default function ChartOfAccounts() {
 
   const headsList = Array.isArray(accountHeads) ? accountHeads : [];
 
-  const codeById = useMemo(
-    () => new Map(headsList.map((h) => [h.id, h.code])),
-    [headsList],
-  );
-
-  // Distinct types present in the data, scoped to the chosen category, used to
-  // populate the Type filter (handles custom types beyond the defaults).
   const typeFilterOptions = useMemo(() => {
     const pool = headsList.filter(
       (h) => filters.category === ALL || h.category === filters.category,
@@ -177,47 +175,116 @@ export default function ChartOfAccounts() {
     return Array.from(new Set(pool.map((h) => h.type).filter(Boolean))).sort();
   }, [headsList, filters.category]);
 
-  const filtered = useMemo(() => {
+  const tree = useMemo(() => {
     const term = filters.q.trim().toLowerCase();
-    return headsList
-      .filter((h) => {
-        if (filters.category !== ALL && h.category !== filters.category) return false;
-        if (filters.type !== ALL && h.type !== filters.type) return false;
-        if (filters.status === "active" && h.isActive !== 1) return false;
-        if (filters.status === "inactive" && h.isActive === 1) return false;
-        if (term) {
-          const hay = `${h.code} ${h.name}`.toLowerCase();
-          if (!hay.includes(term)) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
-  }, [headsList, filters]);
+    
+    // Create nodes
+    const map = new Map<string, TreeNode>();
+    headsList.forEach(h => {
+      map.set(h.id, { ...h, children: [], level: 1, isMatch: false });
+    });
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageRows = filtered.slice(
-    (currentPage - 1) * PAGE_SIZE,
-    currentPage * PAGE_SIZE,
-  );
+    const roots: TreeNode[] = [];
+    
+    headsList.forEach(h => {
+      if (h.parentAccountId && map.has(h.parentAccountId)) {
+        const parent = map.get(h.parentAccountId)!;
+        const node = map.get(h.id)!;
+        node.level = parent.level + 1;
+        parent.children.push(node);
+      } else {
+        roots.push(map.get(h.id)!);
+      }
+    });
+    
+    const evaluateMatch = (node: TreeNode): boolean => {
+      let matches = true;
+      if (filters.category !== ALL && node.category !== filters.category) matches = false;
+      if (filters.type !== ALL && node.type !== filters.type) matches = false;
+      if (filters.status === "active" && node.isActive !== 1) matches = false;
+      if (filters.status === "inactive" && node.isActive === 1) matches = false;
+      if (term) {
+        const hay = `${node.code} ${node.name}`.toLowerCase();
+        if (!hay.includes(term)) matches = false;
+      }
+      
+      let childMatches = false;
+      for (const child of node.children) {
+        if (evaluateMatch(child)) childMatches = true;
+      }
+      
+      node.isMatch = matches || childMatches;
+      return node.isMatch;
+    };
+    
+    const filteredRoots: TreeNode[] = [];
+    for (const root of roots) {
+      if (evaluateMatch(root)) {
+        filteredRoots.push(root);
+      }
+    }
+    
+    return filteredRoots;
+  }, [headsList, filters]);
 
   const updateFilter = (patch: Partial<FilterState>) => {
     setFilters((prev) => ({ ...prev, ...patch }));
-    setPage(1);
   };
 
   const resetFilters = () => {
     setFilters(EMPTY_FILTERS);
-    setPage(1);
+  };
+  
+  const toggleExpand = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  
+  const fetchNextCode = async (parentId: string, level: number) => {
+    setAutoCodeLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (parentId !== NONE) qs.set("parentId", parentId);
+      qs.set("level", level.toString());
+      
+      const res = await apiRequest("GET", `/api/office/account-heads/next-code?${qs.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setForm(prev => ({ ...prev, code: data.nextCode }));
+      }
+    } catch (err) {
+      console.error("Failed to auto generate code", err);
+    } finally {
+      setAutoCodeLoading(false);
+    }
   };
 
-  // --- Form helpers ---------------------------------------------------------
-
-  const openCreate = () => {
+  const openCreate = (parentHead?: TreeNode) => {
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    let level = 1;
+    let initialCategory = "";
+    let initialType = "";
+    
+    if (parentHead) {
+      level = parentHead.level + 1;
+      initialCategory = parentHead.category || "";
+      initialType = parentHead.type || "";
+    }
+    
+    setForm({
+      ...EMPTY_FORM,
+      parentAccountId: parentHead ? parentHead.id : NONE,
+      category: initialCategory,
+      type: initialType
+    });
     setErrors({});
     setDialogOpen(true);
+    
+    fetchNextCode(parentHead ? parentHead.id : NONE, level);
   };
 
   const openEdit = (head: AccountHead) => {
@@ -410,39 +477,154 @@ export default function ChartOfAccounts() {
   );
 
   const typeOptionsForForm = form.category ? ACCOUNT_TYPES[form.category] ?? [] : [];
+  
+
+  const renderCards = (nodes: TreeNode[]) => {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {nodes.map(parent => {
+          if (!parent.isMatch) return null;
+          return (
+          <Card key={parent.id} className="border shadow-sm flex flex-col dark:bg-zinc-900 overflow-hidden">
+            <div 
+              className="flex justify-between items-center p-3 cursor-pointer select-none" 
+              style={{ backgroundColor: '#ffd6d6', borderBottom: '2px solid #ff9999' }}
+              onClick={() => toggleExpand(parent.id)}
+            >
+              <h6 className="mb-0 text-slate-800 font-bold m-0 text-sm flex items-center">
+                ({parent.code}) {parent.name}
+              </h6>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 text-green-700 bg-white/50 hover:bg-white rounded-full" 
+                  onClick={(e) => { e.stopPropagation(); openCreate(parent); }}
+                  title="Add Child Head"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-6 w-6 text-slate-800 hover:bg-black/5">
+                  {expanded.has(parent.id) || filters.q.trim().length > 0 ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            {(expanded.has(parent.id) || filters.q.trim().length > 0) && (
+              <div className="flex-1 overflow-x-auto p-0 bg-white dark:bg-zinc-950">
+                <Table className="m-0 border-0 text-xs">
+                  <TableHeader className="bg-slate-50 dark:bg-zinc-900">
+                    <TableRow className="border-b-2">
+                      <TableHead className="w-10 text-center text-slate-500 py-2">S.No</TableHead>
+                      <TableHead className="w-16 text-slate-500 py-2">Code</TableHead>
+                      <TableHead className="text-slate-500 py-2">Head</TableHead>
+                      <TableHead className="text-center w-16 text-slate-500 py-2">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {parent.children.map((child, idx) => {
+                      if (!child.isMatch && filters.q.trim().length > 0) return null;
+                      return (
+                      <TableRow key={child.id} className={idx % 2 === 0 ? "bg-slate-50/50 dark:bg-zinc-900/50" : "bg-white dark:bg-zinc-950"}>
+                        <TableCell className="text-center py-2">
+                          <Badge variant="secondary" className="bg-slate-200 text-slate-600 hover:bg-slate-200 font-normal px-1.5 py-0 rounded">
+                            {idx + 1}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <Badge className="bg-emerald-500 hover:bg-emerald-600 font-mono text-[10px] px-1.5 py-0 rounded">
+                            {child.code}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="py-2 align-top">
+                          <div className="font-bold text-slate-800 dark:text-slate-200">{child.name}</div>
+                          {child.children.length > 0 && (
+                            <ul className="list-none m-0 mt-2 p-0 space-y-1.5 ml-1">
+                              {child.children.map(trans => (
+                                <li key={trans.id} className="pl-2 border-l-[3px] border-cyan-400">
+                                  <div className="flex justify-between items-start group">
+                                    <div className="flex items-start gap-1">
+                                      <Badge variant="outline" className="text-[9px] px-1 py-0 border-cyan-400 text-cyan-700 bg-cyan-50 font-mono shrink-0 leading-tight rounded">
+                                        {trans.code}
+                                      </Badge>
+                                      <span className="text-slate-600 dark:text-slate-400 text-[11px] font-medium leading-tight mt-0.5">
+                                        &rarr; {trans.name}
+                                      </span>
+                                    </div>
+                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 ml-2 shrink-0">
+                                      <Button variant="ghost" size="icon" className="h-4 w-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-sm" onClick={() => openCreate(trans)} title="Add Sub-Transaction">
+                                        <Plus className="h-2.5 w-2.5" />
+                                      </Button>
+                                      <Button variant="ghost" size="icon" className="h-4 w-4 bg-amber-500 hover:bg-amber-600 text-white rounded-sm" onClick={() => openEdit(trans)} title="Edit">
+                                        <Edit className="h-2.5 w-2.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  {trans.children.length > 0 && (
+                                    <ul className="list-none m-0 mt-1 pl-1 space-y-1 ml-1 text-[10px]">
+                                      {trans.children.map(subTrans => (
+                                        <li key={subTrans.id} className="flex justify-between items-start group/sub pl-1.5 border-l-2 border-emerald-400 text-slate-500">
+                                          <div className="flex items-start gap-1">
+                                            <Badge className="bg-emerald-500 hover:bg-emerald-600 text-[9px] px-1 py-0 font-mono shrink-0 leading-tight rounded">
+                                              {subTrans.code}
+                                            </Badge>
+                                            <span className="leading-tight mt-0.5 font-medium">
+                                              &#8627; {subTrans.name}
+                                            </span>
+                                          </div>
+                                          <Button variant="ghost" size="icon" className="h-4 w-4 bg-amber-500 hover:bg-amber-600 text-white rounded-sm opacity-0 group-hover/sub:opacity-100 transition-opacity ml-2 shrink-0" onClick={() => openEdit(subTrans)} title="Edit">
+                                            <Edit className="h-2 w-2" />
+                                          </Button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center align-top pt-2">
+                          <div className="flex items-center justify-center gap-1">
+                             <Button variant="ghost" size="icon" className="h-5 w-5 bg-emerald-500 hover:bg-emerald-600 text-white rounded" onClick={() => openCreate(child)} title="Add Transaction">
+                               <Plus className="h-3 w-3" />
+                             </Button>
+                             <Button variant="ghost" size="icon" className="h-5 w-5 bg-amber-500 hover:bg-amber-600 text-white rounded" onClick={() => openEdit(child)} title="Edit">
+                               <Edit className="h-3 w-3" />
+                             </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )})}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        )})}
+      </div>
+    );
+  };
+
 
   return (
     <ScrollArea className="flex-1 bg-slate-50 dark:bg-zinc-950">
       <div className="p-6 space-y-6">
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <h1
-            className="text-sm font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-wide"
-            data-testid="text-page-title"
-          >
+          <h1 className="text-sm font-bold text-slate-600 dark:text-zinc-400 uppercase tracking-wide">
             Chart of Accounts
           </h1>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={handleExport}
-              disabled={isExporting}
-              data-testid="button-export"
-            >
+            <Button variant="outline" onClick={handleExport} disabled={isExporting}>
               <Download className="h-4 w-4 mr-1.5" />
               {isExporting ? "Exporting..." : "Export CSV"}
             </Button>
-            <Button
-              onClick={openCreate}
-              className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
-              data-testid="button-add-account"
-            >
+            <Button onClick={() => openCreate()} className="bg-[#00a65a] hover:bg-[#008d4c] text-white">
               <Plus className="h-4 w-4 mr-1" />
-              Add Account Head
+              Add Parent Head
             </Button>
           </div>
         </div>
 
-        {/* Filters */}
         <Card className="border-none shadow-sm dark:bg-zinc-900">
           <CardContent className="p-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
@@ -455,7 +637,6 @@ export default function ChartOfAccounts() {
                     onChange={(e) => updateFilter({ q: e.target.value })}
                     placeholder="Search code or name"
                     className="pl-8"
-                    data-testid="input-search"
                   />
                 </div>
               </div>
@@ -465,7 +646,7 @@ export default function ChartOfAccounts() {
                   value={filters.category}
                   onValueChange={(v) => updateFilter({ category: v, type: ALL })}
                 >
-                  <SelectTrigger data-testid="select-filter-category">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -484,7 +665,7 @@ export default function ChartOfAccounts() {
                   value={filters.type}
                   onValueChange={(v) => updateFilter({ type: v })}
                 >
-                  <SelectTrigger data-testid="select-filter-type">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -504,7 +685,7 @@ export default function ChartOfAccounts() {
                     value={filters.status}
                     onValueChange={(v) => updateFilter({ status: v })}
                   >
-                    <SelectTrigger data-testid="select-filter-status">
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -513,13 +694,7 @@ export default function ChartOfAccounts() {
                       <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
                   </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={resetFilters}
-                    title="Reset filters"
-                    data-testid="button-reset-filters"
-                  >
+                  <Button variant="ghost" size="icon" onClick={resetFilters} title="Reset filters">
                     <RotateCcw className="h-4 w-4" />
                   </Button>
                 </div>
@@ -528,148 +703,31 @@ export default function ChartOfAccounts() {
           </CardContent>
         </Card>
 
-        {/* Table */}
-        <Card className="border-none shadow-sm dark:bg-zinc-900">
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="text-center py-16 text-muted-foreground" data-testid="state-loading">
-                Loading account heads...
-              </div>
-            ) : isError ? (
-              <div className="text-center py-16 space-y-3" data-testid="state-error">
-                <p className="text-red-500 text-sm">
-                  {(error as any)?.message || "Failed to load account heads."}
-                </p>
-                <Button variant="outline" onClick={() => refetch()}>
-                  Retry
-                </Button>
-              </div>
-            ) : filtered.length === 0 ? (
-              <div className="text-center py-16 text-muted-foreground" data-testid="state-empty">
-                {headsList.length === 0
-                  ? "No account heads yet. Click “Add Account Head” to create your first one."
-                  : "No account heads match the current filters."}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">#</TableHead>
-                      <TableHead className="w-32">Code</TableHead>
-                      <TableHead>Account Head</TableHead>
-                      <TableHead className="w-28">Category</TableHead>
-                      <TableHead className="w-40">Type</TableHead>
-                      <TableHead className="w-28">Parent</TableHead>
-                      <TableHead className="w-24">Normal</TableHead>
-                      <TableHead className="w-32 text-right">Opening</TableHead>
-                      <TableHead className="w-24 text-center">Status</TableHead>
-                      <TableHead className="w-28 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pageRows.map((head, index) => (
-                      <TableRow key={head.id} data-testid={`row-account-${head.id}`}>
-                        <TableCell className="text-slate-400">
-                          {(currentPage - 1) * PAGE_SIZE + index + 1}
-                        </TableCell>
-                        <TableCell className="font-mono">{head.code}</TableCell>
-                        <TableCell className="font-medium">{head.name}</TableCell>
-                        <TableCell>{categoryLabel(head.category)}</TableCell>
-                        <TableCell className="text-slate-500">{head.type}</TableCell>
-                        <TableCell className="font-mono text-slate-500">
-                          {head.parentAccountId
-                            ? codeById.get(head.parentAccountId) ?? "—"
-                            : "—"}
-                        </TableCell>
-                        <TableCell>{head.normalBalance ?? "—"}</TableCell>
-                        <TableCell className="text-right font-mono">
-                          {fmtAmount(head.openingBalance)}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <Switch
-                              checked={head.isActive === 1}
-                              onCheckedChange={() => toggleMutation.mutate(head)}
-                              disabled={toggleMutation.isPending}
-                              data-testid={`switch-active-${head.id}`}
-                            />
-                            <Badge
-                              variant={head.isActive === 1 ? "default" : "secondary"}
-                              className={
-                                head.isActive === 1
-                                  ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100"
-                                  : ""
-                              }
-                            >
-                              {head.isActive === 1 ? "Active" : "Inactive"}
-                            </Badge>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openEdit(head)}
-                              data-testid={`button-edit-${head.id}`}
-                            >
-                              <Edit className="h-4 w-4 text-slate-500" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => deleteMutation.mutate(head)}
-                              disabled={deleteMutation.isPending}
-                              data-testid={`button-delete-${head.id}`}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Pagination */}
-        {!isLoading && !isError && filtered.length > 0 && (
-          <div className="flex items-center justify-between text-sm text-slate-500">
-            <span data-testid="text-result-count">
-              Showing {(currentPage - 1) * PAGE_SIZE + 1}–
-              {Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                data-testid="button-prev-page"
-              >
-                Previous
-              </Button>
-              <span>
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                data-testid="button-next-page"
-              >
-                Next
-              </Button>
-            </div>
+        
+        {isLoading ? (
+          <div className="text-center py-16 text-muted-foreground">
+            Loading account heads...
           </div>
+        ) : isError ? (
+          <div className="text-center py-16 space-y-3">
+            <p className="text-red-500 text-sm">
+              {(error as any)?.message || "Failed to load account heads."}
+            </p>
+            <Button variant="outline" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : tree.length === 0 ? (
+          <div className="text-center py-16 text-muted-foreground">
+            {headsList.length === 0
+              ? "No account heads yet. Click 'Add Parent Head' to create your first one."
+              : "No account heads match the current filters."}
+          </div>
+        ) : (
+          renderCards(tree)
         )}
 
-        {/* Add / Edit dialog */}
+
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -677,6 +735,14 @@ export default function ChartOfAccounts() {
                 {editingId ? "Edit Account Head" : "Add Account Head"}
               </DialogTitle>
             </DialogHeader>
+            
+            {autoCodeLoading && !editingId && (
+              <div className="bg-blue-50/50 p-3 rounded-md flex items-center gap-3 text-blue-600 text-sm animate-pulse">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Generating next account code...
+              </div>
+            )}
+            
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <div className="space-y-1.5">
                 <Label className="text-slate-600 font-medium">
@@ -693,7 +759,7 @@ export default function ChartOfAccounts() {
                     }))
                   }
                 >
-                  <SelectTrigger data-testid="select-category">
+                  <SelectTrigger>
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
@@ -718,7 +784,7 @@ export default function ChartOfAccounts() {
                   onValueChange={(v) => setForm((prev) => ({ ...prev, type: v }))}
                   disabled={!form.category}
                 >
-                  <SelectTrigger data-testid="select-type">
+                  <SelectTrigger>
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -740,7 +806,6 @@ export default function ChartOfAccounts() {
                   value={form.code}
                   onChange={(e) => setForm((prev) => ({ ...prev, code: e.target.value }))}
                   placeholder="e.g. 10101"
-                  data-testid="input-code"
                 />
                 {errors.code && <p className="text-xs text-red-500">{errors.code}</p>}
               </div>
@@ -753,7 +818,6 @@ export default function ChartOfAccounts() {
                   value={form.name}
                   onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                   placeholder="Account head name"
-                  data-testid="input-name"
                 />
                 {errors.name && <p className="text-xs text-red-500">{errors.name}</p>}
               </div>
@@ -766,7 +830,7 @@ export default function ChartOfAccounts() {
                     setForm((prev) => ({ ...prev, normalBalance: v }))
                   }
                 >
-                  <SelectTrigger data-testid="select-normal-balance">
+                  <SelectTrigger>
                     <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
@@ -789,7 +853,6 @@ export default function ChartOfAccounts() {
                     setForm((prev) => ({ ...prev, openingBalance: e.target.value }))
                   }
                   placeholder="0.00"
-                  data-testid="input-opening-balance"
                 />
                 {errors.openingBalance && (
                   <p className="text-xs text-red-500">{errors.openingBalance}</p>
@@ -804,7 +867,7 @@ export default function ChartOfAccounts() {
                     setForm((prev) => ({ ...prev, parentAccountId: v }))
                   }
                 >
-                  <SelectTrigger data-testid="select-parent">
+                  <SelectTrigger>
                     <SelectValue placeholder="None" />
                   </SelectTrigger>
                   <SelectContent>
@@ -827,7 +890,6 @@ export default function ChartOfAccounts() {
                   value={form.branch}
                   onChange={(e) => setForm((prev) => ({ ...prev, branch: e.target.value }))}
                   placeholder="Optional"
-                  data-testid="input-branch"
                 />
               </div>
 
@@ -840,7 +902,6 @@ export default function ChartOfAccounts() {
                   }
                   placeholder="Optional notes"
                   className="resize-none h-20"
-                  data-testid="input-description"
                 />
               </div>
             </div>
@@ -849,15 +910,13 @@ export default function ChartOfAccounts() {
               <Button
                 variant="outline"
                 onClick={() => setDialogOpen(false)}
-                data-testid="button-cancel"
               >
                 Cancel
               </Button>
               <Button
                 className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
                 onClick={handleSubmit}
-                disabled={saveMutation.isPending}
-                data-testid="button-submit"
+                disabled={saveMutation.isPending || autoCodeLoading}
               >
                 <Save className="h-4 w-4 mr-1.5" />
                 {saveMutation.isPending
