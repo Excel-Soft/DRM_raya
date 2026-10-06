@@ -18174,8 +18174,6 @@ if (isset($_POST['quoteRead'])) {
             $retval = mysqli_query($con, $query);
             apiData($dat->id, 'quoteReaded');
         }
-
-        curl_close($curl);
     }
 }
 
@@ -18870,7 +18868,7 @@ if (isset($_POST['comid'])) {
         exit;
     }
 
-    if (mysqli_ping($con) === false) {
+    if (!@mysqli_query($con, "SELECT 1")) {
         echo json_encode(['type' => 'error', 'message' => 'Database connection lost']);
         exit;
     }
@@ -47936,7 +47934,7 @@ function send_customer_data_to_api($comid, $userid)
     if (curl_errno($ch)) {
         return false;
     }
-    curl_close($ch);
+    unset($ch);
     return $response;
 }
 // Function to register customer support data
