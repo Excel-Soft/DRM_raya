@@ -1969,6 +1969,7 @@ export const cheques = drmSchema.table("cheques", {
   companyName: text("company_name").notNull(),
   chequeDate: timestamp("cheque_date").notNull(),
   status: chequeStatusEnum("status").notNull().default("Pending"),
+  chequeType: text("cheque_type"),
   notes: text("notes"),
   createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),

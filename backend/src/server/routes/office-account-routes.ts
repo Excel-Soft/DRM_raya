@@ -900,9 +900,11 @@ router.delete(
 );
 
 // Cheques
+db.execute(sql`ALTER TABLE "drm"."cheques" ADD COLUMN IF NOT EXISTS "cheque_type" text;`).catch(() => {});
+
 router.get("/cheques", async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, status, search } = req.query;
+    const { startDate, endDate, status, search, type } = req.query;
     let conditions = [];
     
     if (startDate) {

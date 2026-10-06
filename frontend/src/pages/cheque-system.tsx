@@ -174,15 +174,17 @@ export default function ChequeSystem() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-gray-500 font-normal">Cheque Type:</Label>
+                  <Label className="text-xs text-gray-500 font-normal">Type</Label>
                   <Select value={formData.chequeType} onValueChange={(v) => setFormData({ ...formData, chequeType: v })}>
                     <SelectTrigger className="h-9 focus-visible:ring-1 focus-visible:ring-emerald-500">
                       <SelectValue placeholder="Choose..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Cross">Cross</SelectItem>
-                      <SelectItem value="Bearer">Bearer</SelectItem>
-                      <SelectItem value="Order">Order</SelectItem>
+                      <SelectItem value="For Dollar">For Dollar</SelectItem>
+                      <SelectItem value="For Expense">For Expense</SelectItem>
+                      <SelectItem value="Recovery">Recovery</SelectItem>
+                      <SelectItem value="Last Closing">Last Closing</SelectItem>
+                      <SelectItem value="Direct Purchase">Direct Purchase</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -220,10 +222,10 @@ export default function ChequeSystem() {
               chequesList.map((cheque) => (
                 <div key={cheque.id} className="relative w-full max-w-[850px] bg-white dark:bg-zinc-900 border border-gray-300 shadow-sm overflow-hidden flex flex-col font-sans" style={{ minHeight: '320px' }}>
                   
-                  {/* Ribbon FOR DOLLAR */}
-                  <div className="absolute top-0 left-0 w-24 h-24 overflow-hidden z-10 pointer-events-none">
-                    <div className="absolute top-5 -left-12 w-48 bg-[#d0eaf9] border-y border-blue-200 text-[#0f5c9c] text-[10px] font-bold py-1 text-center -rotate-45 shadow-sm">
-                      FOR DOLLAR
+                  {/* Dynamic Ribbon for Selected Cheque Type */}
+                  <div className="absolute top-0 left-0 w-28 h-28 overflow-hidden z-10 pointer-events-none">
+                    <div className="absolute top-6 -left-12 w-52 bg-[#d0eaf9] border-y border-blue-200 text-[#0f5c9c] text-[10px] font-extrabold py-1 text-center -rotate-45 shadow-sm uppercase tracking-wider">
+                      {cheque.chequeType || "FOR DOLLAR"}
                     </div>
                   </div>
 
