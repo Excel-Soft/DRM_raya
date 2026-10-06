@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2 } from "lucide-react";
+import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -94,9 +94,23 @@ function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
                 )}>{item.status || "-"}</Badge>
               </td>
               <td className="p-2.5 text-center">
-                <div className="flex gap-1 items-center justify-center">
-                  <button onClick={() => onAttach(item)} title="Attach"><FileText size={14} className={item.proofUrl ? "text-[#00a65a] cursor-pointer" : "text-gray-400 cursor-pointer"}/></button>
-                  <button onClick={() => onView(item)} title="View"><Eye size={14} className="text-[#00a65a] cursor-pointer dark:text-zinc-400"/></button>
+                <div className="flex gap-1.5 items-center justify-center">
+                  <button 
+                    type="button" 
+                    onClick={() => onAttach(item)} 
+                    title="Attach Payment Proof / File"
+                    className="w-5 h-5 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer"
+                  >
+                    <DollarSign size={11} strokeWidth={2.8} />
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => onView(item)} 
+                    title="View Details"
+                    className="w-5 h-5 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer"
+                  >
+                    <Info size={11} strokeWidth={2.8} />
+                  </button>
                 </div>
               </td>
             </tr>
