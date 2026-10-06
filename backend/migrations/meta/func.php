@@ -6,7 +6,16 @@ if (!class_exists('PHPExcel_IOFactory')) {
         public static function createReader($readerType = '') { return new self(); }
         public static function identify($pFilename) { return ''; }
         public function getActiveSheet() { return $this; }
+        public function getWorksheetIterator() { return [$this]; }
+        public function getHighestRow() { return 0; }
+        public function getHighestColumn() { return 'A'; }
+        public function getCellByColumnAndRow($pColumn = 0, $pRow = 1) { return $this; }
+        public function getCell($pCoordinate = 'A1') { return $this; }
+        public function getValue() { return ''; }
+        public function getFormattedValue() { return ''; }
         public function toArray($nullValue = null, $calculateFormulas = true, $formatData = true, $returnCellRef = false) { return []; }
+        public function __call($name, $args) { return $this; }
+        public static function __callStatic($name, $args) { return new self(); }
     }
 }
 
