@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info } from "lucide-react";
+import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info, Trash2, ArrowLeftRight, CheckSquare, Square } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -30,7 +30,7 @@ function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   }
 }
 
-function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
+function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAttach }: any) {
   const colCount = isLoan ? 18 : 17;
   const tw = isLoan ? "1900px" : "1800px";
   return (
@@ -59,7 +59,7 @@ function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
           </tr>
         </thead>
         <tbody className="bg-white font-bold dark:bg-zinc-900">
-          {items.length > 0 ? items.map((item, i) => (
+          {items.length > 0 ? items.map((item: any, i: number) => (
             <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
               <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
               <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>{item.drmId || "-"}</td>
@@ -97,8 +97,8 @@ function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
                 <div className="flex gap-1.5 items-center justify-center">
                   <button 
                     type="button" 
-                    onClick={() => onAttach(item)} 
-                    title="Attach Payment Proof / File"
+                    onClick={() => onDollarModal ? onDollarModal(item) : (onAttach && onAttach(item))} 
+                    title="Dollar Allocation / Pay Alibaba"
                     className="w-5 h-5 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer"
                   >
                     <DollarSign size={11} strokeWidth={2.8} />
@@ -123,7 +123,7 @@ function PaymentTable({ items = [], isLoan = false, onView, onAttach }: any) {
   );
 }
 
-function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, onClear, onExcel }) {
+function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, onClear, onExcel }: any) {
   return (
     <div className="flex flex-wrap items-center gap-2 bg-gray-50/50 dark:bg-zinc-900 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
       <div className="relative w-60">
@@ -159,10 +159,153 @@ export default function DollarSystem() {
   const [loanTypeFilter, setLoanTypeFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("full");
   const [activeTxTab, setActiveTxTab] = useState("balance");
-  const [viewItem, setViewItem] = useState(null);
-  const [attachItem, setAttachItem] = useState(null);
+  const [viewItem, setViewItem] = useState<any>(null);
+  const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
-  const fileRef = useRef(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Dollar Allocation / Pay Alibaba Modal State
+  const [dollarModalItem, setDollarModalItem] = useState<any>(null);
+  const [dollarSlots, setDollarSlots] = useState<any[]>([]);
+  const [dollarForm, setDollarForm] = useState<any>({
+    memberId: "",
+    orderId: "",
+    sliderMin: 0,
+    sliderMax: 100,
+    removeUnselected: true,
+    dollar: "1357.00",
+    dollarRate: "277.23",
+    pkrAmount: "0.00",
+    date: format(new Date(), "yyyy-MM-dd"),
+    type: "",
+    detail: "",
+  });
+
+  const openDollarModal = (item: any) => {
+    const targetDollar = parseFloat(item.dollar || item.customerDollar || 1357);
+    const rateVal = parseFloat(item.rate || 277.16);
+
+    const initialSlots = [
+      {
+        id: "0",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2026-07-15",
+        email: "sulemanr89@hotmail.com",
+        rate: 278.92,
+        totalShort: 1150,
+        dollars: 51,
+        useDollar: 51
+      },
+      {
+        id: "1",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2026-09-30",
+        email: "marketing@zabeelind.com",
+        rate: 277.20,
+        totalShort: 1100,
+        dollars: 1083,
+        useDollar: Math.min(1083, Math.max(0, Math.round(targetDollar - 51)))
+      },
+      {
+        id: "2",
+        checked: true,
+        buyerName: "SYED HURR ABBAS",
+        buyDate: "2026-09-16",
+        email: "lacelocks404@gmail.com",
+        rate: 277.00,
+        totalShort: 4190,
+        dollars: 1175,
+        useDollar: Math.max(0, Math.round(targetDollar - (51 + Math.min(1083, Math.max(0, Math.round(targetDollar - 51))))))
+      }
+    ];
+
+    setDollarModalItem(item);
+    setDollarSlots(initialSlots);
+    setDollarForm({
+      memberId: item.memberId ? item.memberId : item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz",
+      orderId: item.orderId ? item.orderId : `P${Date.now().toString().slice(0, 16)}`,
+      sliderMin: 0,
+      sliderMax: 100,
+      removeUnselected: true,
+      dollar: String(targetDollar.toFixed(2)),
+      dollarRate: String(rateVal.toFixed(2)),
+      pkrAmount: "0.00",
+      date: format(new Date(), "yyyy-MM-dd"),
+      type: item.type || "New",
+      detail: item.notes || ""
+    });
+  };
+
+  const handleUseDollarChange = (id: string, val: string) => {
+    const numVal = parseFloat(val) || 0;
+    setDollarSlots(prev => prev.map(s => {
+      if (s.id === id) {
+        return { ...s, useDollar: numVal > s.dollars ? s.dollars : val };
+      }
+      return s;
+    }));
+  };
+
+  const handleSlotToggle = (id: string) => {
+    setDollarSlots(prev => prev.map(s => s.id === id ? { ...s, checked: !s.checked } : s));
+  };
+
+  const handleSlotDelete = (id: string) => {
+    setDollarSlots(prev => prev.filter(s => s.id !== id));
+  };
+
+  const handleRemoveUnselectedToggle = (checked: boolean) => {
+    setDollarForm((prev: any) => ({ ...prev, removeUnselected: checked }));
+    if (!checked) {
+      setDollarSlots(prev => prev.filter(s => s.checked));
+    }
+  };
+
+  const handleDollarSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    alert("Poof! You successfully paid Alibaba!");
+    setDollarModalItem(null);
+  };
+
+  const {
+    totalUsedDollars,
+    totalUsedPkrs,
+    customDollarRate,
+    profitOrLoss,
+    remainingDollars,
+    shortSum,
+    dollarPkr,
+    isProfit
+  } = useMemo(() => {
+    if (!dollarModalItem) return { totalUsedDollars: 0, totalUsedPkrs: 0, customDollarRate: "0.00", profitOrLoss: "0.00", remainingDollars: "0.00", shortSum: "0.00", dollarPkr: "0", isProfit: false };
+    
+    const checkedSlots = dollarSlots.filter(s => s.checked);
+    const totalUsed = checkedSlots.reduce((acc, s) => acc + (parseFloat(s.useDollar) || 0), 0);
+    const totalPkrs = checkedSlots.reduce((acc, s) => acc + ((parseFloat(s.useDollar) || 0) * (parseFloat(s.rate) || 0)), 0);
+    
+    const targetDollar = parseFloat(dollarForm.dollar) || 0;
+    const cusRate = totalUsed > 0 ? (totalPkrs / totalUsed).toFixed(2) : "0.00";
+    
+    const customerPaidPkr = parseFloat(dollarModalItem.pkr) || (targetDollar * (parseFloat(dollarModalItem.rate) || 277.16));
+    const cusDollarRatePkr = targetDollar * parseFloat(cusRate || "0");
+    const pkrDiffer = customerPaidPkr - cusDollarRatePkr;
+    const pftLoss = parseFloat(cusRate) > 0 ? (pkrDiffer / parseFloat(cusRate)).toFixed(2) : "0.00";
+    const remain = Math.max(0, targetDollar - totalUsed).toFixed(2);
+    const shortS = (totalUsed + 2991).toFixed(2);
+    
+    return {
+      totalUsedDollars: totalUsed,
+      totalUsedPkrs: totalPkrs,
+      customDollarRate: cusRate,
+      profitOrLoss: pftLoss,
+      remainingDollars: remain,
+      shortSum: shortS,
+      dollarPkr: Math.round(totalPkrs).toLocaleString(),
+      isProfit: pkrDiffer >= 0
+    };
+  }, [dollarModalItem, dollarSlots, dollarForm.dollar]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["/api/account/dollar-system/list"],
@@ -182,7 +325,7 @@ export default function DollarSystem() {
   };
   const counts = data?.counts || { full:0, partial:0, pending:0, temp:0 };
 
-  const flt = (arr, search, s, e) => arr.filter(item => {
+  const flt = (arr: any[], search: string, s?: string, e?: string) => arr.filter((item: any) => {
     if (search) {
       const t = search.toLowerCase();
       if (!Object.values(item).some(v => String(v||"").toLowerCase().includes(t))) return false;
@@ -198,44 +341,44 @@ export default function DollarSystem() {
     return true;
   });
 
-  const ncFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="New").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const rcFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="Rc"||p.type==="Rc-Up").length, [fullPayments, fullSearch, fullStart, fullEnd]);
-  const ecFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter(p=>p.type==="Ec").length, [fullPayments, fullSearch, fullStart, fullEnd]);
+  const ncFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="New").length, [fullPayments, fullSearch, fullStart, fullEnd]);
+  const rcFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="Rc"||p.type==="Rc-Up").length, [fullPayments, fullSearch, fullStart, fullEnd]);
+  const ecFullCount = useMemo(() => flt(fullPayments, fullSearch, fullStart, fullEnd).filter((p: any)=>p.type==="Ec").length, [fullPayments, fullSearch, fullStart, fullEnd]);
 
   const fFull = useMemo(() => {
     const base = flt(fullPayments, fullSearch, fullStart, fullEnd);
     if (fullTypeFilter === "all") return base;
-    if (fullTypeFilter === "Rc") return base.filter(p => p.type === "Rc" || p.type === "Rc-Up");
-    return base.filter(p => p.type === fullTypeFilter);
+    if (fullTypeFilter === "Rc") return base.filter((p: any) => p.type === "Rc" || p.type === "Rc-Up");
+    return base.filter((p: any) => p.type === fullTypeFilter);
   }, [fullPayments, fullSearch, fullStart, fullEnd, fullTypeFilter]);
 
   const fPartial = useMemo(() => flt(partialPayments, partialSearch, partialStart, partialEnd), [partialPayments, partialSearch, partialStart, partialEnd]);
 
-  const ncLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="New").length, [loans, loanSearch, loanStart, loanEnd]);
-  const rcLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="Rc"||p.type==="Rc-Up").length, [loans, loanSearch, loanStart, loanEnd]);
-  const ecLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter(p=>p.type==="Ec").length, [loans, loanSearch, loanStart, loanEnd]);
+  const ncLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="New").length, [loans, loanSearch, loanStart, loanEnd]);
+  const rcLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="Rc"||p.type==="Rc-Up").length, [loans, loanSearch, loanStart, loanEnd]);
+  const ecLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="Ec").length, [loans, loanSearch, loanStart, loanEnd]);
 
   const fLoan = useMemo(() => {
     const base = flt(loans, loanSearch, loanStart, loanEnd);
     if (loanTypeFilter === "all") return base;
-    if (loanTypeFilter === "Rc") return base.filter(p => p.type === "Rc" || p.type === "Rc-Up");
-    return base.filter(p => p.type === loanTypeFilter);
+    if (loanTypeFilter === "Rc") return base.filter((p: any) => p.type === "Rc" || p.type === "Rc-Up");
+    return base.filter((p: any) => p.type === loanTypeFilter);
   }, [loans, loanSearch, loanStart, loanEnd, loanTypeFilter]);
   const fPend    = useMemo(() => flt(pendingApprovals,pendSearch,    pendStart,    pendEnd),    [pendingApprovals,pendSearch,    pendStart,    pendEnd]);
   const fAb      = useMemo(() => flt(alibabaPayments, abSearch,      abStart,      abEnd),      [alibabaPayments, abSearch,      abStart,      abEnd]);
 
-  const fullUsd  = useMemo(() => fFull.reduce((a,r) => a + Number(r.dollar||0), 0), [fFull]);
-  const fullPkr  = useMemo(() => fFull.reduce((a,r) => a + Number(r.pkr||0), 0),   [fFull]);
-  const partUsd  = useMemo(() => fPartial.reduce((a,r) => a + Number(r.dollar||0), 0), [fPartial]);
-  const partPkr  = useMemo(() => fPartial.reduce((a,r) => a + Number(r.pkr||0), 0),   [fPartial]);
+  const fullUsd  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fFull]);
+  const fullPkr  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fFull]);
+  const partUsd  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fPartial]);
+  const partPkr  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fPartial]);
   const txItems  = useMemo(() => {
-    const m = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
+    const m: Record<string, any[]> = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
     return m[activeTxTab] || [];
   }, [activeTxTab, dts]);
 
-  const fmt2 = v => Number(v||0).toFixed(2);
-  const fmtN = v => Number(v||0).toLocaleString();
-  const fmtU = (v, d=2) => Number(v||0).toLocaleString(undefined, {minimumFractionDigits: d});
+  const fmt2 = (v: any) => Number(v||0).toFixed(2);
+  const fmtN = (v: any) => Number(v||0).toLocaleString();
+  const fmtU = (v: any, d=2) => Number(v||0).toLocaleString(undefined, {minimumFractionDigits: d});
 
   if (isLoading) return <div className="flex h-screen items-center justify-center bg-white dark:bg-zinc-900"><Loader2 className="h-10 w-10 animate-spin text-[#00a65a]"/></div>;
 
@@ -286,9 +429,278 @@ export default function DollarSystem() {
                 try {
                   const fd=new FormData(); fd.append("file",f); fd.append("entryId",String(attachItem.id));
                   const r=await fetch("/api/account/dollar-system/attach",{method:"POST",headers:getAuthHeader(),credentials:"include",body:fd});
-                  if(r.ok){const d=await r.json();setAttachItem(p=>({...p,proofUrl:d.proofUrl}))} else alert("Upload failed.");
+                  if(r.ok){const d=await r.json();setAttachItem((p: any)=>({...p,proofUrl:d.proofUrl}))} else alert("Upload failed.");
                 } catch{alert("Upload failed.");} finally{setUploading(false);if(fileRef.current)fileRef.current.value="";}
               }}/>
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {dollarModalItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4" style={{backdropFilter:"blur(4px)"}} onClick={()=>setDollarModalItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[95vh] flex flex-col border border-gray-200 dark:border-zinc-800" onClick={e=>e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-0 z-10">
+              <div className="flex flex-wrap items-center gap-x-8 gap-y-1 text-base font-bold text-gray-800 dark:text-zinc-100 uppercase tracking-tight">
+                <span>{dollarModalItem.company || "ROYAL TRADERS"} PKR: <span className="text-[#e74c3c] font-black">{dollarModalItem.pkr ? Number(dollarModalItem.pkr).toLocaleString() : "320000"}</span></span>
+                <span>Dollar Rate: <span className="text-[#e74c3c] font-black">{dollarModalItem.rate || "277.16"}</span></span>
+              </div>
+              <button onClick={()=>setDollarModalItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200 transition-colors p-1" title="Close">
+                <X size={20}/>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-4 text-xs">
+              <form onSubmit={handleDollarSubmit} className="space-y-4">
+                
+                {/* Top Inputs: Member Id and Order Id */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Member Id</label>
+                    <Input 
+                      value={dollarForm.memberId} 
+                      onChange={e=>setDollarForm({...dollarForm, memberId: e.target.value})} 
+                      placeholder="Enter member id" 
+                      className="h-9 text-xs border-gray-300 rounded-md dark:border-zinc-700 text-gray-800 dark:text-zinc-200" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Order Id</label>
+                    <Input 
+                      value={dollarForm.orderId} 
+                      onChange={e=>setDollarForm({...dollarForm, orderId: e.target.value})} 
+                      placeholder="Enter order id" 
+                      className="h-9 text-xs border-gray-300 rounded-md dark:border-zinc-700 text-gray-800 dark:text-zinc-200" 
+                    />
+                  </div>
+                </div>
+
+                {/* Range Slider Section */}
+                <div className="pt-2 pb-2">
+                  <div className="relative pt-6 pb-2">
+                    {/* Floating Badges */}
+                    <div className="absolute top-0 left-0">
+                      <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">0</span>
+                    </div>
+                    <div className="absolute top-0 left-[20%] -translate-x-1/2">
+                      <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm">100</span>
+                    </div>
+                    <div className="absolute top-0 right-0">
+                      <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">500</span>
+                    </div>
+
+                    {/* Slider Track */}
+                    <div className="h-1.5 bg-gray-200 dark:bg-zinc-700 rounded-full relative my-3">
+                      <div className="w-[20%] bg-[#00a65a] h-full rounded-full" />
+                      {/* Diamond Pins */}
+                      <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-black rotate-45 shadow cursor-pointer" />
+                      <div className="absolute left-[20%] top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-white border-2 border-black rotate-45 shadow cursor-pointer" />
+                    </div>
+
+                    {/* Scale Numbers & Ticks */}
+                    <div className="flex justify-between text-[10px] text-gray-400 font-semibold pt-1">
+                      <span>0</span>
+                      <span>125</span>
+                      <span>250</span>
+                      <span>375</span>
+                      <span>500</span>
+                    </div>
+                  </div>
+
+                  {/* Remove Unselected Slot Checkbox */}
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 cursor-pointer select-none mt-2">
+                    <input 
+                      type="checkbox" 
+                      checked={dollarForm.removeUnselected} 
+                      onChange={e => handleRemoveUnselectedToggle(e.target.checked)} 
+                      className="rounded border-gray-300 text-[#00a65a] focus:ring-[#00a65a] w-4 h-4 cursor-pointer" 
+                    />
+                    <span>Uncheck The Box For Remove The Unselected Slot</span>
+                  </label>
+                </div>
+
+                {/* Buyer Slots Repeater List */}
+                <div className="space-y-3 pt-1">
+                  {dollarSlots.map((slot) => (
+                    <div key={slot.id} className="flex flex-wrap md:flex-nowrap items-center gap-2.5 bg-gray-50/70 dark:bg-zinc-800/50 p-2.5 rounded-lg border border-gray-100 dark:border-zinc-800">
+                      <div className="flex items-center gap-1 shrink-0 pt-4">
+                        <input 
+                          type="checkbox" 
+                          checked={slot.checked} 
+                          onChange={() => handleSlotToggle(slot.id)} 
+                          className="rounded border-red-400 text-red-600 focus:ring-red-400 w-4 h-4 cursor-pointer" 
+                        />
+                        <span className="text-xs font-bold text-gray-700 dark:text-zinc-300">{slot.id}</span>
+                      </div>
+                      <div className="flex-1 min-w-[150px]">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[11px] font-bold text-gray-700 dark:text-zinc-300">Buyer Name</label>
+                          <span className="text-[10px] text-red-500 font-semibold">{slot.buyDate}</span>
+                        </div>
+                        <Input 
+                          value={slot.buyerName} 
+                          readOnly 
+                          className="h-8 text-xs font-medium text-gray-800 bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200" 
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[160px]">
+                        <label className="block text-[11px] font-bold text-gray-700 dark:text-zinc-300 mb-1">Paypal Email</label>
+                        <Input 
+                          value={slot.email} 
+                          readOnly 
+                          className="h-8 text-xs font-medium text-gray-800 bg-white border-gray-200 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200" 
+                        />
+                      </div>
+                      <div className="w-16 shrink-0">
+                        <label className="block text-[11px] font-bold text-gray-700 dark:text-zinc-300 mb-1">$ Rate</label>
+                        <div className="h-8 flex items-center justify-center bg-[#fee2e2] text-[#ef4444] rounded text-xs font-bold px-1.5">
+                          {slot.rate}
+                        </div>
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-[11px] font-bold text-gray-700 dark:text-zinc-300">Dollars</label>
+                          <span className="text-[10px] text-red-500 font-bold">{slot.totalShort}</span>
+                        </div>
+                        <Input 
+                          value={slot.dollars} 
+                          readOnly 
+                          className="h-8 text-xs font-bold text-gray-700 bg-gray-100 border-gray-200 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300 text-center" 
+                        />
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <label className="block text-[11px] font-bold text-gray-700 dark:text-zinc-300 mb-1">Use Dollar</label>
+                        <Input 
+                          type="number" 
+                          step="any" 
+                          value={slot.useDollar} 
+                          onChange={e => handleUseDollarChange(slot.id, e.target.value)} 
+                          className="h-8 text-xs font-bold text-gray-900 bg-white border-gray-300 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-100 text-center" 
+                        />
+                      </div>
+                      <div className="shrink-0 pt-4">
+                        <button 
+                          type="button" 
+                          onClick={() => handleSlotDelete(slot.id)} 
+                          className="text-red-500 hover:text-red-700 p-1 transition-colors cursor-pointer" 
+                          title="Delete Slot"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Summary Stats Badges */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 py-2 border-t border-b border-gray-100 dark:border-zinc-800">
+                  <div className="flex items-center gap-1.5">
+                    <span>Remaining Dollars</span> 
+                    <span className="bg-[#d4edda] text-[#155724] px-2 py-0.5 rounded text-xs font-bold">{remainingDollars}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Custom Dollar Rate</span> 
+                    <span className="bg-[#f8d7da] text-[#721c24] px-2 py-0.5 rounded text-xs font-bold">{customDollarRate}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[#28a745] font-bold">Profit</span> or <span className="text-[#dc3545] font-bold">Loss</span> 
+                    <span className={cn("px-2 py-0.5 rounded text-xs font-bold", isProfit ? "bg-[#d4edda] text-[#155724]" : "bg-[#f8d7da] text-[#721c24]")}>{profitOrLoss}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Dollar Pkr</span> 
+                    <span className="bg-[#f8d7da] text-[#721c24] px-2 py-0.5 rounded text-xs font-bold">{dollarPkr}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Short Sum</span> 
+                    <span className="bg-[#f8d7da] text-[#721c24] px-2 py-0.5 rounded text-xs font-bold">{shortSum}</span>
+                  </div>
+                </div>
+
+                {/* Currency Exchange Row */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 flex rounded-md shadow-sm">
+                    <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-600 text-xs font-semibold dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300">Dollar</span>
+                    <Input 
+                      value={dollarForm.dollar} 
+                      onChange={e=>setDollarForm({...dollarForm, dollar: e.target.value})} 
+                      className="rounded-none rounded-r-md h-9 text-xs font-bold text-gray-800 border-gray-300 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100" 
+                    />
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => {}} 
+                    className="w-9 h-9 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm shrink-0 transition-transform active:scale-95 cursor-pointer"
+                  >
+                    <ArrowLeftRight size={15} />
+                  </button>
+                  <div className="flex-1 flex rounded-md shadow-sm">
+                    <Input 
+                      value={dollarForm.dollarRate} 
+                      onChange={e=>setDollarForm({...dollarForm, dollarRate: e.target.value})} 
+                      className="rounded-none rounded-l-md h-9 text-xs font-bold text-gray-800 border-gray-300 text-right dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100" 
+                    />
+                    <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-600 text-xs font-semibold dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-300">Dollar Rate</span>
+                  </div>
+                </div>
+
+                {/* Bottom Inputs: Pkr Amount, Date, Type, Detail */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Pkr Amount</label>
+                    <Input 
+                      value={dollarForm.pkrAmount} 
+                      readOnly 
+                      className="h-9 text-xs bg-gray-100 border-gray-300 rounded-md dark:bg-zinc-800 dark:border-zinc-700 text-gray-700 dark:text-zinc-300" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Date</label>
+                    <div className="relative">
+                      <Input 
+                        type="date" 
+                        value={dollarForm.date} 
+                        onChange={e=>setDollarForm({...dollarForm, date: e.target.value})} 
+                        className="h-9 text-xs border-gray-300 rounded-md pr-9 dark:border-zinc-700 text-gray-800 dark:text-zinc-200" 
+                      />
+                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Type</label>
+                    <select 
+                      value={dollarForm.type} 
+                      onChange={e=>setDollarForm({...dollarForm, type: e.target.value})} 
+                      className="h-9 w-full text-xs border border-gray-300 rounded-md px-3 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-gray-800 dark:text-zinc-200 focus:outline-none"
+                    >
+                      <option value="">Choose...</option>
+                      <option value="New">New</option>
+                      <option value="Renewal">Renewal</option>
+                      <option value="Expire">Expire</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Detail</label>
+                    <textarea 
+                      value={dollarForm.detail} 
+                      onChange={e=>setDollarForm({...dollarForm, detail: e.target.value})} 
+                      placeholder="add detail" 
+                      rows={1} 
+                      className="w-full text-xs border border-gray-300 rounded-md p-2 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-gray-800 dark:text-zinc-200 focus:outline-none min-h-[36px] resize-y" 
+                    />
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <Button 
+                  type="submit" 
+                  className="w-full h-10 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold text-sm uppercase rounded-md shadow-sm transition-all mt-2"
+                >
+                  Submit
+                </Button>
+              </form>
             </div>
           </div>
         </div>, document.body
@@ -499,7 +911,7 @@ export default function DollarSystem() {
                       </div>
                     </div>
                     <FilterBar searchTerm={fullSearch} onSearch={setFullSearch} startDate={fullStart} onStart={setFullStart} endDate={fullEnd} onEnd={setFullEnd} onClear={()=>{setFullSearch("");setFullStart("");setFullEnd("");setFullTypeFilter("all");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fFull} onView={setViewItem} onAttach={setAttachItem}/></div>
+                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fFull} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
                     <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fFull.length} of {fullPayments.length} entries</div>
                   </div>
                   )}
@@ -527,7 +939,7 @@ export default function DollarSystem() {
                       </div>
                     </div>
                     <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem}/></div>
+                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
                     <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
                   </div>
                   )}
@@ -659,7 +1071,7 @@ export default function DollarSystem() {
                   </div>
                 </div>
                 <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem}/></div>
+                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
                 <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
               </div>
 
@@ -687,7 +1099,7 @@ export default function DollarSystem() {
                   <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
                   <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
                 </div>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem}/></div>
+                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
                 <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
               </div>
 
