@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { apiRequest, queryClient, mutationRequest } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -54,6 +55,9 @@ interface GmEntry {
   payDate: string | null;
   isLoan: boolean;
   isPartialPayment: boolean;
+  fullyPaid?: boolean;
+  installmentsTotal?: number;
+  installmentsCollected?: number;
   notes: string | null;
   createdAt: string;
 }
@@ -538,6 +542,17 @@ export default function AccountGmEntries() {
                       {entry.drmId}
                       {entry.isLoan && <span className="bg-amber-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">L</span>}
                       {entry.isPartialPayment && <span className="bg-purple-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">P</span>}
+                      {entry.isPartialPayment && !!entry.installmentsTotal && (
+                        <span
+                          title="Installments collected / scheduled"
+                          className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded shadow-sm font-semibold",
+                            entry.fullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-600"
+                          )}
+                        >
+                          {entry.installmentsCollected || 0}/{entry.installmentsTotal}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-[11px] max-w-[100px] truncate text-slate-500" title={entry.memberId || ""}>{entry.memberId || "—"}</td>
@@ -608,16 +623,28 @@ export default function AccountGmEntries() {
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
-                      {/* ── Approve / Reject (only for HOD Approved entries) ── */}
+                      {/* ── Approve / Reject (only for HOD Approved entries) ──
+                          A Partial GM can't be approved until its installment
+                          collection (gm_partial_receipts) is fully cleared. */}
                       {(entry.approvalStatus === "pending_managers" && entry.accountManagerStatus === "pending") && (
-                        <button
-                          onClick={() => setApproveModalEntry(entry)}
-                          title="Account Approve"
-                          className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-colors shadow-sm"
-                        >
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          Approve
-                        </button>
+                        entry.isPartialPayment && !entry.fullyPaid ? (
+                          <span
+                            title="This Partial GM's installments aren't fully collected yet"
+                            className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed"
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            Approve
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setApproveModalEntry(entry)}
+                            title="Account Approve"
+                            className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-colors shadow-sm"
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            Approve
+                          </button>
+                        )
                       )}
                       {/* ── Patch 5 Stage 3: payment receipts / loan terms ── */}
                       {!entry.isLoan && (

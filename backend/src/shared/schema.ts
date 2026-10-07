@@ -1214,6 +1214,10 @@ export const gmEntries = drmSchema.table("gm_entries", {
   addedByName: text("added_by_name"),
   packageType: text("package_type").notNull(),
   entryType: text("entry_type").notNull(), // New, Rc, Rc-Up, Renewal, etc.
+  // Catalog sticker price before the Alibaba discount — amountUsd is the real
+  // order value (packagePriceUsd - alibabaDiscountUsd), kept separately so the
+  // listing can show both.
+  packagePriceUsd: decimal("package_price_usd", { precision: 12, scale: 2 }),
   amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull(),
   customerDollar: decimal("customer_dollar", { precision: 12, scale: 2 }),
   dollarRate: decimal("dollar_rate", { precision: 12, scale: 4 }),
@@ -2022,13 +2026,17 @@ export const dollarBuying = drmSchema.table("dollar_buying", {
   screenshotUrl: text("screenshot_url"),
   detail: text("detail"),
   martini: text("martini").default("Show"),
+  // How much of this buy's dollarAmount hasn't yet been allocated to an Alibaba
+  // payment. Defaults to dollarAmount at insert time; decremented transactionally
+  // by /api/account/dollar-system/allocate-payment as it gets spent down.
+  remainingUsd: decimal("remaining_usd", { precision: 12, scale: 2 }),
   createdById: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const insertDollarBuyerSchema = createInsertSchema(dollarBuyers).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertDollarBuyingSchema = createInsertSchema(dollarBuying).omit({ id: true, createdAt: true, updatedAt: true, createdById: true }).extend({
+export const insertDollarBuyingSchema = createInsertSchema(dollarBuying).omit({ id: true, createdAt: true, updatedAt: true, createdById: true, remainingUsd: true }).extend({
   date: z.coerce.date().optional(),
 });
 
@@ -2036,6 +2044,24 @@ export type DollarBuyer = typeof dollarBuyers.$inferSelect;
 export type InsertDollarBuyer = z.infer<typeof insertDollarBuyerSchema>;
 export type DollarBuying = typeof dollarBuying.$inferSelect;
 export type InsertDollarBuying = z.infer<typeof insertDollarBuyingSchema>;
+
+// Ledger recording which dollar_buying "buy" rows funded a given Alibaba payment,
+// and how much of each was drawn — lets remainingUsd be decremented auditable/atomically.
+export const dollarAllocations = drmSchema.table("dollar_allocations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dollarBuyingId: varchar("dollar_buying_id").references(() => dollarBuying.id),
+  abPaymentId: integer("ab_payment_id"),
+  amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull(),
+  rate: decimal("rate", { precision: 12, scale: 4 }),
+  pkrAmount: decimal("pkr_amount", { precision: 12, scale: 2 }),
+  customDollarRate: decimal("custom_dollar_rate", { precision: 12, scale: 4 }),
+  memberId: text("member_id"),
+  orderId: text("order_id"),
+  createdById: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type DollarAllocation = typeof dollarAllocations.$inferSelect;
 
 // Dollar Advance Payments (Wallets → Advance Pay)
 export const dollarAdvancePayments = drmSchema.table("dollar_advance_payments", {
@@ -2964,12 +2990,19 @@ export const abPayments = drmSchema.table("ab_payments", {
   id: serial("id").primaryKey(),
   abId: text("ab_id"),
   orderId: text("order_id"),
+  memberId: text("member_id"),
   gmDrmId: text("gm_drm_id"),
   gmEntryId: uuid("gm_entry_id").references(() => gmEntries.id),
   companyName: text("company_name"),
   amountUsd: decimal("amount_usd", { precision: 12, scale: 2 }).notNull().default("0"),
   amountPkr: decimal("amount_pkr", { precision: 15, scale: 2 }).notNull().default("0"),
+  // Blended rate from the buyer-dollar allocation ("Cus $ Rate" in the Paid
+  // Alibaba ledger) — distinct from dollarRate below.
   rate: decimal("rate", { precision: 12, scale: 4 }),
+  // The top-level "Dollar Rate" field on the allocation form itself ("TD Rate"
+  // in the Paid Alibaba ledger) — a separate, editable figure from `rate`.
+  dollarRate: decimal("dollar_rate", { precision: 12, scale: 4 }),
+  type: text("type"),
   proofUrl: text("proof_url"),
   status: text("status").notNull().default("pending"),
   paidDate: date("paid_date"),

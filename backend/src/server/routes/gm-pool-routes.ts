@@ -682,6 +682,7 @@ export function registerGmPoolRoutes(app: Express) {
           sales_person_name as "salesPersonName",
           package_type as package,
           entry_type as type,
+          package_price_usd as "packagePrice",
           amount_usd as "orderDollar",
           customer_dollar as "customerDollar",
           dollar_rate as "dollarRate",
@@ -711,8 +712,19 @@ export function registerGmPoolRoutes(app: Express) {
           extension,
           payment_proof_url as "paymentProofUrl",
           created_at as "createdAt",
-          updated_at as "updateRequest"
+          updated_at as "updateRequest",
+          -- A Partial GM is only "fullyPaid" once its installment collection
+          -- (tracked via gm_partial_receipts) has reached its target. Non-partial
+          -- GMs are trivially fullyPaid — the gate below only applies to Partial.
+          (
+            NOT coalesce(is_partial_payment,false)
+            OR (COALESCE(customer_dollar, amount_usd, 0) - COALESCE(pr.paid, 0)) <= 0.009
+          ) AS "fullyPaid",
+          COALESCE(pr.paid, 0) AS "partialPaidAmount"
         FROM drm.gm_entries
+        LEFT JOIN (
+          SELECT gm_id, SUM(amount_usd) AS paid FROM drm.gm_partial_receipts GROUP BY gm_id
+        ) pr ON pr.gm_id = gm_entries.id::text
         ${whereClause}
         ORDER BY created_at DESC
         LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -720,8 +732,31 @@ export function registerGmPoolRoutes(app: Express) {
       );
 
       return res.json({
-        data: dataResult.rows.map((row: any) => ({
+        data: dataResult.rows.map((row: any) => {
+          // Installments collected/total — waterfall-allocate the total amount
+          // actually paid (gm_partial_receipts) across the scheduled installment
+          // rows in order, same logic as the Installments tab, so "0/3" style
+          // counts here stay consistent with that detail view.
+          const instArr = Array.isArray(row.installments) ? row.installments : [];
+          let remainingPaid = Number(row.partialPaidAmount || 0);
+          let installmentsCollected = 0;
+          for (const inst of instArr) {
+            const d = Number(inst?.dollar || 0);
+            if (d > 0 && remainingPaid >= d - 0.009) {
+              installmentsCollected++;
+              remainingPaid -= d;
+            } else {
+              break;
+            }
+          }
+          return {
           ...row,
+          installmentsTotal: instArr.length,
+          installmentsCollected,
+          // Rows created before package_price_usd existed have no stored sticker
+          // price — fall back to the current catalog price for that package name
+          // so the column isn't blank for historical entries.
+          packagePrice: row.packagePrice ?? (gmPackages.find((p) => p.name === row.package)?.priceUsd ?? null),
           // `status` below is overwritten with paymentStatus (almost always set),
           // so the raw lifecycle status ("Withdrawn"/"Pending"/"Rejected") is kept
           // under its own key for anything that needs the real value (e.g. telling
@@ -733,7 +768,8 @@ export function registerGmPoolRoutes(app: Express) {
           hod: null,
           alibaba: row.alibabaStatus || null,
           payDate: null,
-        })),
+          };
+        }),
         total,
         page,
         pageSize,
@@ -1021,6 +1057,7 @@ export function registerGmPoolRoutes(app: Express) {
           entry_type,
           amount,
           amount_usd,
+          package_price_usd,
           customer_dollar,
           dollar_rate,
           amount_pkr,
@@ -1051,7 +1088,7 @@ export function registerGmPoolRoutes(app: Express) {
         VALUES (
           gen_random_uuid(),
           'GM',
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28, now(), now(), false, 'pending_hod', $29, $30
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29, now(), now(), false, 'pending_hod', $30, $31
         )
         returning *
       `;
@@ -1079,7 +1116,8 @@ export function registerGmPoolRoutes(app: Express) {
         parsed.packageName,
         parsed.type,
         finalOrderDollar,
-        orderDollar,
+        finalOrderDollar,
+        packagePrice,
         customerDollar,
         parsed.dollarRate,
         parsed.pkrAmount,
@@ -2381,30 +2419,182 @@ export function registerGmPoolRoutes(app: Express) {
       if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
       const { id } = req.params;
       const gm = await pool.query(
-        "SELECT id, company_name, is_partial_payment, is_loan, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+        `SELECT id, company_name, sales_person_name, is_partial_payment, is_loan, installments,
+                COALESCE(customer_dollar, amount_usd, 0)::numeric AS target
+         FROM drm.gm_entries WHERE id = $1 AND is_deleted = false`,
         [id],
       );
       if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
       const receipts = await pool.query(
-        `SELECT id, gm_id AS "gmId", amount_usd AS "amountUsd", amount_pkr AS "amountPkr",
-                dollar_rate AS "dollarRate", receipt_date AS "receiptDate", method, reference,
-                notes, collected_by AS "collectedBy", created_at AS "createdAt"
-           FROM drm.gm_partial_receipts WHERE gm_id = $1 ORDER BY receipt_date ASC, created_at ASC`,
+        `SELECT r.id, r.gm_id AS "gmId", r.amount_usd AS "amountUsd", r.amount_pkr AS "amountPkr",
+                r.dollar_rate AS "dollarRate", r.receipt_date AS "receiptDate", r.method, r.reference,
+                r.notes, r.collected_by AS "collectedBy", r.created_at AS "createdAt",
+                COALESCE(u.full_name, u.name, u.username) AS "collectedByName"
+           FROM drm.gm_partial_receipts r
+           LEFT JOIN drm.users u ON u.id::text = r.collected_by::text
+          WHERE r.gm_id = $1 ORDER BY r.receipt_date ASC, r.created_at ASC`,
         [id],
       );
-      const summary = await loadPartialSummary(id, Number(gm.rows[0].target || 0));
+      const target = Number(gm.rows[0].target || 0);
+      const summary = await loadPartialSummary(id, target);
+
+      // Receipt List "Due": running remaining balance on the overall target as
+      // each receipt lands, in the order they were recorded.
+      let cumPaid = 0;
+      const receiptsWithDue = receipts.rows.map((r: any) => {
+        cumPaid += Number(r.amountUsd || 0);
+        return { ...r, due: Number(Math.max(0, target - cumPaid).toFixed(2)) };
+      });
+
+      // Installments tab: waterfall-allocate the total amount actually paid
+      // (from gm_partial_receipts) across the scheduled installment rows in
+      // the order they were added — row 1 is paid off first, then row 2, etc.
+      const rawInstallments = Array.isArray(gm.rows[0].installments) ? gm.rows[0].installments : [];
+      let remainingPaid = summary.paid;
+      const installments = rawInstallments.map((row: any, idx: number) => {
+        const dollar = Number(row.dollar || 0);
+        const pay = Number(Math.max(0, Math.min(dollar, remainingPaid)).toFixed(2));
+        remainingPaid = Number((remainingPaid - pay).toFixed(2));
+        return {
+          no: idx + 1,
+          installmentDate: row.payDate || null,
+          grandTotalDollar: dollar,
+          grandTotalPkr: Number(row.pkr || 0),
+          chequeNo: row.chequeNo || null,
+          pay,
+          due: Number((dollar - pay).toFixed(2)),
+          createDate: row.createdAt || row.payDate || null,
+        };
+      });
+      const installmentTotals = installments.reduce((acc: any, r: any) => {
+        acc.grandTotalDollar += r.grandTotalDollar;
+        acc.grandTotalPkr += r.grandTotalPkr;
+        acc.pay += r.pay;
+        acc.due += r.due;
+        return acc;
+      }, { grandTotalDollar: 0, grandTotalPkr: 0, pay: 0, due: 0 });
+
       return sendSuccess(res, {
         gmId: id,
         companyName: gm.rows[0].company_name,
+        personName: gm.rows[0].sales_person_name,
         isPartialPayment: Number(gm.rows[0].is_partial_payment) === 1,
         summary,
-        receipts: receipts.rows,
+        receipts: receiptsWithDue,
+        installments,
+        installmentTotals,
       });
     } catch (err) {
       console.error("[gm-pool] list partial receipts error:", err);
       return sendError(res, 500, "INTERNAL", "Failed to load partial receipts");
     }
   });
+
+  const installmentRowSchema = z.object({
+    dollar: z.coerce.number().positive(),
+    pkr: z.coerce.number().nonnegative().optional().default(0),
+    chequeNo: z.string().trim().max(80).optional(),
+    payDate: z.coerce.date().optional(),
+  });
+  const addInstallmentsSchema = z.object({
+    rows: z.array(installmentRowSchema).min(1).max(20),
+  });
+
+  // --- Add one or more scheduled installment rows (Dollar/Pkr/Cheque No/Pay
+  // Date) to a Partial GM's installment plan. Separate from partial-receipts:
+  // this schedules what's DUE, receipts record what's actually been PAID.
+  router.post(
+    "/gm-pool/:id/installments",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id } = req.params;
+        const input = addInstallmentsSchema.parse(req.body ?? {});
+        const gm = await pool.query(
+          "SELECT id, installments FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        const existing = Array.isArray(gm.rows[0].installments) ? gm.rows[0].installments : [];
+        const now = new Date().toISOString();
+        const newRows = input.rows.map((r) => ({
+          dollar: r.dollar,
+          pkr: r.pkr ?? 0,
+          chequeNo: r.chequeNo || null,
+          payDate: r.payDate ? r.payDate.toISOString().slice(0, 10) : null,
+          createdAt: now,
+        }));
+        const updated = [...existing, ...newRows];
+        await pool.query(
+          "UPDATE drm.gm_entries SET installments = $2::jsonb, updated_at = NOW() WHERE id = $1",
+          [id, JSON.stringify(updated)],
+        );
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_PARTIAL_RECEIPT_ADD,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: `Added ${newRows.length} installment row(s)`,
+          after: { addedCount: newRows.length },
+          req,
+        });
+        return sendSuccess(res, { installments: updated }, 201);
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid installment data", zodIssues(err));
+        console.error("[gm-pool] add installments error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to add installments");
+      }
+    },
+  );
+
+  // --- Edit one scheduled installment row's own dollar/pkr/cheque/pay-date --
+  // (its createdAt is preserved; Pay/Due keep being derived live from receipts).
+  router.patch(
+    "/gm-pool/:id/installments/:index",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const { id, index } = req.params;
+        const idx = Number(index);
+        const input = installmentRowSchema.parse(req.body ?? {});
+        const gm = await pool.query(
+          "SELECT id, installments FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          [id],
+        );
+        if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
+        const existing = Array.isArray(gm.rows[0].installments) ? gm.rows[0].installments : [];
+        if (!Number.isInteger(idx) || idx < 0 || idx >= existing.length) {
+          return sendError(res, 404, "NOT_FOUND", "Installment row not found");
+        }
+        const updated = existing.slice();
+        updated[idx] = {
+          ...updated[idx],
+          dollar: input.dollar,
+          pkr: input.pkr ?? 0,
+          chequeNo: input.chequeNo || null,
+          payDate: input.payDate ? input.payDate.toISOString().slice(0, 10) : null,
+        };
+        await pool.query(
+          "UPDATE drm.gm_entries SET installments = $2::jsonb, updated_at = NOW() WHERE id = $1",
+          [id, JSON.stringify(updated)],
+        );
+        await recordGmSalesAudit({
+          action: GM_SALES_AUDIT_ACTIONS.GM_PARTIAL_RECEIPT_ADD,
+          entityType: "gm_entry",
+          entityId: String(id),
+          reason: `Edited installment row ${idx + 1}`,
+          after: { index: idx },
+          req,
+        });
+        return sendSuccess(res, { installments: updated });
+      } catch (err) {
+        if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid installment data", zodIssues(err));
+        console.error("[gm-pool] edit installment error:", err);
+        return sendError(res, 500, "INTERNAL", "Failed to edit installment");
+      }
+    },
+  );
 
   // --- P4: record a partial receipt -----------------------------------------
   router.post(
