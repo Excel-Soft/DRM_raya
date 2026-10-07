@@ -84,6 +84,7 @@ const createProjectFromGmSchema = z.object({
   totalAmount: z.coerce.number().optional(),
   paymentMethod: z.string().trim().optional(),
   receiptNumber: z.string().trim().optional(),
+  receiptImage: z.string().trim().optional(),
 }).strict();
 
 const gmRejectReasonSchema = z.object({
@@ -123,6 +124,7 @@ const quotationApproveSchema = z.object({
   amount: z.coerce.number().optional(),
   paymentMethod: z.string().trim().optional(),
   receiptNumber: z.string().trim().optional(),
+  receiptImage: z.string().trim().optional(),
   projectName: z.string().trim().optional(),
 }).strict();
 
@@ -613,7 +615,7 @@ export function registerAccountRoutes(app: Express) {
             NULL as payment_proof_url
           FROM drm.product_posting_invoices p
           LEFT JOIN drm.users u ON u.id = p.sales_exec_id
-          WHERE p.status = 'PENDING_ACCOUNT'
+          WHERE p.status IN ('PENDING_ACCOUNT', 'APPROVED')
         )
         SELECT * FROM combined
         ${whereSql}
@@ -2373,11 +2375,15 @@ export function registerAccountRoutes(app: Express) {
         params.push(dateTo);
       }
 
-      const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const invWhereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+      const ppWhereSql = conditions.length > 0 ? `WHERE ${conditions.map((c) => c.replace('issue_date', 'invoice_date').replace('status', "CASE WHEN status = 'APPROVED' THEN 'Paid' ELSE status END")).join(' AND ')}` : '';
 
       const { rows } = await pool.query(
-        `SELECT id, customer_id, invoice_number, total as amount, status, issue_date as issued_at, due_date as due_at, notes, created_at, updated_at
-         FROM drm.invoices ${whereSql}
+        `SELECT id, customer_id, invoice_number, total as amount, status, issue_date as issued_at, due_date as due_at, notes, NULL as payment_method, created_at, updated_at
+         FROM drm.invoices ${invWhereSql}
+         UNION ALL
+         SELECT id, customer_id, CASE WHEN invoice_number LIKE 'INV-%' THEN invoice_number ELSE 'INV-' || LPAD(invoice_number, 5, '0') END as invoice_number, amount, CASE WHEN status = 'APPROVED' THEN 'Paid' ELSE status END as status, invoice_date as issued_at, NULL as due_at, notes, payment_method, created_at, updated_at
+         FROM drm.product_posting_invoices ${ppWhereSql}
          ORDER BY created_at DESC`,
         params
       );
@@ -2392,6 +2398,7 @@ export function registerAccountRoutes(app: Express) {
           issueDate: row.issued_at || row.created_at,
           dueDate: row.due_at,
           notes: row.notes,
+          paymentMethod: row.payment_method,
           currency: 'PKR',
           createdAt: row.created_at,
         }))
@@ -3033,7 +3040,7 @@ export function registerAccountRoutes(app: Express) {
           u.email            AS "submittedByEmail",
           'product_posting'  AS "source",
           NULL               AS "paymentProofUrl",
-          p.invoice_number   AS "invoiceNumber",
+          CASE WHEN p.invoice_number LIKE 'INV-%' THEN p.invoice_number ELSE 'INV-' || LPAD(p.invoice_number, 5, '0') END AS "invoiceNumber",
           NULL               AS "items",
           cp.phone           AS "customerPhone",
           cp.address         AS "customerAddress",
@@ -3041,7 +3048,7 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
         LEFT JOIN drm.customers cp ON cp.id = p.customer_id
-        WHERE p.status = 'PENDING_ACCOUNT'
+        WHERE p.status IN ('PENDING_ACCOUNT', 'APPROVED')
         
         UNION ALL
         
@@ -3076,7 +3083,7 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
         LEFT JOIN drm.customers ci ON ci.id = i.customer_id
-        WHERE i.status = 'Sent'
+        WHERE i.status IN ('Sent', 'Paid', 'Partial', 'Overdue')
         ) as combined_results
         ORDER BY COALESCE(combined_results."updatedAt", combined_results."createdAt") DESC NULLS LAST
         LIMIT $1 OFFSET $2
@@ -3115,7 +3122,7 @@ export function registerAccountRoutes(app: Express) {
       const { id } = req.params;
       const _qaParsed = quotationApproveSchema.safeParse(req.body);
       if (!_qaParsed.success) return res.status(400).json({ error: "Invalid payload", issues: _qaParsed.error.issues });
-      const { action, note, amount, paymentMethod, receiptNumber, projectName: customProjectName } = _qaParsed.data;
+      const { action, note, amount, paymentMethod, receiptNumber, receiptImage, projectName: customProjectName } = _qaParsed.data;
       const approving = action === "approve";
       const actorUserId = getUserId(req)!;
 
@@ -3162,11 +3169,20 @@ export function registerAccountRoutes(app: Express) {
         // for D-018 found this branch was newly exposed to once the
         // notification stopped being (accidentally) gated on project-creation
         // idempotency. See docs/completion/DECISION_LOG.md D-018.
+        let updatedNotes = quotation?.note || note || "";
+        if (receiptNumber || receiptImage) {
+            let parsedNotes: any = {};
+            try { if (updatedNotes) parsedNotes = JSON.parse(updatedNotes); } catch (e) {}
+            if (receiptNumber) parsedNotes.receiptNumber = receiptNumber;
+            if (receiptImage) parsedNotes.receiptImage = receiptImage;
+            updatedNotes = JSON.stringify(parsedNotes);
+        }
+
         const upd = await pool.query(
           `UPDATE drm.quotations SET save_status=$1, note=COALESCE($2,note), payment_method=COALESCE($3,payment_method), updated_at=now()
              WHERE id=$4 AND save_status='pending_account_manager'
              RETURNING id, save_status AS "saveStatus", created_by AS "createdBy", company, customer_id AS "customerId"`,
-          [newStatus, note ?? null, paymentMethod ?? null, id],
+          [newStatus, updatedNotes || null, paymentMethod ?? null, id],
         );
         if (!upd.rows[0]) {
           return res.status(404).json({ error: "Invoice not found or already processed" });
@@ -3282,10 +3298,20 @@ export function registerAccountRoutes(app: Express) {
         // the 'quotation' branch above -- re-check status='Sent' in the
         // UPDATE's own WHERE clause instead of relying only on the earlier,
         // unlocked SELECT.
+        const checkRes = await pool.query(`SELECT notes FROM drm.invoices WHERE id = $1`, [id]);
+        let updatedNotes = checkRes.rows[0]?.notes || "";
+        if (receiptNumber || receiptImage) {
+            let parsedNotes: any = {};
+            try { if (updatedNotes) parsedNotes = JSON.parse(updatedNotes); } catch (e) {}
+            if (receiptNumber) parsedNotes.receiptNumber = receiptNumber;
+            if (receiptImage) parsedNotes.receiptImage = receiptImage;
+            updatedNotes = JSON.stringify(parsedNotes);
+        }
+
         const upd = await pool.query(
-          `UPDATE drm.invoices SET status=$1, payment_method=COALESCE($2,payment_method), updated_at=now()
-             WHERE id=$3 AND status='Sent' RETURNING id, status AS "saveStatus", created_by_user_id AS "createdBy", customer_name as company, customer_id as "customerId"`,
-          [newStatus, paymentMethod ?? null, id],
+          `UPDATE drm.invoices SET status=$1, payment_method=COALESCE($2,payment_method), notes=COALESCE($3,notes), updated_at=now()
+             WHERE id=$4 AND status='Sent' RETURNING id, status AS "saveStatus", created_by_user_id AS "createdBy", customer_name as company, customer_id as "customerId"`,
+          [newStatus, paymentMethod ?? null, updatedNotes || null, id],
         );
         if (!upd.rows[0]) {
           return res.status(404).json({ error: "Invoice not found or already processed" });
