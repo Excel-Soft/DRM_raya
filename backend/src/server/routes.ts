@@ -32,6 +32,7 @@ import poolsRoutes from "./routes/pools-routes";
 import trainingRoutes from "./routes/training-routes";
 import crmRoutes from "./routes/crm-routes";
 import officeAccountRoutes from "./routes/office-account-routes";
+import { companyLedgerRouter } from "./routes/company-ledger-routes";
 import { checkUrlPermission, checkAllowedIp } from "./middleware/settings.middleware";
 import { usersRepository } from "./repositories/users.repository";
 import { registerHodRoutes } from "./routes/hod-routes";
@@ -369,6 +370,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Custom Reports (Grade System) - Must be before registerReportsRoutes
   app.use("/api/reports/grade-system", gradeSystemRoutes);
   app.use("/api/reports/bv-system", bvSystemRoutes);
+
+  // Register company ledger routes here (for /api/reports/ledger)
+  app.use(companyLedgerRouter);
 
   console.log("registering ReportsRoutes");
   registerReportsRoutes(app);

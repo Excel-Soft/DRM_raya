@@ -230,6 +230,8 @@ export default function AccountManagerDashboard() {
         method: '',
         approvalStatus: 'approved',
         project: '',
+        receiptNumber: '',
+        receiptImage: null as File | null,
     });
 
     const queryClient = useQueryClient();
@@ -496,6 +498,17 @@ export default function AccountManagerDashboard() {
         refetchInterval: 30000,
     });
 
+    const dollarSystemQuery = useQuery({
+        queryKey: ["account-dollar-system-list"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/account/dollar-system/list");
+            if (!res.ok) throw new Error("Failed to fetch dollar system list");
+            return res.json();
+        },
+        refetchInterval: 60000,
+    });
+    const martiniItems = dollarSystemQuery.data?.dailyTxSummary?.martini?.items || [];
+
     const processQuotationMutation = useMutation({
         // Fixed 2026-07-21 (D-015): this never checked res.ok before returning
         // res.json() as the mutation's "result" -- a 403/404/500 error body was
@@ -503,13 +516,14 @@ export default function AccountManagerDashboard() {
         // even when the Account Manager's approval was rejected server-side and
         // nothing in the database actually changed. Matches the pattern
         // createProjectFromGmMutation (below) already used correctly.
-        mutationFn: async ({ id, action, note, amount, paymentMethod, receiptNumber, projectName }: {
+        mutationFn: async ({ id, action, note, amount, paymentMethod, receiptNumber, receiptImage, projectName }: {
             id: string;
             action: "approve" | "reject";
             note?: string;
             amount?: string;
             paymentMethod?: string;
             receiptNumber?: string;
+            receiptImage?: string;
             projectName?: string;
         }) => {
             const res = await apiRequest("POST", `/api/account/pending-quotations/${id}/approve`, {
@@ -518,6 +532,7 @@ export default function AccountManagerDashboard() {
                 amount,
                 paymentMethod,
                 receiptNumber,
+                receiptImage,
                 projectName
             });
             if (!res.ok) {
@@ -565,10 +580,29 @@ export default function AccountManagerDashboard() {
         }
     });
 
-    const handleSaveProject = () => {
+    const handleSaveProject = async () => {
         if (!selectedGm) return;
 
         const action = projectForm.approvalStatus === 'rejected' ? 'reject' : 'approve';
+        let proofUrl = undefined;
+
+        if (projectForm.receiptImage) {
+            const formData = new FormData();
+            formData.append("file", projectForm.receiptImage);
+            formData.append("entryId", selectedGm.id); // hack for backend
+            try {
+                const res = await fetch("/api/account/dollar-system/attach", {
+                    method: "POST",
+                    body: formData,
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.proofUrl) proofUrl = data.proofUrl;
+                }
+            } catch (err) {
+                console.error("Failed to upload receipt", err);
+            }
+        }
 
         if (selectedGm.entrySource === 'invoice') {
             processQuotationMutation.mutate({
@@ -576,6 +610,8 @@ export default function AccountManagerDashboard() {
                 action,
                 amount: projectForm.amount,
                 paymentMethod: projectForm.method,
+                receiptNumber: projectForm.receiptNumber,
+                receiptImage: proofUrl,
                 projectName: projectForm.name
             });
             setCreateProjectOpen(false);
@@ -586,7 +622,8 @@ export default function AccountManagerDashboard() {
                 dueAmount: Number(projectForm.due),
                 totalAmount: Number(projectForm.amount),
                 paymentMethod: projectForm.method,
-                approvalStatus: projectForm.approvalStatus
+                approvalStatus: projectForm.approvalStatus,
+                proofUrl
             });
         }
     };
@@ -680,9 +717,10 @@ export default function AccountManagerDashboard() {
     const createProjectCombined = createProjectPendingInvoices;
     const createProjectFilteredItems = createProjectCombined.filter((item: any) => {
         if (filterType === 'all') return true;
-        const itemDate = new Date(item.updatedAt || item.createdAt);
-        if (filterType === 'today') return isToday(itemDate);
-        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(itemDate, new Date());
+        const createdDate = new Date(item.createdAt || item.updatedAt);
+        const updatedDate = new Date(item.updatedAt || item.createdAt);
+        if (filterType === 'today') return isToday(createdDate) || isToday(updatedDate);
+        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(createdDate, new Date()) || isSameMonth(updatedDate, new Date());
         return true;
     });
     const createProjectTotalPages = Math.max(1, Math.ceil(createProjectFilteredItems.length / DASHBOARD_PAGE_SIZE));
@@ -702,14 +740,10 @@ export default function AccountManagerDashboard() {
     );
 
     // "Invoice" (Customer Monthly) section: paginate recent invoices
-    const invoiceItemsRaw = Array.isArray(recentInvoicesQuery.data) ? recentInvoicesQuery.data : [];
-    const invoiceItems = invoiceItemsRaw.filter((item: any) => {
-        if (filterType === 'all') return true;
-        const itemDate = new Date(item.createdAt || item.updatedAt);
-        if (filterType === 'today') return isToday(itemDate);
-        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(itemDate, new Date());
-        return true;
-    });
+    const invoiceItemsRaw = Array.isArray(recentInvoicesQuery.data) 
+        ? [...recentInvoicesQuery.data].sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()) 
+        : [];
+    const invoiceItems = invoiceItemsRaw;
     const invoiceTotalPages = Math.max(1, Math.ceil(invoiceItems.length / DASHBOARD_PAGE_SIZE));
     const invoiceCurrentPage = Math.min(invoicePage, invoiceTotalPages);
     const invoicePagedItems = invoiceItems.slice(
@@ -838,7 +872,7 @@ export default function AccountManagerDashboard() {
                                 >
                                     <span className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Martini Status</span>
                                     <div className="flex items-center justify-center bg-rose-500 text-white w-5 h-5 rounded-full text-[10px] font-bold">
-                                        {createProjectFilteredItems.length}
+                                        {martiniItems.length}
                                     </div>
                                 </div>
                             </div>
@@ -905,6 +939,52 @@ export default function AccountManagerDashboard() {
                                     </div>
                                 </div>
                             )}
+                            </>
+                          ) : filterType === 'martini-status' ? (
+                            <>
+                            <Table>
+                                <TableHeader className="bg-slate-100/50">
+                                    <TableRow>
+                                        <TableHead className="w-[60px] font-bold text-slate-700 dark:text-zinc-400">No</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Company</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Date</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Email</TableHead>
+                                        <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Amount USD</TableHead>
+                                        <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Rate</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {dollarSystemQuery.isLoading ? (
+                                        <TableRow>
+                                            <TableCell colSpan={6} className="text-center text-slate-400 py-8">Loading...</TableCell>
+                                        </TableRow>
+                                    ) : martiniItems.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={6} className="text-center text-slate-400 py-8">No Martini entries found</TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        martiniItems.map((item, index) => (
+                                            <TableRow key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800">
+                                                <TableCell className="font-medium text-slate-600 dark:text-zinc-300">{index + 1}</TableCell>
+                                                <TableCell className="font-medium text-slate-700 dark:text-zinc-400">{item.name}</TableCell>
+                                                <TableCell className="text-slate-600 dark:text-zinc-300">
+                                                    {format(new Date(item.date), "MM/dd/yyyy hh:mm a")}
+                                                </TableCell>
+                                                <TableCell className="text-slate-600 dark:text-zinc-300">{item.email || "-"}</TableCell>
+                                                <TableCell className="text-slate-600 font-medium text-emerald-600 text-right dark:text-zinc-300">
+                                                    $ {item.amount || 0}
+                                                </TableCell>
+                                                <TableCell className="text-slate-600 text-right dark:text-zinc-300">{item.rate || "-"}</TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                            <div className="flex items-center justify-between px-6 py-3 border-t">
+                                <p className="text-xs text-slate-500 dark:text-zinc-400">
+                                    Total {martiniItems.length} entries
+                                </p>
+                            </div>
                             </>
                           ) : (
                             <>
@@ -989,19 +1069,22 @@ export default function AccountManagerDashboard() {
                                                                     <button
                                                                         onClick={() => {
                                                                             setSelectedGm({...item, entrySource: 'invoice'});
+                                                                            const totalPkr = Number(item.amountPkr) || (Number(item.grandTotal) || 0) * (Number(item.dollarRate) || 280);
                                                                             setProjectForm({
                                                                                 name: item.company,
                                                                                 due: "0",
-                                                                                amount: item.grandTotal?.toString() || "",
+                                                                                amount: totalPkr.toString(),
                                                                                 method: "",
                                                                                 approvalStatus: 'approved',
-                                                                                project: deriveInvoiceProjectLabel(item)
+                                                                                project: deriveInvoiceProjectLabel(item),
+                                                                                receiptNumber: "",
+                                                                                receiptImage: null
                                                                             });
                                                                             setCreateProjectOpen(true);
                                                                         }}
-                                                                        disabled={processQuotationMutation.isPending}
-                                                                        className="text-rose-500 hover:text-rose-600 transition-colors"
-                                                                        title="Create Project"
+                                                                        disabled={processQuotationMutation.isPending || item.saveStatus === 'APPROVED' || item.saveStatus === 'Paid'}
+                                                                        className={(item.saveStatus === 'APPROVED' || item.saveStatus === 'Paid') ? 'text-slate-400 cursor-not-allowed' : 'text-rose-500 hover:text-rose-600 transition-colors'}
+                                                                        title={(item.saveStatus === 'APPROVED' || item.saveStatus === 'Paid') ? 'Invoice Paid' : 'Create Project'}
                                                                     >
                                                                         <PlusCircle className="h-5 w-5" />
                                                                     </button>
@@ -1020,13 +1103,16 @@ export default function AccountManagerDashboard() {
                                                                     <button
                                                                         onClick={() => {
                                                                             setSelectedGm({...item, entrySource: 'gm'});
+                                                                            const totalPkr = Number(item.amountPkr) || (Number(item.grandTotal) || 0) * (Number(item.dollarRate) || 280);
                                                                             setProjectForm(prev => ({
                                                                                 ...prev,
                                                                                 name: item.companyName,
                                                                                 due: "0",
-                                                                                amount: "",
+                                                                                amount: totalPkr.toString(),
                                                                                 method: "",
-                                                                                approvalStatus: 'approved'
+                                                                                approvalStatus: 'approved',
+                                                                                receiptNumber: "",
+                                                                                receiptImage: null
                                                                             }));
                                                                             setCreateProjectOpen(true);
                                                                         }}
@@ -1089,16 +1175,7 @@ export default function AccountManagerDashboard() {
                                 <CardTitle>Customer Monthly</CardTitle>
                             </div>
                             <div className="flex items-center gap-2">
-                                <Select defaultValue="rec">
-                                    <SelectTrigger className="w-[80px] h-8">
-                                        <SelectValue placeholder="REC" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="rec">REC</SelectItem>
-                                        <SelectItem value="gm">GM</SelectItem>
-                                        <SelectItem value="bv">BV</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                {/* Removed REC Filter as requested */}
                             </div>
                         </CardHeader>
                         <CardContent>
@@ -1121,7 +1198,7 @@ export default function AccountManagerDashboard() {
                                             <TableCell>
                                                 {(() => {
                                                     try {
-                                                        const p = JSON.parse(inv.notes);
+                                                        const p = typeof inv.notes === 'string' ? JSON.parse(inv.notes) : (inv.notes || {});
                                                         return p.receiptNumber || '-';
                                                     } catch (e) { return '-'; }
                                                 })()}
@@ -1130,17 +1207,33 @@ export default function AccountManagerDashboard() {
                                             <TableCell>
                                                 {(() => {
                                                     try {
-                                                        const p = JSON.parse(inv.notes);
-                                                        return p.paymentMethod || '-';
-                                                    } catch (e) { return '-'; }
+                                                        const p = typeof inv.notes === 'string' ? JSON.parse(inv.notes) : (inv.notes || {});
+                                                        return p.paymentMethod || inv.paymentMethod || '-';
+                                                    } catch (e) { return inv.paymentMethod || '-'; }
                                                 })()}
                                             </TableCell>
                                             <TableCell><Badge variant="outline" className={inv.status === 'Paid' ? 'border-emerald-500 text-emerald-600' : inv.status === 'Overdue' ? 'border-rose-500 text-rose-600' : 'border-amber-500 text-amber-600'}>{inv.status}</Badge></TableCell>
                                             <TableCell>{format(new Date(inv.issueDate), "MM/dd/yyyy hh:mm a")}</TableCell>
                                             <TableCell>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-600 hover:bg-blue-50" onClick={() => handleEditInvoiceClick(inv)}>
-                                                    <Edit className="h-4 w-4" />
-                                                </Button>
+                                                <div className="flex items-center gap-1">
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-500 hover:text-blue-600 hover:bg-blue-50" onClick={() => handleEditInvoiceClick(inv)}>
+                                                        <Edit className="h-4 w-4" />
+                                                    </Button>
+                                                    {(() => {
+                                                        try {
+                                                            const p = typeof inv.notes === 'string' ? JSON.parse(inv.notes) : (inv.notes || {});
+                                                            const receiptImage = p.receiptImage || p.proofUrl;
+                                                            if (receiptImage) {
+                                                                return (
+                                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-50" onClick={() => window.open(receiptImage, '_blank')}>
+                                                                        <Eye className="h-4 w-4" />
+                                                                    </Button>
+                                                                );
+                                                            }
+                                                        } catch (e) {}
+                                                        return null;
+                                                    })()}
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))
@@ -1326,7 +1419,15 @@ export default function AccountManagerDashboard() {
                                 <Label className="text-sm font-semibold text-slate-600 dark:text-zinc-300">Amount</Label>
                                 <Input
                                     value={projectForm.amount}
-                                    onChange={(e) => setProjectForm(prev => ({ ...prev, amount: e.target.value }))}
+                                    onChange={(e) => {
+                                        const newAmountStr = e.target.value;
+                                        setProjectForm(prev => {
+                                            const totalPkr = Number(selectedGm?.amountPkr) || (Number(selectedGm?.grandTotal) || 0) * (Number(selectedGm?.dollarRate) || 280);
+                                            const enteredAmount = Number(newAmountStr) || 0;
+                                            const newDue = totalPkr - enteredAmount;
+                                            return { ...prev, amount: newAmountStr, due: Math.max(0, newDue).toString() };
+                                        });
+                                    }}
                                     className="bg-slate-50 border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800"
                                     placeholder=""
                                 />
@@ -1367,6 +1468,28 @@ export default function AccountManagerDashboard() {
                                     </SelectContent>
                                 </Select>
                             </div>
+                            <div className="space-y-2">
+                                <Label className="text-sm font-semibold text-slate-600 dark:text-zinc-300">Receipt Number</Label>
+                                <Input
+                                    value={projectForm.receiptNumber}
+                                    onChange={(e) => setProjectForm(prev => ({ ...prev, receiptNumber: e.target.value }))}
+                                    className="bg-slate-50 border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800"
+                                    placeholder="Optional"
+                                />
+                            </div>
+                            <div className="space-y-2 col-span-2">
+                                <Label className="text-sm font-semibold text-slate-600 dark:text-zinc-300">Receipt Image (Optional)</Label>
+                                <Input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => {
+                                        if (e.target.files && e.target.files.length > 0) {
+                                            setProjectForm(prev => ({ ...prev, receiptImage: e.target.files![0] }));
+                                        }
+                                    }}
+                                    className="bg-slate-50 border-slate-200 h-11 pt-2 dark:bg-zinc-900 dark:border-zinc-800"
+                                />
+                            </div>
                         </div>
 
                         {/* Project */}
@@ -1398,27 +1521,34 @@ export default function AccountManagerDashboard() {
                             </div>
                         </div>
                     </div>
-                    <DialogFooter className="p-6 pt-4 border-t gap-2">
-                        <Button
-                            variant="outline"
-                            onClick={() => setCreateProjectOpen(false)}
-                            className="px-6"
-                        >
-                            Close
-                        </Button>
-                        <Button
-                            className={`text-white px-6 ${
-                                projectForm.approvalStatus === 'rejected'
-                                    ? 'bg-rose-600 hover:bg-rose-700'
-                                    : 'bg-emerald-600 hover:bg-emerald-700'
-                            }`}
-                            onClick={handleSaveProject}
-                            disabled={createProjectFromGmMutation.isPending || !selectedGm}
-                        >
-                            {createProjectFromGmMutation.isPending
-                                ? (projectForm.approvalStatus === 'rejected' ? "Rejecting..." : "Approving...")
-                                : (projectForm.approvalStatus === 'rejected' ? "Reject" : "Approve")}
-                        </Button>
+                    <DialogFooter className="p-6 pt-4 border-t gap-2 flex-col sm:flex-row sm:justify-between items-center">
+                        <div className="flex-1">
+                            {selectedGm?.status === 'Paid' && (
+                                <span className="text-rose-500 font-bold text-sm">Invoice Paid</span>
+                            )}
+                        </div>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                            <Button
+                                variant="outline"
+                                onClick={() => setCreateProjectOpen(false)}
+                                className="px-6 flex-1 sm:flex-none"
+                            >
+                                Close
+                            </Button>
+                            <Button
+                                className={`text-white px-6 flex-1 sm:flex-none ${
+                                    projectForm.approvalStatus === 'rejected'
+                                        ? 'bg-rose-600 hover:bg-rose-700'
+                                        : 'bg-emerald-600 hover:bg-emerald-700'
+                                }`}
+                                onClick={handleSaveProject}
+                                disabled={createProjectFromGmMutation.isPending || !selectedGm || selectedGm.status === 'Paid'}
+                            >
+                                {createProjectFromGmMutation.isPending
+                                    ? (projectForm.approvalStatus === 'rejected' ? "Rejecting..." : "Approving...")
+                                    : (projectForm.approvalStatus === 'rejected' ? "Reject" : "Approve")}
+                            </Button>
+                        </div>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
