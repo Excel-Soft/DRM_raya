@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -167,6 +167,144 @@ const BUSINESS_LINES = {
 
 const REGIONS = ["UAE", "USA", "Pakistan"];
 
+// Memoized so typing in one of these dynamic rows (or toggling a service
+// checkbox) doesn't force the entire 1600-line form — the other two of these
+// sections plus every Card/Select above — to re-render on every keystroke.
+const EmailFieldsList = memo(function EmailFieldsList({
+  emails, fieldChecks, onChange, onBlur, onAdd, onRemove,
+}: {
+  emails: string[];
+  fieldChecks: Record<string, { available: boolean; message: string }>;
+  onChange: (index: number, value: string) => void;
+  onBlur: (index: number, value: string) => void;
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <FormLabel className="text-sm font-medium flex items-center gap-1">
+        Email <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({emails.length}/5 max)</span>
+      </FormLabel>
+      {emails.map((emailVal, index) => {
+        const isLast = index === emails.length - 1;
+        const showAdd = isLast && emails.length < 5;
+        return (
+          <div key={index} className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Input
+                type="email"
+                placeholder={index === 0 ? "Enter Company E-mail" : "Enter additional email"}
+                value={emailVal}
+                onChange={(e) => onChange(index, e.target.value)}
+                onBlur={(e) => onBlur(index, e.target.value)}
+                data-testid={`input-email-${index}`}
+              />
+              <Button
+                type="button"
+                size="icon"
+                className={`h-9 w-10 shrink-0 text-white ${showAdd ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-500 hover:bg-rose-600"}`}
+                onClick={() => (showAdd ? onAdd() : onRemove(index))}
+                title={showAdd ? "Add email" : "Remove email"}
+              >
+                {showAdd ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+              </Button>
+            </div>
+            {fieldChecks[`email_${index}`]?.message && (
+              <p className="text-xs font-medium text-destructive mt-1">
+                {fieldChecks[`email_${index}`].message}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const MobileFieldsList = memo(function MobileFieldsList({
+  mobiles, fieldChecks, onChange, onBlur, onAdd, onRemove,
+}: {
+  mobiles: string[];
+  fieldChecks: Record<string, { available: boolean; message: string }>;
+  onChange: (index: number, value: string) => void;
+  onBlur: (index: number, value: string) => void;
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <FormLabel className="text-sm font-medium flex items-center gap-1">
+        Mobile <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({mobiles.length}/5 max)</span>
+      </FormLabel>
+      {mobiles.map((mobileVal, index) => {
+        const isLast = index === mobiles.length - 1;
+        const showAdd = isLast && mobiles.length < 5;
+        return (
+          <div key={index} className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder={index === 0 ? "Enter company mobile no" : "Enter additional mobile no"}
+                autoComplete="off"
+                value={mobileVal}
+                maxLength={11}
+                onChange={(e) => onChange(index, e.target.value)}
+                onBlur={(e) => onBlur(index, e.target.value)}
+                data-testid={`input-mobile-${index}`}
+              />
+              <Button
+                type="button"
+                size="icon"
+                className={`h-9 w-10 shrink-0 text-white ${showAdd ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-500 hover:bg-rose-600"}`}
+                onClick={() => (showAdd ? onAdd() : onRemove(index))}
+                title={showAdd ? "Add mobile" : "Remove mobile"}
+              >
+                {showAdd ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+              </Button>
+            </div>
+            {fieldChecks[`mobile_${index}`]?.message && (
+              <p className="text-xs font-medium text-destructive mt-1">
+                {fieldChecks[`mobile_${index}`].message}
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+const ServiceTypeChecklist = memo(function ServiceTypeChecklist({
+  selected, onToggle,
+}: {
+  selected: string[];
+  onToggle: (service: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <FormLabel>Service Type</FormLabel>
+      <div className="border rounded-md p-3 space-y-2 max-h-[200px] overflow-y-auto overflow-x-hidden">
+        {SERVICE_TYPES.map((service: string) => (
+          <div key={service} className="flex items-start space-x-2">
+            <Checkbox
+              id={service}
+              checked={selected.includes(service)}
+              onCheckedChange={() => onToggle(service)}
+              data-testid={`checkbox-service-${service.toLowerCase().replace(/\s/g, '-')}`}
+              className="mt-0.5"
+            />
+            <label
+              htmlFor={service}
+              className="text-sm font-medium leading-5 peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer break-words flex-1"
+            >
+              {service}
+            </label>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+});
+
 export default function AddCustomer() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -184,85 +322,6 @@ export default function AddCustomer() {
   const [mobilesList, setMobilesList] = useState<string[]>([""]);
   const [editCustomerId, setEditCustomerId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const addEmailField = () => {
-    if (emailsList.length < 5) {
-      setEmailsList(prev => [...prev, ""]);
-    }
-  };
-
-  const removeEmailField = (index: number) => {
-    if (emailsList.length > 1) {
-      const next = emailsList.filter((_, i) => i !== index);
-      setEmailsList(next);
-      form.setValue("email", next[0] || "");
-      form.setValue("emails", next);
-      setFieldChecks(prev => {
-        const copy = { ...prev };
-        delete copy[`email_${index}`];
-        return copy;
-      });
-    }
-  };
-
-  const updateEmailValue = (index: number, value: string) => {
-    const next = [...emailsList];
-    next[index] = value;
-    setEmailsList(next);
-    form.setValue("email", next[0] || "");
-    form.setValue("emails", next);
-  };
-
-  const addMobileField = () => {
-    if (mobilesList.length < 5) {
-      setMobilesList(prev => [...prev, ""]);
-    }
-  };
-
-  const removeMobileField = (index: number) => {
-    const next = mobilesList.filter((_, i) => i !== index);
-    setMobilesList(next);
-    form.setValue("mobile", next[0] || "");
-    form.setValue("mobiles", next);
-    setFieldChecks(prev => {
-      const copy = { ...prev };
-      delete copy[`mobile_${index}`];
-      return copy;
-    });
-  };
-
-  const updateMobileValue = (index: number, value: string) => {
-    const cleanVal = value.replace(/\D/g, "").slice(0, 11);
-    const next = [...mobilesList];
-    next[index] = cleanVal;
-    setMobilesList(next);
-    form.setValue("mobile", next[0] || "");
-    form.setValue("mobiles", next);
-  };
-
-  const { data: products } = useQuery<{ id: string, name: string }[]>({
-    queryKey: ["/api/posting/products"],
-  });
-
-  const [sourceTempContact] = useState<any>(() => {
-    if (isFromPublicPool) {
-      try {
-        const raw = sessionStorage.getItem("pickupPublicPool");
-        if (raw) return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    }
-    if (!fromTempContactId) return null;
-    try {
-      const raw = sessionStorage.getItem("convertTempContact");
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed?.id === fromTempContactId ? parsed : null;
-    } catch {
-      return null;
-    }
-  });
 
   const form = useForm<CustomerFormData>({
     resolver: zodResolver(customerFormSchema),
@@ -296,6 +355,85 @@ export default function AddCustomer() {
       abType: "",
       region: "",
     },
+  });
+
+  const addEmailField = useCallback(() => {
+    if (emailsList.length < 5) {
+      setEmailsList(prev => [...prev, ""]);
+    }
+  }, [emailsList.length]);
+
+  const removeEmailField = useCallback((index: number) => {
+    if (emailsList.length > 1) {
+      const next = emailsList.filter((_, i) => i !== index);
+      setEmailsList(next);
+      form.setValue("email", next[0] || "");
+      form.setValue("emails", next);
+      setFieldChecks(prev => {
+        const copy = { ...prev };
+        delete copy[`email_${index}`];
+        return copy;
+      });
+    }
+  }, [emailsList, form]);
+
+  const updateEmailValue = useCallback((index: number, value: string) => {
+    const next = [...emailsList];
+    next[index] = value;
+    setEmailsList(next);
+    form.setValue("email", next[0] || "");
+    form.setValue("emails", next);
+  }, [emailsList, form]);
+
+  const addMobileField = useCallback(() => {
+    if (mobilesList.length < 5) {
+      setMobilesList(prev => [...prev, ""]);
+    }
+  }, [mobilesList.length]);
+
+  const removeMobileField = useCallback((index: number) => {
+    const next = mobilesList.filter((_, i) => i !== index);
+    setMobilesList(next);
+    form.setValue("mobile", next[0] || "");
+    form.setValue("mobiles", next);
+    setFieldChecks(prev => {
+      const copy = { ...prev };
+      delete copy[`mobile_${index}`];
+      return copy;
+    });
+  }, [mobilesList, form]);
+
+  const updateMobileValue = useCallback((index: number, value: string) => {
+    const cleanVal = value.replace(/\D/g, "").slice(0, 11);
+    const next = [...mobilesList];
+    next[index] = cleanVal;
+    setMobilesList(next);
+    form.setValue("mobile", next[0] || "");
+    form.setValue("mobiles", next);
+  }, [mobilesList, form]);
+
+  const { data: products } = useQuery<{ id: string, name: string }[]>({
+    queryKey: ["/api/posting/products"],
+  });
+
+  const [sourceTempContact] = useState<any>(() => {
+    if (isFromPublicPool) {
+      try {
+        const raw = sessionStorage.getItem("pickupPublicPool");
+        if (raw) return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+    if (!fromTempContactId) return null;
+    try {
+      const raw = sessionStorage.getItem("convertTempContact");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.id === fromTempContactId ? parsed : null;
+    } catch {
+      return null;
+    }
   });
 
   // Prefill from the temp contact's own captured fields once it loads.
@@ -488,13 +626,13 @@ export default function AddCustomer() {
     createMutation.mutate(data);
   };
 
-  const handleServiceToggle = (service: string) => {
+  const handleServiceToggle = useCallback((service: string) => {
     setSelectedServices(prev =>
       prev.includes(service)
         ? prev.filter(s => s !== service)
         : [...prev, service]
     );
-  };
+  }, []);
 
   const handleCompanyNameBlur = async (e: React.FocusEvent<HTMLInputElement>) => {
     const name = e.target.value.trim();
@@ -513,7 +651,7 @@ export default function AddCustomer() {
     }
   };
 
-  const handleFieldBlur = async (fieldPath: string, value: string) => {
+  const handleFieldBlur = useCallback(async (fieldPath: string, value: string) => {
     const val = value?.trim();
     if (!val || val.length < 2) {
       setFieldChecks(prev => ({ ...prev, [fieldPath]: { available: true, message: "" } }));
@@ -582,7 +720,17 @@ export default function AddCustomer() {
     } catch (err) {
       console.error(`Check ${fieldPath} error`, err);
     }
-  };
+  }, [emailsList, mobilesList, editCustomerId, form]);
+
+  const handleEmailBlur = useCallback((index: number, value: string) => {
+    if (index === 0) form.setValue("email", value);
+    handleFieldBlur(`email_${index}`, value);
+  }, [form, handleFieldBlur]);
+
+  const handleMobileBlur = useCallback((index: number, value: string) => {
+    if (index === 0) form.setValue("mobile", value);
+    handleFieldBlur(`mobile_${index}`, value);
+  }, [form, handleFieldBlur]);
 
   const handleCheckDuplicates = () => {
     const companyName = form.getValues("companyName");
@@ -1325,90 +1473,23 @@ export default function AddCustomer() {
                   )}
                 />
 
-                {/* Dynamic Emails Field (Max 5) */}
-                <div className="space-y-2">
-                  <FormLabel className="text-sm font-medium flex items-center gap-1">
-                    Email <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({emailsList.length}/5 max)</span>
-                  </FormLabel>
-                  {emailsList.map((emailVal, index) => {
-                    const isLast = index === emailsList.length - 1;
-                    const showAdd = isLast && emailsList.length < 5;
-                    return (
-                      <div key={index} className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="email"
-                            placeholder={index === 0 ? "Enter Company E-mail" : "Enter additional email"}
-                            value={emailVal}
-                            onChange={(e) => updateEmailValue(index, e.target.value)}
-                            onBlur={(e) => {
-                              if (index === 0) form.setValue("email", e.target.value);
-                              handleFieldBlur(`email_${index}`, e.target.value);
-                            }}
-                            data-testid={`input-email-${index}`}
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            className={`h-9 w-10 shrink-0 text-white ${showAdd ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-500 hover:bg-rose-600"}`}
-                            onClick={() => (showAdd ? addEmailField() : removeEmailField(index))}
-                            title={showAdd ? "Add email" : "Remove email"}
-                          >
-                            {showAdd ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                          </Button>
-                        </div>
-                        {fieldChecks[`email_${index}`]?.message && (
-                          <p className="text-xs font-medium text-destructive mt-1">
-                            {fieldChecks[`email_${index}`].message}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                <EmailFieldsList
+                  emails={emailsList}
+                  fieldChecks={fieldChecks}
+                  onChange={updateEmailValue}
+                  onBlur={handleEmailBlur}
+                  onAdd={addEmailField}
+                  onRemove={removeEmailField}
+                />
 
-                {/* Dynamic Mobile Field (Max 5) */}
-                <div className="space-y-2">
-                  <FormLabel className="text-sm font-medium flex items-center gap-1">
-                    Mobile <span className="text-red-500">*</span> <span className="text-xs text-muted-foreground font-normal">({mobilesList.length}/5 max)</span>
-                  </FormLabel>
-                  {mobilesList.map((mobileVal, index) => {
-                    const isLast = index === mobilesList.length - 1;
-                    const showAdd = isLast && mobilesList.length < 5;
-                    return (
-                      <div key={index} className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Input
-                            placeholder={index === 0 ? "Enter company mobile no" : "Enter additional mobile no"}
-                            autoComplete="off"
-                            value={mobileVal}
-                            maxLength={11}
-                            onChange={(e) => updateMobileValue(index, e.target.value)}
-                            onBlur={(e) => {
-                              if (index === 0) form.setValue("mobile", e.target.value);
-                              handleFieldBlur(`mobile_${index}`, e.target.value);
-                            }}
-                            data-testid={`input-mobile-${index}`}
-                          />
-                          <Button
-                            type="button"
-                            size="icon"
-                            className={`h-9 w-10 shrink-0 text-white ${showAdd ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-500 hover:bg-rose-600"}`}
-                            onClick={() => (showAdd ? addMobileField() : removeMobileField(index))}
-                            title={showAdd ? "Add mobile" : "Remove mobile"}
-                          >
-                            {showAdd ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                          </Button>
-                        </div>
-                        {fieldChecks[`mobile_${index}`]?.message && (
-                          <p className="text-xs font-medium text-destructive mt-1">
-                            {fieldChecks[`mobile_${index}`].message}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                <MobileFieldsList
+                  mobiles={mobilesList}
+                  fieldChecks={fieldChecks}
+                  onChange={updateMobileValue}
+                  onBlur={handleMobileBlur}
+                  onAdd={addMobileField}
+                  onRemove={removeMobileField}
+                />
 
                 <FormField
                   control={form.control}
@@ -1555,28 +1636,7 @@ export default function AddCustomer() {
                   )}
                 />
 
-                <div className="space-y-2">
-                  <FormLabel>Service Type</FormLabel>
-                  <div className="border rounded-md p-3 space-y-2 max-h-[200px] overflow-y-auto overflow-x-hidden">
-                    {SERVICE_TYPES.map((service: string) => (
-                      <div key={service} className="flex items-start space-x-2">
-                        <Checkbox
-                          id={service}
-                          checked={selectedServices.includes(service)}
-                          onCheckedChange={() => handleServiceToggle(service)}
-                          data-testid={`checkbox-service-${service.toLowerCase().replace(/\s/g, '-')}`}
-                          className="mt-0.5"
-                        />
-                        <label
-                          htmlFor={service}
-                          className="text-sm font-medium leading-5 peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer break-words flex-1"
-                        >
-                          {service}
-                        </label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <ServiceTypeChecklist selected={selectedServices} onToggle={handleServiceToggle} />
               </CardContent>
             </Card>
           </div>

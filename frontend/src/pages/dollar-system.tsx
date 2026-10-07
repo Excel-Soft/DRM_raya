@@ -1,10 +1,10 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getAuthHeader, apiRequestJson } from "@/lib/queryClient";
+import { getAuthHeader, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info, Trash2, ArrowLeftRight, CheckSquare, Square } from "lucide-react";
+import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info, Trash2, ArrowLeftRight, CheckSquare, Square, Pencil } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -62,7 +62,18 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
           {items.length > 0 ? items.map((item: any, i: number) => (
             <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
               <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
-              <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>{item.drmId || "-"}</td>
+              <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>
+                {item.drmId || "-"}
+                {!!item.installmentsTotal && (
+                  <span
+                    title="Installments collected / scheduled"
+                    className={cn("ml-1.5 not-italic font-bold normal-case text-[9px] px-1.5 py-0.5 rounded",
+                      item.fullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500")}
+                  >
+                    {item.installmentsCollected || 0}/{item.installmentsTotal}
+                  </span>
+                )}
+              </td>
               <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{safeDate(item.date, "yyyy-MM-dd")}</td>
               <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 truncate" title={item.company}>{item.company || "-"}</td>
               <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 truncate">{item.salePerson || "-"}</td>
@@ -154,7 +165,8 @@ export default function DollarSystem() {
   const [partialSearch, setPartialSearch] = useState(""); const [partialStart, setPartialStart] = useState(""); const [partialEnd, setPartialEnd] = useState("");
   const [loanSearch, setLoanSearch] = useState(""); const [loanStart, setLoanStart] = useState(""); const [loanEnd, setLoanEnd] = useState("");
   const [pendSearch, setPendSearch] = useState(""); const [pendStart, setPendStart] = useState(""); const [pendEnd, setPendEnd] = useState("");
-  const [abSearch, setAbSearch] = useState(""); const [abStart, setAbStart] = useState(""); const [abEnd, setAbEnd] = useState("");
+  const [paidAbSearch, setPaidAbSearch] = useState(""); const [paidAbStart, setPaidAbStart] = useState(""); const [paidAbEnd, setPaidAbEnd] = useState("");
+  const [paidAbStatus, setPaidAbStatus] = useState("all");
   const [fullTypeFilter, setFullTypeFilter] = useState("all");
   const [loanTypeFilter, setLoanTypeFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("full");
@@ -163,6 +175,12 @@ export default function DollarSystem() {
   const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Paid Alibaba row modals: Order Details (buyer breakdown) + Payment Verify (status update)
+  const [orderDetailItem, setOrderDetailItem] = useState<any>(null);
+  const [verifyItem, setVerifyItem] = useState<any>(null);
+  const [verifyForm, setVerifyForm] = useState<any>({ status: "", payDate: "", detail: "" });
+  const [verifySubmitting, setVerifySubmitting] = useState(false);
 
   // Dollar Allocation / Pay Alibaba Modal State
   const [dollarModalItem, setDollarModalItem] = useState<any>(null);
@@ -173,16 +191,112 @@ export default function DollarSystem() {
     sliderMin: 0,
     sliderMax: 100,
     removeUnselected: true,
-    dollar: "1357.00",
-    dollarRate: "277.23",
+    dollar: "0.00",
+    dollarRate: "0.00",
     pkrAmount: "0.00",
     date: format(new Date(), "yyyy-MM-dd"),
     type: "",
     detail: "",
   });
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [allocError, setAllocError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const sliderTrackRef = useRef<HTMLDivElement>(null);
   const [activeThumb, setActiveThumb] = useState<"min" | "max" | null>(null);
+
+  // Mirrors the legacy PHP's addPriceRangeToRepeater: pick the smallest available
+  // buys first until the order's dollar amount is fully covered.
+  function allocateSmallestFirst(records: any[], orderAmount: number) {
+    const sorted = [...records].sort((a, b) => Number(a.dollars) - Number(b.dollars));
+    let remaining = orderAmount;
+    const slots: any[] = [];
+    for (const r of sorted) {
+      const dollars = Number(r.dollars) || 0;
+      const useDollar = Math.max(0, Math.min(dollars, remaining));
+      remaining -= useDollar;
+      slots.push({
+        id: String(r.id),
+        checked: true,
+        buyerName: r.name || "-",
+        buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
+        email: r.buyer_reference_paypal_email || "",
+        rate: Number(r.dollar_rate) || 0,
+        totalShort: r.total_short_dollars ?? "-",
+        dollars,
+        useDollar: Number(useDollar.toFixed(2)),
+      });
+      if (remaining <= 0) break;
+    }
+    return { slots, shortfall: Math.max(0, remaining) };
+  }
+
+  // Mirrors the legacy PHP's addPriceRangeToRepeater_temp: prefer a single exact
+  // match first, otherwise accumulate smaller buys (strictly less than what's left).
+  function allocateExactMatchFirst(records: any[], orderAmount: number) {
+    const exact = records.find((r: any) => Math.abs(Number(r.dollars) - orderAmount) < 0.005);
+    if (exact) {
+      return {
+        slots: [{
+          id: String(exact.id),
+          checked: true,
+          buyerName: exact.name || "-",
+          buyDate: exact.buy_date ? safeDate(exact.buy_date, "yyyy-MM-dd") : "-",
+          email: exact.buyer_reference_paypal_email || "",
+          rate: Number(exact.dollar_rate) || 0,
+          totalShort: exact.total_short_dollars ?? "-",
+          dollars: Number(exact.dollars) || 0,
+          useDollar: Number(exact.dollars) || 0,
+        }],
+        shortfall: 0,
+      };
+    }
+    let remaining = orderAmount;
+    const slots: any[] = [];
+    for (const r of records) {
+      const dollars = Number(r.dollars) || 0;
+      if (dollars < remaining) {
+        remaining -= dollars;
+        slots.push({
+          id: String(r.id),
+          checked: true,
+          buyerName: r.name || "-",
+          buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
+          email: r.buyer_reference_paypal_email || "",
+          rate: Number(r.dollar_rate) || 0,
+          totalShort: r.total_short_dollars ?? "-",
+          dollars,
+          useDollar: dollars,
+        });
+      }
+      if (remaining <= 0) break;
+    }
+    return { slots, shortfall: Math.max(0, remaining) };
+  }
+
+  const loadAndAllocate = async (min: number, max: number, targetDollar: number, isTemp: boolean) => {
+    setSlotsLoading(true);
+    try {
+      const res = await apiRequestJson<{ records: any[] }>(
+        "GET",
+        `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}`
+      );
+      const records = res?.records || [];
+      const { slots, shortfall } = isTemp
+        ? allocateExactMatchFirst(records, targetDollar)
+        : allocateSmallestFirst(records, targetDollar);
+      setDollarSlots(slots);
+      setAllocError(shortfall > 0.01
+        ? `Not enough dollar amounts available to cover the entire order amount (short by $${shortfall.toFixed(2)}).`
+        : "");
+    } catch (err) {
+      console.error("Failed to load buyer dollar short records:", err);
+      setDollarSlots([]);
+      setAllocError("Failed to load available buyer balances.");
+    } finally {
+      setSlotsLoading(false);
+    }
+  };
 
   const handleSliderChange = (type: "min" | "max", val: number) => {
     const cleanVal = Math.max(0, Math.min(500, Math.round(val)));
@@ -218,6 +332,10 @@ export default function DollarSystem() {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {}
       setActiveThumb(null);
+      // Mirrors the PHP slider's onFinish: re-fetch the available buy pool for the
+      // new range and re-run the same allocation the modal opened with.
+      const targetDollar = parseFloat(dollarForm.dollar) || 0;
+      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? 100, targetDollar, !!dollarForm.isTemp);
     }
   };
 
@@ -238,102 +356,21 @@ export default function DollarSystem() {
   };
 
   const openDollarModal = (item: any, isTemp: boolean = false) => {
-    const targetDollar = parseFloat(item.dollar || item.customerDollar || 0) || 1357;
-    const rateVal = parseFloat(item.rate || 0) || 277.16;
+    const targetDollar = parseFloat(item.dollar || item.customerDollar || 0) || 0;
+    const rateVal = parseFloat(item.rate || 0) || 0;
     const pkrVal = item.pkr ? Number(item.pkr) : Math.round(targetDollar * rateVal);
-    const memberIdVal = item.memberId || (item.drmId ? `pk${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}uoqz` : "pk19023484233uoqz");
-    const orderIdVal = item.orderId || (item.drmId ? `P${String(item.drmId).replace(/[^a-zA-Z0-9]/g, "")}` : `P${Date.now().toString().slice(0, 16)}`);
     const dateVal = item.date ? safeDate(item.date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
-    const remaining = targetDollar;
-    const initialSlots = isTemp ? [
-      {
-        id: "0",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2026-01-17",
-        email: "wloureiro2023@gmail.com",
-        rate: 277.00,
-        totalShort: "null",
-        dollars: 900,
-        useDollar: Math.min(900, Math.max(0, Math.round(remaining * 100) / 100))
-      },
-      {
-        id: "1",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2026-01-12",
-        email: "handyholdem0@gmail.com",
-        rate: 280.00,
-        totalShort: "null",
-        dollars: 100,
-        useDollar: Math.min(100, Math.max(0, Math.round(Math.max(0, remaining - 900) * 100) / 100))
-      },
-      {
-        id: "15",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2025-09-15",
-        email: "sportsexceedinc@gmail.com",
-        rate: 284.00,
-        totalShort: "null",
-        dollars: 58.44,
-        useDollar: Math.min(58.44, Math.max(0, Math.round(Math.max(0, remaining - 1000) * 100) / 100))
-      },
-      {
-        id: "16",
-        checked: remaining > 1058.44,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2025-09-15",
-        email: "sportsexceedinc@gmail.com",
-        rate: 284.00,
-        totalShort: "null",
-        dollars: 58.44,
-        useDollar: Math.min(58.44, Math.max(0, Math.round(Math.max(0, remaining - 1058.44) * 100) / 100))
-      }
-    ] : [
-      {
-        id: "0",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2026-07-15",
-        email: "sulemanr89@hotmail.com",
-        rate: 278.92,
-        totalShort: 1150,
-        dollars: 51,
-        useDollar: Math.min(51, Math.max(0, Math.round(remaining * 100) / 100))
-      },
-      {
-        id: "1",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2026-09-30",
-        email: "marketing@zabeelind.com",
-        rate: 277.20,
-        totalShort: 1100,
-        dollars: 1083,
-        useDollar: Math.min(1083, Math.max(0, Math.round(Math.max(0, remaining - 51) * 100) / 100))
-      },
-      {
-        id: "2",
-        checked: true,
-        buyerName: "SYED HURR ABBAS",
-        buyDate: "2026-09-16",
-        email: "lacelocks404@gmail.com",
-        rate: 277.00,
-        totalShort: 4190,
-        dollars: 1175,
-        useDollar: Math.min(1175, Math.max(0, Math.round(Math.max(0, remaining - 1134) * 100) / 100))
-      }
-    ];
-
     setDollarModalItem({ ...item, pkr: pkrVal, rate: rateVal });
-    setDollarSlots(initialSlots);
+    setDollarSlots([]);
+    setAllocError("");
     setDollarForm({
-      isTemp: isTemp,
-      memberId: memberIdVal,
-      orderId: orderIdVal,
-      sliderMin: isTemp ? 2 : 0,
+      isTemp,
+      gmEntryId: item.id,
+      gmDrmId: item.drmId,
+      memberId: item.memberId || "",
+      orderId: item.orderId || "",
+      sliderMin: 0,
       sliderMax: 100,
       removeUnselected: true,
       dollar: String(targetDollar.toFixed(2)),
@@ -343,6 +380,7 @@ export default function DollarSystem() {
       type: item.type || "New",
       detail: item.notes || item.detail || ""
     });
+    loadAndAllocate(0, 500, targetDollar, isTemp);
   };
 
   const handleUseDollarChange = (id: string, val: string) => {
@@ -370,12 +408,6 @@ export default function DollarSystem() {
     }
   };
 
-  const handleDollarSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    alert("Poof! You successfully paid Alibaba!");
-    setDollarModalItem(null);
-  };
-
   const {
     totalUsedDollars,
     totalUsedPkrs,
@@ -387,21 +419,23 @@ export default function DollarSystem() {
     isProfit
   } = useMemo(() => {
     if (!dollarModalItem) return { totalUsedDollars: 0, totalUsedPkrs: 0, customDollarRate: "0.00", profitOrLoss: "0.00", remainingDollars: "0.00", shortSum: "0.00", dollarPkr: "0", isProfit: false };
-    
-    const checkedSlots = dollarSlots.filter(s => s.checked);
-    const totalUsed = checkedSlots.reduce((acc, s) => acc + (parseFloat(s.useDollar) || 0), 0);
-    const totalPkrs = checkedSlots.reduce((acc, s) => acc + ((parseFloat(s.useDollar) || 0) * (parseFloat(s.rate) || 0)), 0);
-    
+
+    // Every present slot counts toward the sum regardless of its own checkbox —
+    // "checked" only controls what survives the "remove unselected" master toggle,
+    // matching the legacy PHP where the per-row checkbox isn't a submitted field.
+    const totalUsed = dollarSlots.reduce((acc, s) => acc + (parseFloat(s.useDollar) || 0), 0);
+    const totalPkrs = dollarSlots.reduce((acc, s) => acc + ((parseFloat(s.useDollar) || 0) * (parseFloat(s.rate) || 0)), 0);
+
     const targetDollar = parseFloat(dollarForm.dollar) || 0;
     const cusRate = totalUsed > 0 ? (totalPkrs / totalUsed).toFixed(2) : "0.00";
-    
-    const customerPaidPkr = parseFloat(dollarModalItem.pkr) || (targetDollar * (parseFloat(dollarModalItem.rate) || 277.16));
+
+    const customerPaidPkr = parseFloat(dollarModalItem.pkr) || (targetDollar * (parseFloat(dollarModalItem.rate) || 0));
     const cusDollarRatePkr = targetDollar * parseFloat(cusRate || "0");
     const pkrDiffer = customerPaidPkr - cusDollarRatePkr;
     const pftLoss = parseFloat(cusRate) > 0 ? (pkrDiffer / parseFloat(cusRate)).toFixed(2) : "0.00";
     const remain = Math.max(0, targetDollar - totalUsed).toFixed(2);
     const shortS = (totalUsed + 2991).toFixed(2);
-    
+
     return {
       totalUsedDollars: totalUsed,
       totalUsedPkrs: totalPkrs,
@@ -414,17 +448,93 @@ export default function DollarSystem() {
     };
   }, [dollarModalItem, dollarSlots, dollarForm.dollar]);
 
+  const canSubmitDollarForm = dollarSlots.length > 0
+    && Math.abs(totalUsedDollars - (parseFloat(dollarForm.dollar) || 0)) < 0.01;
+
+  const handleDollarSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmitDollarForm || submitting) return;
+    setSubmitting(true);
+    setAllocError("");
+    try {
+      await apiRequestJson("POST", "/api/account/dollar-system/allocate-payment", {
+        gmEntryId: dollarForm.gmEntryId,
+        gmDrmId: dollarForm.gmDrmId,
+        companyName: dollarModalItem?.company,
+        memberId: dollarForm.memberId,
+        orderId: dollarForm.orderId,
+        targetDollar: parseFloat(dollarForm.dollar) || 0,
+        customerPaidPkr: parseFloat(dollarModalItem?.pkr) || 0,
+        customDollarRate,
+        dollarRate: parseFloat(dollarForm.dollarRate) || null,
+        profitOrLoss,
+        type: dollarForm.type,
+        detail: dollarForm.detail,
+        allocations: dollarSlots.map(s => ({
+          dollarBuyingId: s.id,
+          useDollar: parseFloat(s.useDollar) || 0,
+          rate: s.rate,
+        })),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
+      setDollarModalItem(null);
+    } catch (err: any) {
+      setAllocError(err?.message || "Failed to submit payment.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleVerifySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!verifyItem || !verifyForm.status || verifySubmitting) return;
+    setVerifySubmitting(true);
+    try {
+      await apiRequestJson("PATCH", `/api/account/ab-payments/${verifyItem.id}/status`, {
+        status: verifyForm.status,
+        paidDate: verifyForm.payDate || undefined,
+        notes: verifyForm.detail || undefined,
+        reason: "Updated via Paid Alibaba Payment Verify form",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/paid-alibaba"] });
+      setVerifyItem(null);
+    } catch (err: any) {
+      alert(err?.message || "Failed to update payment status.");
+    } finally {
+      setVerifySubmitting(false);
+    }
+  };
+
   const { data, isLoading } = useQuery({
     queryKey: ["/api/account/dollar-system/list"],
     queryFn: () => apiRequestJson("GET", "/api/account/dollar-system/list")
   });
+
+  const paidAbParams = new URLSearchParams();
+  if (paidAbSearch) paidAbParams.set("search", paidAbSearch);
+  if (paidAbStart) paidAbParams.set("fromDate", paidAbStart);
+  if (paidAbEnd) paidAbParams.set("toDate", paidAbEnd);
+  if (paidAbStatus !== "all") paidAbParams.set("status", paidAbStatus);
+  const { data: paidAbData } = useQuery({
+    queryKey: ["/api/account/dollar-system/paid-alibaba", paidAbSearch, paidAbStart, paidAbEnd, paidAbStatus],
+    queryFn: () => apiRequestJson("GET", `/api/account/dollar-system/paid-alibaba?${paidAbParams.toString()}`),
+  });
+  const paidAlibabaRows = paidAbData?.records || [];
+  const paidAbCounts = paidAbData?.counts || { processing: 0, paid: 0, all: 0 };
+  const paidAbTotals = paidAbData?.totals || { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0 };
+
+  const { data: buyerDetailData, isLoading: buyerDetailLoading } = useQuery({
+    queryKey: ["/api/account/dollar-system/paid-alibaba/buyer-detail", orderDetailItem?.id],
+    queryFn: () => apiRequestJson("GET", `/api/account/dollar-system/paid-alibaba/${orderDetailItem.id}/buyer-detail`),
+    enabled: !!orderDetailItem,
+  });
+  const buyerDetailRows = buyerDetailData?.records || [];
 
   const ws = data?.walletStats || {};
   const fullPayments = data?.fullPayments || [];
   const partialPayments = data?.partialPayments || [];
   const loans = data?.loans || [];
   const pendingApprovals = data?.pendingApprovals || [];
-  const alibabaPayments = data?.alibabaPayments || [];
   const abLiabilities = data?.abLiabilities || {};
   const dts = data?.dailyTxSummary || {
     balance:{count:0,sum:0,items:[]}, buy:{count:0,sum:0,items:[]},
@@ -459,7 +569,13 @@ export default function DollarSystem() {
     return base.filter((p: any) => p.type === fullTypeFilter);
   }, [fullPayments, fullSearch, fullStart, fullEnd, fullTypeFilter]);
 
-  const fPartial = useMemo(() => flt(partialPayments, partialSearch, partialStart, partialEnd), [partialPayments, partialSearch, partialStart, partialEnd]);
+  // A Partial GM only moves into the "PARTIAL" tab once its installment
+  // collection is fully cleared (fullyPaid); until then it stays in the
+  // standalone "Partial Payment Received" section below.
+  const partialCleared = useMemo(() => partialPayments.filter((p: any) => p.fullyPaid), [partialPayments]);
+  const partialPending = useMemo(() => partialPayments.filter((p: any) => !p.fullyPaid), [partialPayments]);
+  const fPartial = useMemo(() => flt(partialCleared, partialSearch, partialStart, partialEnd), [partialCleared, partialSearch, partialStart, partialEnd]);
+  const fPartialPending = useMemo(() => flt(partialPending, partialSearch, partialStart, partialEnd), [partialPending, partialSearch, partialStart, partialEnd]);
 
   const ncLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="New").length, [loans, loanSearch, loanStart, loanEnd]);
   const rcLoanCount = useMemo(() => flt(loans, loanSearch, loanStart, loanEnd).filter((p: any)=>p.type==="Rc"||p.type==="Rc-Up").length, [loans, loanSearch, loanStart, loanEnd]);
@@ -472,12 +588,13 @@ export default function DollarSystem() {
     return base.filter((p: any) => p.type === loanTypeFilter);
   }, [loans, loanSearch, loanStart, loanEnd, loanTypeFilter]);
   const fPend    = useMemo(() => flt(pendingApprovals,pendSearch,    pendStart,    pendEnd),    [pendingApprovals,pendSearch,    pendStart,    pendEnd]);
-  const fAb      = useMemo(() => flt(alibabaPayments, abSearch,      abStart,      abEnd),      [alibabaPayments, abSearch,      abStart,      abEnd]);
 
   const fullUsd  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fFull]);
   const fullPkr  = useMemo(() => fFull.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fFull]);
   const partUsd  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fPartial]);
   const partPkr  = useMemo(() => fPartial.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fPartial]);
+  const partPendingUsd = useMemo(() => fPartialPending.reduce((a: number, r: any) => a + Number(r.dollar||0), 0), [fPartialPending]);
+  const partPendingPkr = useMemo(() => fPartialPending.reduce((a: number, r: any) => a + Number(r.pkr||0), 0),   [fPartialPending]);
   const txItems  = useMemo(() => {
     const m: Record<string, any[]> = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
     return m[activeTxTab] || [];
@@ -504,6 +621,107 @@ export default function DollarSystem() {
               ))}
               {viewItem.proofUrl && <div className="pt-3 border-t border-gray-100"><a href={viewItem.proofUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-[#00a65a] text-white px-4 py-2 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c]"><Eye size={14}/> View File</a></div>}
             </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {orderDetailItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setOrderDetailItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-xl mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">Order Details</div>
+              <button onClick={()=>setOrderDetailItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <div className="p-6 space-y-4 text-[13px]">
+              <div className="flex flex-wrap justify-between gap-y-2">
+                <div><span className="font-bold text-gray-500 dark:text-zinc-400">Member id: </span><span className="text-[#00a65a] font-bold">{orderDetailItem.memberId || "-"}</span></div>
+                <div><span className="font-bold text-gray-500 dark:text-zinc-400">Order id: </span><span className="text-[#00a65a] font-bold">{orderDetailItem.orderId || "-"}</span></div>
+                <div><span className="font-bold text-gray-500 dark:text-zinc-400">Company Name: </span><span className="text-[#00a65a] font-bold">{orderDetailItem.company || "-"}</span></div>
+                <div><span className="font-bold text-gray-500 dark:text-zinc-400">Order Amount: </span><span className="text-[#00a65a] font-bold">$ {fmt2(orderDetailItem.dollar)}</span></div>
+              </div>
+
+              <div className="border border-gray-100 rounded-md overflow-hidden dark:border-zinc-800">
+                <table className="w-full text-left text-[12px] border-separate border-spacing-0">
+                  <thead className="bg-gray-50 dark:bg-zinc-800">
+                    <tr>
+                      {["#","Buyer","Use","Balance"].map(h=><th key={h} className="p-2.5 font-black text-gray-600 dark:text-zinc-300 border-b border-gray-100 dark:border-zinc-700">{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buyerDetailLoading ? (
+                      <tr><td colSpan={4} className="p-4 text-center text-gray-400"><Loader2 className="inline h-4 w-4 animate-spin"/></td></tr>
+                    ) : buyerDetailRows.length > 0 ? buyerDetailRows.map((b: any, i: number) => (
+                      <tr key={i} className="border-b border-gray-50 dark:border-zinc-800 last:border-0">
+                        <td className="p-2.5 align-top text-gray-500">{i+1}</td>
+                        <td className="p-2.5 align-top">
+                          <div className="font-bold text-gray-800 dark:text-zinc-100">{b.buyerName || "-"}</div>
+                          <div className="text-[11px] text-gray-500 dark:text-zinc-400">{b.email || "-"}</div>
+                          <div className="text-[11px] text-gray-400">Total: $ {fmt2(b.totalShort)} Rate: {b.rate ?? "-"}</div>
+                        </td>
+                        <td className="p-2.5 align-top font-bold text-gray-800 dark:text-zinc-100">$ {fmt2(b.use)}</td>
+                        <td className="p-2.5 align-top font-bold text-gray-800 dark:text-zinc-100">$ {fmt2(b.balance)}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={4} className="p-4 text-center text-gray-400 italic">No buyer allocation on record</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 py-2">
+                <span className="font-bold text-gray-600 dark:text-zinc-400">Dollar Rate:</span>
+                <span className="font-bold text-gray-900 dark:text-zinc-100">{orderDetailItem.tdRate ?? "-"}</span>
+              </div>
+              <div className="flex items-center justify-between py-2">
+                <span className="font-bold text-gray-600 dark:text-zinc-400">{Number(orderDetailItem.reportProfitLoss||0) >= 0 ? "Profit" : "Loss"}:</span>
+                <span className={cn("font-bold", Number(orderDetailItem.reportProfitLoss||0) >= 0 ? "text-[#00a65a]" : "text-red-500")}>$ {fmt2(orderDetailItem.reportProfitLoss)}</span>
+              </div>
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {verifyItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setVerifyItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">{verifyItem.company || "Payment Verify"}</div>
+              <button onClick={()=>setVerifyItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <form onSubmit={handleVerifySubmit} className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Member Id</label>
+                  <Input value={verifyItem.memberId || ""} readOnly className="h-9 bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300"/>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Order Id</label>
+                  <Input value={verifyItem.orderId || ""} readOnly className="h-9 bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300"/>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Ab Payment Status</label>
+                  <select value={verifyForm.status} onChange={e=>setVerifyForm({...verifyForm, status: e.target.value})}
+                    className="h-9 w-full border border-gray-300 rounded-md px-2 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-gray-800 dark:text-zinc-200 focus:outline-none">
+                    <option value="">Choose...</option>
+                    <option value="paid">Paid</option>
+                    <option value="refund">Refund</option>
+                    <option value="processing">Processing</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Ab Pay Date</label>
+                  <Input type="date" value={verifyForm.payDate} onChange={e=>setVerifyForm({...verifyForm, payDate: e.target.value})} className="h-9 border-gray-300 dark:border-zinc-700"/>
+                </div>
+              </div>
+              <div>
+                <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Detail</label>
+                <textarea value={verifyForm.detail} onChange={e=>setVerifyForm({...verifyForm, detail: e.target.value})} placeholder="add detail" rows={2}
+                  className="w-full border border-gray-300 rounded-md p-2 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-gray-800 dark:text-zinc-200 focus:outline-none resize-y"/>
+              </div>
+              <Button type="submit" disabled={!verifyForm.status || verifySubmitting} className="w-full h-10 bg-[#00a65a] hover:bg-[#008d4c] disabled:opacity-50 text-white font-bold text-sm uppercase rounded-md flex items-center justify-center gap-2">
+                {verifySubmitting && <Loader2 size={14} className="animate-spin"/>} Submit
+              </Button>
+            </form>
           </div>
         </div>, document.body
       )}
@@ -556,10 +774,10 @@ export default function DollarSystem() {
             )}>
               <div className="flex flex-wrap items-center gap-x-8 gap-y-1 text-base font-bold uppercase tracking-tight">
                 <span className={dollarForm.isTemp ? "text-gray-900" : "text-gray-800 dark:text-zinc-100"}>
-                  {dollarModalItem.company || "ROYAL TRADERS"} PKR: <span className="text-[#e74c3c] font-black">{dollarModalItem.pkr ? Number(dollarModalItem.pkr).toLocaleString() : "320000"}</span>
+                  {dollarModalItem.company || "-"} PKR: <span className="text-[#e74c3c] font-black">{dollarModalItem.pkr ? Number(dollarModalItem.pkr).toLocaleString() : "0"}</span>
                 </span>
                 <span className={dollarForm.isTemp ? "text-gray-900" : "text-gray-800 dark:text-zinc-100"}>
-                  Dollar Rate: <span className="text-[#e74c3c] font-black">{dollarModalItem.rate || "277.16"}</span>
+                  Dollar Rate: <span className="text-[#e74c3c] font-black">{dollarModalItem.rate || "0.00"}</span>
                 </span>
               </div>
               <button 
@@ -694,18 +912,34 @@ export default function DollarSystem() {
                   );
                 })()}
 
+                {allocError && (
+                  <div className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2 dark:bg-red-950/30 dark:border-red-900 dark:text-red-400">
+                    {allocError}
+                  </div>
+                )}
+
                 {/* Buyer Slots Repeater List */}
                 <div className="space-y-3 pt-1">
-                  {dollarSlots.map((slot) => (
+                  {slotsLoading && (
+                    <div className="flex items-center justify-center gap-2 py-6 text-gray-400 text-xs font-bold">
+                      <Loader2 size={16} className="animate-spin" /> Loading available buyer balances...
+                    </div>
+                  )}
+                  {!slotsLoading && dollarSlots.length === 0 && (
+                    <div className="text-center py-6 text-gray-400 text-xs font-bold">
+                      No buyer dollar balances available in this range.
+                    </div>
+                  )}
+                  {dollarSlots.map((slot, slotIndex) => (
                     <div key={slot.id} className="flex flex-wrap md:flex-nowrap items-center gap-2.5 bg-gray-50/70 dark:bg-zinc-800/50 p-2.5 rounded-lg border border-gray-100 dark:border-zinc-800">
                       <div className="flex items-center gap-1 shrink-0 pt-4">
-                        <input 
-                          type="checkbox" 
-                          checked={slot.checked} 
-                          onChange={() => handleSlotToggle(slot.id)} 
-                          className="rounded border-red-400 text-red-600 focus:ring-red-400 w-4 h-4 cursor-pointer" 
+                        <input
+                          type="checkbox"
+                          checked={slot.checked}
+                          onChange={() => handleSlotToggle(slot.id)}
+                          className="rounded border-red-400 text-red-600 focus:ring-red-400 w-4 h-4 cursor-pointer"
                         />
-                        <span className="text-xs font-bold text-gray-700 dark:text-zinc-300">{slot.id}</span>
+                        <span className="text-xs font-bold text-gray-700 dark:text-zinc-300">{slotIndex}</span>
                       </div>
                       <div className="flex-1 min-w-[150px]">
                         <div className="flex justify-between items-center mb-1">
@@ -822,9 +1056,9 @@ export default function DollarSystem() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Pkr Amount</label>
-                    <Input 
-                      value={dollarForm.pkrAmount} 
-                      readOnly 
+                    <Input
+                      value={((parseFloat(dollarForm.dollar) || 0) * (parseFloat(dollarForm.dollarRate) || 0)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                      readOnly
                       className="h-9 text-xs bg-gray-100 border-gray-300 rounded-md dark:bg-zinc-800 dark:border-zinc-700 text-gray-700 dark:text-zinc-300" 
                     />
                   </div>
@@ -866,11 +1100,17 @@ export default function DollarSystem() {
                 </div>
 
                 {/* Submit Button */}
-                <Button 
-                  type="submit" 
-                  className="w-full h-10 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold text-sm uppercase rounded-md shadow-sm transition-all mt-2"
+                {!canSubmitDollarForm && !slotsLoading && (
+                  <div className="text-[11px] font-bold text-amber-600 dark:text-amber-400 text-center">
+                    Allocated amount (${totalUsedDollars.toFixed(2)}) must equal the order amount (${dollarForm.dollar}) before you can submit.
+                  </div>
+                )}
+                <Button
+                  type="submit"
+                  disabled={!canSubmitDollarForm || submitting}
+                  className="w-full h-10 bg-[#00a65a] hover:bg-[#008d4c] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm uppercase rounded-md shadow-sm transition-all mt-2 flex items-center justify-center gap-2"
                 >
-                  Submit
+                  {submitting && <Loader2 size={14} className="animate-spin" />} Submit
                 </Button>
               </form>
             </div>
@@ -1004,7 +1244,7 @@ export default function DollarSystem() {
                   <div className="flex flex-wrap items-center gap-1">
                     {[
                       {id:"full",          label:"Full "+(fullPayments.length||counts.full||0)},
-                      {id:"partial",       label:"Partial "+(partialPayments.length||counts.partial||0)},
+                      {id:"partial",       label:"Partial "+partialCleared.length},
                       {id:"term",          label:"Tem Payment "+(counts.temp||0)},
                       {id:"ab_liabilities",label:"AB Liabilities"},
                     ].map(t => (
@@ -1112,7 +1352,7 @@ export default function DollarSystem() {
                     </div>
                     <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
                     <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
-                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
+                    <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialCleared.length} entries</div>
                   </div>
                   )}
 
@@ -1194,166 +1434,236 @@ export default function DollarSystem() {
                 </div>
               </div>
 
-              {/* LOAN PAYMENT RECEIVED */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="flex flex-wrap items-center justify-between gap-y-2">
-                  <div className="text-[18px] font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100 flex items-center gap-3">
-                    <span>Loan Payment Received</span>
-                    <div className="flex items-center gap-1.5 text-[12px] font-[1000] tracking-tighter uppercase">
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter("all")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer",
-                          loanTypeFilter === "all" ? "bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-gray-500 hover:text-gray-900 dark:text-zinc-400"
-                        )}
-                      >
-                        All ({flt(loans, loanSearch, loanStart, loanEnd).length})
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "New" ? "all" : "New")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "New" ? "bg-[#00a65a] text-white shadow-sm" : "hover:bg-emerald-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>NC</span>
-                        <span className={loanTypeFilter === "New" ? "text-white" : "text-[#00a65a]"}>({ncLoanCount})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "Rc" ? "all" : "Rc")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "Rc" ? "bg-blue-600 text-white shadow-sm" : "hover:bg-blue-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>RC</span>
-                        <span className={loanTypeFilter === "Rc" ? "text-white" : "text-blue-500"}>({rcLoanCount})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setLoanTypeFilter(prev => prev === "Ec" ? "all" : "Ec")}
-                        className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
-                          loanTypeFilter === "Ec" ? "bg-red-600 text-white shadow-sm" : "hover:bg-red-50 dark:hover:bg-zinc-800"
-                        )}
-                      >
-                        <span>EC</span>
-                        <span className={loanTypeFilter === "Ec" ? "text-white" : "text-red-500"}>({ecLoanCount})</span>
-                      </button>
+            </div>
+          </div>
+
+          {/* LOAN PAYMENT RECEIVED — full page width, not confined to the right column */}
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-y-2">
+              <div className="text-[18px] font-[1000] text-gray-900 uppercase tracking-tighter dark:text-zinc-100 flex items-center gap-3">
+                <span>Loan Payment Received</span>
+                <div className="flex items-center gap-1.5 text-[12px] font-[1000] tracking-tighter uppercase">
+                  <button
+                    type="button"
+                    onClick={() => setLoanTypeFilter("all")}
+                    className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer",
+                      loanTypeFilter === "all" ? "bg-gray-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm" : "text-gray-500 hover:text-gray-900 dark:text-zinc-400"
+                    )}
+                  >
+                    All ({flt(loans, loanSearch, loanStart, loanEnd).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoanTypeFilter(prev => prev === "New" ? "all" : "New")}
+                    className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
+                      loanTypeFilter === "New" ? "bg-[#00a65a] text-white shadow-sm" : "hover:bg-emerald-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>NC</span>
+                    <span className={loanTypeFilter === "New" ? "text-white" : "text-[#00a65a]"}>({ncLoanCount})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoanTypeFilter(prev => prev === "Rc" ? "all" : "Rc")}
+                    className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
+                      loanTypeFilter === "Rc" ? "bg-blue-600 text-white shadow-sm" : "hover:bg-blue-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>RC</span>
+                    <span className={loanTypeFilter === "Rc" ? "text-white" : "text-blue-500"}>({rcLoanCount})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLoanTypeFilter(prev => prev === "Ec" ? "all" : "Ec")}
+                    className={cn("px-2 py-0.5 rounded text-[11px] font-black transition-all cursor-pointer flex items-center gap-0.5",
+                      loanTypeFilter === "Ec" ? "bg-red-600 text-white shadow-sm" : "hover:bg-red-50 dark:hover:bg-zinc-800"
+                    )}
+                  >
+                    <span>EC</span>
+                    <span className={loanTypeFilter === "Ec" ? "text-white" : "text-red-500"}>({ecLoanCount})</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+            <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
+          </div>
+
+          {/* PARTIAL PAYMENT RECEIVED SECTION — full page width, not confined to the right column */}
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-between gap-y-2">
+              <div className="text-[18px] font-[1000] text-blue-500 uppercase tracking-tighter">Partial Payment Received <span className="text-red-500">{fPartialPending.length}</span></div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  {l:"Cash Received",  u:partPendingUsd, p:partPendingPkr},
+                  {l:"Online Paid",    u:Number(abLiabilities.partialOnlinePaidUsd||0), p:Number(abLiabilities.partialOnlinePaidPkr||0)},
+                  {l:"Customer Paid",  u:partPendingUsd, p:partPendingPkr},
+                ].map((b,bi) => (
+                  <div key={bi} className={cn("flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5", bi<2&&"border-r border-gray-200 pr-3 dark:border-zinc-800")}>
+                    <span className="text-gray-400">{b.l}</span>
+                    <div className="flex gap-1">
+                      <Badge className="bg-emerald-50 text-[#00a65a] border-none px-1.5 py-0.5 shadow-none font-black text-[10px]">$ {fmtU(b.u)}</Badge>
+                      <Badge className="bg-rose-50 text-red-400 border-none px-1.5 py-0.5 shadow-none font-black italic text-[10px]">Pkr {fmtN(b.p)}</Badge>
                     </div>
                   </div>
-                </div>
-                <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
-                <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
+                ))}
               </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
+              <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
+            </div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartialPending} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+            <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartialPending.length} of {partialPending.length} entries</div>
+          </div>
 
-              {/* PARTIAL PAYMENT RECEIVED SECTION */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="flex flex-wrap items-center justify-between gap-y-2">
-                  <div className="text-[18px] font-[1000] text-blue-500 uppercase tracking-tighter">Partial Payment Received <span className="text-red-500">{fPartial.length}</span></div>
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      {l:"Cash Received",  u:partUsd, p:partPkr},
-                      {l:"Online Paid",    u:Number(abLiabilities.partialOnlinePaidUsd||0), p:Number(abLiabilities.partialOnlinePaidPkr||0)},
-                      {l:"Customer Paid",  u:partUsd, p:partPkr},
-                    ].map((b,bi) => (
-                      <div key={bi} className={cn("flex flex-col items-start font-[1000] uppercase text-[10px] gap-0.5", bi<2&&"border-r border-gray-200 pr-3 dark:border-zinc-800")}>
-                        <span className="text-gray-400">{b.l}</span>
-                        <div className="flex gap-1">
-                          <Badge className="bg-emerald-50 text-[#00a65a] border-none px-1.5 py-0.5 shadow-none font-black text-[10px]">$ {fmtU(b.u)}</Badge>
-                          <Badge className="bg-rose-50 text-red-400 border-none px-1.5 py-0.5 shadow-none font-black italic text-[10px]">Pkr {fmtN(b.p)}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                  <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
-                </div>
-                <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
-                <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialPayments.length} entries</div>
+          {/* PENDING APPROVALS — full page width, not confined to the right column */}
+          <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
+            <div className="text-[18px] font-[1000] text-rose-500 uppercase tracking-tighter">Pending Approvals <span className="text-red-500 font-black">{fPend.length}</span></div>
+            <FilterBar searchTerm={pendSearch} onSearch={setPendSearch} startDate={pendStart} onStart={setPendStart} endDate={pendEnd} onEnd={setPendEnd} onClear={()=>{setPendSearch("");setPendStart("");setPendEnd("");}}/>
+            <div className="flex gap-1">{["Copy","Excel","CSV","PDF"].map(b=><button key={b} className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-black uppercase px-4 py-1.5 rounded-sm dark:bg-zinc-800 dark:text-zinc-400">{b}</button>)}</div>
+            <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
+              <div className="overflow-x-auto custom-scrollbar">
+                <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1400px] border-separate border-spacing-0">
+                  <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
+                    <TableRow>{["#","DRM ID","Company","Sales Person","Dollar","PKR","Dollar Rate","AB Disc","Extra Disc","Package","Type","Dropout","Status","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
+                  </TableHeader>
+                  <TableBody className="bg-white dark:bg-zinc-900">
+                    {fPend.length > 0 ? fPend.map((tx,i) => (
+                      <TableRow key={i} className="hover:bg-rose-50/10 transition-colors">
+                        <TableCell className="p-3 border-r border-b font-bold text-gray-400">{i+1}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-[1000] text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-bold italic text-gray-500 dark:text-zinc-400">{tx.salePerson}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {tx.dollar}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-bold">{tx.pkr}</TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.rate}</TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.abDisc||"0"}</TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.exDisc||"0"}</TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.package||"-"}</TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.type||"-"}</TableCell>
+                        <TableCell className="p-3 border-r border-b">None</TableCell>
+                        <TableCell className="p-3 border-r border-b font-black text-[#00a65a] uppercase italic dark:text-zinc-400">{tx.status}</TableCell>
+                        <TableCell className="p-3 border-b text-center"><Badge className="bg-red-500/10 text-red-700 border-none text-[10px] uppercase font-black px-2 shadow-none">Pending</Badge></TableCell>
+                      </TableRow>
+                    )) : <TableRow><TableCell colSpan={14} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No pending approvals</TableCell></TableRow>}
+                  </TableBody>
+                </Table>
               </div>
+            </div>
+          </div>
 
-              {/* PENDING APPROVALS */}
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 dark:bg-zinc-900 dark:border-zinc-800">
-                <div className="text-[18px] font-[1000] text-rose-500 uppercase tracking-tighter">Pending Approvals <span className="text-red-500 font-black">{fPend.length}</span></div>
-                <FilterBar searchTerm={pendSearch} onSearch={setPendSearch} startDate={pendStart} onStart={setPendStart} endDate={pendEnd} onEnd={setPendEnd} onClear={()=>{setPendSearch("");setPendStart("");setPendEnd("");}}/>
-                <div className="flex gap-1">{["Copy","Excel","CSV","PDF"].map(b=><button key={b} className="bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-black uppercase px-4 py-1.5 rounded-sm dark:bg-zinc-800 dark:text-zinc-400">{b}</button>)}</div>
-                <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1400px] border-separate border-spacing-0">
-                      <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
-                        <TableRow>{["#","DRM ID","Company","Sales Person","Dollar","PKR","Dollar Rate","AB Disc","Extra Disc","Package","Type","Dropout","Status","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
-                      </TableHeader>
-                      <TableBody className="bg-white dark:bg-zinc-900">
-                        {fPend.length > 0 ? fPend.map((tx,i) => (
-                          <TableRow key={i} className="hover:bg-rose-50/10 transition-colors">
-                            <TableCell className="p-3 border-r border-b font-bold text-gray-400">{i+1}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-[1000] text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400">{tx.company}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-bold italic text-gray-500 dark:text-zinc-400">{tx.salePerson}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {tx.dollar}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-bold">{tx.pkr}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.rate}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.abDisc||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.exDisc||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.package||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">{tx.type||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">None</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-[#00a65a] uppercase italic dark:text-zinc-400">{tx.status}</TableCell>
-                            <TableCell className="p-3 border-b text-center"><Badge className="bg-red-500/10 text-red-700 border-none text-[10px] uppercase font-black px-2 shadow-none">Pending</Badge></TableCell>
-                          </TableRow>
-                        )) : <TableRow><TableCell colSpan={14} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No pending approvals</TableCell></TableRow>}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
+          {/* PAID ALIBABA — full page width, not confined to the right column */}
+          <div className="bg-[#fbfcfd] border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 pb-10 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="flex items-center gap-3 border-b border-gray-100 pb-3 dark:border-zinc-800">
+              <h2 className="text-[18px] font-[1000] text-gray-800 tracking-tighter uppercase whitespace-nowrap dark:text-zinc-100">Paid Alibaba</h2>
+              <span className="text-[24px] font-black text-green-500 leading-none">..</span>
+              <h2 className="text-[18px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-y-3">
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={()=>setPaidAbStatus(prev=>prev==="processing"?"all":"processing")}
+                  className={cn("px-3 py-1.5 rounded-md text-[11px] font-black uppercase shadow-none transition-all",
+                    paidAbStatus==="processing" ? "bg-red-600 text-white" : "bg-red-50 text-red-600 hover:bg-red-100")}>
+                  In Processing {paidAbCounts.processing}
+                </button>
+                <button type="button" onClick={()=>setPaidAbStatus(prev=>prev==="paid"?"all":"paid")}
+                  className={cn("px-3 py-1.5 rounded-md text-[11px] font-black uppercase shadow-none transition-all",
+                    paidAbStatus==="paid" ? "bg-[#00a65a] text-white" : "bg-emerald-50 text-[#00a65a] hover:bg-emerald-100")}>
+                  Paid {paidAbCounts.paid}
+                </button>
               </div>
-
-              {/* PAID ALIBABA */}
-              <div className="bg-[#fbfcfd] border border-gray-200 rounded-lg shadow-sm p-4 space-y-4 pb-10 dark:border-zinc-800 dark:bg-zinc-900">
-                <div className="flex items-center gap-3 border-b border-gray-100 pb-3 dark:border-zinc-800">
-                  <h2 className="text-[18px] font-[1000] text-gray-800 tracking-tighter uppercase whitespace-nowrap dark:text-zinc-100">Paid Alibaba</h2>
-                  <span className="text-[24px] font-black text-green-500 leading-none">..</span>
-                  <h2 className="text-[18px] font-[1000] text-[#00a65a] tracking-tighter uppercase leading-none dark:text-zinc-400">Partial Payments Paid To Alibaba</h2>
-                </div>
-                <FilterBar searchTerm={abSearch} onSearch={setAbSearch} startDate={abStart} onStart={setAbStart} endDate={abEnd} onEnd={setAbEnd} onClear={()=>{setAbSearch("");setAbStart("");setAbEnd("");}}/>
-                <div className="border border-gray-100 rounded-sm overflow-hidden shadow-sm dark:border-zinc-800">
-                  <div className="overflow-x-auto custom-scrollbar">
-                    <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1200px] border-separate border-spacing-0">
-                      <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
-                        <TableRow>
-                          <TableHead className="p-3 border-r w-12 text-center"><div className="flex items-center justify-center"><Checkbox className="rounded-sm border-emerald-500"/></div></TableHead>
-                          {["AB Date","BV Date","DRM ID","AB ID","Order ID","Company","Amount","Status","Paid Date","Proof"].map(h=><TableHead key={h} className="p-3 border-r last:border-0">{h}</TableHead>)}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody className="bg-white dark:bg-zinc-900">
-                        {fAb.length > 0 ? fAb.map((tx,i) => (
-                          <TableRow key={i} className="hover:bg-slate-50 transition-colors dark:hover:bg-zinc-800">
-                            <TableCell className="p-3 border-r border-b text-center"><Checkbox className="rounded-sm border-emerald-500"/></TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{safeDate(tx.abDate, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-r border-b text-[#dd4b39]">{safeDate(tx.date, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-[#00a65a] italic uppercase dark:text-zinc-400">{tx.drmId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-600 dark:text-zinc-300">{tx.abId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{tx.orderId||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black uppercase text-gray-700 dark:text-zinc-400 max-w-[200px] truncate">{tx.company||"-"}</TableCell>
-                            <TableCell className="p-3 border-r border-b font-black text-gray-900 dark:text-zinc-100">$ {tx.abAmountUsd||tx.dollar||"0"}</TableCell>
-                            <TableCell className="p-3 border-r border-b">
-                              <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
-                                tx.paymentStatus==="paid"?"bg-emerald-100 text-emerald-700":tx.paymentStatus==="processing"?"bg-blue-100 text-blue-700":"bg-yellow-100 text-yellow-700"
-                              )}>{tx.paymentStatus||"pending"}</Badge>
-                            </TableCell>
-                            <TableCell className="p-3 border-r border-b text-gray-500 dark:text-zinc-400">{safeDate(tx.paidDate, "MM/dd/yyyy")}</TableCell>
-                            <TableCell className="p-3 border-b text-center">{tx.proofUrl?<a href={tx.proofUrl} target="_blank" rel="noreferrer"><Eye size={14} className="text-[#00a65a] cursor-pointer inline-block"/></a>:<span className="text-gray-300 text-[10px] italic">none</span>}</TableCell>
-                          </TableRow>
-                        )) : <TableRow><TableCell colSpan={11} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No alibaba payments found</TableCell></TableRow>}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
+            </div>
+            <FilterBar searchTerm={paidAbSearch} onSearch={setPaidAbSearch} startDate={paidAbStart} onStart={setPaidAbStart} endDate={paidAbEnd} onEnd={setPaidAbEnd} onClear={()=>{setPaidAbSearch("");setPaidAbStart("");setPaidAbEnd("");setPaidAbStatus("all");}}/>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800">
+              <div style={{display:"block",width:"100%",overflowX:"auto"}} className="custom-scrollbar">
+                <table style={{width:"1930px",tableLayout:"fixed",minWidth:"1930px"}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                  <thead className="bg-[#f39c12] text-white font-bold text-[11px] shadow-sm dark:bg-zinc-900">
+                    <tr>
+                      {[["Ab Date",100],["Bv Date",100],["Drm Id",90],["Ab Id",110],["Order Id",130],["Company",220],["Person",110],["T-Dollar",90],["TD Rate",80],["Package",100],["Type",70],["Ex-Disc",80],["Pay Status",90],["Report",140],["Cus $ Rate",90],["Cus $ Profit",140],["View",110],["Action",80]].map(([h,w])=>
+                        <th key={h as string} style={{width: w}} className="py-2.5 px-2.5 border-r border-white/20 last:border-0 overflow-hidden text-ellipsis">{h}</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white font-bold dark:bg-zinc-900">
+                    {paidAlibabaRows.length > 0 ? paidAlibabaRows.map((row: any) => {
+                      const cusProfit = Number(row.cusProfit || 0);
+                      const reportProfitLoss = Number(row.reportProfitLoss || 0);
+                      return (
+                        <tr key={row.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{safeDate(row.payDate, "MM/dd/yyyy")}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{safeDate(row.gmBvDate, "MM/dd/yyyy")}</td>
+                          <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 overflow-hidden text-ellipsis">{row.drmId || "-"}</td>
+                          <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.memberId || "-"}</td>
+                          <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.orderId || "-"}</td>
+                          <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 overflow-hidden text-ellipsis" title={row.company}>{row.company || "-"}</td>
+                          <td className="p-2.5 border-r italic text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.person || "-"}</td>
+                          <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100 overflow-hidden text-ellipsis">$ {fmt2(row.dollar)}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.tdRate ?? "-"}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.package || "-"}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{row.type || "-"}</td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 overflow-hidden text-ellipsis">{fmt2(row.exDisc)}</td>
+                          <td className="p-2.5 border-r">
+                            <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                              row.payStatus==="paid" ? "bg-emerald-100 text-emerald-700" :
+                              row.payStatus==="refund" ? "bg-amber-100 text-amber-700" :
+                              row.payStatus==="processing" ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-600"
+                            )}>{row.payStatus || "-"}</Badge>
+                          </td>
+                          <td className="p-2.5 border-r">
+                            <span className={cn("px-2 py-0.5 rounded text-[10px] font-black",
+                              reportProfitLoss > 0 ? "bg-[#d4edda] text-[#155724]" : reportProfitLoss < 0 ? "bg-[#f8d7da] text-[#721c24]" : "bg-[#fff3cd] text-[#856404]")}>
+                              {reportProfitLoss > 0 ? "Profit" : reportProfitLoss < 0 ? "Loss" : "Equal"}: $ {fmt2(reportProfitLoss)}
+                            </span>
+                          </td>
+                          <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{row.cusRate ?? "-"}</td>
+                          <td className="p-2.5 border-r">
+                            <span className={cn("px-2 py-0.5 rounded text-[10px] font-black",
+                              cusProfit >= 0 ? "bg-[#d4edda] text-[#155724]" : "bg-[#f8d7da] text-[#721c24]")}>
+                              {cusProfit >= 0 ? "Profit" : "Loss"}: $ {fmt2(cusProfit)}
+                            </span>
+                          </td>
+                          <td className="p-2.5 border-r text-center">
+                            <button type="button" onClick={()=>setOrderDetailItem(row)} className="inline-flex items-center gap-1.5 bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase shadow-sm transition-all cursor-pointer">
+                              View Details
+                            </button>
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {row.payStatus !== "paid" && (
+                                <button type="button" title="Payment Verify" onClick={()=>{
+                                  setVerifyItem(row);
+                                  setVerifyForm({ status: row.payStatus === "pending" ? "" : row.payStatus, payDate: "", detail: "" });
+                                }} className="w-6 h-6 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                                  <Pencil size={12} strokeWidth={2.8} />
+                                </button>
+                              )}
+                              <button type="button" title="View Details" onClick={()=>setViewItem({
+                                drmId: row.drmId, company: row.company, salePerson: row.person,
+                                memberId: row.memberId, date: row.payDate, package: row.package,
+                                type: row.type, orderId: row.orderId, dollar: row.dollar,
+                                pkr: row.pkr, rate: row.tdRate, exDisc: row.exDisc, status: row.payStatus,
+                                proofUrl: row.proofUrl,
+                              })} className="w-6 h-6 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                                <Eye size={12} strokeWidth={2.8} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan={18} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No data available in table</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
-
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-semibold text-gray-700 dark:text-zinc-300 py-2 border-t border-gray-100 dark:border-zinc-800">
+              <div className="flex items-center gap-1.5"><span>Total T-Dollar</span><Badge className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.totalDollar)}</Badge></div>
+              <div className="flex items-center gap-1.5"><span>Extra Disc</span><Badge className="bg-[#f6e8cc] text-[#a9730a] px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.totalExDisc)}</Badge></div>
+              <div className="flex items-center gap-1.5"><span>Cus Profit</span><Badge className="bg-[#d4edda] text-[#155724] px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.cusProfit)}</Badge></div>
+              <div className="flex items-center gap-1.5"><span>Cus Loss</span><Badge className="bg-[#f8d7da] text-[#721c24] px-2 py-0.5 rounded text-xs font-bold">$ {fmt2(paidAbTotals.cusLoss)}</Badge></div>
             </div>
           </div>
         </div>

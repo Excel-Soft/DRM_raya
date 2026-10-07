@@ -392,9 +392,27 @@ export function registerAccountRoutes(app: Express) {
           screenshot_url text,
           detail text,
           martini text default 'Show',
+          remaining_usd numeric(12,2),
           created_by_user_id varchar(50) references users(id),
           created_at timestamp default now(),
           updated_at timestamp default now()
+        );
+
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS remaining_usd numeric(12,2);
+        UPDATE drm.dollar_buying SET remaining_usd = dollar_amount WHERE remaining_usd IS NULL;
+
+        CREATE TABLE IF NOT EXISTS drm.dollar_allocations (
+          id varchar(50) primary key default gen_random_uuid(),
+          dollar_buying_id varchar(50) references drm.dollar_buying(id),
+          ab_payment_id integer,
+          amount_usd numeric(12,2) not null,
+          rate numeric(12,4),
+          pkr_amount numeric(12,2),
+          custom_dollar_rate numeric(12,4),
+          member_id text,
+          order_id text,
+          created_by_user_id varchar(50),
+          created_at timestamptz default now()
         );
       `);
 
@@ -424,6 +442,11 @@ export function registerAccountRoutes(app: Express) {
         create index if not exists ab_payments_status_idx  on drm.ab_payments(status);
         create index if not exists ab_payments_gm_drm_idx  on drm.ab_payments(gm_drm_id);
         create index if not exists ab_payments_created_idx on drm.ab_payments(created_at desc);
+
+        alter table drm.ab_payments
+          add column if not exists member_id   text,
+          add column if not exists dollar_rate numeric(12,4),
+          add column if not exists type        text;
       `);
 
       // 6. Ensure gm_entries has member_id and order_id columns (used by Paid Alibaba)
@@ -435,6 +458,9 @@ export function registerAccountRoutes(app: Express) {
         alter table drm.gm_entries
           add column if not exists extra_discount_usd  numeric(12,2),
           add column if not exists alibaba_discount_usd numeric(12,2);
+
+        alter table drm.gm_entries
+          add column if not exists package_price_usd numeric(12,2);
       `);
 
       // 7. AB payments: add voided status, soft-delete columns (migration 0001)
@@ -446,7 +472,7 @@ export function registerAccountRoutes(app: Express) {
       // Expand the status CHECK to include voided (DROP + ADD is idempotent via IF NOT EXISTS pattern)
       try {
         await pool.query(`ALTER TABLE drm.ab_payments DROP CONSTRAINT IF EXISTS ab_payments_status_check`);
-        await pool.query(`ALTER TABLE drm.ab_payments ADD CONSTRAINT ab_payments_status_check CHECK (status IN ('pending','processing','paid','rejected','cancelled','voided'))`);
+        await pool.query(`ALTER TABLE drm.ab_payments ADD CONSTRAINT ab_payments_status_check CHECK (status IN ('pending','processing','paid','refund','rejected','cancelled','voided'))`);
       } catch (_) { /* ignore if constraint already correct */ }
 
       // 8. Notification outbox: ensure table exists and extend with structured outbox columns (migration 0001)
@@ -861,7 +887,10 @@ export function registerAccountRoutes(app: Express) {
             e.company_name,
             COALESCE(e.amount_usd,0)::numeric AS amount_usd,
             COALESCE(e.customer_dollar, e.amount_usd, 0)::numeric AS customer_total,
-            GREATEST(COALESCE(e.amount_usd,0) - COALESCE(e.alibaba_discount_usd,0), 0)::numeric AS order_dollar,
+            -- amount_usd is already net of the Alibaba discount as of the GM-creation
+            -- fix (gm-pool-routes.ts POST /gm) — do not subtract alibaba_discount_usd
+            -- again here, that would double-count the discount.
+            GREATEST(COALESCE(e.amount_usd,0), 0)::numeric AS order_dollar,
             COALESCE(r.received,0)::numeric AS received,
             COALESCE(l.loan_amount, e.amount_usd, 0)::numeric AS loan_amount,
             l.agreed_return_date, l.return_status
@@ -1044,7 +1073,8 @@ export function registerAccountRoutes(app: Express) {
       const todayStart = new Date(new Date().toDateString());
       const recentGms = recentRes.rows.map((r: any) => {
         const type = r.gm_type_canonical as string;
-        const orderDollar = Math.max(0, Number(r.amount_usd ?? 0) - Number(r.alibaba_discount_usd ?? 0));
+        // amount_usd is already net of the Alibaba discount — see note on order_dollar above.
+        const orderDollar = Math.max(0, Number(r.amount_usd ?? 0));
         const received = Number(r.received ?? 0);
         const overdue =
           type === "LOAN" &&
@@ -1158,11 +1188,12 @@ export function registerAccountRoutes(app: Express) {
       }
       const g = gmRes.rows[0];
       const canonicalType = Number(g.is_loan) === 1 ? "LOAN" : Number(g.is_partial_payment) === 1 ? "PARTIAL" : "FULL";
-      // Order dollar: package price minus only the Alibaba discount (the extra/HOD
-      // discount is a separate later adjustment and must not reduce this figure).
+      // Order dollar: amount_usd is already net of the Alibaba discount as of the
+      // GM-creation fix (gm-pool-routes.ts POST /gm) — do not subtract
+      // alibaba_discount_usd again here, that would double-count the discount.
       // Same formula as /api/accounts/dashboard/gm-summary's recentGms.amountUsd so
       // this detail view's Amount matches what the summary list showed for this GM.
-      const orderDollar = Math.max(0, Number(g.amount_usd ?? 0) - Number(g.alibaba_discount_usd ?? 0));
+      const orderDollar = Math.max(0, Number(g.amount_usd ?? 0));
 
       const [invRes, recRes, loanRes] = await Promise.all([
         pool.query(
@@ -3585,7 +3616,7 @@ export function registerAccountRoutes(app: Express) {
         const { id } = req.params;
         const numId = Number(id);
         const { status, notes, paidDate, proofUrl, reason } = req.body;
-        const VALID_STATUSES = ['pending', 'processing', 'paid', 'rejected', 'cancelled', 'voided'];
+        const VALID_STATUSES = ['pending', 'processing', 'paid', 'refund', 'rejected', 'cancelled', 'voided'];
 
         if (!VALID_STATUSES.includes(status)) {
           return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
@@ -4348,38 +4379,56 @@ export function registerAccountRoutes(app: Express) {
         WHERE coalesce(is_deleted, false) = false
           AND (entry_type IN ('Full', 'Standard', 'Service', 'GM')
                OR (coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false))
+          AND NOT EXISTS (
+            SELECT 1 FROM drm.ab_payments ap
+            WHERE ap.gm_entry_id = drm.gm_entries.id AND coalesce(ap.is_deleted, false) = false
+          )
           ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
       // 3. Partial Payments — columns matching PHP datatable
+      // "fullyPaid": whether this Partial GM's installment collection (tracked via
+      // gm_partial_receipts) has reached its target — still-collecting rows stay in
+      // the standalone "Partial Payment Received" section; only once cleared do
+      // they move up into this PARTIAL tab (ready to proceed like a Full GM).
       const partialPayments = await pool.query(`
-        SELECT id, drm_id as "drmId", created_at as "date",
-               company_name as "company", sales_person_name as "salePerson",
-               amount_usd as "dollar",
-               COALESCE(customer_dollar, amount_usd) as "customerDollar",
-               amount_pkr as "pkr",
-               dollar_rate as "rate",
-               COALESCE(extra_discount_usd, 0) as "exDisc",
-               COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
-               member_id as "memberId", order_id as "orderId",
-               package_type as "package",
+        SELECT g.id, g.drm_id as "drmId", g.created_at as "date",
+               g.company_name as "company", g.sales_person_name as "salePerson",
+               g.amount_usd as "dollar",
+               COALESCE(g.customer_dollar, g.amount_usd) as "customerDollar",
+               g.amount_pkr as "pkr",
+               g.dollar_rate as "rate",
+               COALESCE(g.extra_discount_usd, 0) as "exDisc",
+               COALESCE(g.extra_discount_pkr, 0) as "exDiscPkr",
+               g.member_id as "memberId", g.order_id as "orderId",
+               g.package_type as "package",
                CASE
-                  WHEN renwal::text = '1' OR entry_type = '1' OR entry_type ILIKE 'New%' OR gm_type = '1' OR gm_type ILIKE 'New%' THEN 'New'
-                  WHEN renwal::text = '0' OR entry_type = '0' OR entry_type ILIKE 'Rc%' OR gm_type = '0' OR gm_type ILIKE 'Rc%' THEN 'Rc'
-                  WHEN renwal::text = '2' OR entry_type = '2' OR entry_type ILIKE 'Ec%' OR gm_type = '2' OR gm_type ILIKE 'Ec%' THEN 'Ec'
-                  WHEN renwal::text = '3' OR entry_type = '3' OR entry_type ILIKE 'Rc-Up%' OR gm_type = '3' OR gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
                   ELSE 'New'
                 END as "type",
-               expiry_date as "expireDate",
-               dropout as "dropout",
-               status,
-               proof_url as "proofUrl", notes
-        FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false
-          AND (entry_type = 'Partial' OR coalesce(is_partial_payment,false) = true)
+               g.expiry_date as "expireDate",
+               g.dropout as "dropout",
+               g.status,
+               g.proof_url as "proofUrl", g.notes,
+               g.installments,
+               (COALESCE(g.customer_dollar, g.amount_usd, 0) - COALESCE(pr.paid, 0)) <= 0.009 AS "fullyPaid",
+               COALESCE(pr.paid, 0) AS "partialPaidAmount"
+        FROM drm.gm_entries g
+        LEFT JOIN (
+          SELECT gm_id, SUM(amount_usd) AS paid FROM drm.gm_partial_receipts GROUP BY gm_id
+        ) pr ON pr.gm_id = g.id::text
+        WHERE coalesce(g.is_deleted, false) = false
+          AND (g.entry_type = 'Partial' OR coalesce(g.is_partial_payment,false) = true)
+          AND NOT EXISTS (
+            SELECT 1 FROM drm.ab_payments ap
+            WHERE ap.gm_entry_id = g.id AND coalesce(ap.is_deleted, false) = false
+          )
           ${dateWhere}
-        ORDER BY created_at DESC LIMIT 50
+        ORDER BY g.created_at DESC LIMIT 50
       `, params);
 
       // 4. Loan Payments — columns matching PHP: #, Drm id, Joining Date, Company, Sale Person, Dollar, Pkr, Dollar Rate, Ex-Disc, Ex-Disc Pkr, loan Amount, Package, Type, Expire, Dropout, Status, Action
@@ -4598,6 +4647,24 @@ export function registerAccountRoutes(app: Express) {
         notUsed: { count: txNotUsed.rows.length, sum: txNotUsed.rows.reduce((s: number, r: any) => s + Number(r.amount || 0), 0), items: txNotUsed.rows },
       };
 
+      // Installments collected/total per Partial GM — same waterfall-allocation
+      // used for the Installments tab, kept consistent across both views.
+      const partialPaymentsWithInstallments = partialPayments.rows.map((row: any) => {
+        const instArr = Array.isArray(row.installments) ? row.installments : [];
+        let remainingPaid = Number(row.partialPaidAmount || 0);
+        let installmentsCollected = 0;
+        for (const inst of instArr) {
+          const d = Number(inst?.dollar || 0);
+          if (d > 0 && remainingPaid >= d - 0.009) {
+            installmentsCollected++;
+            remainingPaid -= d;
+          } else {
+            break;
+          }
+        }
+        return { ...row, installmentsTotal: instArr.length, installmentsCollected };
+      });
+
       res.json({
         walletStats,
         fullPayments: fullPayments.rows,
@@ -4609,7 +4676,7 @@ export function registerAccountRoutes(app: Express) {
           received: row.pkr
         })),
         dollarBuys: dollarBuys.rows,
-        partialPayments: partialPayments.rows,
+        partialPayments: partialPaymentsWithInstallments,
         loans: loans.rows,
         pendingApprovals: pendingApprovals.rows,
         alibabaPayments: alibabaPayments.rows,
@@ -4834,9 +4901,9 @@ export function registerAccountRoutes(app: Express) {
         INSERT INTO drm.dollar_buying (
           buyer_id, buyer_name, buyer_reference, paypal_email, account_no,
           cheque_id, payment_method, type, dollar_amount, dollar_rate,
-          pkr_amount, date, screenshot_url, detail, created_by_user_id
+          pkr_amount, date, screenshot_url, detail, remaining_usd, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $9, $15)
         RETURNING *
       `, [
         data.buyerId, data.buyerName, data.buyerReference, data.paypalEmail, data.accountNo,
@@ -4857,6 +4924,274 @@ export function registerAccountRoutes(app: Express) {
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: "Failed to delete" });
+    }
+  });
+
+  // GET /api/account/dollar-system/buyer-dollar-short?min=&max=
+  // Real buyer "buy" records with an unspent balance, for the Pay Alibaba allocation modal.
+  app.get("/api/account/dollar-system/buyer-dollar-short", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const min = Number(req.query.min ?? 0) || 0;
+      const max = Number(req.query.max ?? 500) || 500;
+      const { rows } = await pool.query(`
+        SELECT
+          b.id,
+          b.buyer_id              AS buyer_main,
+          b.buyer_name             AS name,
+          b.buyer_reference,
+          b.paypal_email           AS buyer_reference_paypal_email,
+          b.dollar_rate,
+          COALESCE(b.remaining_usd, b.dollar_amount) AS dollars,
+          b.dollar_amount          AS total_short_dollars,
+          b.date                   AS buy_date,
+          b.pkr_amount
+        FROM drm.dollar_buying b
+        WHERE COALESCE(b.remaining_usd, b.dollar_amount) > 0
+          AND COALESCE(b.remaining_usd, b.dollar_amount) BETWEEN $1 AND $2
+        ORDER BY COALESCE(b.remaining_usd, b.dollar_amount) ASC
+      `, [min, max]);
+      res.json({ records: rows });
+    } catch (err) {
+      console.error("Failed to fetch buyer dollar short records:", err);
+      res.status(500).json({ error: "Failed to fetch buyer dollar short records" });
+    }
+  });
+
+  // POST /api/account/dollar-system/allocate-payment
+  // Real "Pay Alibaba" submission: spends down the selected dollar_buying rows'
+  // remaining balance and creates the resulting ab_payments record, atomically.
+  app.post("/api/account/dollar-system/allocate-payment", requireFinancialPermission(FINANCIAL_ACTIONS.abPaymentCreate), async (req, res) => {
+    try {
+      const {
+        gmEntryId, gmDrmId, companyName, memberId, orderId,
+        targetDollar, customerPaidPkr, customDollarRate, dollarRate, profitOrLoss,
+        type, detail, allocations,
+      } = req.body;
+
+      const target = Number(targetDollar);
+      if (!target || target <= 0) {
+        return res.status(400).json({ error: "targetDollar must be positive" });
+      }
+      if (!Array.isArray(allocations) || allocations.length === 0) {
+        return res.status(400).json({ error: "At least one allocation is required" });
+      }
+
+      const sumUsed = allocations.reduce((acc: number, a: any) => acc + (Number(a.useDollar) || 0), 0);
+      if (Math.abs(sumUsed - target) > 0.01) {
+        return res.status(400).json({ error: `Allocated amount ($${sumUsed.toFixed(2)}) must equal the order amount ($${target.toFixed(2)})` });
+      }
+
+      const userId = (req.user as any)?.userId || null;
+
+      const result = await withPgTransaction(async (client: any) => {
+        let abId: string | null = null;
+        for (const a of allocations) {
+          const useDollar = Number(a.useDollar) || 0;
+          if (useDollar <= 0) continue;
+
+          const { rows: buyRows } = await client.query(
+            `SELECT * FROM drm.dollar_buying WHERE id = $1 FOR UPDATE`,
+            [a.dollarBuyingId]
+          );
+          if (!buyRows.length) {
+            throw new ApiError(404, "NOT_FOUND", `Buy record ${a.dollarBuyingId} not found`);
+          }
+          const buy = buyRows[0];
+          const available = Number(buy.remaining_usd ?? buy.dollar_amount);
+          if (useDollar - available > 0.01) {
+            throw new ApiError(400, "BAD_REQUEST", `Only $${available.toFixed(2)} remains on buy ${a.dollarBuyingId}`);
+          }
+
+          await client.query(
+            `UPDATE drm.dollar_buying SET remaining_usd = $2, updated_at = NOW() WHERE id = $1`,
+            [a.dollarBuyingId, (available - useDollar).toFixed(2)]
+          );
+        }
+
+        const { rows: abRows } = await client.query(`
+          INSERT INTO drm.ab_payments
+            (ab_id, order_id, member_id, gm_drm_id, gm_entry_id, company_name,
+             amount_usd, amount_pkr, rate, dollar_rate, type, notes,
+             status, created_by, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,NOW(),NOW())
+          RETURNING *
+        `, [
+          abId, orderId || null, memberId || null, gmDrmId || null, gmEntryId || null, companyName || null,
+          target, Number(customerPaidPkr) || 0, customDollarRate ? Number(customDollarRate) : null,
+          dollarRate ? Number(dollarRate) : null, type || null,
+          detail || null, userId,
+        ]);
+        const abPayment = abRows[0];
+
+        for (const a of allocations) {
+          const useDollar = Number(a.useDollar) || 0;
+          if (useDollar <= 0) continue;
+          await client.query(`
+            INSERT INTO drm.dollar_allocations
+              (dollar_buying_id, ab_payment_id, amount_usd, rate, pkr_amount,
+               custom_dollar_rate, member_id, order_id, created_by_user_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          `, [
+            a.dollarBuyingId, abPayment.id, useDollar, a.rate ? Number(a.rate) : null,
+            a.rate ? (useDollar * Number(a.rate)) : null,
+            customDollarRate ? Number(customDollarRate) : null,
+            memberId || null, orderId || null, userId,
+          ]);
+        }
+
+        await AuditLogService.record({
+          actorUserId: userId,
+          action: 'ab_payment_created',
+          module: 'dollar_system',
+          entityType: 'ab_payment',
+          entityId: String(abPayment.id),
+          after: { status: 'pending', amountUsd: target, gmDrmId, allocations: allocations.length, profitOrLoss },
+          req,
+        });
+
+        return abPayment;
+      });
+
+      return res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      console.error("Failed to allocate dollar payment:", err);
+      res.status(500).json({ error: "Failed to allocate payment" });
+    }
+  });
+
+  // GET /api/account/dollar-system/paid-alibaba — the "Paid Alibaba" ledger:
+  // every ab_payments row (i.e. every GM entry that's had a Pay Alibaba
+  // allocation submitted), with the full legacy Paid-Alibaba field set.
+  app.get("/api/account/dollar-system/paid-alibaba", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { search, fromDate, toDate, status } = req.query;
+      const conditions: string[] = ["coalesce(ap.is_deleted, false) = false"];
+      const params: any[] = [];
+
+      if (search) {
+        params.push(`%${String(search)}%`);
+        const p = params.length;
+        conditions.push(`(ap.company_name ILIKE $${p} OR g.drm_id ILIKE $${p} OR ap.order_id ILIKE $${p} OR ap.member_id ILIKE $${p})`);
+      }
+      if (fromDate) {
+        params.push(new Date(String(fromDate)));
+        conditions.push(`ap.created_at >= $${params.length}`);
+      }
+      if (toDate) {
+        params.push(new Date(String(toDate)));
+        conditions.push(`ap.created_at <= $${params.length}`);
+      }
+      if (status && status !== "all") {
+        params.push(String(status));
+        conditions.push(`ap.status = $${params.length}`);
+      }
+
+      const where = conditions.join(" AND ");
+      const { rows } = await pool.query(`
+        SELECT
+          ap.id,
+          ap.created_at                 AS "payDate",
+          g.created_at                  AS "gmBvDate",
+          g.drm_id                      AS "drmId",
+          -- member_id/dollar_rate were only captured on ab_payments starting with
+          -- the fuller Pay Alibaba build — fall back to the linked GM entry's own
+          -- values for payments submitted before that, so historical rows aren't
+          -- left blank.
+          COALESCE(ap.member_id, g.member_id) AS "memberId",
+          ap.order_id                   AS "orderId",
+          ap.company_name               AS "company",
+          COALESCE(u.full_name, u.name, u.username) AS "person",
+          ap.amount_usd                 AS "dollar",
+          COALESCE(ap.dollar_rate, g.dollar_rate) AS "tdRate",
+          g.package_type                AS "package",
+          -- type was only captured on ab_payments starting with the fuller Pay
+          -- Alibaba build — fall back to the linked GM entry's own entry type for
+          -- payments submitted before that.
+          COALESCE(ap.type, CASE
+            WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
+            WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
+            WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
+            WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+            ELSE NULL
+          END)                          AS "type",
+          COALESCE(g.extra_discount_usd, 0) AS "exDisc",
+          ap.status                     AS "payStatus",
+          -- Report: compares what the order was priced at (package price × the
+          -- order's own listed dollar rate) against what this payment actually
+          -- moved (T-Dollar × TD Rate) — a different lens from Cus $ Profit, which
+          -- compares the customer's real paid PKR against the blended buyer rate.
+          CASE WHEN COALESCE(ap.dollar_rate, g.dollar_rate) IS NOT NULL AND COALESCE(ap.dollar_rate, g.dollar_rate) > 0
+               THEN (
+                 (COALESCE(g.package_price_usd, ap.amount_usd) * COALESCE(g.dollar_rate, ap.dollar_rate))
+                 - (ap.amount_usd * COALESCE(ap.dollar_rate, g.dollar_rate))
+               ) / COALESCE(ap.dollar_rate, g.dollar_rate)
+               ELSE NULL END            AS "reportProfitLoss",
+          ap.rate                       AS "cusRate",
+          CASE WHEN ap.rate IS NOT NULL AND ap.rate > 0
+               THEN ((ap.amount_pkr - (ap.amount_usd * ap.rate)) / ap.rate)
+               ELSE NULL END            AS "cusProfit",
+          ap.amount_pkr                 AS "pkr",
+          ap.proof_url                  AS "proofUrl",
+          ap.notes                      AS "detail",
+          ap.gm_entry_id                AS "gmEntryId",
+          ap.gm_drm_id                  AS "gmDrmId"
+        FROM drm.ab_payments ap
+        LEFT JOIN drm.gm_entries g ON g.id = ap.gm_entry_id
+        LEFT JOIN drm.users u ON u.id::text = ap.created_by::text
+        WHERE ${where}
+        ORDER BY ap.created_at DESC
+        LIMIT 200
+      `, params);
+
+      const totals = rows.reduce((acc: any, r: any) => {
+        acc.totalDollar += Number(r.dollar || 0);
+        acc.totalExDisc += Number(r.exDisc || 0);
+        const cusProfit = Number(r.cusProfit || 0);
+        if (cusProfit > 0) acc.cusProfit += cusProfit;
+        else if (cusProfit < 0) acc.cusLoss += cusProfit;
+        return acc;
+      }, { totalDollar: 0, totalExDisc: 0, cusProfit: 0, cusLoss: 0 });
+
+      return res.json({
+        records: rows,
+        counts: {
+          processing: rows.filter((r: any) => r.payStatus === "processing").length,
+          paid: rows.filter((r: any) => r.payStatus === "paid").length,
+          all: rows.length,
+        },
+        totals,
+      });
+    } catch (err) {
+      console.error("Failed to fetch Paid Alibaba ledger:", err);
+      res.status(500).json({ error: "Failed to fetch Paid Alibaba ledger" });
+    }
+  });
+
+  // GET /api/account/dollar-system/paid-alibaba/:id/buyer-detail — the "Order
+  // Details" breakdown: which buyer-dollar buys funded this payment, how much of
+  // each was used, and that buy's current remaining balance.
+  app.get("/api/account/dollar-system/paid-alibaba/:id/buyer-detail", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          db.buyer_name    AS "buyerName",
+          db.paypal_email  AS "email",
+          db.dollar_amount AS "totalShort",
+          db.dollar_rate   AS "rate",
+          da.amount_usd    AS "use",
+          db.remaining_usd AS "balance"
+        FROM drm.dollar_allocations da
+        JOIN drm.dollar_buying db ON db.id = da.dollar_buying_id
+        WHERE da.ab_payment_id = $1
+        ORDER BY da.created_at ASC
+      `, [req.params.id]);
+      res.json({ records: rows });
+    } catch (err) {
+      console.error("Failed to fetch buyer detail:", err);
+      res.status(500).json({ error: "Failed to fetch buyer detail" });
     }
   });
 

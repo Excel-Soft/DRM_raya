@@ -35,6 +35,7 @@ type GmPoolRow = {
   salesPersonName?: string;
   package?: string;
   type?: string;
+  packagePrice?: number | string;
   orderDollar?: number | string;
   customerDollar?: number | string;
   dollarRate?: number | string;
@@ -1636,6 +1637,7 @@ export default function GmPoolAddGm() {
                         "Sale Person",
                         "Package",
                         "Type",
+                        "Package Price",
                         "Order Dollar",
                         "Customer Dollar",
                         "Dollar Rate",
@@ -1663,7 +1665,7 @@ export default function GmPoolAddGm() {
                   <TableBody>
                     {displayedRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={24} className="text-center text-muted-foreground">
+                        <TableCell colSpan={25} className="text-center text-muted-foreground">
                           No data available in table
                         </TableCell>
                       </TableRow>
@@ -1679,6 +1681,7 @@ export default function GmPoolAddGm() {
                           <TableCell>{row.salesPersonName || "-"}</TableCell>
                           <TableCell>{row.package || "-"}</TableCell>
                           <TableCell>{row.type || "-"}</TableCell>
+                          <TableCell>{row.packagePrice ?? "-"}</TableCell>
                           <TableCell>{row.orderDollar ?? "-"}</TableCell>
                           <TableCell>{row.customerDollar ?? "-"}</TableCell>
                           <TableCell>{row.dollarRate ?? "-"}</TableCell>
