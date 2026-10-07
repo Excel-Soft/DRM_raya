@@ -69,6 +69,7 @@ const AttendanceTodo = lazy(() => import("@/pages/attendance-todo"));
 const PerformanceEvaluation = lazy(() => import("@/pages/performance-evaluation"));
 const AccountInvoices = lazy(() => import("@/pages/account-invoices"));
 const AccountLedger = lazy(() => import("@/pages/account-ledger"));
+const AccountHistory = lazy(() => import("@/pages/account-history"));
 const OfficeExpenses = lazy(() => import("@/pages/office-expenses"));
 const ChartOfAccounts = lazy(() => import("@/pages/chart-of-accounts"));
 const GeneralLedger = lazy(() => import("@/pages/general-ledger"));
@@ -432,6 +433,7 @@ function Router() {
       <Route path="/account/dollar-buying" component={DollarBuying} />
       <Route path="/account/dollar-advance-payment" component={DollarAdvancePayment} />
       <Route path="/account/ledger" component={AccountLedger} />
+      <Route path="/account/history/:companyId" component={AccountHistory} />
       <Route path="/office/expenses" component={OfficeExpenses} />
       <Route path="/office/vas" component={OfficeVasPage} />
       <Route path="/office/cheques" component={ChequeSystem} />

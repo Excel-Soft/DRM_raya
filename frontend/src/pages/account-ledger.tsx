@@ -28,6 +28,7 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -52,6 +53,10 @@ interface LedgerEntry {
     balanceAfter: string | null;
     entryDate: string;
     createdAt: string;
+    accountName?: string;
+    grandTotal?: string;
+    pay?: string;
+    due?: string;
 }
 
 interface LedgerResponse {
@@ -95,6 +100,7 @@ const categories = [
 
 export default function AccountLedger() {
     const { toast } = useToast();
+    const [, setLocation] = useLocation();
     const [dialogOpen, setDialogOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [companyFilter, setCompanyFilter] = useState("");
@@ -188,13 +194,6 @@ export default function AccountLedger() {
                         <span className="text-slate-300 px-0.5">/</span>
                         <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-600 to-teal-500 uppercase">LEDGER</span>
                     </div>
-                    <Button
-                        onClick={() => setDialogOpen(true)}
-                        className="bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-700 hover:to-teal-600 text-white shadow-md border-none px-6 h-9 transition-all duration-300 hover:scale-105 active:scale-95 text-[12px] font-bold uppercase tracking-wider"
-                    >
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add New Entry
-                    </Button>
                 </div>
 
                 {/* Summary Section */}
@@ -351,9 +350,9 @@ export default function AccountLedger() {
                                         entries.map((entry, i) => {
                                             const subTotal = parseFloat(entry.amount);
                                             const discount = 0;
-                                            const grandTotal = subTotal - discount;
-                                            const pay = entry.entryType === "Credit" ? grandTotal : 0;
-                                            const due = entry.entryType === "Debit" ? grandTotal : 0;
+                                            const grandTotal = entry.grandTotal ? parseFloat(entry.grandTotal) : subTotal - discount;
+                                            const pay = entry.pay ? parseFloat(entry.pay) : (entry.entryType === "Credit" ? grandTotal : 0);
+                                            const due = entry.due ? parseFloat(entry.due) : (entry.entryType === "Debit" ? grandTotal : 0);
                                             
                                             const coName = entry.description.split(':').pop()?.trim() || entry.description;
 
@@ -361,7 +360,12 @@ export default function AccountLedger() {
                                                 <TableRow key={entry.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-slate-100 transition-colors dark:border-zinc-800">
                                                     <TableCell className="text-[13px] font-bold text-slate-400 py-4 pl-6">{(currentPage - 1) * pageSize + i + 1}</TableCell>
                                                     <TableCell className="text-[13px] font-black text-slate-700 py-4 whitespace-nowrap dark:text-zinc-400">
-                                                        {coName}
+                                                        <div>{coName}</div>
+                                                        {entry.accountName && (
+                                                            <div className="text-[10px] text-slate-400 font-medium tracking-wide mt-1 uppercase">
+                                                                {entry.accountName}
+                                                            </div>
+                                                        )}
                                                     </TableCell>
                                                     <TableCell className="text-[13px] font-bold text-slate-600 py-4 text-right dark:text-zinc-300">
                                                         {subTotal.toLocaleString()}
@@ -387,6 +391,7 @@ export default function AccountLedger() {
                                                         <div className="flex items-center justify-center gap-2">
                                                             <button 
                                                                 title="View Details"
+                                                                onClick={() => setLocation(`/account/history/${encodeURIComponent(coName)}`)}
                                                                 className="h-7 w-7 rounded-full bg-[#059669] shadow-sm hover:bg-[#047857] flex items-center justify-center transition-colors shadow-emerald-100"
                                                             >
                                                                 <User className="h-3.5 w-3.5 text-white" />
