@@ -716,9 +716,17 @@ export function registerGmPoolRoutes(app: Express) {
           -- A Partial GM is only "fullyPaid" once its installment collection
           -- (tracked via gm_partial_receipts) has reached its target. Non-partial
           -- GMs are trivially fullyPaid — the gate below only applies to Partial.
+          -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
+          -- total) — an installment plan can commit to more than a stale
+          -- customer_dollar figure, and that larger, user-authored plan wins.
           (
             NOT coalesce(is_partial_payment,false)
-            OR (COALESCE(customer_dollar, amount_usd, 0) - COALESCE(pr.paid, 0)) <= 0.009
+            OR (
+              GREATEST(
+                COALESCE(customer_dollar, amount_usd, 0),
+                (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(installments, '[]'::jsonb)) elem)
+              ) - COALESCE(pr.paid, 0)
+            ) <= 0.009
           ) AS "fullyPaid",
           COALESCE(pr.paid, 0) AS "partialPaidAmount"
         FROM drm.gm_entries
@@ -1477,7 +1485,7 @@ export function registerGmPoolRoutes(app: Express) {
       const hodApproveParams: any[] = [id, req.user.userId, comment || null, extraDiscountHod ?? 0];
       const hodApproveScope = await gmApprovalScopeClause(req, hodApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, extra_discount_hod = $4, account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_status = 'Approved', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, extra_discount_hod = $4, account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodApproveScope} RETURNING *`,
         hodApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -2393,6 +2401,18 @@ export function registerGmPoolRoutes(app: Express) {
   // recordGmSalesAudit (best-effort). `gm_id` is a plain varchar link to
   // drm.gm_entries(id); existence is validated here in the app layer.
   // ===========================================================================
+  // A GM's recorded customer_dollar/amount_usd can go stale relative to an
+  // installment plan that was actually scheduled for more (e.g. the plan was
+  // built off the package price while customer_dollar reflects a separate,
+  // smaller figure). Whatever the installment schedule actually commits to
+  // collecting is the real, user-authored source of truth for "what's owed" —
+  // so the effective target is whichever is larger.
+  function effectiveTarget(recordedTarget: number, installments: any): number {
+    const rows = Array.isArray(installments) ? installments : [];
+    const scheduledTotal = rows.reduce((sum, r) => sum + Number(r?.dollar || 0), 0);
+    return Math.max(recordedTarget, Number(scheduledTotal.toFixed(2)));
+  }
+
   async function loadPartialSummary(id: string, target: number) {
     const paidRes = await pool.query(
       "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
@@ -2435,7 +2455,7 @@ export function registerGmPoolRoutes(app: Express) {
           WHERE r.gm_id = $1 ORDER BY r.receipt_date ASC, r.created_at ASC`,
         [id],
       );
-      const target = Number(gm.rows[0].target || 0);
+      const target = effectiveTarget(Number(gm.rows[0].target || 0), gm.rows[0].installments);
       const summary = await loadPartialSummary(id, target);
 
       // Receipt List "Due": running remaining balance on the overall target as
@@ -2453,13 +2473,19 @@ export function registerGmPoolRoutes(app: Express) {
       let remainingPaid = summary.paid;
       const installments = rawInstallments.map((row: any, idx: number) => {
         const dollar = Number(row.dollar || 0);
+        const pkr = Number(row.pkr || 0);
         const pay = Number(Math.max(0, Math.min(dollar, remainingPaid)).toFixed(2));
         remainingPaid = Number((remainingPaid - pay).toFixed(2));
+        // Rows added before this field existed have no stored rate — derive a
+        // display-only rate from pkr/dollar so the column isn't blank for them.
+        const dollarRate = row.dollarRate != null ? Number(row.dollarRate)
+          : (dollar > 0 && pkr > 0 ? Number((pkr / dollar).toFixed(4)) : null);
         return {
           no: idx + 1,
           installmentDate: row.payDate || null,
           grandTotalDollar: dollar,
-          grandTotalPkr: Number(row.pkr || 0),
+          grandTotalPkr: pkr,
+          dollarRate,
           chequeNo: row.chequeNo || null,
           pay,
           due: Number((dollar - pay).toFixed(2)),
@@ -2493,6 +2519,7 @@ export function registerGmPoolRoutes(app: Express) {
   const installmentRowSchema = z.object({
     dollar: z.coerce.number().positive(),
     pkr: z.coerce.number().nonnegative().optional().default(0),
+    dollarRate: z.coerce.number().nonnegative().optional(),
     chequeNo: z.string().trim().max(80).optional(),
     payDate: z.coerce.date().optional(),
   });
@@ -2521,6 +2548,7 @@ export function registerGmPoolRoutes(app: Express) {
         const newRows = input.rows.map((r) => ({
           dollar: r.dollar,
           pkr: r.pkr ?? 0,
+          dollarRate: r.dollarRate ?? null,
           chequeNo: r.chequeNo || null,
           payDate: r.payDate ? r.payDate.toISOString().slice(0, 10) : null,
           createdAt: now,
@@ -2572,6 +2600,7 @@ export function registerGmPoolRoutes(app: Express) {
           ...updated[idx],
           dollar: input.dollar,
           pkr: input.pkr ?? 0,
+          dollarRate: input.dollarRate ?? updated[idx].dollarRate ?? null,
           chequeNo: input.chequeNo || null,
           payDate: input.payDate ? input.payDate.toISOString().slice(0, 10) : null,
         };
@@ -2606,7 +2635,7 @@ export function registerGmPoolRoutes(app: Express) {
         const { id } = req.params;
         const input = partialReceiptSchema.parse(req.body ?? {});
         const gm = await pool.query(
-          "SELECT id, is_partial_payment, is_loan, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          "SELECT id, is_partial_payment, is_loan, installments, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
           [id],
         );
         if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
@@ -2616,7 +2645,7 @@ export function registerGmPoolRoutes(app: Express) {
         if (Number(gm.rows[0].is_loan) === 1) {
           return sendError(res, 409, "NOT_ELIGIBLE_FOR_RECEIPTS", "Loan GMs are tracked via loan terms, not receipts");
         }
-        const target = Number(gm.rows[0].target || 0);
+        const target = effectiveTarget(Number(gm.rows[0].target || 0), gm.rows[0].installments);
         const before = await loadPartialSummary(id, target);
         if (target > 0 && input.amountUsd - before.remaining > 0.009) {
           return sendError(
@@ -2670,14 +2699,14 @@ export function registerGmPoolRoutes(app: Express) {
         if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
         const { id } = req.params;
         const gm = await pool.query(
-          "SELECT id, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
+          "SELECT id, is_partial_payment, installments, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1 AND is_deleted = false",
           [id],
         );
         if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
         if (Number(gm.rows[0].is_partial_payment) !== 1) {
           return sendError(res, 409, "NOT_PARTIAL_GM", "Only a partial-payment GM can be finalised this way");
         }
-        const summary = await loadPartialSummary(id, Number(gm.rows[0].target || 0));
+        const summary = await loadPartialSummary(id, effectiveTarget(Number(gm.rows[0].target || 0), gm.rows[0].installments));
         if (!summary.fullyPaid) {
           return sendError(
             res,

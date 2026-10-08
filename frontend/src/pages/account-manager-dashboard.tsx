@@ -464,6 +464,100 @@ export default function AccountManagerDashboard() {
     });
     const monthlyTaskItems = Array.isArray(monthlyTaskQuery.data) ? monthlyTaskQuery.data : [];
 
+    // Martini Status: real buyer-dollar PKR liability (how much of a dollar
+    // purchase hasn't yet been repaid to the buyer) — ported from the legacy
+    // account_dash.php "Martini Status" tab / buyer_dollar_ab_show_acc_not_pay().
+    const [martiniBuyerRefFilter, setMartiniBuyerRefFilter] = useState<string>("all");
+    const [martiniInstallmentsOpen, setMartiniInstallmentsOpen] = useState(false);
+    const [martiniPaymentOpen, setMartiniPaymentOpen] = useState(false);
+    const [selectedMartiniRecord, setSelectedMartiniRecord] = useState<any>(null);
+    const [martiniPaymentForm, setMartiniPaymentForm] = useState({ amountPkr: "", status: "", note: "", payDate: "", imageFile: null as File | null });
+
+    const martiniBadgeCountQuery = useQuery({
+        queryKey: ["account-martini-status-count"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/account/dollar-system/martini-status/count");
+            if (!res.ok) throw new Error("Failed to fetch count");
+            return res.json();
+        },
+    });
+    const martiniBadgeCount = martiniBadgeCountQuery.data?.count ?? 0;
+
+    const martiniStatusQuery = useQuery({
+        queryKey: ["account-martini-status", martiniBuyerRefFilter],
+        queryFn: async () => {
+            const qs = martiniBuyerRefFilter !== "all" ? `?buyerReference=${encodeURIComponent(martiniBuyerRefFilter)}` : "";
+            const res = await apiRequest("GET", `/api/account/dollar-system/martini-status${qs}`);
+            if (!res.ok) throw new Error("Failed to fetch martini status");
+            return res.json();
+        },
+        enabled: filterType === "martini-status",
+    });
+    const martiniRecords: any[] = martiniStatusQuery.data?.records || [];
+    const martiniTotals = martiniStatusQuery.data?.totals || { totalPkr: 0, totalPaid: 0, totalRemaining: 0, totalDollar: 0 };
+
+    const martiniBuyerRefsQuery = useQuery({
+        queryKey: ["account-martini-status-buyer-refs"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/account/dollar-system/martini-status/buyer-references");
+            if (!res.ok) throw new Error("Failed to fetch buyer references");
+            return res.json();
+        },
+        enabled: filterType === "martini-status",
+    });
+    const martiniBuyerRefs: string[] = martiniBuyerRefsQuery.data?.records || [];
+
+    const martiniInstallmentsQuery = useQuery({
+        queryKey: ["account-martini-installments", selectedMartiniRecord?.id],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/account/dollar-system/martini-status/${selectedMartiniRecord.id}/installments`);
+            if (!res.ok) throw new Error("Failed to fetch installment history");
+            return res.json();
+        },
+        enabled: !!selectedMartiniRecord?.id && martiniInstallmentsOpen,
+    });
+    const martiniInstallments: any[] = martiniInstallmentsQuery.data?.records || [];
+
+    const martiniPaymentMutation = useMutation({
+        mutationFn: async () => {
+            if (!selectedMartiniRecord) throw new Error("No record selected");
+            const amount = Number(martiniPaymentForm.amountPkr);
+            if (!amount || amount <= 0) throw new Error("Amount must be greater than 0");
+
+            let imageUrl: string | undefined;
+            if (martiniPaymentForm.imageFile) {
+                const fd = new FormData();
+                fd.append("file", martiniPaymentForm.imageFile);
+                const uploadRes = await apiRequest("POST", "/api/account/dollar-system/martini-status/upload-image", fd);
+                if (!uploadRes.ok) throw new Error("Image upload failed");
+                const uploadData = await uploadRes.json();
+                imageUrl = uploadData.url;
+            }
+
+            const res = await apiRequest("POST", `/api/account/dollar-system/martini-status/${selectedMartiniRecord.id}/payment`, {
+                amountPkr: amount,
+                status: martiniPaymentForm.status || undefined,
+                note: martiniPaymentForm.note || undefined,
+                payDate: martiniPaymentForm.payDate || undefined,
+                imageUrl,
+            });
+            if (!res.ok) {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData?.error || "Failed to record payment");
+            }
+            return res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["account-martini-status"] });
+            queryClient.invalidateQueries({ queryKey: ["account-martini-status-count"] });
+            queryClient.invalidateQueries({ queryKey: ["account-martini-installments"] });
+            setMartiniPaymentOpen(false);
+            setMartiniPaymentForm({ amountPkr: "", status: "", note: "", payDate: "", imageFile: null });
+            toast({ title: "Payment recorded", description: "Installment added successfully." });
+        },
+        onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed to record payment", variant: "destructive" }),
+    });
+
     // Only surface tasks whose recurring day-of-month falls within the next 7
     // days (rolling into next month once this month's date has passed) — a
     // week's notice so the Account Manager can see it and pay it in time.
@@ -838,7 +932,7 @@ export default function AccountManagerDashboard() {
                                 >
                                     <span className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Martini Status</span>
                                     <div className="flex items-center justify-center bg-rose-500 text-white w-5 h-5 rounded-full text-[10px] font-bold">
-                                        {createProjectFilteredItems.length}
+                                        {martiniBadgeCount}
                                     </div>
                                 </div>
                             </div>
@@ -905,6 +999,124 @@ export default function AccountManagerDashboard() {
                                     </div>
                                 </div>
                             )}
+                            </>
+                          ) : filterType === 'martini-status' ? (
+                            <>
+                            <div className="flex items-center justify-between gap-2 px-6 py-3 border-b flex-wrap">
+                                <p className="text-sm text-slate-500 dark:text-zinc-400">Buyer Dollar Pending Accounts</p>
+                                <div className="flex items-center gap-2">
+                                    <Select value={martiniBuyerRefFilter} onValueChange={setMartiniBuyerRefFilter}>
+                                        <SelectTrigger className="h-9 w-[220px] text-sm">
+                                            <SelectValue placeholder="All Buyer References" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All Buyer References</SelectItem>
+                                            {martiniBuyerRefs.map((ref) => (
+                                                <SelectItem key={ref} value={ref}>{ref}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    {martiniBuyerRefFilter !== "all" && (
+                                        <Button variant="outline" size="sm" onClick={() => setMartiniBuyerRefFilter("all")}>Clear</Button>
+                                    )}
+                                </div>
+                            </div>
+                            <Table>
+                                <TableHeader className="bg-slate-100/50">
+                                    <TableRow>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Buyer</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Buyer Reference</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Date</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Email</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">Total PKR</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">Paid PKR</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">Remaining PKR</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">Rate</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">$</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
+                                        <TableHead className="text-center font-bold text-slate-700 dark:text-zinc-400">Installments</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-700 dark:text-zinc-400">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {martiniStatusQuery.isLoading ? (
+                                        <TableRow>
+                                            <TableCell colSpan={12} className="text-center text-slate-400 py-8">Loading...</TableCell>
+                                        </TableRow>
+                                    ) : martiniRecords.length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={12} className="text-center text-slate-400 py-8">No pending buyer dollar accounts</TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        martiniRecords.map((r: any) => {
+                                            const totalPkr = Number(r.pkr_amount || 0);
+                                            const paidPkr = Number(r.paid_pkr || 0);
+                                            const remainingPkr = Number(r.remaining_pkr || 0);
+                                            const progress = totalPkr > 0 ? Math.min(100, Math.round((paidPkr / totalPkr) * 100)) : 0;
+                                            const statusColor = r.pay_status === "Paid" ? "bg-emerald-500" : r.pay_status === "Delay" ? "bg-rose-500" : r.pay_status === "Refund" ? "bg-slate-500" : "bg-amber-500";
+                                            return (
+                                                <TableRow key={r.id}>
+                                                    <TableCell className="font-medium text-slate-700 dark:text-zinc-300">
+                                                        {r.buyer_name || r.buyer_name_full || "-"}
+                                                    </TableCell>
+                                                    <TableCell className="text-slate-600 dark:text-zinc-400">{r.buyer_reference || "N/A"}</TableCell>
+                                                    <TableCell className="text-slate-600 dark:text-zinc-400">{r.buy_date ? format(new Date(r.buy_date), "dd-MM-yyyy") : "-"}</TableCell>
+                                                    <TableCell className="min-w-[140px]">
+                                                        <div className="text-xs text-slate-500 dark:text-zinc-400">{r.paypal_email || "-"}</div>
+                                                        <div className="h-1 w-full bg-slate-100 dark:bg-zinc-800 rounded mt-1">
+                                                            <div className="h-1 bg-emerald-500 rounded" style={{ width: `${progress}%` }} />
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-400">{progress}% paid</div>
+                                                    </TableCell>
+                                                    <TableCell className="text-right">PKR {totalPkr.toLocaleString()}</TableCell>
+                                                    <TableCell className="text-right text-emerald-600">PKR {paidPkr.toLocaleString()}</TableCell>
+                                                    <TableCell className="text-right text-rose-500">PKR {remainingPkr.toLocaleString()}</TableCell>
+                                                    <TableCell className="text-right">{r.dollar_rate}</TableCell>
+                                                    <TableCell className="text-right">$ {r.dollar_amount}</TableCell>
+                                                    <TableCell>
+                                                        <Badge className={`${statusColor} text-white hover:${statusColor}`}>{r.pay_status}</Badge>
+                                                    </TableCell>
+                                                    <TableCell className="text-center">
+                                                        <Button
+                                                            variant="outline" size="icon" className="h-8 w-8 rounded-full"
+                                                            title="View Installments"
+                                                            onClick={() => { setSelectedMartiniRecord(r); setMartiniInstallmentsOpen(true); }}
+                                                        >
+                                                            <Eye className="h-4 w-4" />
+                                                        </Button>
+                                                    </TableCell>
+                                                    <TableCell className="text-right">
+                                                        <Button
+                                                            size="icon" className="h-8 w-8 rounded-full bg-emerald-600 hover:bg-emerald-700"
+                                                            title="Payment / Installment"
+                                                            onClick={() => {
+                                                                setSelectedMartiniRecord(r);
+                                                                setMartiniPaymentForm({ amountPkr: "", status: "", note: "", payDate: "", imageFile: null });
+                                                                setMartiniPaymentOpen(true);
+                                                            }}
+                                                        >
+                                                            <Edit className="h-4 w-4" />
+                                                        </Button>
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })
+                                    )}
+                                </TableBody>
+                                {martiniRecords.length > 0 && (
+                                    <tfoot>
+                                        <TableRow className="bg-slate-50 dark:bg-zinc-900 font-bold">
+                                            <TableCell colSpan={4}>Total</TableCell>
+                                            <TableCell className="text-right">PKR {martiniTotals.totalPkr.toLocaleString()}</TableCell>
+                                            <TableCell className="text-right text-emerald-600">PKR {martiniTotals.totalPaid.toLocaleString()}</TableCell>
+                                            <TableCell className="text-right text-rose-500">PKR {martiniTotals.totalRemaining.toLocaleString()}</TableCell>
+                                            <TableCell />
+                                            <TableCell className="text-right">$ {martiniTotals.totalDollar.toLocaleString()}</TableCell>
+                                            <TableCell colSpan={3} />
+                                        </TableRow>
+                                    </tfoot>
+                                )}
+                            </Table>
                             </>
                           ) : (
                             <>
@@ -1487,6 +1699,144 @@ export default function AccountManagerDashboard() {
                         <Button variant="outline" onClick={() => setEditInvoiceOpen(false)}>Cancel</Button>
                         <Button onClick={submitInvoiceUpdate} disabled={updateInvoiceMutation.isPending}>
                             {updateInvoiceMutation.isPending ? "Saving..." : "Save Changes"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Martini Status: Installment History */}
+            <Dialog open={martiniInstallmentsOpen} onOpenChange={setMartiniInstallmentsOpen}>
+                <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>
+                            Installment History - {selectedMartiniRecord?.buyer_name || selectedMartiniRecord?.buyer_name_full || "Buyer"}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="overflow-x-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>#</TableHead>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead className="text-right">Amount</TableHead>
+                                    <TableHead>Note</TableHead>
+                                    <TableHead>Image</TableHead>
+                                    <TableHead>Created By</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {martiniInstallmentsQuery.isLoading ? (
+                                    <TableRow><TableCell colSpan={7} className="text-center text-slate-400 py-6">Loading...</TableCell></TableRow>
+                                ) : martiniInstallments.length === 0 ? (
+                                    <TableRow><TableCell colSpan={7} className="text-center text-slate-400 py-6">No record found</TableCell></TableRow>
+                                ) : (
+                                    martiniInstallments.map((inst: any, idx: number) => (
+                                        <TableRow key={idx}>
+                                            <TableCell>{idx + 1}</TableCell>
+                                            <TableCell>
+                                                {inst.payDate ? format(new Date(inst.payDate), "dd-MM-yyyy") : (inst.createdAt ? format(new Date(inst.createdAt), "dd-MM-yyyy") : "-")}
+                                            </TableCell>
+                                            <TableCell><Badge variant="outline">{inst.status || "-"}</Badge></TableCell>
+                                            <TableCell className="text-right">PKR {Number(inst.amountPkr || 0).toLocaleString()}</TableCell>
+                                            <TableCell className="max-w-[200px] truncate" title={inst.note || ""}>{inst.note || "-"}</TableCell>
+                                            <TableCell>
+                                                {inst.imageUrl ? (
+                                                    <a href={inst.imageUrl} target="_blank" rel="noreferrer" className="text-emerald-600 underline">View</a>
+                                                ) : "-"}
+                                            </TableCell>
+                                            <TableCell>{inst.createdByName || "-"}</TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* Martini Status: Payment / Installment */}
+            <Dialog open={martiniPaymentOpen} onOpenChange={setMartiniPaymentOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>{selectedMartiniRecord?.buyer_name || selectedMartiniRecord?.buyer_name_full || "Buyer"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <Label>Total PKR</Label>
+                                <Input readOnly value={Number(selectedMartiniRecord?.pkr_amount || 0).toFixed(0)} />
+                            </div>
+                            <div>
+                                <Label>Remaining PKR</Label>
+                                <Input readOnly value={Number(selectedMartiniRecord?.remaining_pkr || 0).toFixed(0)} />
+                            </div>
+                        </div>
+                        <div>
+                            <Label>AB Payment Status</Label>
+                            <Select value={martiniPaymentForm.status} onValueChange={(v) => setMartiniPaymentForm((f) => ({ ...f, status: v }))}>
+                                <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="Paid">Paid</SelectItem>
+                                    <SelectItem value="Delay">Delay</SelectItem>
+                                    <SelectItem value="Not Show">Not Show</SelectItem>
+                                    <SelectItem value="Refund">Refund</SelectItem>
+                                    <SelectItem value="Installment">Installment</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <Label>Amount</Label>
+                            <Input
+                                type="number"
+                                placeholder="Enter installment amount"
+                                value={martiniPaymentForm.amountPkr}
+                                onChange={(e) => setMartiniPaymentForm((f) => ({ ...f, amountPkr: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <Label>Date</Label>
+                            <Input type="date" value={martiniPaymentForm.payDate} onChange={(e) => setMartiniPaymentForm((f) => ({ ...f, payDate: e.target.value }))} />
+                        </div>
+                        <div>
+                            <Label>Note</Label>
+                            <textarea
+                                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
+                                rows={3}
+                                value={martiniPaymentForm.note}
+                                onChange={(e) => setMartiniPaymentForm((f) => ({ ...f, note: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <Label>Image</Label>
+                            <Input
+                                type="file"
+                                accept=".jpg,.jpeg,.png,.webp"
+                                onChange={(e) => setMartiniPaymentForm((f) => ({ ...f, imageFile: e.target.files?.[0] || null }))}
+                            />
+                            <p className="text-xs text-slate-400 mt-1">Allowed: jpg, jpeg, png, webp</p>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setMartiniPaymentOpen(false)}>Close</Button>
+                        <Button
+                            onClick={() => {
+                                const amount = Number(martiniPaymentForm.amountPkr);
+                                const remaining = Number(selectedMartiniRecord?.remaining_pkr || 0);
+                                if (!amount || amount <= 0) {
+                                    toast({ title: "Error", description: "Amount must be greater than 0", variant: "destructive" });
+                                    return;
+                                }
+                                if (amount > remaining) {
+                                    toast({ title: "Error", description: "Installment amount cannot exceed remaining amount!", variant: "destructive" });
+                                    return;
+                                }
+                                martiniPaymentMutation.mutate();
+                            }}
+                            disabled={martiniPaymentMutation.isPending}
+                            className="bg-emerald-600 hover:bg-emerald-700"
+                        >
+                            {martiniPaymentMutation.isPending ? "Submitting..." : "Submit"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
