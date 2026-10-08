@@ -830,14 +830,12 @@ export function AppSidebar() {
                     return (
                       <SidebarMenuItem key={item.title}>
                         <HoverCard openDelay={0} closeDelay={100}>
-                          <HoverCardTrigger asChild>
-                            <div className="w-full">
-                              <SidebarMenuButton className={`${sidebarText} ${hoverMain}`}>
-                                <item.icon className="w-5 h-5" />
-                                <span>{item.title}</span>
-                                <ChevronDown className="ml-auto w-4 h-4" />
-                              </SidebarMenuButton>
-                            </div>
+                          <HoverCardTrigger className="w-full block">
+                            <SidebarMenuButton className={`${sidebarText} ${hoverMain}`}>
+                              <item.icon className="w-5 h-5" />
+                              <span>{item.title}</span>
+                              <ChevronDown className="ml-auto w-4 h-4" />
+                            </SidebarMenuButton>
                           </HoverCardTrigger>
                           <HoverCardContent side="right" align="start" className="w-56 p-0 border-none shadow-xl overflow-hidden bg-transparent">
                             <div className="bg-[#2c3b41] text-white px-4 py-3 flex items-center gap-2">
@@ -847,7 +845,7 @@ export function AppSidebar() {
                             <div className="bg-[#00a65a] py-2 flex flex-col">
                               {getVisibleSubItems(item.items, item.permKey).map((subItem) => (
                                 <Link key={subItem.title} href={getDynamicUrl(subItem.url)!}
-                                  className={`flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-white dark:bg-zinc-900/10 transition-colors ${location === subItem.url ? "bg-white dark:bg-zinc-900/20 font-medium" : ""}`}>
+                                  className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${location === subItem.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
                                   <subItem.icon className="w-4 h-4 opacity-90" />
                                   <span>{subItem.title}</span>
                                 </Link>
@@ -889,7 +887,7 @@ export function AppSidebar() {
                   return (
                     <SidebarMenuItem key={item.title}>
                       <HoverCard openDelay={0} closeDelay={100}>
-                        <HoverCardTrigger asChild>
+                        <HoverCardTrigger className="w-full block">
                           <div className="w-full">
                             <SidebarMenuButton asChild className={`${sidebarText} ${hoverMain} ${location === item.url ? activeClass : ""}`}>
                               <Link href={getDynamicUrl(item.url)!} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
@@ -906,7 +904,7 @@ export function AppSidebar() {
                           </div>
                           <div className="bg-[#00a65a] py-2 flex flex-col">
                             <Link href={getDynamicUrl(item.url)!}
-                              className={`flex items-center gap-2 px-4 py-2 text-sm text-white hover:bg-white dark:bg-zinc-900/10 transition-colors ${location === item.url ? "bg-white dark:bg-zinc-900/20 font-medium" : ""}`}>
+                              className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${location === item.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
                               <item.icon className="w-4 h-4 opacity-90" />
                               <span>{item.title}</span>
                             </Link>
