@@ -171,6 +171,7 @@ export default function DollarSystem() {
   const [loanTypeFilter, setLoanTypeFilter] = useState("all");
   const [activeTab, setActiveTab] = useState("full");
   const [activeTxTab, setActiveTxTab] = useState("balance");
+  const [txPage, setTxPage] = useState(1);
   const [viewItem, setViewItem] = useState<any>(null);
   const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
@@ -599,6 +600,9 @@ export default function DollarSystem() {
     const m: Record<string, any[]> = { balance: dts.balance?.items||[], buy: dts.buy?.items||[], sell: dts.sell?.items||[], martini: dts.martini?.items||[], notUsed: dts.notUsed?.items||[] };
     return m[activeTxTab] || [];
   }, [activeTxTab, dts]);
+  const TX_PAGE_SIZE = 4;
+  const txTotalPages = Math.max(1, Math.ceil(txItems.length / TX_PAGE_SIZE));
+  const txPagedItems = useMemo(() => txItems.slice((txPage - 1) * TX_PAGE_SIZE, txPage * TX_PAGE_SIZE), [txItems, txPage]);
 
   const fmt2 = (v: any) => Number(v||0).toFixed(2);
   const fmtN = (v: any) => Number(v||0).toLocaleString();
@@ -1200,7 +1204,7 @@ export default function DollarSystem() {
                       {id:"martini",label:"Martini",c:"bg-blue-400"},
                       {id:"notUsed",label:"Not Used",c:"bg-blue-400"},
                     ].map(tab => (
-                      <button key={tab.id} onClick={()=>setActiveTxTab(tab.id)}
+                      <button key={tab.id} onClick={()=>{setActiveTxTab(tab.id); setTxPage(1);}}
                         className={cn("flex-1 min-w-0 text-[8px] font-black py-1.5 px-1 rounded text-white transition-all flex items-center justify-between gap-0.5",
                           activeTxTab===tab.id ? tab.c : "bg-gray-200 text-gray-500 dark:bg-zinc-700 dark:text-zinc-400"
                         )}>
@@ -1209,8 +1213,8 @@ export default function DollarSystem() {
                       </button>
                     ))}
                   </div>
-                  <div className="space-y-3 max-h-80 overflow-y-auto">
-                    {txItems.length > 0 ? txItems.map((tx, i) => (
+                  <div className="space-y-3">
+                    {txPagedItems.length > 0 ? txPagedItems.map((tx, i) => (
                       <div key={i} className="flex gap-2 pb-3 border-b border-gray-50 last:border-0 last:pb-0 items-start dark:border-zinc-800">
                         <div className={cn("w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-white",
                           activeTxTab==="buy"?"bg-[#00a65a]":activeTxTab==="sell"?"bg-red-400":activeTxTab==="martini"||activeTxTab==="notUsed"?"bg-yellow-400":"bg-gray-400"
@@ -1231,6 +1235,27 @@ export default function DollarSystem() {
                       </div>
                     )) : <div className="text-[10px] text-gray-400 text-center py-4 italic">No transactions for today</div>}
                   </div>
+                  {txItems.length > TX_PAGE_SIZE && (
+                    <div className="flex items-center justify-between pt-3 mt-1 border-t border-gray-50 dark:border-zinc-800">
+                      <button
+                        type="button"
+                        disabled={txPage <= 1}
+                        onClick={() => setTxPage(p => Math.max(1, p - 1))}
+                        className="text-[10px] font-bold text-gray-500 hover:text-gray-800 dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      <span className="text-[10px] text-gray-400">Page {txPage} of {txTotalPages}</span>
+                      <button
+                        type="button"
+                        disabled={txPage >= txTotalPages}
+                        onClick={() => setTxPage(p => Math.min(txTotalPages, p + 1))}
+                        className="text-[10px] font-bold text-gray-500 hover:text-gray-800 dark:text-zinc-400 dark:hover:text-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -531,6 +531,66 @@ export function registerAccountRoutes(app: Express) {
         );
       `);
 
+      // 10. AB Report daily closing — 2-stage sign-off (Account, then HOD)
+      await pool.query(`
+        create table if not exists drm.ab_closing_history (
+          id varchar(50) primary key default gen_random_uuid(),
+          closing_date date not null unique,
+          snapshot jsonb not null,
+          account_dep_status text not null default '',
+          account_dep_by uuid,
+          account_dep_at timestamptz,
+          hod_dep_status text not null default '',
+          hod_dep_by uuid,
+          hod_dep_at timestamptz,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        );
+      `);
+
+      // 11. AB Report cheque pool — typed, used/un-used cheque inventory
+      await pool.query(`
+        create table if not exists drm.cheque_pool (
+          id varchar(50) primary key default gen_random_uuid(),
+          type text not null,
+          cheque_number text not null,
+          bank_name text,
+          company_name text,
+          amount numeric(12,2) not null,
+          cheque_date date not null,
+          status text not null default 'un-used',
+          used_at timestamptz,
+          notes text,
+          created_by_user_id uuid,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        );
+        create index if not exists cheque_pool_type_status_idx on drm.cheque_pool(type, status);
+        create index if not exists cheque_pool_date_idx on drm.cheque_pool(cheque_date);
+      `);
+
+      // 12. AB Report reconciliation notes ("Add Details" on purely-derived figures)
+      await pool.query(`
+        create table if not exists drm.ab_report_notes (
+          id varchar(50) primary key default gen_random_uuid(),
+          metric_key text not null,
+          note text not null,
+          created_by_user_id uuid,
+          created_at timestamptz not null default now()
+        );
+        create index if not exists ab_report_notes_metric_idx on drm.ab_report_notes(metric_key, created_at desc);
+      `);
+
+      // 13. URL permission for the closing sign-off sub-routes only (today/confirm/history) —
+      // the existing blanket "account" rule (admin/accountant/account_manager/service_manager)
+      // doesn't include hod/super_hod, but the HOD stage of this workflow needs them. Scoped to
+      // this one sub-path so it doesn't widen access to the rest of /api/account/*.
+      await pool.query(`
+        INSERT INTO drm.url_permissions (path, name, allowed_role_ids)
+        VALUES ('account/ab-closing', 'AB Closing Sign-off', ARRAY['admin','accountant','account_manager','service_manager','hod','super_hod'])
+        ON CONFLICT (path) DO NOTHING;
+      `);
+
       console.info("[accounts] schema maintenance completed successfully");
     } catch (err) {
       console.error("[accounts] schema maintenance failed:", err);
@@ -4148,103 +4208,291 @@ export function registerAccountRoutes(app: Express) {
       const { dateFrom, dateTo } = req.query;
       const params: any[] = [];
       let dateWhere = "";
+      let dateWhereG = "";
       let buyingDateWhere = "";
-      
+      let advanceDateWhere = "";
+      let chequeDateWhere = "";
+
       if (dateFrom && dateTo) {
         params.push(new Date(String(dateFrom)));
         params.push(new Date(String(dateTo)));
         dateWhere = ` AND created_at >= $1 AND created_at <= $2`;
+        dateWhereG = ` AND g.created_at >= $1 AND g.created_at <= $2`;
         buyingDateWhere = ` AND date >= $1 AND date <= $2`;
+        advanceDateWhere = ` AND pay_date >= $1 AND pay_date <= $2`;
+        chequeDateWhere = ` AND cheque_date >= $1 AND cheque_date <= $2`;
       }
 
       const { rows } = await pool.query(`
         WITH gm_stats AS (
-          SELECT 
-            COUNT(*) FILTER (WHERE status = 'Approved' AND coalesce(is_loan, false) = false AND (entry_type IN ('Standard', 'GM', 'New', 'Full') OR gm_type IN ('GM', 'Standard', 'Full'))) as client_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND coalesce(is_loan, false) = false AND (entry_type IN ('Standard', 'GM', 'New', 'Full') OR gm_type IN ('GM', 'Standard', 'Full'))), 0) as client_amount,
-            COUNT(*) FILTER (WHERE status = 'Approved' AND (entry_type = 'Cheque' OR package_type ILIKE '%Cheque%')) as cheque_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND (entry_type = 'Cheque' OR package_type ILIKE '%Cheque%')), 0) as cheque_amount,
+          SELECT
+            -- "Client Payment": real acc-pay status values actually written by the GM form
+            -- (gm-pool-add-gm.tsx) are 'Cash Received' / 'Online Paid' / 'Customer Paid' — this
+            -- mirrors the legacy acc_pay_status concept directly, unlike entry_type/gm_type
+            -- (renewal-classification columns that are unrelated to payment method).
+            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')) as client_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid')), 0) as client_amount,
+            -- Client Payment's 3-way split (Full / Loan-first / Partial), mirroring the legacy's
+            -- "Full payment" / "Loan First payment Received" / "Partial payment" breakdown rows.
+            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false) as client_full_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND coalesce(is_partial_payment,false) = false), 0) as client_full_amount,
+            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND is_loan IS TRUE) as client_loanfirst_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND is_loan IS TRUE), 0) as client_loanfirst_amount,
+            COUNT(*) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND is_partial_payment IS TRUE) as client_partial_count,
+            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND payment_status IN ('Cash Received', 'Online Paid', 'Customer Paid') AND coalesce(is_loan,false) = false AND is_partial_payment IS TRUE), 0) as client_partial_amount,
             COUNT(*) FILTER (WHERE status = 'Approved' AND is_loan IS TRUE) as loan_count,
             COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND is_loan IS TRUE), 0) as loan_amount,
-            COUNT(*) FILTER (WHERE status = 'Approved' AND entry_type = 'Recovery') as loan_rec_count,
-            COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Approved' AND entry_type = 'Recovery'), 0) as loan_rec_amount,
             COALESCE(SUM(extra_discount_usd) FILTER (WHERE status = 'Approved'), 0) as extra_discount,
+            COALESCE(SUM(extra_discount_pkr) FILTER (WHERE status = 'Approved'), 0) as extra_discount_pkr,
             COUNT(*) FILTER (WHERE status = 'Pending') as pending_count,
             COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending'), 0) as pending_dollar_amount,
             COALESCE(SUM(amount_pkr) FILTER (WHERE status = 'Pending'), 0) as pending_pkr_amount,
+            -- "Required": Full (non-installment) vs Partial (installment) pending dollars —
+            -- mirrors the legacy's separate webxl_required_dollars_to_pay_full_payment vs
+            -- webxl_required_dollars_to_pay (installment) functions.
+            COUNT(*) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,false) = false) as required_full_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND coalesce(is_partial_payment,false) = false), 0) as required_full_amount,
+            COUNT(*) FILTER (WHERE status = 'Pending' AND is_partial_payment IS TRUE) as required_partial_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Pending' AND is_partial_payment IS TRUE), 0) as required_partial_amount,
             COALESCE(SUM(amount_usd) FILTER (WHERE status = 'Approved'), 0) as total_dollar_balance
           FROM drm.gm_entries
           WHERE coalesce(is_deleted, false) = false ${dateWhere}
         ),
+        -- "Loan Recovered": the legacy concept is money actually COLLECTED against an
+        -- installment/delay schedule — in this app that's gm_partial_receipts (the real
+        -- installment-collection ledger used by the GM Installments feature), not a
+        -- gm_entries.entry_type tag (no such tag is ever written by the app).
+        recovery_stats AS (
+          SELECT
+            COUNT(*) as recovery_count,
+            COALESCE(SUM(amount_usd), 0) as recovery_usd,
+            COALESCE(SUM(amount_pkr), 0) as recovery_pkr_raw,
+            COALESCE(SUM(amount_usd * COALESCE(dollar_rate, 0)), 0) as recovery_pkr_derived
+          FROM drm.gm_partial_receipts
+          WHERE 1=1 ${dateWhere.replace(/created_at/g, "receipt_date")}
+        ),
+        -- "Cheque"/"Pending Cheque": sourced from the real /office/cheques ledger (drm.cheques),
+        -- the same table that feature already manages — not a separate system. "Paid" mirrors
+        -- that page's own used/remaining logic (office-account-routes.ts GET /cheques): a
+        -- cheque counts as used once ANY drm.office_expenses row references its cheque_number
+        -- (or, for older rows, its id). "Un-Paid" is everything else; "Full" is both combined.
+        cheque_stats AS (
+          SELECT
+            COUNT(*) FILTER (WHERE COALESCE(oe.used_amount, 0) > 0) as cheque_used_count,
+            COALESCE(SUM(c.amount) FILTER (WHERE COALESCE(oe.used_amount, 0) > 0), 0) as cheque_used_amount,
+            COUNT(*) FILTER (WHERE COALESCE(oe.used_amount, 0) = 0) as cheque_unused_count,
+            COALESCE(SUM(c.amount) FILTER (WHERE COALESCE(oe.used_amount, 0) = 0), 0) as cheque_unused_amount,
+            -- "Last Closing" cheque breakdown — same used/un-used logic, scoped to cheques
+            -- tagged cheque_type='Closing' (quarter-end carry-forward cheques).
+            COUNT(*) FILTER (WHERE c.cheque_type = 'Closing' AND COALESCE(oe.used_amount, 0) > 0) as closing_cheque_used_count,
+            COALESCE(SUM(c.amount) FILTER (WHERE c.cheque_type = 'Closing' AND COALESCE(oe.used_amount, 0) > 0), 0) as closing_cheque_used_amount,
+            COUNT(*) FILTER (WHERE c.cheque_type = 'Closing' AND COALESCE(oe.used_amount, 0) = 0) as closing_cheque_unused_count,
+            COALESCE(SUM(c.amount) FILTER (WHERE c.cheque_type = 'Closing' AND COALESCE(oe.used_amount, 0) = 0), 0) as closing_cheque_unused_amount
+          FROM drm.cheques c
+          LEFT JOIN (
+            SELECT cheque_number, SUM(amount) as used_amount
+            FROM drm.office_expenses
+            WHERE cheque_number IS NOT NULL
+            GROUP BY cheque_number
+          ) oe ON oe.cheque_number = c.cheque_number OR oe.cheque_number = c.id::text
+          WHERE 1=1 ${chequeDateWhere.replace(/cheque_date/g, "c.cheque_date")}
+        ),
         buy_stats AS (
           SELECT
             COUNT(*) as buy_count,
-            COALESCE(SUM(dollar_amount), 0) as total_dollar_buy
+            COALESCE(SUM(dollar_amount), 0) as total_dollar_buy,
+            COUNT(*) FILTER (WHERE martini = 'Not Show') as martini_pending_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show'), 0) as martini_pending_amount,
+            -- Martini Pending's own Client-Shorts vs Cheque split, by the buy's real payment method.
+            COUNT(*) FILTER (WHERE martini = 'Not Show' AND payment_method = 'Cheque') as martini_pending_cheque_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show' AND payment_method = 'Cheque'), 0) as martini_pending_cheque_amount,
+            COUNT(*) FILTER (WHERE martini = 'Not Show' AND COALESCE(payment_method,'') != 'Cheque') as martini_pending_shorts_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show' AND COALESCE(payment_method,'') != 'Cheque'), 0) as martini_pending_shorts_amount,
+            COUNT(*) FILTER (WHERE martini = 'Refund') as martini_refund_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Refund'), 0) as martini_refund_amount,
+            COUNT(*) FILTER (WHERE martini = 'Show' OR martini IS NULL) as martini_show_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Show' OR martini IS NULL), 0) as martini_show_amount,
+            -- "Account Paid": buys accounts has acted on — at least partially allocated to an
+            -- AB payment already (remaining_usd < dollar_amount), vs still fully un-touched.
+            COUNT(*) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount) as buy_account_paid_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount), 0) as buy_account_paid_amount
           FROM drm.dollar_buying
           WHERE 1=1 ${buyingDateWhere}
         ),
+        -- "Balance": approved-order dollar total split by real calendar quarter (independent of
+        -- the page's own date-range filter), mirroring the legacy's LastQueStart/CurQueEnd split.
+        balance_stats AS (
+          SELECT
+            COUNT(*) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) - INTERVAL '3 months' AND created_at < date_trunc('quarter', CURRENT_DATE)) as balance_last_quarter_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) - INTERVAL '3 months' AND created_at < date_trunc('quarter', CURRENT_DATE)), 0) as balance_last_quarter_amount,
+            COUNT(*) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) AND created_at < date_trunc('quarter', CURRENT_DATE) + INTERVAL '3 months') as balance_current_quarter_count,
+            COALESCE(SUM(amount_usd) FILTER (WHERE created_at >= date_trunc('quarter', CURRENT_DATE) AND created_at < date_trunc('quarter', CURRENT_DATE) + INTERVAL '3 months'), 0) as balance_current_quarter_amount
+          FROM drm.gm_entries
+          WHERE coalesce(is_deleted, false) = false AND status = 'Approved'
+        ),
         temp_stats AS (
-          SELECT 
+          SELECT
             COUNT(*) as temp_count,
             COALESCE(SUM(amount), 0) as temp_amount
           FROM drm.temp_gm_entries
           WHERE 1=1 ${dateWhere}
         ),
         refund_stats AS (
-          SELECT 
+          SELECT
             COALESCE(SUM(amount), 0) as refund_amount
           FROM drm.refund_gm_entries
           WHERE status = 'approved' ${dateWhere}
+        ),
+        advance_stats AS (
+          SELECT
+            COUNT(*) FILTER (WHERE remaining_amount > 0 AND status NOT IN ('deleted','clear','cleared')) as advance_count,
+            COALESCE(SUM(remaining_amount) FILTER (WHERE remaining_amount > 0 AND status NOT IN ('deleted','clear','cleared')), 0) as advance_amount
+          FROM drm.dollar_advance_payments
+          WHERE 1=1 ${advanceDateWhere}
+        ),
+        extra_disc_paid AS (
+          SELECT
+            COUNT(*) FILTER (WHERE ap.status = 'paid') as ex_paid_count,
+            COALESCE(SUM(g.extra_discount_usd) FILTER (WHERE ap.status = 'paid'), 0) as ex_paid_usd,
+            COALESCE(SUM(g.extra_discount_pkr) FILTER (WHERE ap.status = 'paid'), 0) as ex_paid_pkr
+          FROM drm.gm_entries g
+          LEFT JOIN drm.ab_payments ap ON ap.gm_drm_id = g.drm_id AND coalesce(ap.is_deleted, false) = false
+          WHERE coalesce(g.is_deleted, false) = false AND coalesce(g.extra_discount_usd, 0) > 0 ${dateWhereG}
         )
-        SELECT * FROM gm_stats, buy_stats, temp_stats, refund_stats;
+        SELECT * FROM gm_stats, recovery_stats, cheque_stats, buy_stats, balance_stats, temp_stats, refund_stats, advance_stats, extra_disc_paid;
       `, params);
 
       const stats = rows[0] || {};
-      
+
+      // Last confirmed daily closing (most recent fully-signed-off ab_closing_history row)
+      const lastClosingRes = await pool.query(`
+        SELECT closing_date, snapshot FROM drm.ab_closing_history
+        WHERE hod_dep_status = 'Verified'
+        ORDER BY closing_date DESC LIMIT 1
+      `);
+      const lastClosingRow = lastClosingRes.rows[0];
+      const lastClosingCashInHand = lastClosingRow ? Number(lastClosingRow.snapshot?.cashInHand || 0) : 0;
+
+      // Temp GM broken down by its real `reason` category — mirrors the legacy's
+      // allTemGmRemainPkrByType_reasion breakdown (Leads Transfer Issue / Company Is Not
+      // Registered Yet / Wrong Info Added By The Sales / GM Not Add By The Sales), but reads
+      // whatever reason strings actually exist rather than hardcoding that exact list.
+      const tempGmByReasonRes = await pool.query(`
+        SELECT reason, COUNT(*) as count, COALESCE(SUM(amount), 0) as amount
+        FROM drm.temp_gm_entries
+        WHERE 1=1 ${dateWhere}
+        GROUP BY reason
+        ORDER BY SUM(amount) DESC
+      `, params);
+      const tempGmBreakdown = tempGmByReasonRes.rows.map((r: any) => ({
+        reason: r.reason, count: Number(r.count), amount: Number(r.amount),
+      }));
+
+      // Cheque tracking: sourced from the real /office/cheques ledger (see cheque_stats CTE
+      // above) — "used" cheques are the Cash/Account-Closing "Cheque" figure, "un-used" ones
+      // are the Temp-Payment/Account-Closing "Pending Cheque" figure.
+      const chequeCount = Number(stats.cheque_used_count || 0);
+      const chequeAmount = Number(stats.cheque_used_amount || 0);
+      const pendingChequeCount = Number(stats.cheque_unused_count || 0);
+      const pendingChequeAmount = Number(stats.cheque_unused_amount || 0);
+
+      const recoveryCount = Number(stats.recovery_count || 0);
+      const recoveryUsd = Number(stats.recovery_usd || 0);
+      // Prefer the PKR actually captured on the receipt; fall back to USD*rate when a receipt
+      // didn't store a PKR amount (e.g. older rows created before that field was populated).
+      const recoveryPkr = Number(stats.recovery_pkr_raw || 0) > 0 ? Number(stats.recovery_pkr_raw) : Number(stats.recovery_pkr_derived || 0);
+
       // Calculate derived values
-      const sum_pkr = Number(stats.client_amount) + Number(stats.cheque_amount) + Number(stats.loan_amount);
+      const sum_pkr = Number(stats.client_amount) + chequeAmount + recoveryPkr;
       const total_dollar_usd = Number(stats.total_dollar_buy);
       const dollarPkrRate: number | null = null;
-      const cash_in_hand = sum_pkr - Number(stats.refund_amount);
+      const cash_in_hand = sum_pkr - Number(stats.refund_amount) + lastClosingCashInHand;
+
+      const dollarBalanceUsd = Number(stats.total_dollar_balance) + Number(stats.total_dollar_buy);
+      const requiredUsd = Number(stats.pending_dollar_amount);
+      // "Get Funds": USD shortfall still needed if pending dollar requirements exceed what's
+      // already on hand (bought + received) — kept in USD since no stored PKR/USD rate exists
+      // to convert this safely (see meta.dollarConversion below).
+      const getFundsUsd = Math.max(0, requiredUsd - dollarBalanceUsd);
+
+      const exPaidUsd = Number(stats.ex_paid_usd || 0);
+      const exPaidPkr = Number(stats.ex_paid_pkr || 0);
+      const exReceivedUsd = Number(stats.extra_discount || 0);
+      const exReceivedPkr = Number(stats.extra_discount_pkr || 0);
+
+      const webExcelsClosingAmount = chequeAmount + Number(stats.loan_amount) + recoveryPkr - exPaidPkr;
+
+      const clientPayment = {
+        count: Number(stats.client_count), amount: Number(stats.client_amount),
+        full: { count: Number(stats.client_full_count || 0), amount: Number(stats.client_full_amount || 0) },
+        loanFirst: { count: Number(stats.client_loanfirst_count || 0), amount: Number(stats.client_loanfirst_amount || 0) },
+        partial: { count: Number(stats.client_partial_count || 0), amount: Number(stats.client_partial_amount || 0) },
+      };
+      const required = {
+        count: Number(stats.pending_count), amount: requiredUsd,
+        full: { count: Number(stats.required_full_count || 0), amount: Number(stats.required_full_amount || 0) },
+        partial: { count: Number(stats.required_partial_count || 0), amount: Number(stats.required_partial_amount || 0) },
+      };
 
       res.json({
         account: {
           cash: {
-            clientPayment: { count: Number(stats.client_count), amount: Number(stats.client_amount) },
-            cheque: { count: Number(stats.cheque_count), amount: Number(stats.cheque_amount) },
-            loanRecovered: { count: Number(stats.loan_rec_count || 0), amount: Number(stats.loan_rec_amount || 0) },
-            lastClosing: { count: 0, amount: 0 },
-            total: { count: Number(stats.client_count) + Number(stats.cheque_count) + Number(stats.loan_rec_count || 0), amount: sum_pkr }
+            clientPayment,
+            cheque: { count: chequeCount, amount: chequeAmount },
+            loanRecovered: { count: recoveryCount, amount: recoveryPkr },
+            lastClosing: {
+              count: lastClosingRow ? 1 : 0, amount: lastClosingCashInHand,
+              closingCheque: {
+                full: { count: Number(stats.closing_cheque_used_count || 0) + Number(stats.closing_cheque_unused_count || 0), amount: Number(stats.closing_cheque_used_amount || 0) + Number(stats.closing_cheque_unused_amount || 0) },
+                paid: { count: Number(stats.closing_cheque_used_count || 0), amount: Number(stats.closing_cheque_used_amount || 0) },
+                unpaid: { count: Number(stats.closing_cheque_unused_count || 0), amount: Number(stats.closing_cheque_unused_amount || 0) },
+              },
+            },
+            total: { count: Number(stats.client_count) + chequeCount + recoveryCount, amount: sum_pkr }
           },
           dollars: {
-            balance: { count: 0, amount: Number(stats.total_dollar_balance) },
-            buy: { count: Number(stats.buy_count || 0), amount: Number(stats.total_dollar_buy) },
-            required: { count: 0, amount: 0 },
-            getFunds: { count: 0, amount: 0 },
-            total: { count: 0, amount: Number(stats.total_dollar_balance) + Number(stats.total_dollar_buy) }
+            balance: {
+              count: 0, amount: Number(stats.total_dollar_balance),
+              lastQuarter: { count: Number(stats.balance_last_quarter_count || 0), amount: Number(stats.balance_last_quarter_amount || 0) },
+              currentQuarter: { count: Number(stats.balance_current_quarter_count || 0), amount: Number(stats.balance_current_quarter_amount || 0) },
+            },
+            buy: {
+              count: Number(stats.buy_count || 0), amount: Number(stats.total_dollar_buy),
+              martiniShow: { count: Number(stats.martini_show_count || 0), amount: Number(stats.martini_show_amount || 0) },
+              martiniPending: { count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0) },
+              martiniRefund: { count: Number(stats.martini_refund_count || 0), amount: Number(stats.martini_refund_amount || 0) },
+              accountPaid: { count: Number(stats.buy_account_paid_count || 0), amount: Number(stats.buy_account_paid_amount || 0) },
+            },
+            required,
+            getFunds: { count: getFundsUsd > 0 ? 1 : 0, amount: getFundsUsd },
+            total: { count: 0, amount: dollarBalanceUsd }
           },
           tempPayment: {
-            tempGm: { count: Number(stats.temp_count), amount: Number(stats.temp_amount) },
-            martiniPending: { count: 0, amount: 0 },
-            pendingCheque: { count: 0, amount: 0 },
-            advancePay: { count: 0, amount: 0 },
+            tempGm: { count: Number(stats.temp_count), amount: Number(stats.temp_amount), breakdown: tempGmBreakdown },
+            martiniPending: {
+              count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0),
+              clientShorts: { count: Number(stats.martini_pending_shorts_count || 0), amount: Number(stats.martini_pending_shorts_amount || 0) },
+              cheque: { count: Number(stats.martini_pending_cheque_count || 0), amount: Number(stats.martini_pending_cheque_amount || 0) },
+            },
+            pendingCheque: { count: pendingChequeCount, amount: pendingChequeAmount },
+            advancePay: { count: Number(stats.advance_count || 0), amount: Number(stats.advance_amount || 0) },
             total: { count: Number(stats.temp_count), amount: Number(stats.temp_amount) }
           },
           accountClosing: {
-            clientPayment: { count: Number(stats.client_count), amount: Number(stats.client_amount) },
-            cheque: { count: Number(stats.cheque_count), amount: Number(stats.cheque_amount) },
-            pendingCheque: { count: 0, amount: 0 },
-            extraAmount: { count: 0, amount: 0 },
-            total: { count: Number(stats.client_count) + Number(stats.cheque_count), amount: Number(stats.client_amount) + Number(stats.cheque_amount) }
+            clientPayment,
+            cheque: { count: chequeCount, amount: chequeAmount },
+            pendingCheque: { count: pendingChequeCount, amount: pendingChequeAmount },
+            extraAmount: { count: 0, amount: exReceivedPkr },
+            total: { count: Number(stats.client_count) + chequeCount, amount: Number(stats.client_amount) + chequeAmount }
           },
           webExcels: {
             cash: {
-              chequePay: { count: Number(stats.cheque_count), amount: Number(stats.cheque_amount) },
+              chequePay: { count: chequeCount, amount: chequeAmount },
               loanPayment: { count: Number(stats.loan_count), amount: Number(stats.loan_amount) },
-              loanRecovered: { count: Number(stats.loan_rec_count), amount: Number(stats.loan_rec_amount) },
-              extraDiscount: { count: 0, amount: Number(stats.extra_discount) },
-              extraDiscountPaid: { count: 0, amount: 0 },
-              remainingExtraDiscount: { count: 0, amount: Number(stats.extra_discount) }
+              loanRecovered: { count: recoveryCount, amount: recoveryPkr },
+              extraDiscount: { count: 0, amount: exReceivedUsd },
+              extraDiscountPaid: { count: Number(stats.ex_paid_count || 0), amount: exPaidUsd },
+              remainingExtraDiscount: { count: 0, amount: Math.max(0, exReceivedUsd - exPaidUsd) }
             },
             dollars: {
               balance: { count: Number(stats.client_count), amount: Number(stats.total_dollar_balance) },
@@ -4255,22 +4503,30 @@ export function registerAccountRoutes(app: Express) {
               pkr: { count: Number(stats.pending_count), amount: Number(stats.pending_pkr_amount) }
             },
             closing: {
-              chequePay: { count: Number(stats.cheque_count), amount: Number(stats.cheque_amount) },
+              chequePay: { count: chequeCount, amount: chequeAmount },
               loanPayment: { count: Number(stats.loan_count), amount: Number(stats.loan_amount) },
-              loanRecovered: { count: Number(stats.loan_rec_count), amount: Number(stats.loan_rec_amount) },
-              extraDiscountPaid: { count: 0, amount: 0 },
-              webExcelsClosing: { count: 0, amount: Number(stats.client_amount) + Number(stats.cheque_amount) - Number(stats.loan_amount) }
+              loanRecovered: { count: recoveryCount, amount: recoveryPkr },
+              extraDiscountPaid: { count: Number(stats.ex_paid_count || 0), amount: exPaidPkr },
+              webExcelsClosing: { count: 0, amount: webExcelsClosingAmount }
             }
+          },
+          martini: {
+            show: { count: Number(stats.martini_show_count || 0), amount: Number(stats.martini_show_amount || 0) },
+            pending: { count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0) },
+            refund: { count: Number(stats.martini_refund_count || 0), amount: Number(stats.martini_refund_amount || 0) },
           }
         },
         closing: [
-          { label: "Client Payment", type: "P", val: Number(stats.client_amount).toLocaleString() },
-          { label: "Cheque Payment", type: "P", val: Number(stats.cheque_amount).toLocaleString() },
-          { label: "Loan Recovered", type: "P", val: Number(stats.loan_rec_amount || 0).toLocaleString() },
-          { label: "Sum", type: "P", val: sum_pkr.toLocaleString(), color: "text-blue-500", border: true },
-          { label: "Refund Amount", type: "P", val: Number(stats.refund_amount).toLocaleString() },
-          { label: "Total Dollar (USD)", type: "P", val: `$${total_dollar_usd.toLocaleString()}`, color: "text-rose-400" },
-          { label: "Cash In Hand", type: "P", val: cash_in_hand.toLocaleString(), color: "text-emerald-500", bold: true },
+          { label: "Client Payment", type: "P", val: Number(stats.client_amount).toLocaleString(), tooltip: "All Client Payment" },
+          { label: "Cheque Payment", type: "P", val: chequeAmount.toLocaleString(), tooltip: "All Cheque Payment (used cheques from /office/cheques)" },
+          { label: "Loan Recovered", type: "P", val: recoveryPkr.toLocaleString(), tooltip: "Real installment/recovery collections (gm_partial_receipts)" },
+          { label: "Last Closing", type: "P", val: lastClosingCashInHand.toLocaleString(), tooltip: "Last confirmed daily closing's Cash In Hand" },
+          { label: "Sum", type: "P", val: sum_pkr.toLocaleString(), color: "text-sky-600 dark:text-sky-400", bold: true, tooltip: "Sum Of All Above Payment" },
+          { label: "Refund Amount", type: "P", val: Number(stats.refund_amount).toLocaleString(), tooltip: "All Refund Payment" },
+          { label: "Total Dollar (USD)", type: "D", val: `$${total_dollar_usd.toLocaleString()}`, color: "text-rose-500", tooltip: "Total Dollar PKR by Account Pay Date" },
+          { label: "Required To Pay", type: "D", val: `$${requiredUsd.toLocaleString()}`, tooltip: "Required To Pay Full Amount" },
+          { label: "Extra Discount Received / Paid", type: "P", val: `${exReceivedPkr.toLocaleString()} / ${exPaidPkr.toLocaleString()}`, tooltip: "Extra discount received from the customer vs. already paid out to Alibaba" },
+          { label: "Cash In Hand", type: "P", val: cash_in_hand.toLocaleString(), color: "text-emerald-600 dark:text-emerald-400", bold: true, tooltip: "SUM - (Total Dollar - Refund) = Cash In Hand" },
         ],
         meta: {
           dollarConversion: {
@@ -4280,11 +4536,551 @@ export function registerAccountRoutes(app: Express) {
             rateSource: dollarPkrRate === null ? "unavailable" : "stored",
             note: "Dollar totals are shown in USD; no stored PKR conversion rate is applied.",
           },
+          // Raw numeric snapshot for the daily closing sign-off (POST /api/account/ab-closing/confirm)
+          closingSnapshot: {
+            clientPaymentPkr: Number(stats.client_amount),
+            chequePaymentPkr: chequeAmount,
+            loanRecoveredPkr: recoveryPkr,
+            refundPkr: Number(stats.refund_amount),
+            totalDollarUsd: total_dollar_usd,
+            requiredUsd,
+            cashInHand: cash_in_hand,
+          },
         },
       });
     } catch (error) {
       console.error("Error fetching AB report stats:", error);
       res.status(500).json({ error: "Failed to fetch AB report statistics" });
+    }
+  });
+
+  // GET /api/account/ab-closing/today - Today's 2-stage sign-off status (Account, then HOD) and
+  // whether the current user can act on the next pending stage.
+  app.get("/api/account/ab-closing/today", requireFinancialPermission(FINANCIAL_ACTIONS.abClosingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const { rows } = await pool.query(`SELECT * FROM drm.ab_closing_history WHERE closing_date = $1`, [today]);
+      const row = rows[0] || null;
+
+      const userRoles: string[] = [
+        ...(((req.user as any)?.roles) || []),
+        (req.user as any)?.roleId,
+        (req.user as any)?.activeRoleId,
+      ].filter(Boolean);
+      const hasRole = (...roles: string[]) => roles.some(r => userRoles.includes(r));
+      const isAccountRole = hasRole(ROLES.ACCOUNT_MANAGER, ROLES.ADMIN);
+      const isHodRole = hasRole(ROLES.HOD, ROLES.SUPER_HOD, ROLES.ADMIN);
+
+      const accountVerified = row?.account_dep_status === 'Verified';
+      const hodVerified = row?.hod_dep_status === 'Verified';
+
+      res.json({
+        closingDate: today,
+        row,
+        accountVerified,
+        hodVerified,
+        canConfirmAccount: isAccountRole && !accountVerified,
+        canConfirmHod: isHodRole && accountVerified && !hodVerified,
+      });
+    } catch (err) {
+      console.error("[ab-closing] today status error:", err);
+      res.status(500).json({ error: "Failed to fetch today's closing status" });
+    }
+  });
+
+  // POST /api/account/ab-closing/confirm - Confirm today's closing. Account stage creates the row
+  // and freezes the day's numbers as `snapshot`; HOD stage only verifies on top of an
+  // already-account-verified row. (Ported from the legacy 3-stage webxl_ab_closing_history
+  // workflow — Accounts/AB-Pay/HOD — collapsed to 2 stages since this app has no separate
+  // ab-pay role; Account here covers both.)
+  app.post("/api/account/ab-closing/confirm", requireFinancialPermission(FINANCIAL_ACTIONS.abClosingConfirm, { roles: FINANCIAL_WRITE_ROLES }), async (req, res) => {
+    try {
+      const { stage, snapshot } = req.body as { stage?: string; snapshot?: Record<string, any> };
+      if (stage !== 'account' && stage !== 'hod') {
+        return res.status(400).json({ error: "stage must be 'account' or 'hod'" });
+      }
+
+      const userId = (req.user as any)?.userId || null;
+      const userRoles: string[] = [
+        ...(((req.user as any)?.roles) || []),
+        (req.user as any)?.roleId,
+        (req.user as any)?.activeRoleId,
+      ].filter(Boolean);
+      const hasRole = (...roles: string[]) => roles.some(r => userRoles.includes(r));
+
+      if (stage === 'account' && !hasRole(ROLES.ACCOUNT_MANAGER, ROLES.ADMIN)) {
+        return res.status(403).json({ error: "Only Account Manager/Admin can confirm the account stage" });
+      }
+      if (stage === 'hod' && !hasRole(ROLES.HOD, ROLES.SUPER_HOD, ROLES.ADMIN)) {
+        return res.status(403).json({ error: "Only HOD/Super HOD/Admin can confirm the HOD stage" });
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const existing = await pool.query(`SELECT * FROM drm.ab_closing_history WHERE closing_date = $1`, [today]);
+      const prev = existing.rows[0];
+
+      if (stage === 'account') {
+        if (prev?.account_dep_status === 'Verified') {
+          return res.status(400).json({ error: "Today's closing is already confirmed by Accounts" });
+        }
+        if (!snapshot || typeof snapshot !== 'object') {
+          return res.status(400).json({ error: "snapshot is required to confirm the account stage" });
+        }
+        const { rows } = await pool.query(`
+          INSERT INTO drm.ab_closing_history (closing_date, snapshot, account_dep_status, account_dep_by, account_dep_at)
+          VALUES ($1, $2, 'Verified', $3, NOW())
+          ON CONFLICT (closing_date) DO UPDATE SET
+            account_dep_status = 'Verified', account_dep_by = $3, account_dep_at = NOW(), updated_at = NOW()
+          RETURNING *
+        `, [today, JSON.stringify(snapshot), userId]);
+
+        await AuditLogService.record({
+          actorUserId: userId, action: 'ab_closing_account_confirmed', module: 'ab_report',
+          entityType: 'ab_closing_history', entityId: today, after: { stage: 'account' }, req,
+        });
+        return res.json({ success: true, data: rows[0] });
+      }
+
+      // stage === 'hod'
+      if (!prev || prev.account_dep_status !== 'Verified') {
+        return res.status(400).json({ error: "Accounts must confirm today's closing before HOD can confirm" });
+      }
+      if (prev.hod_dep_status === 'Verified') {
+        return res.status(400).json({ error: "Today's closing is already confirmed by HOD" });
+      }
+      const { rows } = await pool.query(`
+        UPDATE drm.ab_closing_history
+        SET hod_dep_status = 'Verified', hod_dep_by = $2, hod_dep_at = NOW(), updated_at = NOW()
+        WHERE closing_date = $1
+        RETURNING *
+      `, [today, userId]);
+
+      await AuditLogService.record({
+        actorUserId: userId, action: 'ab_closing_hod_confirmed', module: 'ab_report',
+        entityType: 'ab_closing_history', entityId: today, after: { stage: 'hod' }, req,
+      });
+      return res.json({ success: true, data: rows[0] });
+    } catch (err) {
+      console.error("[ab-closing] confirm error:", err);
+      res.status(500).json({ error: "Failed to confirm closing" });
+    }
+  });
+
+  // GET /api/account/ab-closing/history - Recent daily closing rows (for an audit/history list)
+  app.get("/api/account/ab-closing/history", requireFinancialPermission(FINANCIAL_ACTIONS.abClosingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT h.*, au.name AS account_dep_by_name, hu.name AS hod_dep_by_name
+        FROM drm.ab_closing_history h
+        LEFT JOIN users au ON au.id = h.account_dep_by
+        LEFT JOIN users hu ON hu.id = h.hod_dep_by
+        ORDER BY h.closing_date DESC
+        LIMIT 30
+      `);
+      res.json({ data: rows });
+    } catch (err) {
+      console.error("[ab-closing] history error:", err);
+      res.status(500).json({ error: "Failed to fetch closing history" });
+    }
+  });
+
+  // GET /api/account/ab-report/metric-detail - Generic "View Data" drill-down backing any
+  // AB-report row that has real, listable rows behind its number (as opposed to a purely
+  // derived figure like "Get Funds"). Returns a column spec + rows so one dialog on the
+  // frontend can render any of these without a per-metric hardcoded table.
+  app.get("/api/account/ab-report/metric-detail", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { metric, dateFrom, dateTo, reason } = req.query;
+      const params: any[] = [];
+      let dateWhere = "";
+      if (dateFrom && dateTo) {
+        params.push(new Date(String(dateFrom)));
+        params.push(new Date(String(dateTo)));
+      }
+      const range = (col: string) => dateFrom && dateTo ? ` AND ${col} >= $1 AND ${col} <= $2` : "";
+
+      const COLS = {
+        gm: [
+          { key: "drm_id", label: "DRM ID" },
+          { key: "company_name", label: "Company" },
+          { key: "sales_person_name", label: "Sales Person" },
+          { key: "payment_status", label: "Payment Status" },
+          { key: "amount_usd", label: "USD", align: "right" },
+          { key: "amount_pkr", label: "PKR", align: "right" },
+          { key: "created_at", label: "Date", type: "date" },
+        ],
+        recovery: [
+          { key: "drm_id", label: "DRM ID" },
+          { key: "company_name", label: "Company" },
+          { key: "amount_usd", label: "USD", align: "right" },
+          { key: "amount_pkr", label: "PKR", align: "right" },
+          { key: "method", label: "Method" },
+          { key: "receipt_date", label: "Date", type: "date" },
+        ],
+        tempGm: [
+          { key: "company_name", label: "Company" },
+          { key: "person_name", label: "Person" },
+          { key: "amount", label: "Amount", align: "right" },
+          { key: "amount_type", label: "Type" },
+          { key: "reason", label: "Reason" },
+          { key: "status", label: "Status" },
+          { key: "created_at", label: "Date", type: "date" },
+        ],
+        advance: [
+          { key: "company_name", label: "Company" },
+          { key: "buyer_name", label: "Buyer" },
+          { key: "amount", label: "Amount", align: "right" },
+          { key: "remaining_amount", label: "Remaining", align: "right" },
+          { key: "status", label: "Status" },
+          { key: "pay_date", label: "Date", type: "date" },
+        ],
+        buying: [
+          { key: "buyer_name", label: "Buyer" },
+          { key: "dollar_amount", label: "USD", align: "right" },
+          { key: "pkr_amount", label: "PKR", align: "right" },
+          { key: "martini", label: "Martini" },
+          { key: "date", label: "Date", type: "date" },
+        ],
+      };
+
+      let columns: any[];
+      let rows: any[];
+
+      switch (metric) {
+        case "client-payment":
+        case "client-payment-full":
+        case "client-payment-loanfirst":
+        case "client-payment-partial": {
+          columns = COLS.gm;
+          const extra = metric === "client-payment-full" ? " AND coalesce(is_loan,false)=false AND coalesce(is_partial_payment,false)=false"
+            : metric === "client-payment-loanfirst" ? " AND is_loan IS TRUE"
+            : metric === "client-payment-partial" ? " AND coalesce(is_loan,false)=false AND is_partial_payment IS TRUE"
+            : "";
+          ({ rows } = await pool.query(`
+            SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
+            FROM drm.gm_entries
+            WHERE coalesce(is_deleted,false)=false AND status='Approved'
+              AND payment_status IN ('Cash Received','Online Paid','Customer Paid')
+              ${extra}
+              ${range("created_at")}
+            ORDER BY created_at DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "required":
+        case "required-full":
+        case "required-partial": {
+          columns = COLS.gm;
+          const extra = metric === "required-full" ? " AND coalesce(is_partial_payment,false)=false"
+            : metric === "required-partial" ? " AND is_partial_payment IS TRUE"
+            : "";
+          ({ rows } = await pool.query(`
+            SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
+            FROM drm.gm_entries
+            WHERE coalesce(is_deleted,false)=false AND status='Pending' ${extra} ${range("created_at")}
+            ORDER BY created_at DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "extra-discount-received": {
+          columns = COLS.gm;
+          ({ rows } = await pool.query(`
+            SELECT drm_id, company_name, sales_person_name, payment_status, extra_discount_usd AS amount_usd, extra_discount_pkr AS amount_pkr, created_at
+            FROM drm.gm_entries
+            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND coalesce(extra_discount_usd,0) > 0 ${range("created_at")}
+            ORDER BY created_at DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "extra-discount-paid": {
+          columns = COLS.gm;
+          ({ rows } = await pool.query(`
+            SELECT g.drm_id, g.company_name, g.sales_person_name, ap.status AS payment_status, g.extra_discount_usd AS amount_usd, g.extra_discount_pkr AS amount_pkr, g.created_at
+            FROM drm.gm_entries g
+            JOIN drm.ab_payments ap ON ap.gm_drm_id = g.drm_id AND coalesce(ap.is_deleted,false)=false AND ap.status = 'paid'
+            WHERE coalesce(g.is_deleted,false)=false AND coalesce(g.extra_discount_usd,0) > 0 ${dateFrom && dateTo ? " AND g.created_at >= $1 AND g.created_at <= $2" : ""}
+            ORDER BY g.created_at DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "loan-recovered": {
+          columns = COLS.recovery;
+          ({ rows } = await pool.query(`
+            SELECT g.drm_id, g.company_name, pr.amount_usd, pr.amount_pkr, pr.method, pr.receipt_date
+            FROM drm.gm_partial_receipts pr
+            LEFT JOIN drm.gm_entries g ON g.id::text = pr.gm_id
+            WHERE 1=1 ${range("pr.receipt_date")}
+            ORDER BY pr.receipt_date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "loan-payment": {
+          columns = COLS.gm;
+          ({ rows } = await pool.query(`
+            SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
+            FROM drm.gm_entries
+            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND is_loan IS TRUE ${range("created_at")}
+            ORDER BY created_at DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "temp-gm": {
+          columns = COLS.tempGm;
+          const tempGmParams = [...params];
+          let reasonWhere = "";
+          if (reason) {
+            tempGmParams.push(String(reason));
+            reasonWhere = ` AND reason = $${tempGmParams.length}`;
+          }
+          ({ rows } = await pool.query(`
+            SELECT company_name, person_name, amount, amount_type, reason, status, created_at
+            FROM drm.temp_gm_entries
+            WHERE 1=1 ${range("created_at")} ${reasonWhere}
+            ORDER BY created_at DESC LIMIT 200
+          `, tempGmParams));
+          break;
+        }
+        case "advance-pay": {
+          columns = COLS.advance;
+          ({ rows } = await pool.query(`
+            SELECT company_name, buyer_name, amount, remaining_amount, status, pay_date
+            FROM drm.dollar_advance_payments
+            WHERE 1=1 ${range("pay_date")}
+            ORDER BY pay_date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "martini-pending":
+        case "martini-pending-cheque":
+        case "martini-pending-shorts": {
+          columns = COLS.buying;
+          const extra = metric === "martini-pending-cheque" ? " AND payment_method = 'Cheque'"
+            : metric === "martini-pending-shorts" ? " AND COALESCE(payment_method,'') != 'Cheque'"
+            : "";
+          ({ rows } = await pool.query(`
+            SELECT buyer_name, dollar_amount, pkr_amount, martini, date
+            FROM drm.dollar_buying
+            WHERE martini = 'Not Show' ${extra} ${range("date")}
+            ORDER BY date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "martini-show":
+        case "martini-refund": {
+          columns = COLS.buying;
+          const martiniVal = metric === "martini-show" ? "Show" : "Refund";
+          ({ rows } = await pool.query(`
+            SELECT buyer_name, dollar_amount, pkr_amount, martini, date
+            FROM drm.dollar_buying
+            WHERE ${metric === "martini-show" ? "(martini = 'Show' OR martini IS NULL)" : "martini = 'Refund'"} ${range("date")}
+            ORDER BY date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "buy-account-paid": {
+          columns = COLS.buying;
+          ({ rows } = await pool.query(`
+            SELECT buyer_name, dollar_amount, pkr_amount, martini, date
+            FROM drm.dollar_buying
+            WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount ${range("date")}
+            ORDER BY date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        case "balance-last-quarter":
+        case "balance-current-quarter": {
+          columns = COLS.gm;
+          const quarterWhere = metric === "balance-last-quarter"
+            ? "created_at >= date_trunc('quarter', CURRENT_DATE) - INTERVAL '3 months' AND created_at < date_trunc('quarter', CURRENT_DATE)"
+            : "created_at >= date_trunc('quarter', CURRENT_DATE) AND created_at < date_trunc('quarter', CURRENT_DATE) + INTERVAL '3 months'";
+          ({ rows } = await pool.query(`
+            SELECT drm_id, company_name, sales_person_name, payment_status, amount_usd, amount_pkr, created_at
+            FROM drm.gm_entries
+            WHERE coalesce(is_deleted,false)=false AND status='Approved' AND ${quarterWhere}
+            ORDER BY created_at DESC LIMIT 200
+          `));
+          break;
+        }
+        case "dollar-buy": {
+          columns = COLS.buying;
+          ({ rows } = await pool.query(`
+            SELECT buyer_name, dollar_amount, pkr_amount, martini, date
+            FROM drm.dollar_buying
+            WHERE 1=1 ${range("date")}
+            ORDER BY date DESC LIMIT 200
+          `, params));
+          break;
+        }
+        default:
+          return res.status(400).json({ error: `Unknown metric: ${metric}` });
+      }
+
+      res.json({ columns, data: rows });
+    } catch (err) {
+      console.error("[ab-report] metric-detail error:", err);
+      res.status(500).json({ error: "Failed to fetch metric detail" });
+    }
+  });
+
+  // GET /api/account/ab-report/cheque-detail - Drill-down list backing the Cheque/Pending
+  // Cheque breakdown rows (Full / Paid / Un-Paid), sourced from the same real /office/cheques
+  // ledger + used/remaining logic as the cheque_stats CTE in /ab-report/stats above.
+  app.get("/api/account/ab-report/cheque-detail", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { bucket, dateFrom, dateTo, type } = req.query;
+      const params: any[] = [];
+      let dateWhere = "";
+      if (dateFrom && dateTo) {
+        params.push(new Date(String(dateFrom)));
+        params.push(new Date(String(dateTo)));
+        dateWhere = ` AND c.cheque_date >= $${params.length - 1} AND c.cheque_date <= $${params.length}`;
+      }
+
+      let bucketWhere = "";
+      if (bucket === 'paid') bucketWhere = " AND COALESCE(oe.used_amount, 0) > 0";
+      else if (bucket === 'unpaid') bucketWhere = " AND COALESCE(oe.used_amount, 0) = 0";
+
+      let typeWhere = "";
+      if (type) { params.push(String(type)); typeWhere = ` AND c.cheque_type = $${params.length}`; }
+
+      const { rows } = await pool.query(`
+        SELECT c.id, c.cheque_number, c.bank_name, c.company_name, c.amount, c.cheque_date, c.status,
+               COALESCE(oe.used_amount, 0) AS used_amount,
+               GREATEST(c.amount - COALESCE(oe.used_amount, 0), 0) AS remaining_amount
+        FROM drm.cheques c
+        LEFT JOIN (
+          SELECT cheque_number, SUM(amount) as used_amount
+          FROM drm.office_expenses
+          WHERE cheque_number IS NOT NULL
+          GROUP BY cheque_number
+        ) oe ON oe.cheque_number = c.cheque_number OR oe.cheque_number = c.id::text
+        WHERE 1=1 ${dateWhere} ${bucketWhere} ${typeWhere}
+        ORDER BY c.cheque_date DESC
+        LIMIT 200
+      `, params);
+
+      res.json({ data: rows, bucket: bucket || 'full' });
+    } catch (err) {
+      console.error("[ab-report] cheque-detail error:", err);
+      res.status(500).json({ error: "Failed to fetch cheque detail" });
+    }
+  });
+
+  // GET /api/account/cheque-pool - Typed cheque inventory (For Dollar / Recovery / Closing)
+  app.get("/api/account/cheque-pool", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { type, status, dateFrom, dateTo } = req.query;
+      const params: any[] = [];
+      const where: string[] = ["1=1"];
+      if (type) { params.push(String(type)); where.push(`type = $${params.length}`); }
+      if (status) { params.push(String(status)); where.push(`status = $${params.length}`); }
+      if (dateFrom) { params.push(new Date(String(dateFrom))); where.push(`cheque_date >= $${params.length}`); }
+      if (dateTo) { params.push(new Date(String(dateTo))); where.push(`cheque_date <= $${params.length}`); }
+
+      const { rows } = await pool.query(`
+        SELECT cp.*, u.name AS created_by_name
+        FROM drm.cheque_pool cp
+        LEFT JOIN users u ON u.id = cp.created_by_user_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY cp.cheque_date DESC, cp.created_at DESC
+        LIMIT 100
+      `, params);
+      res.json({ data: rows });
+    } catch (err) {
+      console.error("[cheque-pool] list error:", err);
+      res.status(500).json({ error: "Failed to fetch cheque pool" });
+    }
+  });
+
+  // POST /api/account/cheque-pool - Add a cheque to the pool (defaults to un-used)
+  app.post("/api/account/cheque-pool", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_WRITE_ROLES }), async (req, res) => {
+    try {
+      const { type, chequeNumber, bankName, companyName, amount, chequeDate, notes } = req.body;
+      if (!['For Dollar', 'Recovery', 'Closing'].includes(type)) {
+        return res.status(400).json({ error: "type must be one of: For Dollar, Recovery, Closing" });
+      }
+      if (!chequeNumber || !String(chequeNumber).trim()) {
+        return res.status(400).json({ error: "chequeNumber is required" });
+      }
+      if (!amount || Number(amount) <= 0) {
+        return res.status(400).json({ error: "amount must be positive" });
+      }
+      if (!chequeDate) {
+        return res.status(400).json({ error: "chequeDate is required" });
+      }
+
+      const userId = (req.user as any)?.userId || null;
+      const { rows } = await pool.query(`
+        INSERT INTO drm.cheque_pool (type, cheque_number, bank_name, company_name, amount, cheque_date, created_by_user_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        RETURNING *
+      `, [type, String(chequeNumber).trim(), bankName || null, companyName || null, Number(amount), String(chequeDate), userId]);
+
+      res.status(201).json({ success: true, data: rows[0] });
+    } catch (err) {
+      console.error("[cheque-pool] create error:", err);
+      res.status(500).json({ error: "Failed to add cheque" });
+    }
+  });
+
+  // PATCH /api/account/cheque-pool/:id/status - Toggle used / un-used
+  app.patch("/api/account/cheque-pool/:id/status", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_WRITE_ROLES }), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      if (!['used', 'un-used'].includes(status)) {
+        return res.status(400).json({ error: "status must be 'used' or 'un-used'" });
+      }
+      const { rows } = await pool.query(`
+        UPDATE drm.cheque_pool
+        SET status = $2, used_at = CASE WHEN $2 = 'used' THEN NOW() ELSE NULL END, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `, [id, status]);
+      if (!rows.length) return res.status(404).json({ error: "Cheque not found" });
+      res.json({ success: true, data: rows[0] });
+    } catch (err) {
+      console.error("[cheque-pool] status update error:", err);
+      res.status(500).json({ error: "Failed to update cheque status" });
+    }
+  });
+
+  // GET /api/account/ab-report/notes - Reconciliation notes for a derived (non-listable) figure
+  app.get("/api/account/ab-report/notes", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { metric } = req.query;
+      if (!metric) return res.status(400).json({ error: "metric is required" });
+      const { rows } = await pool.query(`
+        SELECT n.*, u.name AS created_by_name
+        FROM drm.ab_report_notes n
+        LEFT JOIN users u ON u.id = n.created_by_user_id
+        WHERE n.metric_key = $1
+        ORDER BY n.created_at DESC
+        LIMIT 100
+      `, [String(metric)]);
+      res.json({ data: rows });
+    } catch (err) {
+      console.error("[ab-report] notes list error:", err);
+      res.status(500).json({ error: "Failed to fetch notes" });
+    }
+  });
+
+  // POST /api/account/ab-report/notes - Add a reconciliation note
+  app.post("/api/account/ab-report/notes", requireFinancialPermission(FINANCIAL_ACTIONS.abReportView, { roles: FINANCIAL_WRITE_ROLES }), async (req, res) => {
+    try {
+      const { metric, note } = req.body;
+      if (!metric || !String(metric).trim()) return res.status(400).json({ error: "metric is required" });
+      if (!note || !String(note).trim()) return res.status(400).json({ error: "note is required" });
+      const userId = (req.user as any)?.userId || null;
+      const { rows } = await pool.query(`
+        INSERT INTO drm.ab_report_notes (metric_key, note, created_by_user_id)
+        VALUES ($1, $2, $3)
+        RETURNING *
+      `, [String(metric), String(note).trim(), userId]);
+      res.status(201).json({ success: true, data: rows[0] });
+    } catch (err) {
+      console.error("[ab-report] notes create error:", err);
+      res.status(500).json({ error: "Failed to add note" });
     }
   });
 

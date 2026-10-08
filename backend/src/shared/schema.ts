@@ -1980,6 +1980,45 @@ export const cheques = drmSchema.table("cheques", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// AB Report "cheque pool" — a typed inventory of cheques received (For Dollar / Recovery /
+// Closing), each used or still un-used, ported from the legacy webxl_cheque_system table.
+// Distinct from `cheques` above (that one is the unrelated office petty-cash register).
+export const chequePool = drmSchema.table("cheque_pool", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: text("type").notNull(), // 'For Dollar' | 'Recovery' | 'Closing'
+  chequeNumber: text("cheque_number").notNull(),
+  bankName: text("bank_name"),
+  companyName: text("company_name"),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  chequeDate: date("cheque_date").notNull(),
+  status: text("status").notNull().default("un-used"), // 'used' | 'un-used'
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  notes: text("notes"),
+  createdById: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertChequePoolSchema = createInsertSchema(chequePool)
+  .omit({ id: true, status: true, usedAt: true, createdAt: true, updatedAt: true, createdById: true })
+  .extend({ chequeDate: z.coerce.date() });
+
+export type ChequePool = typeof chequePool.$inferSelect;
+export type InsertChequePool = z.infer<typeof insertChequePoolSchema>;
+
+// Free-text reconciliation notes for AB Report figures that have no raw rows to drill into
+// (e.g. "Remaining Extra-Discount", a derived received-minus-paid number) — the "Add Details"
+// affordance on those rows reads/writes here instead of opening a (non-existent) record list.
+export const abReportNotes = drmSchema.table("ab_report_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  metricKey: text("metric_key").notNull(),
+  note: text("note").notNull(),
+  createdById: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AbReportNote = typeof abReportNotes.$inferSelect;
+
 export const businessCustomers = drmSchema.table("business_customers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyName: text("company_name").notNull(),
@@ -2085,6 +2124,27 @@ export const insertDollarAdvancePaymentSchema = createInsertSchema(dollarAdvance
 
 export type DollarAdvancePayment = typeof dollarAdvancePayments.$inferSelect;
 export type InsertDollarAdvancePayment = z.infer<typeof insertDollarAdvancePaymentSchema>;
+
+// AB Report daily closing — a 2-stage sign-off (Account, then HOD) ported from the
+// legacy 3-stage `webxl_ab_closing_history` workflow (Accounts/AB-Pay/HOD); AB-Pay was
+// folded into the Account stage since this app has no separate ab-pay role. Whoever
+// confirms first for a given closingDate creates the row and freezes `snapshot`; the
+// second stage only updates its own status/by/at columns on that same row.
+export const abClosingHistory = drmSchema.table("ab_closing_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  closingDate: date("closing_date").notNull().unique(),
+  snapshot: jsonb("snapshot").notNull(),
+  accountDepStatus: text("account_dep_status").notNull().default(""),
+  accountDepBy: uuid("account_dep_by").references(() => users.id),
+  accountDepAt: timestamp("account_dep_at", { withTimezone: true }),
+  hodDepStatus: text("hod_dep_status").notNull().default(""),
+  hodDepBy: uuid("hod_dep_by").references(() => users.id),
+  hodDepAt: timestamp("hod_dep_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type AbClosingHistory = typeof abClosingHistory.$inferSelect;
 
 // Account Module schemas
 export const insertGmEntrySchema = createInsertSchema(gmEntries).omit({
