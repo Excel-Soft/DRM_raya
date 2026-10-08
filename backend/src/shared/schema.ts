@@ -1228,7 +1228,7 @@ export const gmEntries = drmSchema.table("gm_entries", {
   extraDiscountPkr: decimal("extra_discount_pkr", { precision: 15, scale: 2 }),
   // New fields for HOD approval form
   extraDiscountHod: decimal("extra_discount_hod", { precision: 12, scale: 2 }),
-  installments: jsonb("installments"), // [{ dollar, pkr, chequeNo, payDate }]
+  installments: jsonb("installments"), // [{ dollar, pkr, dollarRate, chequeNo, payDate }]
   paymentStatus: text("payment_status"),
 
   status: gmEntryStatusEnum("status").notNull().default("Pending"),

@@ -408,6 +408,14 @@ export default function AccountGmEntries() {
 
   const fmtUsd = (v: string | null) => v ? `$ ${parseFloat(v).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "-";
   const fmtPkr = (v: string | null) => v ? Math.round(parseFloat(v)).toLocaleString() : "-";
+  // Raw workflow status columns (account/HOD/Alibaba) sometimes hold backend
+  // enum values like "NOT_STARTED" instead of a human label — normalize any
+  // of those to a friendly Title Case instead of showing the raw value.
+  const fmtStatusLabel = (raw: string | null | undefined) => {
+    if (!raw) return "—";
+    if (raw === "NOT_STARTED") return "Pending";
+    return raw.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase());
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -610,13 +618,13 @@ export default function AccountGmEntries() {
                     {entry.createdAt ? new Date(entry.createdAt).toLocaleDateString() : "—"}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
-                    {entry.accountManagerStatus || "—"}
+                    {fmtStatusLabel(entry.accountManagerStatus)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
-                    {entry.hodStatus || "—"}
+                    {fmtStatusLabel(entry.hodStatus)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600 capitalize">
-                    {entry.alibabaStatus || "—"}
+                    {fmtStatusLabel(entry.alibabaStatus)}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-slate-600">
                     {entry.payDate ? new Date(entry.payDate).toLocaleDateString() : "—"}

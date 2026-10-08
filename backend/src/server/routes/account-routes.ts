@@ -403,6 +403,14 @@ export function registerAccountRoutes(app: Express) {
         ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS remaining_usd numeric(12,2);
         UPDATE drm.dollar_buying SET remaining_usd = dollar_amount WHERE remaining_usd IS NULL;
 
+        -- Martini Status: tracks PKR repayment owed back to the dollar buyer/seller
+        -- for this buy (a separate liability from remaining_usd, which tracks dollar
+        -- inventory spend-down toward Alibaba orders). Ported from the legacy
+        -- account_dash.php "Martini Status" tab / buyer_dollar_ab_show_acc_not_pay().
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS paid_pkr numeric(12,2) NOT NULL DEFAULT 0;
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS pay_status text NOT NULL DEFAULT 'Pending';
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS installments jsonb NOT NULL DEFAULT '[]'::jsonb;
+
         CREATE TABLE IF NOT EXISTS drm.dollar_allocations (
           id varchar(50) primary key default gen_random_uuid(),
           dollar_buying_id varchar(50) references drm.dollar_buying(id),
@@ -589,6 +597,27 @@ export function registerAccountRoutes(app: Express) {
         INSERT INTO drm.url_permissions (path, name, allowed_role_ids)
         VALUES ('account/ab-closing', 'AB Closing Sign-off', ARRAY['admin','accountant','account_manager','service_manager','hod','super_hod'])
         ON CONFLICT (path) DO NOTHING;
+      `);
+
+      // 14. Loan GM repayment installments — the company pays Alibaba the loan's
+      // full amount upfront (one lump sum, same as a Full GM); the customer then
+      // pays the company BACK over time. gm_loan_receivables only ever tracked
+      // one cumulative running total (amount_returned), with no per-payment
+      // history — this is the real per-installment ledger that was missing.
+      await pool.query(`
+        create table if not exists drm.gm_loan_repayments (
+          id varchar(50) primary key default gen_random_uuid(),
+          gm_id varchar(50) not null,
+          amount_usd numeric(12,2) not null,
+          amount_pkr numeric(15,2),
+          dollar_rate numeric(12,4),
+          repay_date timestamptz not null default now(),
+          method text,
+          notes text,
+          created_by_user_id varchar(50),
+          created_at timestamptz not null default now()
+        );
+        create index if not exists gm_loan_repayments_gm_idx on drm.gm_loan_repayments(gm_id, repay_date);
       `);
 
       console.info("[accounts] schema maintenance completed successfully");
@@ -4301,13 +4330,6 @@ export function registerAccountRoutes(app: Express) {
           SELECT
             COUNT(*) as buy_count,
             COALESCE(SUM(dollar_amount), 0) as total_dollar_buy,
-            COUNT(*) FILTER (WHERE martini = 'Not Show') as martini_pending_count,
-            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show'), 0) as martini_pending_amount,
-            -- Martini Pending's own Client-Shorts vs Cheque split, by the buy's real payment method.
-            COUNT(*) FILTER (WHERE martini = 'Not Show' AND payment_method = 'Cheque') as martini_pending_cheque_count,
-            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show' AND payment_method = 'Cheque'), 0) as martini_pending_cheque_amount,
-            COUNT(*) FILTER (WHERE martini = 'Not Show' AND COALESCE(payment_method,'') != 'Cheque') as martini_pending_shorts_count,
-            COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Not Show' AND COALESCE(payment_method,'') != 'Cheque'), 0) as martini_pending_shorts_amount,
             COUNT(*) FILTER (WHERE martini = 'Refund') as martini_refund_count,
             COALESCE(SUM(dollar_amount) FILTER (WHERE martini = 'Refund'), 0) as martini_refund_amount,
             COUNT(*) FILTER (WHERE martini = 'Show' OR martini IS NULL) as martini_show_count,
@@ -4316,6 +4338,19 @@ export function registerAccountRoutes(app: Express) {
             -- AB payment already (remaining_usd < dollar_amount), vs still fully un-touched.
             COUNT(*) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount) as buy_account_paid_count,
             COALESCE(SUM(dollar_amount) FILTER (WHERE COALESCE(remaining_usd, dollar_amount) < dollar_amount), 0) as buy_account_paid_amount
+          FROM drm.dollar_buying
+          WHERE 1=1 ${buyingDateWhere}
+        ),
+        -- "Martini Status": the real buyer-dollar PKR liability — how much of a dollar
+        -- buy's pkr_amount hasn't yet been repaid to the buyer (paid_pkr/installments).
+        -- Ported from the legacy account_dash.php "Martini Status" tab
+        -- (buyer_dollar_ab_show_acc_not_pay); distinct from buy_stats' martini_show/refund
+        -- (a separate, unused buyer-side flag) and from remaining_usd (dollar inventory
+        -- spend-down toward Alibaba orders).
+        martini_status_stats AS (
+          SELECT
+            COUNT(*) FILTER (WHERE coalesce(pkr_amount,0) - coalesce(paid_pkr,0) > 0.009) as martini_status_count,
+            COALESCE(SUM(dollar_amount) FILTER (WHERE coalesce(pkr_amount,0) - coalesce(paid_pkr,0) > 0.009), 0) as martini_status_amount
           FROM drm.dollar_buying
           WHERE 1=1 ${buyingDateWhere}
         ),
@@ -4359,7 +4394,7 @@ export function registerAccountRoutes(app: Express) {
           LEFT JOIN drm.ab_payments ap ON ap.gm_drm_id = g.drm_id AND coalesce(ap.is_deleted, false) = false
           WHERE coalesce(g.is_deleted, false) = false AND coalesce(g.extra_discount_usd, 0) > 0 ${dateWhereG}
         )
-        SELECT * FROM gm_stats, recovery_stats, cheque_stats, buy_stats, balance_stats, temp_stats, refund_stats, advance_stats, extra_disc_paid;
+        SELECT * FROM gm_stats, recovery_stats, cheque_stats, buy_stats, martini_status_stats, balance_stats, temp_stats, refund_stats, advance_stats, extra_disc_paid;
       `, params);
 
       const stats = rows[0] || {};
@@ -4459,7 +4494,7 @@ export function registerAccountRoutes(app: Express) {
             buy: {
               count: Number(stats.buy_count || 0), amount: Number(stats.total_dollar_buy),
               martiniShow: { count: Number(stats.martini_show_count || 0), amount: Number(stats.martini_show_amount || 0) },
-              martiniPending: { count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0) },
+              martiniPending: { count: Number(stats.martini_status_count || 0), amount: Number(stats.martini_status_amount || 0) },
               martiniRefund: { count: Number(stats.martini_refund_count || 0), amount: Number(stats.martini_refund_amount || 0) },
               accountPaid: { count: Number(stats.buy_account_paid_count || 0), amount: Number(stats.buy_account_paid_amount || 0) },
             },
@@ -4469,11 +4504,10 @@ export function registerAccountRoutes(app: Express) {
           },
           tempPayment: {
             tempGm: { count: Number(stats.temp_count), amount: Number(stats.temp_amount), breakdown: tempGmBreakdown },
-            martiniPending: {
-              count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0),
-              clientShorts: { count: Number(stats.martini_pending_shorts_count || 0), amount: Number(stats.martini_pending_shorts_amount || 0) },
-              cheque: { count: Number(stats.martini_pending_cheque_count || 0), amount: Number(stats.martini_pending_cheque_amount || 0) },
-            },
+            // Real definition: the buyer-dollar PKR liability — dollar_buying rows not yet
+            // fully repaid to the buyer (paid_pkr/installments). Ported from the legacy
+            // account_dash.php "Martini Status" tab; see martini_status_stats above.
+            martiniPending: { count: Number(stats.martini_status_count || 0), amount: Number(stats.martini_status_amount || 0) },
             pendingCheque: { count: pendingChequeCount, amount: pendingChequeAmount },
             advancePay: { count: Number(stats.advance_count || 0), amount: Number(stats.advance_amount || 0) },
             total: { count: Number(stats.temp_count), amount: Number(stats.temp_amount) }
@@ -4512,7 +4546,7 @@ export function registerAccountRoutes(app: Express) {
           },
           martini: {
             show: { count: Number(stats.martini_show_count || 0), amount: Number(stats.martini_show_amount || 0) },
-            pending: { count: Number(stats.martini_pending_count || 0), amount: Number(stats.martini_pending_amount || 0) },
+            pending: { count: Number(stats.martini_status_count || 0), amount: Number(stats.martini_status_amount || 0) },
             refund: { count: Number(stats.martini_refund_count || 0), amount: Number(stats.martini_refund_amount || 0) },
           }
         },
@@ -4850,17 +4884,29 @@ export function registerAccountRoutes(app: Express) {
           `, params));
           break;
         }
-        case "martini-pending":
-        case "martini-pending-cheque":
-        case "martini-pending-shorts": {
-          columns = COLS.buying;
-          const extra = metric === "martini-pending-cheque" ? " AND payment_method = 'Cheque'"
-            : metric === "martini-pending-shorts" ? " AND COALESCE(payment_method,'') != 'Cheque'"
-            : "";
+        case "martini-pending": {
+          // Real definition: the buyer-dollar PKR liability — dollar_buying rows not yet
+          // fully repaid to the buyer. Ported from the legacy account_dash.php "Martini
+          // Status" tab (buyer_dollar_ab_show_acc_not_pay); same source as the Account
+          // Manager Dashboard's own Martini Status tab.
+          columns = [
+            { key: "buyer_name", label: "Buyer" },
+            { key: "buyer_reference", label: "Buyer Reference" },
+            { key: "pkr_amount", label: "Total PKR", align: "right" },
+            { key: "paid_pkr", label: "Paid PKR", align: "right" },
+            { key: "remaining_pkr", label: "Remaining PKR", align: "right" },
+            { key: "dollar_rate", label: "Rate", align: "right" },
+            { key: "dollar_amount", label: "USD", align: "right" },
+            { key: "pay_status", label: "Status" },
+            { key: "buy_date", label: "Date", type: "date" },
+          ];
           ({ rows } = await pool.query(`
-            SELECT buyer_name, dollar_amount, pkr_amount, martini, date
+            SELECT buyer_name, buyer_reference, pkr_amount, paid_pkr,
+                   (pkr_amount - paid_pkr) AS remaining_pkr,
+                   dollar_rate, dollar_amount, pay_status, date AS buy_date
             FROM drm.dollar_buying
-            WHERE martini = 'Not Show' ${extra} ${range("date")}
+            WHERE coalesce(pkr_amount,0) - coalesce(paid_pkr,0) > 0.009
+              ${range("date")}
             ORDER BY date DESC LIMIT 200
           `, params));
           break;
@@ -5223,6 +5269,7 @@ export function registerAccountRoutes(app: Express) {
                g.dollar_rate as "rate",
                COALESCE(g.extra_discount_usd, 0) as "exDisc",
                COALESCE(g.extra_discount_pkr, 0) as "exDiscPkr",
+               COALESCE(g.alibaba_discount_usd, 0) as "discount",
                g.member_id as "memberId", g.order_id as "orderId",
                g.package_type as "package",
                CASE
@@ -5235,9 +5282,19 @@ export function registerAccountRoutes(app: Express) {
                g.expiry_date as "expireDate",
                g.dropout as "dropout",
                g.status,
+               g.payment_status as "paymentStatus",
+               g.hod_status as "hodStatus",
+               g.added_by_name as "accountant",
                g.proof_url as "proofUrl", g.notes,
                g.installments,
-               (COALESCE(g.customer_dollar, g.amount_usd, 0) - COALESCE(pr.paid, 0)) <= 0.009 AS "fullyPaid",
+               -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
+               -- total) — see the matching comment in gm-pool-routes.ts's GET /gm-pool.
+               (
+                 GREATEST(
+                   COALESCE(g.customer_dollar, g.amount_usd, 0),
+                   (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(g.installments, '[]'::jsonb)) elem)
+                 ) - COALESCE(pr.paid, 0)
+               ) <= 0.009 AS "fullyPaid",
                COALESCE(pr.paid, 0) AS "partialPaidAmount"
         FROM drm.gm_entries g
         LEFT JOIN (
@@ -5262,6 +5319,7 @@ export function registerAccountRoutes(app: Express) {
                dollar_rate as "rate",
                COALESCE(extra_discount_usd, 0) as "exDisc",
                COALESCE(extra_discount_pkr, 0) as "exDiscPkr",
+               COALESCE(alibaba_discount_usd, 0) as "discount",
                amount_usd as "loanAmount",
                member_id as "memberId", order_id as "orderId",
                package_type as "package",
@@ -5275,6 +5333,9 @@ export function registerAccountRoutes(app: Express) {
                expiry_date as "expireDate",
                dropout as "dropout",
                status, is_loan, entry_type,
+               payment_status as "paymentStatus",
+               hod_status as "hodStatus",
+               added_by_name as "accountant",
                proof_url as "proofUrl", notes
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false AND coalesce(is_loan,false) = true ${dateWhere}
@@ -5287,12 +5348,15 @@ export function registerAccountRoutes(app: Express) {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Balance tab: all dollar_buying entries
+      // Balance tab: dollar_buying entries that still have an unused/remaining
+      // dollar balance — once a buy's remaining_usd is fully allocated (spent
+      // on an Alibaba payment), it drops off this list.
       const txBalance = await pool.query(`
         SELECT id, buyer_name as "name", date, paypal_email as "email",
                dollar_amount as "amount", dollar_rate as "rate", 'balance' as "txType"
         FROM drm.dollar_buying
         WHERE coalesce(is_deleted, false) = false
+          AND COALESCE(remaining_usd, dollar_amount) > 0.009
         ORDER BY date DESC LIMIT 20
       `);
 
@@ -5384,7 +5448,7 @@ export function registerAccountRoutes(app: Express) {
           AND coalesce(ap.is_deleted, false) = false
         WHERE coalesce(g.is_deleted, false) = false
           AND g.status = 'Approved'
-          ${dateWhere}
+          ${dateWhere.replace(/created_at/g, "g.created_at")}
         ORDER BY g.created_at DESC LIMIT 50
       `, params);
 
@@ -5776,6 +5840,341 @@ export function registerAccountRoutes(app: Express) {
     } catch (err) {
       console.error("Failed to fetch buyer dollar short records:", err);
       res.status(500).json({ error: "Failed to fetch buyer dollar short records" });
+    }
+  });
+
+  // GET /api/account/dollar-system/partial-payment/:gmId/receipts — the "Partial
+  // Payment Installment" view: this Partial GM's own totals alongside every real
+  // gm_partial_receipts row recorded against it (the actual partial payments made).
+  app.get("/api/account/dollar-system/partial-payment/:gmId/receipts", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { gmId } = req.params;
+      const gm = await pool.query(`
+        SELECT g.drm_id as "drmId", g.company_name as "company", g.sales_person_name as "salePerson",
+               g.amount_usd as "dollar", g.amount_pkr as "pkr", g.dollar_rate as "rate",
+               g.package_type as "package", g.dropout, g.payment_status as "status",
+               CASE
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  ELSE 'New'
+                END as "type"
+        FROM drm.gm_entries g WHERE g.id = $1 AND coalesce(g.is_deleted, false) = false
+      `, [gmId]);
+      if (!gm.rows[0]) return res.status(404).json({ error: "GM entry not found" });
+
+      const receipts = await pool.query(`
+        SELECT r.id, r.receipt_date as "partialDate", r.amount_usd as "partialDollar",
+               r.dollar_rate as "partialDollarRate", r.amount_pkr as "partialPkr",
+               r.method as "partialStatus"
+        FROM drm.gm_partial_receipts r
+        WHERE r.gm_id = $1
+        ORDER BY r.receipt_date ASC, r.created_at ASC
+      `, [gmId]);
+
+      res.json({ gm: gm.rows[0], receipts: receipts.rows });
+    } catch (err) {
+      console.error("Failed to fetch partial payment receipts:", err);
+      res.status(500).json({ error: "Failed to fetch partial payment receipts" });
+    }
+  });
+
+  // GET /api/account/dollar-system/loan-payment/:gmId/repayments — the "Loan
+  // Repayment Installment" view: this Loan GM's own totals + receivables ledger,
+  // alongside every real gm_loan_repayments row (customer paying the company back).
+  app.get("/api/account/dollar-system/loan-payment/:gmId/repayments", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { gmId } = req.params;
+      const gm = await pool.query(`
+        SELECT g.drm_id as "drmId", g.company_name as "company", g.sales_person_name as "salePerson",
+               g.amount_usd as "dollar", g.amount_pkr as "pkr", g.dollar_rate as "rate",
+               g.package_type as "package", g.dropout, g.payment_status as "status",
+               CASE
+                  WHEN g.renwal::text = '1' OR g.entry_type = '1' OR g.entry_type ILIKE 'New%' OR g.gm_type = '1' OR g.gm_type ILIKE 'New%' THEN 'New'
+                  WHEN g.renwal::text = '0' OR g.entry_type = '0' OR g.entry_type ILIKE 'Rc%' OR g.gm_type = '0' OR g.gm_type ILIKE 'Rc%' THEN 'Rc'
+                  WHEN g.renwal::text = '2' OR g.entry_type = '2' OR g.entry_type ILIKE 'Ec%' OR g.gm_type = '2' OR g.gm_type ILIKE 'Ec%' THEN 'Ec'
+                  WHEN g.renwal::text = '3' OR g.entry_type = '3' OR g.entry_type ILIKE 'Rc-Up%' OR g.gm_type = '3' OR g.gm_type ILIKE 'Rc-Up%' THEN 'Rc-Up'
+                  ELSE 'New'
+                END as "type",
+               lr.loan_amount as "loanAmount", lr.amount_returned as "amountReturned",
+               lr.outstanding_amount as "outstandingAmount", lr.status as "loanStatus"
+        FROM drm.gm_entries g
+        LEFT JOIN drm.gm_loan_receivables lr ON lr.gm_id::text = g.id::text
+        WHERE g.id = $1 AND coalesce(g.is_deleted, false) = false
+      `, [gmId]);
+      if (!gm.rows[0]) return res.status(404).json({ error: "GM entry not found" });
+
+      const repayments = await pool.query(`
+        SELECT r.id, r.repay_date as "repayDate", r.amount_usd as "repayDollar",
+               r.dollar_rate as "repayDollarRate", r.amount_pkr as "repayPkr",
+               r.method as "repayStatus"
+        FROM drm.gm_loan_repayments r
+        WHERE r.gm_id = $1
+        ORDER BY r.repay_date ASC, r.created_at ASC
+      `, [gmId]);
+
+      res.json({ gm: gm.rows[0], repayments: repayments.rows });
+    } catch (err) {
+      console.error("Failed to fetch loan repayments:", err);
+      res.status(500).json({ error: "Failed to fetch loan repayments" });
+    }
+  });
+
+  // POST /api/account/dollar-system/loan-payment/:gmId/repayments — record one
+  // customer-to-company repayment installment against a Loan GM.
+  app.post("/api/account/dollar-system/loan-payment/:gmId/repayments", requireFinancialPermission(FINANCIAL_ACTIONS.abPaymentCreate), async (req, res) => {
+    try {
+      const { gmId } = req.params;
+      const { amountUsd, amountPkr, dollarRate, repayDate, method, notes } = req.body;
+      const amount = Number(amountUsd);
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ error: "amountUsd must be positive" });
+      }
+      const userId = (req.user as any)?.userId || null;
+
+      const result = await withPgTransaction(async (client: any) => {
+        const { rows: lrRows } = await client.query(
+          `SELECT * FROM drm.gm_loan_receivables WHERE gm_id = $1 FOR UPDATE`,
+          [gmId]
+        );
+        if (!lrRows.length) {
+          throw new ApiError(404, "NOT_FOUND", "No loan receivable ledger found for this GM");
+        }
+        const outstanding = Number(lrRows[0].outstanding_amount || 0);
+        if (amount - outstanding > 0.01) {
+          throw new ApiError(400, "BAD_REQUEST", `Repayment of $${amount.toFixed(2)} exceeds the outstanding balance of $${outstanding.toFixed(2)}`);
+        }
+
+        const { rows: repayRows } = await client.query(`
+          INSERT INTO drm.gm_loan_repayments
+            (gm_id, amount_usd, amount_pkr, dollar_rate, repay_date, method, notes, created_by_user_id)
+          VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6, $7, $8)
+          RETURNING *
+        `, [
+          gmId, amount, amountPkr ? Number(amountPkr) : null, dollarRate ? Number(dollarRate) : null,
+          repayDate || null, method || null, notes || null, userId,
+        ]);
+
+        const newOutstanding = Number((outstanding - amount).toFixed(2));
+        const newStatus = newOutstanding <= 0.009 ? "RETURNED" : "OUTSTANDING";
+        await client.query(
+          `UPDATE drm.gm_loan_receivables SET amount_returned = amount_returned + $2, outstanding_amount = $3, status = $4, updated_at = NOW() WHERE gm_id = $1`,
+          [gmId, amount, newOutstanding, newStatus]
+        );
+
+        return repayRows[0];
+      });
+
+      return res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      console.error("Failed to record loan repayment:", err);
+      res.status(500).json({ error: "Failed to record loan repayment" });
+    }
+  });
+
+  // ===== Martini Status (buyer-dollar PKR liability) =====
+  // Ported from the legacy account_dash.php "Martini Status" tab /
+  // buyer_dollar_ab_show_acc_not_pay(): tracks how much PKR the company still
+  // owes a buyer for a dollar purchase, repaid in installments over time. This
+  // is a separate liability from remaining_usd (dollar inventory spend-down
+  // toward Alibaba orders).
+
+  // GET /api/account/dollar-system/martini-status?buyerReference=
+  app.get("/api/account/dollar-system/martini-status", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { buyerReference } = req.query;
+      const conditions = ["coalesce(b.pkr_amount, 0) - coalesce(b.paid_pkr, 0) > 0.009"];
+      const params: any[] = [];
+      if (buyerReference && buyerReference !== "all" && buyerReference !== "0") {
+        params.push(String(buyerReference));
+        conditions.push(`b.buyer_reference = $${params.length}`);
+      }
+      const { rows } = await pool.query(`
+        SELECT
+          b.id, b.buyer_id, b.buyer_name, b.buyer_reference, b.paypal_email,
+          b.cheque_id, b.date AS buy_date, b.dollar_rate, b.dollar_amount,
+          b.pkr_amount, b.paid_pkr, b.pay_status,
+          (b.pkr_amount - b.paid_pkr) AS remaining_pkr,
+          db.name AS buyer_name_full
+        FROM drm.dollar_buying b
+        LEFT JOIN drm.dollar_buyers db ON b.buyer_id = db.id
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY b.date DESC
+        LIMIT 500
+      `, params);
+
+      const totals = rows.reduce((acc: any, r: any) => {
+        acc.totalPkr += Number(r.pkr_amount || 0);
+        acc.totalPaid += Number(r.paid_pkr || 0);
+        acc.totalRemaining += Number(r.remaining_pkr || 0);
+        acc.totalDollar += Number(r.dollar_amount || 0);
+        return acc;
+      }, { totalPkr: 0, totalPaid: 0, totalRemaining: 0, totalDollar: 0 });
+
+      res.json({ records: rows, count: rows.length, totals });
+    } catch (err) {
+      console.error("Failed to fetch martini status records:", err);
+      res.status(500).json({ error: "Failed to fetch martini status records" });
+    }
+  });
+
+  // GET /api/account/dollar-system/martini-status/count — lightweight badge count
+  app.get("/api/account/dollar-system/martini-status/count", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT COUNT(*)::int AS count
+        FROM drm.dollar_buying b
+        WHERE coalesce(b.pkr_amount, 0) - coalesce(b.paid_pkr, 0) > 0.009
+      `);
+      res.json({ count: rows[0]?.count || 0 });
+    } catch (err) {
+      console.error("Failed to fetch martini status count:", err);
+      res.status(500).json({ error: "Failed to fetch martini status count" });
+    }
+  });
+
+  // GET /api/account/dollar-system/martini-status/buyer-references — filter dropdown
+  app.get("/api/account/dollar-system/martini-status/buyer-references", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT DISTINCT buyer_reference
+        FROM drm.dollar_buying
+        WHERE buyer_reference IS NOT NULL AND buyer_reference <> ''
+        ORDER BY buyer_reference ASC
+      `);
+      res.json({ records: rows.map((r: any) => r.buyer_reference) });
+    } catch (err) {
+      console.error("Failed to fetch buyer references:", err);
+      res.status(500).json({ error: "Failed to fetch buyer references" });
+    }
+  });
+
+  // GET /api/account/dollar-system/martini-status/:id/installments — installment history
+  app.get("/api/account/dollar-system/martini-status/:id/installments", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT installments FROM drm.dollar_buying WHERE id = $1`,
+        [req.params.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: "Record not found" });
+      const installments = Array.isArray(rows[0].installments) ? rows[0].installments : [];
+
+      const userIds = Array.from(new Set(installments.map((i: any) => i.createdByUserId).filter(Boolean).map(String)));
+      let nameById: Record<string, string> = {};
+      if (userIds.length) {
+        const { rows: userRows } = await pool.query(
+          `SELECT id::text AS id, COALESCE(full_name, name, username) AS name FROM drm.users WHERE id::text = ANY($1::text[])`,
+          [userIds]
+        );
+        nameById = Object.fromEntries(userRows.map((u: any) => [u.id, u.name]));
+      }
+
+      const enriched = installments.map((i: any) => ({
+        ...i,
+        createdByName: i.createdByUserId ? (nameById[String(i.createdByUserId)] || "-") : "-",
+      }));
+
+      res.json({ records: enriched });
+    } catch (err) {
+      console.error("Failed to fetch installment history:", err);
+      res.status(500).json({ error: "Failed to fetch installment history" });
+    }
+  });
+
+  // POST /api/account/dollar-system/martini-status/:id/payment — record a new installment
+  app.post("/api/account/dollar-system/martini-status/:id/payment", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingCreate), async (req, res) => {
+    try {
+      const { amountPkr, status, note, payDate, imageUrl } = req.body;
+      const amount = Number(amountPkr);
+      if (!amount || amount <= 0) {
+        return res.status(400).json({ error: "Amount must be greater than 0" });
+      }
+      const userId = (req.user as any)?.id || (req.user as any)?.userId || null;
+
+      const result = await withPgTransaction(async (client: any) => {
+        const { rows } = await client.query(
+          `SELECT pkr_amount, paid_pkr, installments FROM drm.dollar_buying WHERE id = $1 FOR UPDATE`,
+          [req.params.id]
+        );
+        if (!rows.length) throw new ApiError(404, "NOT_FOUND", "Record not found");
+        const row = rows[0];
+        const remaining = Number(row.pkr_amount) - Number(row.paid_pkr || 0);
+        if (amount - remaining > 0.01) {
+          throw new ApiError(400, "BAD_REQUEST", `Installment amount cannot exceed remaining amount (PKR ${remaining.toFixed(0)})`);
+        }
+
+        const newPaid = Number(row.paid_pkr || 0) + amount;
+        const finalStatus = (Number(row.pkr_amount) - newPaid) <= 0.009 ? "Paid" : (status || "Installment");
+
+        const entry = {
+          amountPkr: amount,
+          status: status || finalStatus,
+          note: note || null,
+          imageUrl: imageUrl || null,
+          payDate: payDate || null,
+          createdByUserId: userId,
+          createdAt: new Date().toISOString(),
+        };
+        const existing = Array.isArray(row.installments) ? row.installments : [];
+        const newInstallments = [...existing, entry];
+
+        const { rows: updated } = await client.query(
+          `UPDATE drm.dollar_buying
+           SET paid_pkr = $2, pay_status = $3, installments = $4::jsonb, updated_at = NOW()
+           WHERE id = $1
+           RETURNING pkr_amount, paid_pkr, pay_status`,
+          [req.params.id, newPaid, finalStatus, JSON.stringify(newInstallments)]
+        );
+        return updated[0];
+      });
+
+      res.json({
+        success: true,
+        totalPkr: Number(result.pkr_amount),
+        paidPkr: Number(result.paid_pkr),
+        remainingPkr: Number(result.pkr_amount) - Number(result.paid_pkr),
+        finalStatus: result.pay_status,
+      });
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        return res.status(err.status).json({ error: err.message });
+      }
+      console.error("Failed to record martini status payment:", err);
+      res.status(500).json({ error: "Failed to record payment" });
+    }
+  });
+
+  // POST /api/account/dollar-system/martini-status/upload-image — proof image for an installment
+  app.post("/api/account/dollar-system/martini-status/upload-image", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingCreate), async (req, res) => {
+    try {
+      const multer = (await import("multer")).default;
+      const path = await import("path");
+      const fs = await import("fs");
+
+      const uploadDir = path.join(process.cwd(), "uploads", "martini-status");
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+      const storage = multer.diskStorage({
+        destination: (_req: any, _file: any, cb: any) => cb(null, uploadDir),
+        filename: (_req: any, file: any, cb: any) => {
+          const ext = path.extname(file.originalname);
+          cb(null, `installment_${Date.now()}${ext}`);
+        }
+      });
+      const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+
+      upload.single("file")(req as any, res as any, async (err: any) => {
+        if (err) return res.status(400).json({ error: "Upload failed: " + err.message });
+        const file = (req as any).file;
+        if (!file) return res.status(400).json({ error: "No file uploaded" });
+        res.json({ success: true, url: `/uploads/martini-status/${file.filename}` });
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Upload failed" });
     }
   });
 

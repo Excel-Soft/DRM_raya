@@ -134,6 +134,93 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
   );
 }
 
+// Legacy "Partial Payment Received" header set: Drm Id, Member Id, Order Id, Company,
+// Sale Person, Package, Type, Dollar, Dollar Rate, Pkr, Screenshort, Discount, Extra
+// Discount, Extra Pkr Discount, Status, Create, Accountant, HOD, Alibaba, Pay Date.
+// Drm Id opens the "Partial Payment Installment" modal (real gm_partial_receipts rows).
+function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach }: any) {
+  const cols: [string, number][] = [
+    ["#",45],["Drm Id",150],["Member Id",110],["Order Id",130],["Company",220],["Sale Person",120],
+    ["Package",120],["Type",80],["Dollar",90],["Dollar Rate",90],["Pkr",100],["Screenshort",90],
+    ["Discount",90],["Extra Discount",100],["Extra Pkr Discount",110],["Status",110],["Create",100],
+    ["Accountant",110],["HOD",90],["Alibaba",90],["Pay Date",100],
+  ];
+  const tableWidth = cols.reduce((s, [, w]) => s + w, 0);
+  return (
+    <div style={{display:"block",width:"100%",overflowX:"auto",overflowY:"visible",paddingBottom:"16px"}} className="custom-scrollbar">
+      <table style={{width:tableWidth, tableLayout:"fixed", minWidth:tableWidth}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+        <thead className="bg-[#f39c12] text-white font-bold text-[11px] shadow-sm dark:bg-zinc-900 sticky top-0 z-10">
+          <tr>{cols.map(([h,w]) => <th key={h} style={{width:w}} className="py-2.5 px-2 border-r border-white/20 last:border-0">{h}</th>)}</tr>
+        </thead>
+        <tbody className="bg-white font-bold dark:bg-zinc-900">
+          {items.length > 0 ? items.map((item: any, i: number) => (
+            <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
+              <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
+              <td className="p-2.5 border-r whitespace-nowrap">
+                <button type="button" onClick={() => onViewInstallments(item)}
+                  className="font-black text-[#00a65a] italic uppercase underline decoration-dotted hover:text-[#008d4c] cursor-pointer">
+                  {item.drmId || "-"}
+                </button>
+                {!!item.installmentsTotal && (
+                  <span
+                    title="Installments collected / scheduled"
+                    className={cn("ml-1.5 not-italic font-bold normal-case text-[9px] px-1.5 py-0.5 rounded",
+                      item.fullyPaid ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500")}
+                  >
+                    {item.installmentsCollected || 0}/{item.installmentsTotal}
+                  </span>
+                )}
+              </td>
+              <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 truncate">{item.memberId || "-"}</td>
+              <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400 truncate">{item.orderId || "-"}</td>
+              <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 truncate" title={item.company}>{item.company || "-"}</td>
+              <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 truncate">{item.salePerson || "-"}</td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.package || "-"}</td>
+              <td className="p-2.5 border-r">
+                {item.type ? (
+                  <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                    item.type==="New" ? "bg-emerald-100 text-emerald-700" :
+                    item.type==="Rc"  ? "bg-blue-100 text-blue-700" :
+                    item.type==="Ec"  ? "bg-red-100 text-red-700" :
+                    item.type==="Rc-Up" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600"
+                  )}>{item.type}</Badge>
+                ) : "-"}
+              </td>
+              <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || "0"}</td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.rate || "-"}</td>
+              <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{Number(item.pkr || 0).toLocaleString()}</td>
+              <td className="p-2.5 border-r text-center">
+                <button type="button" onClick={() => onAttach(item)} title="View / attach screenshot"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#3c8dbc] hover:bg-[#367fa9] text-white cursor-pointer">
+                  <FileText size={11} strokeWidth={2.8}/>
+                </button>
+              </td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.discount || "0"}</td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDisc || "0"}</td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDiscPkr || "0"}</td>
+              <td className="p-2.5 border-r">
+                <Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">{item.paymentStatus || "-"}</Badge>
+              </td>
+              <td className="p-2.5 border-r text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(item.date, "yyyy-MM-dd")}</td>
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.accountant || "-"}</td>
+              <td className="p-2.5 border-r">
+                <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                  item.hodStatus === "Approved" ? "bg-emerald-100 text-emerald-700" :
+                  item.hodStatus === "Rejected" ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"
+                )}>{item.hodStatus || "Pending"}</Badge>
+              </td>
+              <td className="p-2.5 border-r"><Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">Pending</Badge></td>
+              <td className="p-2.5 text-gray-400 dark:text-zinc-500 text-[10px]">-</td>
+            </tr>
+          )) : (
+            <tr><td colSpan={21} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No data available in table</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, onClear, onExcel }: any) {
   return (
     <div className="flex flex-wrap items-center gap-2 bg-gray-50/50 dark:bg-zinc-900 p-3 rounded-lg border border-gray-100 dark:border-zinc-800">
@@ -176,6 +263,66 @@ export default function DollarSystem() {
   const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Partial Payment Installment modal — real gm_partial_receipts rows for a clicked Drm Id
+  const [installmentItem, setInstallmentItem] = useState<any>(null);
+  const { data: installmentData, isLoading: installmentLoading } = useQuery({
+    queryKey: ["/api/account/dollar-system/partial-payment", installmentItem?.id, "receipts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/account/dollar-system/partial-payment/${installmentItem.id}/receipts`, { headers: getAuthHeader(), credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch installment receipts");
+      return res.json();
+    },
+    enabled: !!installmentItem,
+  });
+
+  // Loan Repayment Installment modal — the customer pays the company back over
+  // time (separate from Pay Alibaba, which a Loan GM pays in full upfront).
+  const [loanRepaymentItem, setLoanRepaymentItem] = useState<any>(null);
+  const [loanRepayForm, setLoanRepayForm] = useState({ amountUsd: "", amountPkr: "", dollarRate: "", repayDate: "", method: "", notes: "" });
+  const [loanRepaySubmitting, setLoanRepaySubmitting] = useState(false);
+  const { data: loanRepayData, isLoading: loanRepayLoading, refetch: refetchLoanRepay } = useQuery({
+    queryKey: ["/api/account/dollar-system/loan-payment", loanRepaymentItem?.id, "repayments"],
+    queryFn: async () => {
+      const res = await fetch(`/api/account/dollar-system/loan-payment/${loanRepaymentItem.id}/repayments`, { headers: getAuthHeader(), credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch loan repayments");
+      return res.json();
+    },
+    enabled: !!loanRepaymentItem,
+  });
+  const submitLoanRepayment = async () => {
+    if (!loanRepaymentItem) return;
+    const amountUsd = parseFloat(loanRepayForm.amountUsd) || 0;
+    if (amountUsd <= 0) { alert("Enter a repayment amount greater than 0."); return; }
+    setLoanRepaySubmitting(true);
+    try {
+      const res = await fetch(`/api/account/dollar-system/loan-payment/${loanRepaymentItem.id}/repayments`, {
+        method: "POST",
+        headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          amountUsd,
+          amountPkr: loanRepayForm.amountPkr ? parseFloat(loanRepayForm.amountPkr) : undefined,
+          dollarRate: loanRepayForm.dollarRate ? parseFloat(loanRepayForm.dollarRate) : undefined,
+          repayDate: loanRepayForm.repayDate || undefined,
+          method: loanRepayForm.method || undefined,
+          notes: loanRepayForm.notes || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Failed to record repayment.");
+        return;
+      }
+      setLoanRepayForm({ amountUsd: "", amountPkr: "", dollarRate: "", repayDate: "", method: "", notes: "" });
+      refetchLoanRepay();
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
+    } catch {
+      alert("Failed to record repayment.");
+    } finally {
+      setLoanRepaySubmitting(false);
+    }
+  };
 
   // Paid Alibaba row modals: Order Details (buyer breakdown) + Payment Verify (status update)
   const [orderDetailItem, setOrderDetailItem] = useState<any>(null);
@@ -299,11 +446,18 @@ export default function DollarSystem() {
     }
   };
 
+  // The slider's upper bound used to be a hardcoded 500 — any dollar_buying row
+  // with more than $500 remaining was silently unreachable (it never showed up
+  // no matter how far the handle was dragged). Scale the bound to the order's
+  // own target instead, with generous headroom, so larger buys stay reachable.
+  const getSliderBound = (targetDollar: number) => Math.max(500, Math.ceil(targetDollar * 3));
+
   const handleSliderChange = (type: "min" | "max", val: number) => {
-    const cleanVal = Math.max(0, Math.min(500, Math.round(val)));
+    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+    const cleanVal = Math.max(0, Math.min(bound, Math.round(val)));
     setDollarForm((prev: any) => {
       if (type === "min") {
-        const newMin = Math.min(cleanVal, prev.sliderMax ?? 500);
+        const newMin = Math.min(cleanVal, prev.sliderMax ?? bound);
         return { ...prev, sliderMin: newMin };
       } else {
         const newMax = Math.max(cleanVal, prev.sliderMin ?? 0);
@@ -321,9 +475,10 @@ export default function DollarSystem() {
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!activeThumb || !sliderTrackRef.current) return;
+    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
     const rect = sliderTrackRef.current.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const val = Math.round(pos * 500);
+    const val = Math.round(pos * bound);
     handleSliderChange(activeThumb, val);
   };
 
@@ -336,17 +491,18 @@ export default function DollarSystem() {
       // Mirrors the PHP slider's onFinish: re-fetch the available buy pool for the
       // new range and re-run the same allocation the modal opened with.
       const targetDollar = parseFloat(dollarForm.dollar) || 0;
-      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? 100, targetDollar, !!dollarForm.isTemp);
+      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? getSliderBound(targetDollar), targetDollar, !!dollarForm.isTemp);
     }
   };
 
   const handleTrackPointerDown = (e: React.PointerEvent) => {
     if (!sliderTrackRef.current) return;
+    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
     const rect = sliderTrackRef.current.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const val = Math.round(pos * 500);
+    const val = Math.round(pos * bound);
     const distMin = Math.abs(val - (dollarForm.sliderMin ?? 0));
-    const distMax = Math.abs(val - (dollarForm.sliderMax ?? 100));
+    const distMax = Math.abs(val - (dollarForm.sliderMax ?? bound));
     if (distMin < distMax) {
       handleSliderChange("min", val);
       startDragging("min", e);
@@ -362,6 +518,7 @@ export default function DollarSystem() {
     const pkrVal = item.pkr ? Number(item.pkr) : Math.round(targetDollar * rateVal);
     const dateVal = item.date ? safeDate(item.date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
+    const bound = getSliderBound(targetDollar);
     setDollarModalItem({ ...item, pkr: pkrVal, rate: rateVal });
     setDollarSlots([]);
     setAllocError("");
@@ -372,7 +529,7 @@ export default function DollarSystem() {
       memberId: item.memberId || "",
       orderId: item.orderId || "",
       sliderMin: 0,
-      sliderMax: 100,
+      sliderMax: bound,
       removeUnselected: true,
       dollar: String(targetDollar.toFixed(2)),
       dollarRate: String(rateVal.toFixed(2)),
@@ -381,7 +538,7 @@ export default function DollarSystem() {
       type: item.type || "New",
       detail: item.notes || item.detail || ""
     });
-    loadAndAllocate(0, 500, targetDollar, isTemp);
+    loadAndAllocate(0, bound, targetDollar, isTemp);
   };
 
   const handleUseDollarChange = (id: string, val: string) => {
@@ -766,6 +923,162 @@ export default function DollarSystem() {
         </div>, document.body
       )}
 
+      {installmentItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" style={{backdropFilter:"blur(4px)"}} onClick={()=>setInstallmentItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-6xl mx-4 overflow-hidden max-h-[90vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 shrink-0">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">Partial Payment Installment</div>
+              <button onClick={()=>setInstallmentItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <div className="p-4 overflow-auto custom-scrollbar">
+              <div style={{display:"block",width:"100%",overflowX:"auto"}} className="custom-scrollbar">
+                <table style={{width:"1900px",tableLayout:"fixed",minWidth:"1900px"}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                  <thead className="bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 font-bold text-[11px]">
+                    <tr>
+                      {["#","Drm id","Partial Date","Company","Sale Person","Dollar","Pkr","Dollar Rate","Partial Dollar","Partial Dollar Rate","Partial Pkr","Partial Status","Package","Type","Droupout","Status","Action"].map(h =>
+                        <th key={h} className="py-2.5 px-2.5 border-r border-b border-gray-200 dark:border-zinc-700 last:border-r-0">{h}</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-zinc-900 font-bold">
+                    {installmentLoading ? (
+                      <tr><td colSpan={17} className="p-5 text-center text-gray-400"><Loader2 className="inline h-4 w-4 animate-spin"/></td></tr>
+                    ) : (installmentData?.receipts?.length > 0) ? installmentData.receipts.map((r: any, i: number) => (
+                      <tr key={r.id} className="border-b border-gray-50 dark:border-zinc-800 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
+                        <td className="p-2.5 border-r text-gray-400 text-center">{i + 1}</td>
+                        <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase">{installmentItem.drmId || "-"}</td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{safeDate(r.partialDate, "yyyy-MM-dd")}</td>
+                        <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 truncate" title={installmentItem.company}>{installmentItem.company || "-"}</td>
+                        <td className="p-2.5 border-r italic text-gray-500 dark:text-zinc-400 truncate">{installmentItem.salePerson || "-"}</td>
+                        <td className="p-2.5 border-r text-gray-900 dark:text-zinc-100">{installmentItem.dollar || "0"}</td>
+                        <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{Number(installmentItem.pkr || 0).toLocaleString()}</td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{installmentItem.rate || "-"}</td>
+                        <td className="p-2.5 border-r text-gray-900 dark:text-zinc-100">{Number(r.partialDollar || 0).toFixed(2)}</td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{r.partialDollarRate ?? "-"}</td>
+                        <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{Number(r.partialPkr || 0).toLocaleString()}</td>
+                        <td className="p-2.5 border-r"><Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">{r.partialStatus || "-"}</Badge></td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{installmentItem.package || "-"}</td>
+                        <td className="p-2.5 border-r">
+                          {installmentItem.type ? (
+                            <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                              installmentItem.type==="New" ? "bg-emerald-100 text-emerald-700" :
+                              installmentItem.type==="Rc"  ? "bg-blue-100 text-blue-700" :
+                              installmentItem.type==="Ec"  ? "bg-red-100 text-red-700" :
+                              installmentItem.type==="Rc-Up" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600"
+                            )}>{installmentItem.type}</Badge>
+                          ) : "-"}
+                        </td>
+                        <td className="p-2.5 border-r text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(installmentItem.dropout, "yyyy-MM-dd", "None")}</td>
+                        <td className="p-2.5 border-r">
+                          <Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">{installmentItem.paymentStatus || "-"}</Badge>
+                        </td>
+                        <td className="p-2.5">
+                          <div className="flex gap-1.5 items-center justify-center">
+                            {(() => {
+                              // Partial/Loan GMs pay Alibaba per-installment, not as one lump
+                              // sum for the whole order — target THIS receipt's own amount.
+                              const perInstallmentItem = {
+                                ...installmentItem,
+                                dollar: r.partialDollar,
+                                customerDollar: r.partialDollar,
+                                rate: r.partialDollarRate || installmentItem.rate,
+                                pkr: r.partialPkr,
+                                date: r.partialDate,
+                              };
+                              return (
+                                <>
+                                  <button type="button" onClick={() => { setInstallmentItem(null); openDollarModal(perInstallmentItem, false); }} title="Dollar Allocation / Pay Alibaba (Standard) — for this installment only"
+                                    className="w-5 h-5 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                                    <DollarSign size={11} strokeWidth={2.8} />
+                                  </button>
+                                  <button type="button" onClick={() => { setInstallmentItem(null); openDollarModal(perInstallmentItem, true); }} title="Dollar Allocation / Pay Alibaba (Temp Payment) — for this installment only"
+                                    className="w-5 h-5 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                                    <Info size={11} strokeWidth={2.8} />
+                                  </button>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={17} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No partial payments recorded yet</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {loanRepaymentItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" style={{backdropFilter:"blur(4px)"}} onClick={()=>setLoanRepaymentItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-5xl mx-4 overflow-hidden max-h-[90vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 shrink-0">
+              <div>
+                <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">Loan Repayment Installment</div>
+                <div className="text-[11px] text-gray-500 dark:text-zinc-400 mt-0.5">{loanRepaymentItem.drmId} &bull; {loanRepaymentItem.company}</div>
+              </div>
+              <button onClick={()=>setLoanRepaymentItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <div className="p-4 overflow-auto custom-scrollbar space-y-4">
+              {loanRepayData?.gm && (
+                <div className="flex flex-wrap gap-4 bg-gray-50 dark:bg-zinc-800 rounded-md p-3 text-[11px] font-bold">
+                  <div><span className="text-gray-400">Loan Amount: </span><span className="text-gray-800 dark:text-zinc-100">$ {Number(loanRepayData.gm.loanAmount || loanRepaymentItem.dollar || 0).toFixed(2)}</span></div>
+                  <div><span className="text-gray-400">Returned: </span><span className="text-[#00a65a]">$ {Number(loanRepayData.gm.amountReturned || 0).toFixed(2)}</span></div>
+                  <div><span className="text-gray-400">Outstanding: </span><span className="text-red-500">$ {Number(loanRepayData.gm.outstandingAmount ?? loanRepaymentItem.dollar ?? 0).toFixed(2)}</span></div>
+                  <div><span className="text-gray-400">Status: </span><span className="text-gray-800 dark:text-zinc-100">{loanRepayData.gm.loanStatus || "OUTSTANDING"}</span></div>
+                </div>
+              )}
+
+              <div style={{display:"block",width:"100%",overflowX:"auto"}} className="custom-scrollbar">
+                <table style={{width:"1100px",tableLayout:"fixed",minWidth:"1100px"}} className="text-left text-[11px] whitespace-nowrap border-separate border-spacing-0">
+                  <thead className="bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-200 font-bold text-[11px]">
+                    <tr>
+                      {["#","Repay Date","Amount $","Dollar Rate","Amount Pkr","Method"].map(h =>
+                        <th key={h} className="py-2.5 px-2.5 border-r border-b border-gray-200 dark:border-zinc-700 last:border-r-0">{h}</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white dark:bg-zinc-900 font-bold">
+                    {loanRepayLoading ? (
+                      <tr><td colSpan={6} className="p-5 text-center text-gray-400"><Loader2 className="inline h-4 w-4 animate-spin"/></td></tr>
+                    ) : (loanRepayData?.repayments?.length > 0) ? loanRepayData.repayments.map((r: any, i: number) => (
+                      <tr key={r.id} className="border-b border-gray-50 dark:border-zinc-800 hover:bg-gray-50/50 dark:hover:bg-zinc-800">
+                        <td className="p-2.5 border-r text-gray-400 text-center">{i + 1}</td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{safeDate(r.repayDate, "yyyy-MM-dd")}</td>
+                        <td className="p-2.5 border-r text-gray-900 dark:text-zinc-100">$ {Number(r.repayDollar || 0).toFixed(2)}</td>
+                        <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{r.repayDollarRate ?? "-"}</td>
+                        <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{r.repayPkr ? Number(r.repayPkr).toLocaleString() : "-"}</td>
+                        <td className="p-2.5"><Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">{r.repayStatus || "-"}</Badge></td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={6} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No repayments recorded yet</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="border-t border-gray-100 dark:border-zinc-800 pt-4">
+                <div className="text-[12px] font-black text-gray-700 dark:text-zinc-300 uppercase mb-2">Record New Repayment</div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <Input type="number" placeholder="Amount $" value={loanRepayForm.amountUsd} onChange={e=>setLoanRepayForm({...loanRepayForm, amountUsd: e.target.value})} className="h-9 text-xs"/>
+                  <Input type="number" placeholder="Dollar Rate" value={loanRepayForm.dollarRate} onChange={e=>setLoanRepayForm({...loanRepayForm, dollarRate: e.target.value})} className="h-9 text-xs"/>
+                  <Input type="number" placeholder="Amount Pkr" value={loanRepayForm.amountPkr} onChange={e=>setLoanRepayForm({...loanRepayForm, amountPkr: e.target.value})} className="h-9 text-xs"/>
+                  <Input type="date" value={loanRepayForm.repayDate} onChange={e=>setLoanRepayForm({...loanRepayForm, repayDate: e.target.value})} className="h-9 text-xs"/>
+                  <Input placeholder="Method (e.g. Cash Received)" value={loanRepayForm.method} onChange={e=>setLoanRepayForm({...loanRepayForm, method: e.target.value})} className="h-9 text-xs"/>
+                  <Input placeholder="Note" value={loanRepayForm.notes} onChange={e=>setLoanRepayForm({...loanRepayForm, notes: e.target.value})} className="h-9 text-xs"/>
+                </div>
+                <Button onClick={submitLoanRepayment} disabled={loanRepaySubmitting} className="mt-3 h-9 bg-[#00a65a] hover:bg-[#008d4c] text-white font-bold text-xs uppercase px-6">
+                  {loanRepaySubmitting ? <Loader2 size={14} className="animate-spin"/> : "Add Repayment"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
       {dollarModalItem && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4" style={{backdropFilter:"blur(4px)"}} onClick={()=>setDollarModalItem(null)}>
           <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[95vh] flex flex-col border border-gray-200 dark:border-zinc-800" onClick={e=>e.stopPropagation()}>
@@ -823,8 +1136,9 @@ export default function DollarSystem() {
 
                 {/* Range Slider Section */}
                 {(() => {
-                  const minP = Math.min(100, Math.max(0, ((dollarForm.sliderMin ?? 0) / 500) * 100));
-                  const maxP = Math.min(100, Math.max(0, ((dollarForm.sliderMax ?? 100) / 500) * 100));
+                  const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+                  const minP = Math.min(100, Math.max(0, ((dollarForm.sliderMin ?? 0) / bound) * 100));
+                  const maxP = Math.min(100, Math.max(0, ((dollarForm.sliderMax ?? bound) / bound) * 100));
                   return (
                     <div 
                       className="pt-2 pb-2 select-none"
@@ -849,14 +1163,14 @@ export default function DollarSystem() {
                           style={{ left: `${maxP}%`, transform: "translateX(-50%)" }}
                         >
                           <span className="bg-[#00a65a] text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm whitespace-nowrap">
-                            {dollarForm.sliderMax ?? 100}
+                            {dollarForm.sliderMax ?? bound}
                           </span>
                         </div>
 
-                        {/* End Limit Badge 500 */}
+                        {/* End Limit Badge */}
                         <div className="absolute top-0 right-0 pointer-events-none">
                           <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                            500
+                            {bound}
                           </span>
                         </div>
 
@@ -888,17 +1202,17 @@ export default function DollarSystem() {
                             onPointerDown={(e) => startDragging("max", e)}
                             className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white border-2 border-black rotate-45 shadow hover:scale-125 active:scale-125 transition-transform cursor-grab active:cursor-grabbing z-20"
                             style={{ left: `${maxP}%` }}
-                            title={`Max: ${dollarForm.sliderMax ?? 100}`}
+                            title={`Max: ${dollarForm.sliderMax ?? bound}`}
                           />
                         </div>
 
                         {/* Scale Numbers & Ticks */}
                         <div className="flex justify-between text-[10px] text-gray-400 font-semibold pt-1">
                           <span>0</span>
-                          <span>125</span>
-                          <span>250</span>
-                          <span>375</span>
-                          <span>500</span>
+                          <span>{Math.round(bound * 0.25)}</span>
+                          <span>{Math.round(bound * 0.5)}</span>
+                          <span>{Math.round(bound * 0.75)}</span>
+                          <span>{bound}</span>
                         </div>
                       </div>
 
@@ -1376,7 +1690,7 @@ export default function DollarSystem() {
                       </div>
                     </div>
                     <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartial} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+                    <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartial} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
                     <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartial.length} of {partialCleared.length} entries</div>
                   </div>
                   )}
@@ -1511,7 +1825,7 @@ export default function DollarSystem() {
               </div>
             </div>
             <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fLoan} onViewInstallments={setLoanRepaymentItem} onAttach={setAttachItem}/></div>
             <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
           </div>
 
@@ -1539,7 +1853,7 @@ export default function DollarSystem() {
               <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
               <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
             </div>
-            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fPartialPending} onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal}/></div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartialPending} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
             <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartialPending.length} of {partialPending.length} entries</div>
           </div>
 
