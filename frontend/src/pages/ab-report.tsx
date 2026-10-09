@@ -410,7 +410,7 @@ export default function AbReport() {
         }
     });
 
-    const { data: dollarList, isLoading: listLoading } = useQuery({
+    const { data: dollarList, isLoading: listLoading, isFetching: listFetching, refetch: refetchDollarList } = useQuery({
         queryKey: ["/api/account/dollar-system/list", dateRange],
         queryFn: async () => {
             const url = new URL("/api/account/dollar-system/list", window.location.origin);
@@ -643,9 +643,9 @@ export default function AbReport() {
                                 count={account.tempPayment?.martiniPending?.count || 0}
                                 amount={account.tempPayment?.martiniPending?.amount || 0}
                                 prefix="$"
+                                infoTooltip="Approved client dollars not yet linked to an AB payment — same data as the Dollar System page's Martini tab"
                                 breakdown={[
-                                    { label: "Martini Client Shorts", count: account.tempPayment?.martiniPending?.clientShorts?.count || 0, amount: account.tempPayment?.martiniPending?.clientShorts?.amount || 0, onView: () => viewMetric("martini-pending-shorts", "Martini Client Shorts") },
-                                    { label: "Martini Cheque", count: account.tempPayment?.martiniPending?.cheque?.count || 0, amount: account.tempPayment?.martiniPending?.cheque?.amount || 0, onView: () => viewMetric("martini-pending-cheque", "Martini Cheque") },
+                                    { label: "Martini Pending", count: account.tempPayment?.martiniPending?.count || 0, amount: account.tempPayment?.martiniPending?.amount || 0, onView: () => viewMetric("martini-pending", "Martini Pending") },
                                 ]}
                             />
                             <MetricRow label="Pending Cheque" count={account.tempPayment?.pendingCheque?.count || 0} amount={account.tempPayment?.pendingCheque?.amount || 0} />
@@ -1029,8 +1029,12 @@ export default function AbReport() {
                                     onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
                                 />
                             </div>
-                            <Button className="bg-emerald-700 hover:bg-emerald-800 h-10 font-bold uppercase transition-all shadow-md">
-                                View
+                            <Button
+                                onClick={() => refetchDollarList()}
+                                disabled={listFetching}
+                                className="bg-emerald-700 hover:bg-emerald-800 h-10 font-bold uppercase transition-all shadow-md disabled:opacity-70"
+                            >
+                                {listFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : "View"}
                             </Button>
                         </div>
 

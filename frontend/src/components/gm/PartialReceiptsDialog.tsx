@@ -35,6 +35,7 @@ interface InstallmentRow {
   installmentDate: string | null;
   grandTotalDollar: number;
   grandTotalPkr: number;
+  dollarRate: number | null;
   chequeNo: string | null;
   pay: number;
   due: number;
@@ -48,6 +49,7 @@ interface Summary {
 }
 interface DraftRow {
   dollar: string;
+  dollarRate: string;
   pkr: string;
   chequeNo: string;
   payDate: string;
@@ -65,7 +67,7 @@ const fmt = (n: any) =>
   `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = (d: any) => (d ? new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "2-digit", day: "2-digit" }) : "—");
 
-const blankRow = (): DraftRow => ({ dollar: "", pkr: "", chequeNo: "", payDate: "" });
+const blankRow = (): DraftRow => ({ dollar: "", dollarRate: "", pkr: "", chequeNo: "", payDate: "" });
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const blankPayForm = (due: string): PayForm => ({
   date: todayStr(), due, dollar: "", dollarRate: "", paymentMethod: "", recoveryType: "",
@@ -126,6 +128,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
         return mutationRequest("PATCH", `/api/gm-pool/${gmId}/installments/${editingIndex}`, {
           dollar: Number(r.dollar),
           pkr: r.pkr ? Number(r.pkr) : 0,
+          dollarRate: r.dollarRate ? Number(r.dollarRate) : undefined,
           chequeNo: r.chequeNo || undefined,
           payDate: r.payDate || undefined,
         });
@@ -135,6 +138,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
         .map(r => ({
           dollar: Number(r.dollar),
           pkr: r.pkr ? Number(r.pkr) : 0,
+          dollarRate: r.dollarRate ? Number(r.dollarRate) : undefined,
           chequeNo: r.chequeNo || undefined,
           payDate: r.payDate || undefined,
         }));
@@ -299,14 +303,24 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                 </div>
               )}
               {draftRows.map((row, index) => (
-                <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_1fr_auto] gap-2 items-end">
+                <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] gap-2 items-end">
                   <div>
                     {index === 0 && <label className="block text-xs font-medium text-muted-foreground mb-1">Dollar</label>}
                     <Input placeholder="add dollar $" value={row.dollar} onChange={e => updateDraftRow(index, "dollar", e.target.value)} />
                   </div>
                   <div>
+                    {index === 0 && <label className="block text-xs font-medium text-muted-foreground mb-1">Dollar Rate</label>}
+                    <Input placeholder="0.00" value={row.dollarRate} onChange={e => updateDraftRow(index, "dollarRate", e.target.value)} />
+                  </div>
+                  <div>
                     {index === 0 && <label className="block text-xs font-medium text-muted-foreground mb-1">Pkr Amount</label>}
-                    <Input placeholder="add pkr amount" value={row.pkr} onChange={e => updateDraftRow(index, "pkr", e.target.value)} />
+                    <Input
+                      placeholder="add pkr amount"
+                      value={row.dollarRate ? ((Number(row.dollar) || 0) * (Number(row.dollarRate) || 0)).toFixed(2) : row.pkr}
+                      readOnly={!!row.dollarRate}
+                      className={row.dollarRate ? "bg-gray-50 dark:bg-zinc-800" : undefined}
+                      onChange={e => updateDraftRow(index, "pkr", e.target.value)}
+                    />
                   </div>
                   <div>
                     {index === 0 && <label className="block text-xs font-medium text-muted-foreground mb-1">Cheque No</label>}
@@ -364,14 +378,14 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="bg-gray-50 dark:bg-zinc-800">
                         <tr>
-                          {["No", "Installment Date", "Company", "Person", "Grand Total Dollar", "Grand Total Pkr", "Cheque No", "Pay", "Due", "Create Date", "Action"].map(h => (
+                          {["No", "Installment Date", "Company", "Person", "Grand Total Dollar", "Dollar Rate", "Grand Total Pkr", "Cheque No", "Pay", "Due", "Create Date", "Action"].map(h => (
                             <th key={h} className="px-2 py-1.5 text-left font-semibold">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {installments.length === 0 ? (
-                          <tr><td colSpan={11} className="px-2 py-4 text-center text-gray-400">No installments scheduled yet</td></tr>
+                          <tr><td colSpan={12} className="px-2 py-4 text-center text-gray-400">No installments scheduled yet</td></tr>
                         ) : (
                           installments.map((row) => (
                             <tr key={row.no} className="border-t">
@@ -380,6 +394,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                               <td className="px-2 py-1.5">{resolvedCompanyName || "—"}</td>
                               <td className="px-2 py-1.5">{personName || "—"}</td>
                               <td className="px-2 py-1.5">{fmt(row.grandTotalDollar)}</td>
+                              <td className="px-2 py-1.5">{row.dollarRate != null ? Number(row.dollarRate).toFixed(2) : "—"}</td>
                               <td className="px-2 py-1.5">{Number(row.grandTotalPkr || 0).toLocaleString()}</td>
                               <td className="px-2 py-1.5">{row.chequeNo || "—"}</td>
                               <td className="px-2 py-1.5">{row.pay > 0 ? fmt(row.pay) : "—"}</td>
@@ -408,6 +423,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                                       setEditingIndex(row.no - 1);
                                       setDraftRows([{
                                         dollar: String(row.grandTotalDollar ?? ""),
+                                        dollarRate: row.dollarRate != null ? String(row.dollarRate) : "",
                                         pkr: String(row.grandTotalPkr ?? ""),
                                         chequeNo: row.chequeNo || "",
                                         payDate: row.installmentDate ? row.installmentDate.slice(0, 10) : "",
@@ -431,6 +447,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                           <tr className="border-t">
                             <td className="px-2 py-1.5" colSpan={4}>Total</td>
                             <td className="px-2 py-1.5">{fmt(installmentTotals.grandTotalDollar)}</td>
+                            <td className="px-2 py-1.5"></td>
                             <td className="px-2 py-1.5">{Number(installmentTotals.grandTotalPkr || 0).toLocaleString()}</td>
                             <td className="px-2 py-1.5"></td>
                             <td className="px-2 py-1.5">{fmt(installmentTotals.pay)}</td>
