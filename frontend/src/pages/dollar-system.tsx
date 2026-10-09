@@ -330,6 +330,41 @@ export default function DollarSystem() {
   const [verifyForm, setVerifyForm] = useState<any>({ status: "", payDate: "", detail: "" });
   const [verifySubmitting, setVerifySubmitting] = useState(false);
 
+  // "Company & BV Date Details" modal — the Paid Alibaba table's eye icon
+  const [bvDetailItem, setBvDetailItem] = useState<any>(null);
+  const [bvDetailDate, setBvDetailDate] = useState("");
+  const [bvDetailSaving, setBvDetailSaving] = useState(false);
+  const openBvDetail = (row: any) => {
+    setBvDetailItem(row);
+    setBvDetailDate(row.accountBvDate || row.gmBvDate?.slice(0, 10) || "");
+  };
+  const bvDetailEndDate = (() => {
+    if (!bvDetailDate) return "";
+    const d = new Date(bvDetailDate);
+    if (isNaN(d.getTime())) return "";
+    d.setFullYear(d.getFullYear() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const saveBvDetail = async () => {
+    if (!bvDetailItem?.gmEntryId || !bvDetailDate) return;
+    setBvDetailSaving(true);
+    try {
+      const res = await fetch(`/api/account/gm-entries/${bvDetailItem.gmEntryId}/bv-date`, {
+        method: "PATCH",
+        headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ bvDate: bvDetailDate }),
+      });
+      if (!res.ok) { alert("Failed to update BV date."); return; }
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/paid-alibaba"] });
+      setBvDetailItem(null);
+    } catch {
+      alert("Failed to update BV date.");
+    } finally {
+      setBvDetailSaving(false);
+    }
+  };
+
   // Dollar Allocation / Pay Alibaba Modal State
   const [dollarModalItem, setDollarModalItem] = useState<any>(null);
   const [dollarSlots, setDollarSlots] = useState<any[]>([]);
@@ -781,6 +816,55 @@ export default function DollarSystem() {
                 <div key={l} className="flex items-start gap-2 text-[12px]"><span className="w-36 font-black text-gray-500 uppercase shrink-0 dark:text-zinc-400">{l}</span><span className="font-bold text-gray-800 dark:text-zinc-200">{v||"-"}</span></div>
               ))}
               {viewItem.proofUrl && <div className="pt-3 border-t border-gray-100"><a href={viewItem.proofUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-[#00a65a] text-white px-4 py-2 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c]"><Eye size={14}/> View File</a></div>}
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {bvDetailItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setBvDetailItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden max-h-[90vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 shrink-0">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">Company &amp; BV Date Details</div>
+              <button onClick={()=>setBvDetailItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar text-[13px]">
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">DRM ID</label>
+                <input readOnly value={bvDetailItem.drmId || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">Company Name</label>
+                <input readOnly value={bvDetailItem.company || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">Member ID</label>
+                <input readOnly value={bvDetailItem.memberId || "-"} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">GM BV Date</label>
+                <input type="date" value={bvDetailDate} onChange={(e)=>setBvDetailDate(e.target.value)}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-gray-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">User BV Date</label>
+                <input readOnly value={bvDetailItem.userBvDate ? safeDate(bvDetailItem.userBvDate, "MM/dd/yyyy") : ""} placeholder="mm/dd/yyyy"
+                  className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">New BV Date</label>
+                <input readOnly value={bvDetailDate ? safeDate(bvDetailDate, "MM/dd/yyyy") : ""} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-gray-600 dark:text-zinc-400">End Date</label>
+                <input readOnly value={bvDetailEndDate ? safeDate(bvDetailEndDate, "MM/dd/yyyy") : ""} className="w-full border border-gray-200 bg-gray-100 rounded-md px-3 py-2.5 text-gray-600 cursor-not-allowed dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400"/>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 dark:border-zinc-800 shrink-0">
+              <button onClick={()=>setBvDetailItem(null)} className="px-6 py-2.5 bg-gray-500 hover:bg-gray-600 text-white rounded-md text-[13px] font-bold">Close</button>
+              <button onClick={saveBvDetail} disabled={bvDetailSaving || !bvDetailDate} className="px-6 py-2.5 bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md text-[13px] font-bold disabled:opacity-50 disabled:cursor-not-allowed">
+                {bvDetailSaving ? "Updating..." : "Update"}
+              </button>
             </div>
           </div>
         </div>, document.body
@@ -1978,13 +2062,7 @@ export default function DollarSystem() {
                                   <Pencil size={12} strokeWidth={2.8} />
                                 </button>
                               )}
-                              <button type="button" title="View Details" onClick={()=>setViewItem({
-                                drmId: row.drmId, company: row.company, salePerson: row.person,
-                                memberId: row.memberId, date: row.payDate, package: row.package,
-                                type: row.type, orderId: row.orderId, dollar: row.dollar,
-                                pkr: row.pkr, rate: row.tdRate, exDisc: row.exDisc, status: row.payStatus,
-                                proofUrl: row.proofUrl,
-                              })} className="w-6 h-6 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
+                              <button type="button" title="Company & BV Date Details" onClick={()=>openBvDetail(row)} className="w-6 h-6 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white flex items-center justify-center shadow-sm transition-all cursor-pointer">
                                 <Eye size={12} strokeWidth={2.8} />
                               </button>
                             </div>
