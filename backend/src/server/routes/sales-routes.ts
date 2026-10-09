@@ -4113,6 +4113,59 @@ export function registerSalesRoutes(app: Express) {
     }
   });
 
+  // POST /api/sales/gm-entries/:id/gm-doc - Submit the GM Doc checklist once.
+  // Locked after the first submission (by anyone) — not just a UI disable, the
+  // server itself refuses a second submit. GM BV can't be submitted until this
+  // has gone through first (enforced in the gm-bv endpoint below).
+  app.post("/api/sales/gm-entries/:id/gm-doc", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { gmDate, note, checklist } = req.body || {};
+      const { rows } = await pool.query(
+        `UPDATE drm.gm_entries
+           SET gm_doc_submitted_at = NOW(), gm_doc_date = $2, gm_doc_note = $3, gm_doc_checklist = $4
+         WHERE id = $1 AND gm_doc_submitted_at IS NULL
+         RETURNING id, gm_doc_submitted_at AS "gmDocSubmittedAt"`,
+        [id, gmDate || null, note || null, JSON.stringify(Array.isArray(checklist) ? checklist : [])]
+      );
+      if (!rows.length) {
+        return res.status(409).json({ error: "GM Doc has already been submitted for this entry" });
+      }
+      res.json({ success: true, data: rows[0] });
+    } catch (error) {
+      console.error("Error submitting GM Doc:", error);
+      res.status(500).json({ error: "Failed to submit GM Doc" });
+    }
+  });
+
+  // POST /api/sales/gm-entries/:id/gm-bv - Submit the GM BV date once, only
+  // after GM Doc has already been submitted for this entry.
+  app.post("/api/sales/gm-entries/:id/gm-bv", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const { id } = req.params;
+      const { bvDate } = req.body || {};
+      const gm = await pool.query(`SELECT gm_doc_submitted_at, gm_bv_submitted_at FROM drm.gm_entries WHERE id = $1`, [id]);
+      if (!gm.rows.length) return res.status(404).json({ error: "GM entry not found" });
+      if (!gm.rows[0].gm_doc_submitted_at) {
+        return res.status(400).json({ error: "GM Doc must be submitted before GM BV can be submitted" });
+      }
+      if (gm.rows[0].gm_bv_submitted_at) {
+        return res.status(409).json({ error: "GM BV has already been submitted for this entry" });
+      }
+      const { rows } = await pool.query(
+        `UPDATE drm.gm_entries SET gm_bv_submitted_at = NOW(), gm_bv_date = $2 WHERE id = $1
+         RETURNING id, gm_bv_submitted_at AS "gmBvSubmittedAt"`,
+        [id, bvDate || null]
+      );
+      res.json({ success: true, data: rows[0] });
+    } catch (error) {
+      console.error("Error submitting GM BV:", error);
+      res.status(500).json({ error: "Failed to submit GM BV" });
+    }
+  });
+
   // GET /api/sales/customers/:id/invoices - Get customer invoice history
   app.get("/api/sales/customers/:id/invoices", async (req, res) => {
     try {

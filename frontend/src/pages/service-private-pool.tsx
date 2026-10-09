@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { cn } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { User, Mail, MessageCircle, Eye, Edit2, ArrowRight, ArrowLeft, FileText, Search, Archive, Globe, Link2, Clock, Phone, Printer } from "lucide-react";
@@ -734,6 +735,18 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
         },
         enabled: !!selectedInvoiceId,
     });
+
+    // Gates the "Gm BV submit" card button — it can't be used until GM Doc has
+    // been submitted for this customer's latest GM entry. Same query key as
+    // AttributeActionModal's gm-entries fetch, so opening either modal reuses
+    // this cached result instead of re-fetching.
+    const { data: gmGateHistory = [] } = useQuery<any[]>({
+        queryKey: ["/api/sales/customers", customerId, "gm-entries"],
+        enabled: !!customerId,
+        staleTime: 0,
+    });
+    const gmGateLatest = gmGateHistory[0] || null;
+    const gmDocGateSubmitted = !!gmGateLatest?.gmDocSubmittedAt;
     const [isSampleModalOpen, setSampleModalOpen] = useState(false);
     const [sampleProduct, setSampleProduct] = useState("");
     const [sampleNote, setSampleNote] = useState("");
@@ -895,7 +908,14 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                             }
                         }} className="bg-[#6366f1] hover:bg-[#4f46e5] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Invoice</span>
                         <span onClick={() => setActiveCardModal('gmdoc')} className="bg-[#ef4444] hover:bg-[#dc2626] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900 dark:hover:bg-zinc-800">Gm Doc</span>
-                        <span onClick={() => setActiveCardModal('gmbv')} className="bg-[#d97706] hover:bg-[#b45309] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900">Gm BV submit</span>
+                        <span
+                            onClick={() => gmDocGateSubmitted && setActiveCardModal('gmbv')}
+                            title={gmDocGateSubmitted ? undefined : "Submit GM Doc first"}
+                            className={cn(
+                                "transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium shadow-sm dark:bg-zinc-900",
+                                gmDocGateSubmitted ? "bg-[#d97706] hover:bg-[#b45309] cursor-pointer" : "bg-slate-300 dark:bg-zinc-800 cursor-not-allowed opacity-60"
+                            )}
+                        >Gm BV submit</span>
                         <span onClick={() => setActiveCardModal('update_expiry')} className="bg-[#3b82f6] hover:bg-[#2563eb] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Update Expiry</span>
                         <span onClick={() => setRatingModalOpen(true)} className="bg-[#f59e0b] hover:bg-[#d97706] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Rate Customer</span>
                         <span onClick={() => setSampleModalOpen(true)} className="bg-[#0ea5e9] hover:bg-[#0284c7] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Log Sample</span>
@@ -1461,14 +1481,55 @@ function QuotationTemplateModal({ open, onClose }: { open: boolean; onClose: () 
 
 
 export function AttributeActionModal({ type, onClose, customerId, companyName }: { type: string | null; onClose: () => void; customerId?: string; companyName?: string }) {
+    const queryClient = useQueryClient();
     const { data: gmHistory = [] } = useQuery<any[]>({
         queryKey: ["/api/sales/customers", customerId, "gm-entries"],
         enabled: !!customerId && (type === 'gmdoc' || type === 'gmbv'),
+        staleTime: 0,
     });
 
     const latestGm = gmHistory[0] || null;
     const packageValue = latestGm ? latestGm.package || 'No package selected' : 'No package selected';
     const statusValue = latestGm ? latestGm.status || '-' : '-';
+    const paymentMethodValue = latestGm ? latestGm.paymentStatus || '-' : '-';
+    const gmDocSubmitted = !!latestGm?.gmDocSubmittedAt;
+    const gmBvSubmitted = !!latestGm?.gmBvSubmittedAt;
+
+    const CHECKLIST_DOCS = ['NTN', 'Latest 181 Form', 'ID card', 'Bank Statement', 'Phone bill', 'Deed (If company have partner)'];
+    const [gmDocDate, setGmDocDate] = useState(latestGm?.gmDocDate || '');
+    const [gmDocNote, setGmDocNote] = useState(latestGm?.gmDocNote || '');
+    const [gmDocChecklist, setGmDocChecklist] = useState<string[]>(latestGm?.gmDocChecklist || []);
+    const [gmBvDate, setGmBvDate] = useState(latestGm?.gmBvDate || '');
+
+    // The modal stays mounted across open/close cycles (only `type` toggles),
+    // so re-sync local form state whenever a fresh GM record loads in —
+    // otherwise reopening would show whatever was left over from last time.
+    useEffect(() => {
+        setGmDocDate(latestGm?.gmDocDate || '');
+        setGmDocNote(latestGm?.gmDocNote || '');
+        setGmDocChecklist(latestGm?.gmDocChecklist || []);
+        setGmBvDate(latestGm?.gmBvDate || '');
+    }, [latestGm?.id, type]);
+
+    const refreshGmHistory = () => queryClient.invalidateQueries({ queryKey: ["/api/sales/customers", customerId, "gm-entries"] });
+
+    const gmDocMutation = useMutation({
+        mutationFn: async () => apiRequest("POST", `/api/sales/gm-entries/${latestGm?.id}/gm-doc`, {
+            gmDate: gmDocDate || undefined, note: gmDocNote || undefined, checklist: gmDocChecklist,
+        }),
+        onSuccess: () => { refreshGmHistory(); onClose(); },
+        onError: (err: any) => alert(err?.message || "Failed to submit GM Doc"),
+    });
+
+    const gmBvMutation = useMutation({
+        mutationFn: async () => apiRequest("POST", `/api/sales/gm-entries/${latestGm?.id}/gm-bv`, { bvDate: gmBvDate || undefined }),
+        onSuccess: () => { refreshGmHistory(); onClose(); },
+        onError: (err: any) => alert(err?.message || "Failed to submit GM BV"),
+    });
+
+    const toggleChecklistDoc = (doc: string) => {
+        setGmDocChecklist((prev) => prev.includes(doc) ? prev.filter((d) => d !== doc) : [...prev, doc]);
+    };
 
     if (!type) return null;
 
@@ -1507,17 +1568,30 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
                             <input type="text" readOnly value={packageValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
-                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Status</label>
-                            <input type="text" readOnly value={statusValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Payment Method</label>
+                            <input type="text" readOnly value={paymentMethodValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">User GM BV Submit Date</label>
-                            <input type="date" className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
+                            <input type="date" value={gmBvDate} onChange={(e) => setGmBvDate(e.target.value)} disabled={gmBvSubmitted}
+                                className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed" />
                         </div>
+                        {!gmDocSubmitted && (
+                            <p className="text-[12px] text-amber-600 bg-amber-50 border border-amber-200 rounded-[6px] px-3 py-2">GM Doc must be submitted first before GM BV can be submitted.</p>
+                        )}
+                        {gmBvSubmitted && (
+                            <p className="text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-[6px] px-3 py-2">Already submitted.</p>
+                        )}
                     </div>
                     <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-slate-100 px-1 dark:border-zinc-800">
                         <button onClick={onClose} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-[6px] text-[13px] font-bold shadow-sm transition-colors dark:bg-zinc-900 dark:text-zinc-400">Cancel</button>
-                        <button onClick={onClose} className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold shadow-sm transition-colors">Submit</button>
+                        <button
+                            onClick={() => gmBvMutation.mutate()}
+                            disabled={gmBvSubmitted || !gmDocSubmitted || gmBvMutation.isPending}
+                            className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#059669]"
+                        >
+                            {gmBvMutation.isPending ? "Submitting..." : "Submit"}
+                        </button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -1542,28 +1616,44 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
                             <input type="text" readOnly value={statusValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Payment Method</label>
+                            <input type="text" readOnly value={paymentMethodValue} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
+                        </div>
+                        <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">GM Date</label>
-                            <input type="date" className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400" />
+                            <input type="date" value={gmDocDate} onChange={(e) => setGmDocDate(e.target.value)} disabled={gmDocSubmitted}
+                                className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm cursor-pointer dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed" />
                         </div>
                         <div className="flex flex-col gap-2">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Note</label>
-                            <textarea rows={3} className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm resize-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400"></textarea>
+                            <textarea rows={3} value={gmDocNote} onChange={(e) => setGmDocNote(e.target.value)} disabled={gmDocSubmitted}
+                                className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm resize-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed"></textarea>
                         </div>
                         <div className="flex flex-col gap-3 mt-1">
                             <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Please check the Relevant Doc which is submitted in GM BV</label>
                             <div className="flex flex-col gap-2.5 pl-1">
-                                {['NTN', 'Latest 181 Form', 'ID card', 'Bank Statement', 'Phone bill', 'Deed (If company have partner)'].map(doc => (
+                                {CHECKLIST_DOCS.map(doc => (
                                     <label key={doc} className="flex items-center gap-2.5 cursor-pointer group">
-                                        <input type="checkbox" className="w-4 h-4 rounded-[4px] border-slate-300 text-[#059669] focus:ring-[#059669] accent-[#059669] cursor-pointer dark:border-zinc-800 dark:text-zinc-400" />
+                                        <input type="checkbox" checked={gmDocChecklist.includes(doc)} onChange={() => toggleChecklistDoc(doc)} disabled={gmDocSubmitted}
+                                            className="w-4 h-4 rounded-[4px] border-slate-300 text-[#059669] focus:ring-[#059669] accent-[#059669] cursor-pointer dark:border-zinc-800 dark:text-zinc-400 disabled:cursor-not-allowed" />
                                         <span className="text-[13px] text-[#4b5563] font-medium dark:text-zinc-400">{doc}</span>
                                     </label>
                                 ))}
                             </div>
                         </div>
+                        {gmDocSubmitted && (
+                            <p className="text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-[6px] px-3 py-2">Already submitted.</p>
+                        )}
                     </div>
                     <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-100 px-1 dark:border-zinc-800">
                         <button onClick={onClose} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-[6px] text-[13px] font-bold shadow-sm transition-colors dark:bg-zinc-900 dark:text-zinc-400">Cancel</button>
-                        <button onClick={onClose} className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold shadow-sm transition-colors">Submit</button>
+                        <button
+                            onClick={() => gmDocMutation.mutate()}
+                            disabled={gmDocSubmitted || gmDocMutation.isPending}
+                            className="px-6 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#059669]"
+                        >
+                            {gmDocMutation.isPending ? "Submitting..." : "Submit"}
+                        </button>
                     </div>
                 </DialogContent>
             </Dialog>

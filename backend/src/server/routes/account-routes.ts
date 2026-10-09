@@ -288,7 +288,15 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists hod_status text,
           add column if not exists accountant_status text,
           add column if not exists sales_person_id uuid,
-          add column if not exists renwal integer
+          add column if not exists renwal integer,
+          add column if not exists gm_doc_submitted_at timestamptz,
+          add column if not exists gm_doc_date date,
+          add column if not exists gm_doc_note text,
+          add column if not exists gm_doc_checklist jsonb,
+          add column if not exists gm_bv_submitted_at timestamptz,
+          add column if not exists gm_bv_date date,
+          add column if not exists account_bv_date date,
+          add column if not exists account_bv_end_date date
       `);
 
 
@@ -6358,7 +6366,13 @@ export function registerAccountRoutes(app: Express) {
           ap.proof_url                  AS "proofUrl",
           ap.notes                      AS "detail",
           ap.gm_entry_id                AS "gmEntryId",
-          ap.gm_drm_id                  AS "gmDrmId"
+          ap.gm_drm_id                  AS "gmDrmId",
+          -- Company & BV Date Details modal: the account team's own editable BV
+          -- date (distinct from g.created_at above), its +1yr validity end date,
+          -- and the real date the customer themselves submitted via GM BV.
+          to_char(g.account_bv_date, 'YYYY-MM-DD')     AS "accountBvDate",
+          to_char(g.account_bv_end_date, 'YYYY-MM-DD') AS "accountBvEndDate",
+          to_char(g.gm_bv_date, 'YYYY-MM-DD')          AS "userBvDate"
         FROM drm.ab_payments ap
         LEFT JOIN drm.gm_entries g ON g.id = ap.gm_entry_id
         LEFT JOIN drm.users u ON u.id::text = ap.created_by::text
@@ -6388,6 +6402,31 @@ export function registerAccountRoutes(app: Express) {
     } catch (err) {
       console.error("Failed to fetch Paid Alibaba ledger:", err);
       res.status(500).json({ error: "Failed to fetch Paid Alibaba ledger" });
+    }
+  });
+
+  // PATCH /api/account/gm-entries/:gmEntryId/bv-date — "Company & BV Date
+  // Details" modal's Update action: sets the account team's own BV date and
+  // recomputes its +1yr validity end date (server-side, not trusted from the client).
+  app.patch("/api/account/gm-entries/:gmEntryId/bv-date", requireFinancialPermission(FINANCIAL_ACTIONS.walletView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
+    try {
+      const { gmEntryId } = req.params;
+      const { bvDate } = req.body;
+      if (!bvDate) return res.status(400).json({ error: "bvDate is required" });
+      const { rows } = await pool.query(`
+        UPDATE drm.gm_entries
+        SET account_bv_date = $2::date,
+            account_bv_end_date = $2::date + INTERVAL '1 year',
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING to_char(account_bv_date, 'YYYY-MM-DD') AS "accountBvDate",
+                  to_char(account_bv_end_date, 'YYYY-MM-DD') AS "accountBvEndDate"
+      `, [gmEntryId, bvDate]);
+      if (!rows.length) return res.status(404).json({ error: "GM entry not found" });
+      res.json({ success: true, data: rows[0] });
+    } catch (err) {
+      console.error("Failed to update BV date:", err);
+      res.status(500).json({ error: "Failed to update BV date" });
     }
   });
 

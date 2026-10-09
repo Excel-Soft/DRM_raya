@@ -868,6 +868,13 @@ export class CustomersRepositoryExtended extends CustomersRepository {
           status,
           hod_status as "hodStatus",
           accountant_status as "accountantStatus",
+          payment_status as "paymentStatus",
+          gm_doc_submitted_at as "gmDocSubmittedAt",
+          to_char(gm_doc_date, 'YYYY-MM-DD') as "gmDocDate",
+          gm_doc_note as "gmDocNote",
+          gm_doc_checklist as "gmDocChecklist",
+          gm_bv_submitted_at as "gmBvSubmittedAt",
+          to_char(gm_bv_date, 'YYYY-MM-DD') as "gmBvDate",
           created_at as "createdAt"
         FROM drm.gm_entries
         WHERE customer_id = $1 OR (company_name = (SELECT company_name from drm.customers WHERE id = $1) AND customer_id IS NULL)
