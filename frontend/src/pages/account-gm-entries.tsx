@@ -635,9 +635,9 @@ export default function AccountGmEntries() {
                           A Partial GM can't be approved until its installment
                           collection (gm_partial_receipts) is fully cleared. */}
                       {(entry.approvalStatus === "pending_managers" && entry.accountManagerStatus === "pending") && (
-                        entry.isPartialPayment && !entry.fullyPaid ? (
+                        (entry.isPartialPayment || entry.isLoan) && !entry.fullyPaid ? (
                           <span
-                            title="This Partial GM's installments aren't fully collected yet"
+                            title={entry.isLoan ? "This Loan GM's installments aren't fully collected yet" : "This Partial GM's installments aren't fully collected yet"}
                             className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed"
                           >
                             <CheckCircle className="h-3.5 w-3.5" />
@@ -654,12 +654,18 @@ export default function AccountGmEntries() {
                           </button>
                         )
                       )}
-                      {/* ── Patch 5 Stage 3: payment receipts / loan terms ── */}
-                      {!entry.isLoan && (
+                      {/* ── Patch 5 Stage 3: payment receipts / loan terms ──
+                          A Loan GM now uses this same installment/receipts
+                          ledger as Partial GM (in addition to its own Loan
+                          Terms admin-approval dialog below) — its "Approve"
+                          button above is held the same way, on `fullyPaid`.
+                          A Full GM has no installments to track, so it gets
+                          neither button. */}
+                      {(entry.isPartialPayment || entry.isLoan) && (
                         <button
                           onClick={() => { setStage3Entry(entry); setPartialDialogOpen(true); }}
                           className="text-purple-600 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 p-1.5 rounded-md transition-colors"
-                          title={entry.isPartialPayment ? "Partial payment receipts" : "Payment receipt"}
+                          title={entry.isLoan ? "Loan installment receipts" : "Partial payment receipts"}
                         >
                           <Wallet className="h-4 w-4" />
                         </button>

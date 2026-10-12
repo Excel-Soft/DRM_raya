@@ -465,6 +465,17 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists member_id   text,
           add column if not exists dollar_rate numeric(12,4),
           add column if not exists type        text;
+
+        -- Links a per-installment Alibaba allocation back to the specific
+        -- gm_partial_receipts row it was paid against, so the "Partial Payment
+        -- Installment" modal can show whether THAT receipt has already been
+        -- paid to Alibaba instead of leaving every row's Action buttons always
+        -- clickable with no way to tell which ones were already submitted.
+        alter table drm.ab_payments
+          add column if not exists partial_receipt_id varchar;
+
+        create index if not exists ab_payments_partial_receipt_idx
+          on drm.ab_payments(partial_receipt_id);
       `);
 
       // 6. Ensure gm_entries has member_id and order_id columns (used by Paid Alibaba)
@@ -5310,9 +5321,22 @@ export function registerAccountRoutes(app: Express) {
         ) pr ON pr.gm_id = g.id::text
         WHERE coalesce(g.is_deleted, false) = false
           AND (g.entry_type = 'Partial' OR coalesce(g.is_partial_payment,false) = true)
-          AND NOT EXISTS (
-            SELECT 1 FROM drm.ab_payments ap
+          -- A Partial GM pays Alibaba per-installment (see the "Pay Alibaba —
+          -- for this installment only" actions in the Partial Payment
+          -- Installment modal), so it can take several separate ab_payments
+          -- rows to clear one GM. Checking "any ab_payment exists" dropped the
+          -- whole GM out of this list the moment the FIRST installment was
+          -- allocated, even with others still outstanding. Compare the total
+          -- already allocated against the same target used for "fullyPaid"
+          -- instead, so it only drops out once every installment is covered.
+          AND COALESCE((
+            SELECT SUM(ap.amount_usd) FROM drm.ab_payments ap
             WHERE ap.gm_entry_id = g.id AND coalesce(ap.is_deleted, false) = false
+          ), 0) < (
+            GREATEST(
+              COALESCE(g.customer_dollar, g.amount_usd, 0),
+              (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(g.installments, '[]'::jsonb)) elem)
+            ) - 0.009
           )
           ${dateWhere}
         ORDER BY g.created_at DESC LIMIT 50
@@ -5872,11 +5896,22 @@ export function registerAccountRoutes(app: Express) {
       `, [gmId]);
       if (!gm.rows[0]) return res.status(404).json({ error: "GM entry not found" });
 
+      // Each receipt is paid to Alibaba as its own separate allocation (see
+      // the "Pay Alibaba — for this installment only" actions), so surface
+      // that receipt's own latest ab_payments row here — otherwise the modal
+      // has no way to show whether a given row has already been paid out.
       const receipts = await pool.query(`
         SELECT r.id, r.receipt_date as "partialDate", r.amount_usd as "partialDollar",
                r.dollar_rate as "partialDollarRate", r.amount_pkr as "partialPkr",
-               r.method as "partialStatus"
+               r.method as "partialStatus",
+               ap.id as "abPaymentId", ap.status as "abPaymentStatus"
         FROM drm.gm_partial_receipts r
+        LEFT JOIN LATERAL (
+          SELECT id, status FROM drm.ab_payments
+          WHERE partial_receipt_id = r.id AND coalesce(is_deleted, false) = false
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) ap ON true
         WHERE r.gm_id = $1
         ORDER BY r.receipt_date ASC, r.created_at ASC
       `, [gmId]);
@@ -6194,7 +6229,7 @@ export function registerAccountRoutes(app: Express) {
       const {
         gmEntryId, gmDrmId, companyName, memberId, orderId,
         targetDollar, customerPaidPkr, customDollarRate, dollarRate, profitOrLoss,
-        type, detail, allocations,
+        type, detail, allocations, partialReceiptId,
       } = req.body;
 
       const target = Number(targetDollar);
@@ -6241,14 +6276,14 @@ export function registerAccountRoutes(app: Express) {
           INSERT INTO drm.ab_payments
             (ab_id, order_id, member_id, gm_drm_id, gm_entry_id, company_name,
              amount_usd, amount_pkr, rate, dollar_rate, type, notes,
-             status, created_by, created_at, updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,NOW(),NOW())
+             partial_receipt_id, status, created_by, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'processing',$14,NOW(),NOW())
           RETURNING *
         `, [
           abId, orderId || null, memberId || null, gmDrmId || null, gmEntryId || null, companyName || null,
           target, Number(customerPaidPkr) || 0, customDollarRate ? Number(customDollarRate) : null,
           dollarRate ? Number(dollarRate) : null, type || null,
-          detail || null, userId,
+          detail || null, partialReceiptId || null, userId,
         ]);
         const abPayment = abRows[0];
 

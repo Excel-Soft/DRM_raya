@@ -384,6 +384,10 @@ export default function DollarSystem() {
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [allocError, setAllocError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // The slider's actual upper bound — starts as a guess from the order's own
+  // target, then widens (see openDollarModal) once the real buyer balances are
+  // known, so a single buy record bigger than that guess never goes invisible.
+  const [sliderBound, setSliderBound] = useState(500);
 
   const sliderTrackRef = useRef<HTMLDivElement>(null);
   const [activeThumb, setActiveThumb] = useState<"min" | "max" | null>(null);
@@ -457,7 +461,18 @@ export default function DollarSystem() {
     return { slots, shortfall: Math.max(0, remaining) };
   }
 
-  const loadAndAllocate = async (min: number, max: number, targetDollar: number, isTemp: boolean) => {
+  // A deliberately huge sentinel for the modal's first, unfiltered load — wide
+  // enough that no real dollar_buying balance could ever exceed it — so the
+  // discovery fetch below always sees every available buy regardless of size.
+  const UNBOUNDED_SLIDER_MAX = 100_000_000;
+
+  const loadAndAllocate = async (
+    min: number,
+    max: number,
+    targetDollar: number,
+    isTemp: boolean,
+    opts: { widenSliderToFit?: boolean } = {},
+  ) => {
     setSlotsLoading(true);
     try {
       const res = await apiRequestJson<{ records: any[] }>(
@@ -465,6 +480,15 @@ export default function DollarSystem() {
         `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}`
       );
       const records = res?.records || [];
+      // Fetched records can never exceed `max`, so this only ever widens the
+      // bound (on the initial, deliberately-huge discovery fetch) — a later,
+      // user-narrowed slider drag is a no-op here and never shrinks it back.
+      if (opts.widenSliderToFit) {
+        const maxAvailable = records.reduce((m, r) => Math.max(m, Number(r.dollars) || 0), 0);
+        const widened = Math.max(getSliderBound(targetDollar), Math.ceil(maxAvailable));
+        setSliderBound(widened);
+        setDollarForm((prev: any) => ({ ...prev, sliderMax: widened }));
+      }
       const { slots, shortfall } = isTemp
         ? allocateExactMatchFirst(records, targetDollar)
         : allocateSmallestFirst(records, targetDollar);
@@ -481,14 +505,16 @@ export default function DollarSystem() {
     }
   };
 
-  // The slider's upper bound used to be a hardcoded 500 — any dollar_buying row
-  // with more than $500 remaining was silently unreachable (it never showed up
-  // no matter how far the handle was dragged). Scale the bound to the order's
-  // own target instead, with generous headroom, so larger buys stay reachable.
+  // The slider's upper bound used to be a hardcoded 500, then a multiple of the
+  // order's own target — either way, a single dollar_buying row bigger than
+  // that guess was silently unreachable no matter how far the handle was
+  // dragged. `sliderBound` state (widened in openDollarModal once the real
+  // buyer balances are known) is now the actual source of truth; this stays
+  // only as the initial guess before that discovery fetch resolves.
   const getSliderBound = (targetDollar: number) => Math.max(500, Math.ceil(targetDollar * 3));
 
   const handleSliderChange = (type: "min" | "max", val: number) => {
-    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+    const bound = sliderBound;
     const cleanVal = Math.max(0, Math.min(bound, Math.round(val)));
     setDollarForm((prev: any) => {
       if (type === "min") {
@@ -510,7 +536,7 @@ export default function DollarSystem() {
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!activeThumb || !sliderTrackRef.current) return;
-    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+    const bound = sliderBound;
     const rect = sliderTrackRef.current.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const val = Math.round(pos * bound);
@@ -526,13 +552,13 @@ export default function DollarSystem() {
       // Mirrors the PHP slider's onFinish: re-fetch the available buy pool for the
       // new range and re-run the same allocation the modal opened with.
       const targetDollar = parseFloat(dollarForm.dollar) || 0;
-      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? getSliderBound(targetDollar), targetDollar, !!dollarForm.isTemp);
+      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? sliderBound, targetDollar, !!dollarForm.isTemp);
     }
   };
 
   const handleTrackPointerDown = (e: React.PointerEvent) => {
     if (!sliderTrackRef.current) return;
-    const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+    const bound = sliderBound;
     const rect = sliderTrackRef.current.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const val = Math.round(pos * bound);
@@ -554,6 +580,7 @@ export default function DollarSystem() {
     const dateVal = item.date ? safeDate(item.date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
     const bound = getSliderBound(targetDollar);
+    setSliderBound(bound);
     setDollarModalItem({ ...item, pkr: pkrVal, rate: rateVal });
     setDollarSlots([]);
     setAllocError("");
@@ -561,6 +588,7 @@ export default function DollarSystem() {
       isTemp,
       gmEntryId: item.id,
       gmDrmId: item.drmId,
+      partialReceiptId: item.partialReceiptId || null,
       memberId: item.memberId || "",
       orderId: item.orderId || "",
       sliderMin: 0,
@@ -573,7 +601,10 @@ export default function DollarSystem() {
       type: item.type || "New",
       detail: item.notes || item.detail || ""
     });
-    loadAndAllocate(0, bound, targetDollar, isTemp);
+    // Discover every available buyer balance up front (not just whatever falls
+    // within the target-based guess above) and widen the slider to fit — a
+    // single buy bigger than that guess must never be silently unreachable.
+    loadAndAllocate(0, UNBOUNDED_SLIDER_MAX, targetDollar, isTemp, { widenSliderToFit: true });
   };
 
   const handleUseDollarChange = (id: string, val: string) => {
@@ -653,6 +684,7 @@ export default function DollarSystem() {
       await apiRequestJson("POST", "/api/account/dollar-system/allocate-payment", {
         gmEntryId: dollarForm.gmEntryId,
         gmDrmId: dollarForm.gmDrmId,
+        partialReceiptId: dollarForm.partialReceiptId || null,
         companyName: dollarModalItem?.company,
         memberId: dollarForm.memberId,
         orderId: dollarForm.orderId,
@@ -670,6 +702,7 @@ export default function DollarSystem() {
         })),
       });
       queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/partial-payment"] });
       setDollarModalItem(null);
     } catch (err: any) {
       setAllocError(err?.message || "Failed to submit payment.");
@@ -1059,6 +1092,24 @@ export default function DollarSystem() {
                         <td className="p-2.5">
                           <div className="flex gap-1.5 items-center justify-center">
                             {(() => {
+                              // Each receipt is paid to Alibaba as its own separate
+                              // allocation — once one's been submitted for THIS row,
+                              // show that instead of the action buttons so it's clear
+                              // which rows are already done vs. still need action.
+                              // A rejected/cancelled/voided allocation can be retried.
+                              const abStatus: string | null = r.abPaymentStatus || null;
+                              const canPay = !abStatus || ["rejected", "cancelled", "voided"].includes(abStatus);
+                              if (!canPay) {
+                                return (
+                                  <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                                    abStatus === "paid" ? "bg-emerald-100 text-emerald-700" :
+                                    abStatus === "refund" ? "bg-amber-100 text-amber-700" :
+                                    "bg-red-100 text-red-700"
+                                  )}>
+                                    {abStatus === "paid" ? "Paid To Alibaba" : "Alibaba: Processing"}
+                                  </Badge>
+                                );
+                              }
                               // Partial/Loan GMs pay Alibaba per-installment, not as one lump
                               // sum for the whole order — target THIS receipt's own amount.
                               const perInstallmentItem = {
@@ -1068,6 +1119,7 @@ export default function DollarSystem() {
                                 rate: r.partialDollarRate || installmentItem.rate,
                                 pkr: r.partialPkr,
                                 date: r.partialDate,
+                                partialReceiptId: r.id,
                               };
                               return (
                                 <>
@@ -1220,7 +1272,7 @@ export default function DollarSystem() {
 
                 {/* Range Slider Section */}
                 {(() => {
-                  const bound = getSliderBound(parseFloat(dollarForm.dollar) || 0);
+                  const bound = sliderBound;
                   const minP = Math.min(100, Math.max(0, ((dollarForm.sliderMin ?? 0) / bound) * 100));
                   const maxP = Math.min(100, Math.max(0, ((dollarForm.sliderMax ?? bound) / bound) * 100));
                   return (

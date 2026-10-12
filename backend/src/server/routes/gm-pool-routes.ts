@@ -713,14 +713,15 @@ export function registerGmPoolRoutes(app: Express) {
           payment_proof_url as "paymentProofUrl",
           created_at as "createdAt",
           updated_at as "updateRequest",
-          -- A Partial GM is only "fullyPaid" once its installment collection
-          -- (tracked via gm_partial_receipts) has reached its target. Non-partial
-          -- GMs are trivially fullyPaid — the gate below only applies to Partial.
-          -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
-          -- total) — an installment plan can commit to more than a stale
-          -- customer_dollar figure, and that larger, user-authored plan wins.
+          -- A Partial or Loan GM is only "fullyPaid" once its installment
+          -- collection (tracked via gm_partial_receipts) has reached its target.
+          -- A Full GM is trivially fullyPaid — the gate below only applies to
+          -- Partial/Loan. Target is GREATEST(customer_dollar/amount_usd,
+          -- scheduled installment total) — an installment plan can commit to
+          -- more than a stale customer_dollar figure, and that larger,
+          -- user-authored plan wins.
           (
-            NOT coalesce(is_partial_payment,false)
+            NOT (coalesce(is_partial_payment,false) OR coalesce(is_loan,false))
             OR (
               GREATEST(
                 COALESCE(customer_dollar, amount_usd, 0),
@@ -2639,12 +2640,10 @@ export function registerGmPoolRoutes(app: Express) {
           [id],
         );
         if (!gm.rows[0]) return sendError(res, 404, "NOT_FOUND", "GM entry not found");
-        // Receipts are also how a FULL GM's payment gets verified (see
-        // enforceLoanPartialFinalApprovalGate) — only a LOAN GM (tracked via
-        // gm_loan_terms/gm_loan_receivables instead) is excluded here.
-        if (Number(gm.rows[0].is_loan) === 1) {
-          return sendError(res, 409, "NOT_ELIGIBLE_FOR_RECEIPTS", "Loan GMs are tracked via loan terms, not receipts");
-        }
+        // Receipts are also how a FULL or LOAN GM's payment gets verified (see
+        // the "fullyPaid" column on GET /gm-pool) — a LOAN GM additionally still
+        // needs Admin (Super HOD) approval of its loan terms (gm_loan_terms)
+        // before it can receive final approval.
         const target = effectiveTarget(Number(gm.rows[0].target || 0), gm.rows[0].installments);
         const before = await loadPartialSummary(id, target);
         if (target > 0 && input.amountUsd - before.remaining > 0.009) {
