@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Search, Wallet, ArrowUp, ChevronDown, Calendar, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info, Trash2, ArrowLeftRight, CheckSquare, Square, Pencil } from "lucide-react";
+import { Search, Wallet, ArrowUp, ChevronDown, Send, Eye, FileText, X, FileSpreadsheet, ArrowRight, Loader2, DollarSign, Info, Trash2, ArrowLeftRight, CheckSquare, Square, Pencil } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -30,8 +30,8 @@ function safeDate(val: any, fmt = "yyyy-MM-dd", fallback = "-"): string {
   }
 }
 
-function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAttach }: any) {
-  const colCount = isLoan ? 18 : 17;
+function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAttach, onViewInstallments }: any) {
+  const colCount = 17;
   const tw = isLoan ? "1900px" : "1800px";
   return (
     <div style={{display:"block",width:"100%",overflowX:"auto",overflowY:"visible",paddingBottom:"16px"}} className="custom-scrollbar">
@@ -40,17 +40,17 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
           <tr>
             <th className="py-2.5 px-2 border-r border-white/20 text-center w-[45px]">#</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Drm id</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">Created Date</th>
+            <th className="py-2.5 px-2 border-r border-white/20 w-[110px]">{isLoan ? "Joining Date" : "Created Date"}</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[220px]">Company</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Sale Person</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Dollar</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Cus Dollar</th>
+            {!isLoan && <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Cus Dollar</th>}
             <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">Pkr</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Dollar Rate</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[80px]">Ex-Disc</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Ex-Disc Pkr</th>
-            <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Package</th>
             {isLoan && <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">loan Amount</th>}
+            <th className="py-2.5 px-2 border-r border-white/20 w-[140px]">Package</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[80px]">Type</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[100px]">Expire</th>
             <th className="py-2.5 px-2 border-r border-white/20 w-[90px]">Droupout</th>
@@ -63,7 +63,11 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
             <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-zinc-800 transition-colors">
               <td className="p-2.5 border-r font-bold text-gray-400 text-center">{i + 1}</td>
               <td className="p-2.5 border-r font-black text-[#00a65a] italic uppercase dark:text-zinc-400 truncate" title={item.drmId}>
-                {item.drmId || "-"}
+                {onViewInstallments ? (
+                  <button type="button" onClick={() => onViewInstallments(item)} className="underline decoration-dotted hover:text-[#008d4c] cursor-pointer">
+                    {item.drmId || "-"}
+                  </button>
+                ) : (item.drmId || "-")}
                 {!!item.installmentsTotal && (
                   <span
                     title="Installments collected / scheduled"
@@ -78,13 +82,13 @@ function PaymentTable({ items = [], isLoan = false, onView, onDollarModal, onAtt
               <td className="p-2.5 border-r font-black uppercase text-gray-700 dark:text-zinc-400 truncate" title={item.company}>{item.company || "-"}</td>
               <td className="p-2.5 border-r font-bold italic text-gray-500 dark:text-zinc-400 truncate">{item.salePerson || "-"}</td>
               <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.dollar || "0"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">$ {item.customerDollar || item.dollar || "0"}</td>
+              {!isLoan && <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">$ {item.customerDollar || item.dollar || "0"}</td>}
               <td className="p-2.5 border-r text-gray-600 dark:text-zinc-400">{Number(item.pkr || 0).toLocaleString()}</td>
               <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.rate || "-"}</td>
               <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDisc || "0"}</td>
               <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400">{item.exDiscPkr || "0"}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.package || "-"}</td>
               {isLoan && <td className="p-2.5 border-r font-black text-gray-900 dark:text-zinc-100">$ {item.loanAmount || item.dollar || "0"}</td>}
+              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.package || "-"}</td>
               <td className="p-2.5 border-r">
                 {item.type ? (
                   <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
@@ -202,7 +206,11 @@ function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach 
                 <Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">{item.paymentStatus || "-"}</Badge>
               </td>
               <td className="p-2.5 border-r text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(item.date, "yyyy-MM-dd")}</td>
-              <td className="p-2.5 border-r text-gray-500 dark:text-zinc-400 truncate">{item.accountant || "-"}</td>
+              <td className="p-2.5 border-r">
+                <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                  item.accountantStatus === "Done" ? "bg-emerald-100 text-emerald-700" : "bg-yellow-100 text-yellow-700"
+                )}>{item.accountantStatus || "Pending"}</Badge>
+              </td>
               <td className="p-2.5 border-r">
                 <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
                   item.hodStatus === "Approved" ? "bg-emerald-100 text-emerald-700" :
@@ -210,7 +218,7 @@ function PartialPaymentReceivedTable({ items = [], onViewInstallments, onAttach 
                 )}>{item.hodStatus || "Pending"}</Badge>
               </td>
               <td className="p-2.5 border-r"><Badge className="text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase bg-gray-100 text-gray-600">Pending</Badge></td>
-              <td className="p-2.5 text-gray-400 dark:text-zinc-500 text-[10px]">-</td>
+              <td className="p-2.5 text-gray-400 dark:text-zinc-500 text-[10px]">{safeDate(item.payDate, "yyyy-MM-dd", "-")}</td>
             </tr>
           )) : (
             <tr><td colSpan={21} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No data available in table</td></tr>
@@ -228,14 +236,8 @@ function FilterBar({ searchTerm, onSearch, startDate, onStart, endDate, onEnd, o
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 w-4 h-4" />
         <Input placeholder="Search..." value={searchTerm} onChange={(e) => onSearch(e.target.value)} className="h-9 pl-10 rounded-md border-gray-200 shadow-sm text-sm dark:border-zinc-800" />
       </div>
-      <div className="relative">
-        <Input type="date" value={startDate} onChange={(e) => onStart(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800 pr-8" />
-        <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
-      </div>
-      <div className="relative">
-        <Input type="date" value={endDate} onChange={(e) => onEnd(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800 pr-8" />
-        <Calendar className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none"/>
-      </div>
+      <Input type="date" value={startDate} onChange={(e) => onStart(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800" />
+      <Input type="date" value={endDate} onChange={(e) => onEnd(e.target.value)} className="h-9 w-40 text-sm border-gray-200 dark:border-zinc-800" />
       <Button onClick={onClear} className="bg-[#6c757d] hover:bg-[#5a6268] text-white px-6 h-9 rounded-md font-bold text-xs uppercase">Clear Filter</Button>
       {onExcel && <Button onClick={onExcel} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 h-9 rounded-md font-bold text-xs uppercase flex items-center gap-1"><FileSpreadsheet size={14}/> Export Excel</Button>}
     </div>
@@ -1518,15 +1520,12 @@ export default function DollarSystem() {
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Date</label>
-                    <div className="relative">
-                      <Input 
-                        type="date" 
-                        value={dollarForm.date} 
-                        onChange={e=>setDollarForm({...dollarForm, date: e.target.value})} 
-                        className="h-9 text-xs border-gray-300 rounded-md pr-9 dark:border-zinc-700 text-gray-800 dark:text-zinc-200" 
-                      />
-                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 pointer-events-none" />
-                    </div>
+                    <Input
+                      type="date"
+                      value={dollarForm.date}
+                      onChange={e=>setDollarForm({...dollarForm, date: e.target.value})}
+                      className="h-9 text-xs border-gray-300 rounded-md dark:border-zinc-700 text-gray-800 dark:text-zinc-200"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-700 dark:text-zinc-300 mb-1">Type</label>
@@ -1721,7 +1720,7 @@ export default function DollarSystem() {
                       {id:"full",          label:"Full "+(fullPayments.length||counts.full||0)},
                       {id:"partial",       label:"Partial "+partialCleared.length},
                       {id:"term",          label:"Tem Payment "+(counts.temp||0)},
-                      {id:"ab_liabilities",label:"AB Liabilities"},
+                      {id:"ab_liabilities",label:"AB Liabilities "+(Number(abLiabilities.fullOnlinePaidCount||0)+Number(abLiabilities.fullCashReceivedCount||0)+Number(abLiabilities.partialOnlinePaidCount||0)+Number(abLiabilities.partialCashReceivedCount||0))},
                     ].map(t => (
                       <Badge key={t.id} className={cn("px-4 py-2 text-[12px] font-black uppercase rounded-md shadow-none cursor-pointer transition-all border-none whitespace-nowrap",
                         activeTab===t.id?"bg-[#00a65a] text-white hover:bg-[#008d4c]":"bg-transparent text-gray-500 dark:text-slate-400 hover:bg-gray-100"
@@ -1864,40 +1863,51 @@ export default function DollarSystem() {
                         </TableHeader>
                         <TableBody className="bg-white font-bold dark:bg-zinc-900">
                           {[
-                            {t:"Full Payment",rows:[
-                              {m:"Online Paid",    u:Number(abLiabilities.fullOnlinePaidUsd||0),   p:Number(abLiabilities.fullOnlinePaidPkr||0)},
-                              {m:"Cash Received",  u:Number(abLiabilities.fullCashReceivedUsd||0), p:Number(abLiabilities.fullCashReceivedPkr||0)},
-                              {m:"Extra Discount", u:0, p:0},
-                            ]},
-                            {t:"Partial Payment",rows:[
-                              {m:"Online Paid",                u:Number(abLiabilities.partialOnlinePaidUsd||0),   p:Number(abLiabilities.partialOnlinePaidPkr||0)},
-                              {m:"Cash Received",              u:Number(abLiabilities.partialCashReceivedUsd||0), p:Number(abLiabilities.partialCashReceivedPkr||0)},
-                              {m:"Installment Extra Discount", u:0, p:0},
-                            ]},
+                            {t:"Full Payment",
+                              c:Number(abLiabilities.fullOnlinePaidCount||0)+Number(abLiabilities.fullCashReceivedCount||0),
+                              rows:[
+                                {m:"Online Paid",    u:Number(abLiabilities.fullOnlinePaidUsd||0),   p:Number(abLiabilities.fullOnlinePaidPkr||0)},
+                                {m:"Cash Received",  u:Number(abLiabilities.fullCashReceivedUsd||0), p:Number(abLiabilities.fullCashReceivedPkr||0)},
+                                {m:"Extra Discount", u:0, p:0},
+                              ]},
+                            {t:"Partial Payment",
+                              c:Number(abLiabilities.partialOnlinePaidCount||0)+Number(abLiabilities.partialCashReceivedCount||0),
+                              rows:[
+                                {m:"Online Paid",                u:Number(abLiabilities.partialOnlinePaidUsd||0),   p:Number(abLiabilities.partialOnlinePaidPkr||0)},
+                                {m:"Cash Received",              u:Number(abLiabilities.partialCashReceivedUsd||0), p:Number(abLiabilities.partialCashReceivedPkr||0)},
+                                {m:"Installment Extra Discount", u:0, p:0},
+                              ]},
+                            {t:"Uncompleted GM Partials",
+                              c:Number(abLiabilities.uncompletedPartialsCount||0),
+                              rows:[
+                                {m:"Online Paid",    u:Number(abLiabilities.uncompletedOnlinePaidUsd||0),   p:Number(abLiabilities.uncompletedOnlinePaidPkr||0)},
+                                {m:"Cash Received",  u:Number(abLiabilities.uncompletedCashReceivedUsd||0), p:Number(abLiabilities.uncompletedCashReceivedPkr||0)},
+                                {m:"Extra Discount", u:0, p:0},
+                              ]},
                           ].map(s => s.rows.map((r,ri) => (
                             <TableRow key={s.t+ri} className="border-b border-gray-100 dark:border-zinc-800">
-                              {ri===0 && <TableCell rowSpan={s.rows.length} className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">{s.t}</TableCell>}
+                              {ri===0 && <TableCell rowSpan={s.rows.length} className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">
+                                {s.t}<span className="text-red-500 font-black ml-1">({s.c})</span>
+                              </TableCell>}
                               <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">{r.m}</TableCell>
                               <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ {fmtU(r.u)}</TableCell>
                               <TableCell className="p-4 text-red-500 font-[1000]">Pkr {fmtU(r.p)}</TableCell>
                             </TableRow>
                           )))}
-                          {[{t:"Uncompleted GM Partials",m:"Outstanding"},{t:"Dollar Vendor Outstanding",m:"Outstanding"}].map(r=>(
-                            <TableRow key={r.t} className="border-b border-gray-100 dark:border-zinc-800">
-                              <TableCell className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">{r.t}</TableCell>
-                              <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">{r.m}</TableCell>
-                              <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 0.00</TableCell>
-                              <TableCell className="p-4 text-red-500 font-[1000]">Pkr 0.00</TableCell>
-                            </TableRow>
-                          ))}
+                          <TableRow className="border-b border-gray-100 dark:border-zinc-800">
+                            <TableCell className="p-4 border-r text-gray-600 font-black dark:text-zinc-300">Dollar Vendor Outstanding</TableCell>
+                            <TableCell className="p-4 border-r text-gray-500 font-bold dark:text-zinc-400">-</TableCell>
+                            <TableCell className="p-4 border-r text-emerald-600 font-[1000]">$ 0.00</TableCell>
+                            <TableCell className="p-4 text-red-500 font-[1000]">Pkr 0.00</TableCell>
+                          </TableRow>
                           <TableRow className="bg-gray-50/50 dark:bg-zinc-900">
                             <TableCell className="p-4 border-r text-gray-700 font-black uppercase dark:text-zinc-400">Total</TableCell>
                             <TableCell className="p-4 border-r text-gray-500 font-black italic dark:text-zinc-400">All Payments</TableCell>
                             <TableCell className="p-4 border-r text-[#3c8dbc] text-lg font-[1000] dark:text-zinc-100">
-                              $ {fmtU(Number(abLiabilities.fullOnlinePaidUsd||0)+Number(abLiabilities.fullCashReceivedUsd||0)+Number(abLiabilities.partialOnlinePaidUsd||0)+Number(abLiabilities.partialCashReceivedUsd||0))}
+                              $ {fmtU(Number(abLiabilities.fullOnlinePaidUsd||0)+Number(abLiabilities.fullCashReceivedUsd||0)+Number(abLiabilities.partialOnlinePaidUsd||0)+Number(abLiabilities.partialCashReceivedUsd||0)+Number(abLiabilities.uncompletedOnlinePaidUsd||0)+Number(abLiabilities.uncompletedCashReceivedUsd||0))}
                             </TableCell>
                             <TableCell className="p-4 text-red-500 text-lg font-[1000]">
-                              Pkr {fmtU(Number(abLiabilities.fullOnlinePaidPkr||0)+Number(abLiabilities.fullCashReceivedPkr||0)+Number(abLiabilities.partialOnlinePaidPkr||0)+Number(abLiabilities.partialCashReceivedPkr||0))}
+                              Pkr {fmtU(Number(abLiabilities.fullOnlinePaidPkr||0)+Number(abLiabilities.fullCashReceivedPkr||0)+Number(abLiabilities.partialOnlinePaidPkr||0)+Number(abLiabilities.partialCashReceivedPkr||0)+Number(abLiabilities.uncompletedOnlinePaidPkr||0)+Number(abLiabilities.uncompletedCashReceivedPkr||0))}
                             </TableCell>
                           </TableRow>
                         </TableBody>
@@ -1961,7 +1971,7 @@ export default function DollarSystem() {
               </div>
             </div>
             <FilterBar searchTerm={loanSearch} onSearch={setLoanSearch} startDate={loanStart} onStart={setLoanStart} endDate={loanEnd} onEnd={setLoanEnd} onClear={()=>{setLoanSearch("");setLoanStart("");setLoanEnd("");}}/>
-            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fLoan} onViewInstallments={setLoanRepaymentItem} onAttach={setAttachItem}/></div>
+            <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PaymentTable items={fLoan} isLoan onView={setViewItem} onAttach={setAttachItem} onDollarModal={openDollarModal} onViewInstallments={setLoanRepaymentItem}/></div>
             <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fLoan.length} of {loans.length} entries</div>
           </div>
 
@@ -1987,7 +1997,6 @@ export default function DollarSystem() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <FilterBar searchTerm={partialSearch} onSearch={setPartialSearch} startDate={partialStart} onStart={setPartialStart} endDate={partialEnd} onEnd={setPartialEnd} onClear={()=>{setPartialSearch("");setPartialStart("");setPartialEnd("");}} onExcel={()=>{}}/>
-              <Button className="bg-[#3c8dbc] hover:bg-[#367fa9] text-white h-9 px-4 font-black uppercase text-[11px]">View Installments</Button>
             </div>
             <div className="border border-gray-100 rounded-sm shadow-sm dark:border-zinc-800"><PartialPaymentReceivedTable items={fPartialPending} onViewInstallments={setInstallmentItem} onAttach={setAttachItem}/></div>
             <div className="text-[11px] text-gray-500 font-bold dark:text-zinc-400">Showing {fPartialPending.length} of {partialPending.length} entries</div>
@@ -2002,7 +2011,7 @@ export default function DollarSystem() {
               <div className="overflow-x-auto custom-scrollbar">
                 <Table className="w-full text-left text-[11px] whitespace-nowrap min-w-[1400px] border-separate border-spacing-0">
                   <TableHeader className="bg-[#f8f9fa] text-gray-800 font-bold text-xs uppercase dark:bg-zinc-900 dark:text-zinc-100">
-                    <TableRow>{["#","DRM ID","Company","Sales Person","Dollar","PKR","Dollar Rate","AB Disc","Extra Disc","Package","Type","Dropout","Status","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
+                    <TableRow>{["#","Drm id","Company","Sale Person","Dollar","Pkr","Dollar Rate","Ab Disc","Extra Disc","Package","Type","Droupout","Status","Accountant","HOD","Action"].map(h=><TableHead key={h} className="p-3 px-3 border-r last:border-0">{h}</TableHead>)}</TableRow>
                   </TableHeader>
                   <TableBody className="bg-white dark:bg-zinc-900">
                     {fPend.length > 0 ? fPend.map((tx,i) => (
@@ -2018,11 +2027,31 @@ export default function DollarSystem() {
                         <TableCell className="p-3 border-r border-b">{tx.exDisc||"0"}</TableCell>
                         <TableCell className="p-3 border-r border-b">{tx.package||"-"}</TableCell>
                         <TableCell className="p-3 border-r border-b">{tx.type||"-"}</TableCell>
-                        <TableCell className="p-3 border-r border-b">None</TableCell>
-                        <TableCell className="p-3 border-r border-b font-black text-[#00a65a] uppercase italic dark:text-zinc-400">{tx.status}</TableCell>
-                        <TableCell className="p-3 border-b text-center"><Badge className="bg-red-500/10 text-red-700 border-none text-[10px] uppercase font-black px-2 shadow-none">Pending</Badge></TableCell>
+                        <TableCell className="p-3 border-r border-b">{tx.dropout||"None"}</TableCell>
+                        <TableCell className="p-3 border-r border-b font-black text-[#00a65a] uppercase italic dark:text-zinc-400">{tx.paymentStatus||tx.status}</TableCell>
+                        <TableCell className="p-3 border-r border-b">
+                          <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                            tx.accountantStatus === "Done" ? "bg-emerald-100 text-emerald-700" : "bg-yellow-100 text-yellow-700"
+                          )}>{tx.accountantStatus||"Pending"}</Badge>
+                        </TableCell>
+                        <TableCell className="p-3 border-r border-b">
+                          <Badge className={cn("text-[9px] font-black px-1.5 py-0.5 border-none shadow-none uppercase",
+                            tx.hodStatus === "Approved" ? "bg-emerald-100 text-emerald-700" :
+                            tx.hodStatus === "Rejected" ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"
+                          )}>{tx.hodStatus||"Pending"}</Badge>
+                        </TableCell>
+                        <TableCell className="p-3 border-b text-center">
+                          <button
+                            type="button"
+                            onClick={() => setViewItem(tx)}
+                            title="View Details"
+                            className="w-5 h-5 rounded-full bg-[#f39c12] hover:bg-[#d97706] text-white inline-flex items-center justify-center shadow-sm transition-all cursor-pointer"
+                          >
+                            <Eye size={11} strokeWidth={2.8} />
+                          </button>
+                        </TableCell>
                       </TableRow>
-                    )) : <TableRow><TableCell colSpan={14} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No pending approvals</TableCell></TableRow>}
+                    )) : <TableRow><TableCell colSpan={16} className="p-5 text-center text-gray-500 font-medium italic dark:text-zinc-400">No pending approvals</TableCell></TableRow>}
                   </TableBody>
                 </Table>
               </div>

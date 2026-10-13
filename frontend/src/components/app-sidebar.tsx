@@ -469,7 +469,17 @@ function hasAccess(
 // ─── Component ────────────────────────────────────────────────────────────────
 export function AppSidebar() {
   const [location] = useLocation();
-  const { state } = useSidebar();
+  const { state, setOpen } = useSidebar();
+
+  // AB Report is wide (lots of side-by-side cards/tables) — collapse the
+  // sidebar to icon-only automatically while viewing it, like a user would
+  // do manually on Dollar System, and restore it on navigating away.
+  useEffect(() => {
+    if (location.startsWith("/account/ab-report")) {
+      setOpen(false);
+      return () => setOpen(true);
+    }
+  }, [location, setOpen]);
 
   const sidebarBg = "bg-sidebar";
   const sidebarText = "text-sidebar-foreground";

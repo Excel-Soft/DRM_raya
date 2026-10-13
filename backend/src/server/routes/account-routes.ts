@@ -5303,9 +5303,10 @@ export function registerAccountRoutes(app: Express) {
                g.status,
                g.payment_status as "paymentStatus",
                g.hod_status as "hodStatus",
-               g.added_by_name as "accountant",
+               g.accountant_status as "accountantStatus",
                g.proof_url as "proofUrl", g.notes,
                g.installments,
+               abp.paid_date as "payDate",
                -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
                -- total) — see the matching comment in gm-pool-routes.ts's GET /gm-pool.
                (
@@ -5314,11 +5315,24 @@ export function registerAccountRoutes(app: Express) {
                    (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(g.installments, '[]'::jsonb)) elem)
                  ) - COALESCE(pr.paid, 0)
                ) <= 0.009 AS "fullyPaid",
-               COALESCE(pr.paid, 0) AS "partialPaidAmount"
+               COALESCE(pr.paid, 0) AS "partialPaidAmount",
+               COALESCE(pr.paid_pkr, 0) AS "partialPaidAmountPkr",
+               COALESCE(abpaid.paid_usd, 0) AS "abPaidAmount",
+               COALESCE(abpaid.paid_pkr, 0) AS "abPaidAmountPkr"
         FROM drm.gm_entries g
         LEFT JOIN (
-          SELECT gm_id, SUM(amount_usd) AS paid FROM drm.gm_partial_receipts GROUP BY gm_id
+          SELECT gm_id, SUM(amount_usd) AS paid, SUM(amount_pkr) AS paid_pkr FROM drm.gm_partial_receipts GROUP BY gm_id
         ) pr ON pr.gm_id = g.id::text
+        LEFT JOIN (
+          SELECT gm_entry_id, MAX(paid_date) AS paid_date FROM drm.ab_payments
+          WHERE coalesce(is_deleted, false) = false
+          GROUP BY gm_entry_id
+        ) abp ON abp.gm_entry_id = g.id
+        LEFT JOIN (
+          SELECT gm_entry_id, SUM(amount_usd) AS paid_usd, SUM(amount_pkr) AS paid_pkr FROM drm.ab_payments
+          WHERE coalesce(is_deleted, false) = false AND status IN ('paid','processing')
+          GROUP BY gm_entry_id
+        ) abpaid ON abpaid.gm_entry_id = g.id
         WHERE coalesce(g.is_deleted, false) = false
           AND (g.entry_type = 'Partial' OR coalesce(g.is_partial_payment,false) = true)
           -- A Partial GM pays Alibaba per-installment (see the "Pay Alibaba —
@@ -5448,10 +5462,15 @@ export function registerAccountRoutes(app: Express) {
       const pendingApprovals = await pool.query(`
         SELECT id, drm_id as "drmId", company_name as "company",
                sales_person_name as "salePerson",
-               amount_usd as "dollar", amount_pkr as "pkr",
+               member_id as "memberId", order_id as "orderId", created_at as "date",
+               amount_usd as "dollar", customer_dollar as "customerDollar", amount_pkr as "pkr",
                dollar_rate as "rate",
                alibaba_discount_usd as "abDisc", extra_discount_usd as "exDisc",
-               package_type as "package", gm_type as "type", status
+               extra_discount_pkr as "exDiscPkr",
+               package_type as "package", gm_type as "type", status,
+               payment_status as "paymentStatus",
+               dropout as "dropout",
+               accountant_status as "accountantStatus", hod_status as "hodStatus"
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false AND status = 'Pending' ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
@@ -5518,7 +5537,23 @@ export function registerAccountRoutes(app: Express) {
           COALESCE(SUM(g.amount_pkr) FILTER (
             WHERE coalesce(g.is_partial_payment,false) = true
               AND g.status = 'Approved'
-          ), 0) AS "partialCashReceivedPkr"
+          ), 0) AS "partialCashReceivedPkr",
+          COUNT(DISTINCT ap.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = false
+              AND ap.status IN ('paid','processing')
+          ) AS "fullOnlinePaidCount",
+          COUNT(DISTINCT g.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = false
+              AND g.status = 'Approved'
+          ) AS "fullCashReceivedCount",
+          COUNT(DISTINCT ap.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = true
+              AND ap.status IN ('paid','processing')
+          ) AS "partialOnlinePaidCount",
+          COUNT(DISTINCT g.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = true
+              AND g.status = 'Approved'
+          ) AS "partialCashReceivedCount"
         FROM drm.gm_entries g
         LEFT JOIN drm.ab_payments ap
           ON ap.gm_drm_id = g.drm_id
@@ -5526,6 +5561,18 @@ export function registerAccountRoutes(app: Express) {
         WHERE coalesce(g.is_deleted, false) = false
       `);
       const abLiabilities = abLiabilitiesRes.rows[0] || {};
+      // "Uncompleted GM Partials" — reuse the partial-payments list already
+      // queried above (#3), which is already filtered to partial GMs not yet
+      // fully paid to Alibaba. Split the same way as Full/Partial Payment:
+      // "Online Paid" = already forwarded to Alibaba (ab_payments), "Cash
+      // Received" = collected from the customer so far (gm_partial_receipts).
+      abLiabilities.uncompletedPartialsCount = partialPayments.rows.length;
+      abLiabilities.uncompletedOnlinePaidCount = partialPayments.rows.filter((r: any) => Number(r.abPaidAmount || 0) > 0).length;
+      abLiabilities.uncompletedCashReceivedCount = partialPayments.rows.filter((r: any) => Number(r.partialPaidAmount || 0) > 0).length;
+      abLiabilities.uncompletedOnlinePaidUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmount || 0), 0);
+      abLiabilities.uncompletedOnlinePaidPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmountPkr || 0), 0);
+      abLiabilities.uncompletedCashReceivedUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmount || 0), 0);
+      abLiabilities.uncompletedCashReceivedPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmountPkr || 0), 0);
 
       // 9. Monthly Totals
       const monthlyStatsRes = await pool.query(`
