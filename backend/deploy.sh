@@ -49,10 +49,11 @@ pm2 save
 # ── 4. Health check ───────────────────────────────────────────────────────────
 info "Waiting 3s for backend to come up..."
 sleep 3
-if curl -sf http://localhost:5001/api/health > /dev/null 2>&1; then
-  info "✅ Backend is healthy at http://localhost:5001"
+if curl -sf http://localhost:5001/api/roles > /dev/null 2>&1 \
+   || curl -sf http://localhost:5001/ > /dev/null 2>&1; then
+  info "✅ Backend is responding at http://localhost:5001"
 else
-  warn "Health check endpoint not reachable — check: pm2 logs ${PM2_APP}"
+  warn "Backend not responding yet — it may still be starting. Check: pm2 logs ${PM2_APP}"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
