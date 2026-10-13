@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,22 @@ function getActiveRole(): string {
   );
 }
 
-const MANAGER_ROLES = ["sales_manager", "manager", "assistant_manager"];
-const HOD_ROLES    = ["hod", "super_hod", "admin"];
+// Mirrors the literal role keys in backend/src/shared/roles.ts — kept as an
+// explicit list (not a shared import) since frontend's @shared alias points
+// at a different folder than the backend's. Covers every manager/assistant-
+// manager tier, not just sales, so service/dd/it/etc. managers correctly get
+// the team view instead of silently falling through to the executive one.
+const MANAGER_ROLES = [
+  "sales_manager", "sales_assistant_manager",
+  "service_manager", "service_assistant_manager",
+  "account_manager", "product_posting_manager",
+  "qa_manager", "verification_manager",
+  "dd_manager", "it_manager", "reception_manager",
+  "seo_smm_manager", "software_manager",
+  "lead_manager", "marketing_manager", "complaint_manager",
+  "manager",
+];
+const HOD_ROLES = ["hod", "super_hod", "admin"];
 
 function isManagerialRole(role: string) {
   return MANAGER_ROLES.includes(role) || HOD_ROLES.includes(role);
@@ -65,12 +79,9 @@ export default function LoanRequestPage() {
     const [appliedEnd,   setAppliedEnd]   = useState("");
 
     // ── Queries ──────────────────────────────────────────────────────────────
-    const { data: loanRequests, isLoading: loadingRequests } = useQuery<LoanRequest[]>({
+    const { data: loanRequests, isLoading: loadingRequests, isError: loansError } = useQuery<LoanRequest[]>({
         queryKey: loansQueryKey,
-        queryFn: async () => {
-            const res = await apiRequest("GET", loansEndpoint);
-            return res.json();
-        },
+        queryFn: () => apiRequestJson<LoanRequest[]>("GET", loansEndpoint),
     });
 
     // ── Mutations ────────────────────────────────────────────────────────────
@@ -163,7 +174,7 @@ export default function LoanRequestPage() {
     };
 
     // ── Filter ───────────────────────────────────────────────────────────────
-    const filteredRequests = (loanRequests ?? []).filter((l) => {
+    const filteredRequests = (Array.isArray(loanRequests) ? loanRequests : []).filter((l) => {
         if (activeTab === "history") {
             if (appliedStart && l.createdAt) {
                 const d = new Date(appliedStart); d.setHours(0, 0, 0, 0);
@@ -386,6 +397,12 @@ export default function LoanRequestPage() {
                                     <tr>
                                         <td colSpan={11} className="px-3 py-4 text-[13px] text-center text-[#495057] dark:text-zinc-400">
                                             Loading…
+                                        </td>
+                                    </tr>
+                                ) : loansError ? (
+                                    <tr>
+                                        <td colSpan={11} className="px-3 py-4 text-[13px] text-center text-red-500">
+                                            Could not load loan requests. Please try again.
                                         </td>
                                     </tr>
                                 ) : filteredRequests.length === 0 ? (

@@ -84,8 +84,7 @@ export class LoanRepository {
       `select lr.*, u.full_name
          from drm.loan_requests lr
          join drm.users u on u.id::text = lr.user_id::text
-         join drm.user_team_members tm on tm.member_id::text = lr.user_id::text
-        where tm.manager_id = $1
+        where u.under_works = $1
         order by lr.created_at desc`,
       [managerId],
     );

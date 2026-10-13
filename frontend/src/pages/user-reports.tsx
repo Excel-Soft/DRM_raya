@@ -60,7 +60,7 @@ import {
 } from "recharts";
 import { apiRequest, getAuthHeader } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import {
   Dialog,
   DialogContent,
@@ -1602,13 +1602,15 @@ function ReportTab({
   dateRange,
   loanActiveSubTab,
   setLoanActiveSubTab,
-  onDateChange
+  onDateChange,
+  scope,
 }: {
   type: ReportType;
   dateRange: { from: string; to: string };
   loanActiveSubTab: "list" | "add" | "history";
   setLoanActiveSubTab: (tab: "list" | "add" | "history") => void;
   onDateChange: (field: "from" | "to", value: string) => void;
+  scope?: string | null;
 }) {
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState<string | null>(null);
@@ -1620,20 +1622,42 @@ function ReportTab({
 
   const [selectedUser, setSelectedUser] = useState<string>("all");
 
+  // Switching between the "User Reports" and "Reports" sidebar links doesn't
+  // remount this component (same route, only ?scope differs), so re-arm the
+  // smart-default effect below whenever scope changes — otherwise whatever
+  // selectedUser got resolved for the FIRST link visited would stick forever.
   useEffect(() => {
-    if (currentUser && selectedUser === "all") {
+    setSelectedUser("all");
+  }, [scope]);
+
+  // Default scope:
+  //  - "Reports" group link (?scope=company) + HOD/Account/Admin -> stays "all" (whole company).
+  //  - "User Reports" group link (no scope) + a manager with a team -> "team" (their direct reports).
+  //  - Everyone else (plain executives, or HOD/Account/Admin on their personal link) -> their own record.
+  useEffect(() => {
+    if (!currentUser || selectedUser !== "all") return;
+    // The currently-ACTING role (impersonation-aware) lives in sessionStorage,
+    // same as every other role-gated view in this app — currentUser.roleId
+    // from /api/auth/me reflects the underlying authenticated identity, not
+    // the active "acting as" role, so it's the wrong source for this check.
+    const role = sessionStorage.getItem("userRole") ?? currentUser.roleId;
+    if (scope === "company" && isCompanyWideRole(role)) return;
+    if (isManagerialRole(role) && !isCompanyWideRole(role)) {
+      setSelectedUser("team");
+    } else {
       setSelectedUser(currentUser.userId || currentUser.id);
     }
-  }, [currentUser, selectedUser]);
+  }, [currentUser, selectedUser, scope]);
 
   const { data: report, isLoading, isError, refetch } = useQuery<ReportData>({
-    queryKey: ["/api/reports", type, dateRange.from, dateRange.to, selectedUser],
+    queryKey: ["/api/reports", type, dateRange.from, dateRange.to, selectedUser, scope],
     queryFn: async () => {
       const params = new URLSearchParams({
         from: dateRange.from,
         to: dateRange.to,
         userId: selectedUser
       });
+      if (scope) params.set("scope", scope);
       const response = await apiRequest("GET", `/api/reports/${type}?${params}`);
       return response.json();
     },
@@ -1649,6 +1673,7 @@ function ReportTab({
         format,
         userId: selectedUser,
       });
+      if (scope) params.set("scope", scope);
       await downloadAuthedFile(
         `/api/reports/${type}/export?${params}`,
         `${type}_report.${format}`,
@@ -1830,7 +1855,7 @@ function ReportTab({
   );
 }
 
-import { isManagerialRole } from "@/lib/role-utils";
+import { isManagerialRole, isCompanyWideRole } from "@/lib/role-utils";
 
 export default function UserReports() {
   useModuleData("/reports");
@@ -1839,6 +1864,16 @@ export default function UserReports() {
     queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
   const [location, setLocation] = useLocation();
+  // Both sidebar groups ("User Reports" and "Reports") link to this same
+  // /reports/:type route — "Reports" group's Loan Report additionally tags
+  // ?scope=company so HOD/Account/Admin get the whole-company view there,
+  // while the "User Reports" one (no scope param) stays personal/team-scoped.
+  // useSearch() (not a plain window.location.search read) is required here —
+  // wouter's route matching ignores the query string, so switching between
+  // these two sidebar links doesn't remount this component; without a
+  // reactive hook the scope read would go stale after the first navigation.
+  const search = useSearch();
+  const scope = new URLSearchParams(search).get("scope");
   const [match, params] = useRoute<{ type?: string }>("/reports/:type") || [false, null];
   const routeType = match && params?.type && isReportType(params.type) ? (params.type as ReportType) : null;
   const [activeTab, setActiveTab] = useState<ReportType>(routeType ?? "loan");
@@ -1886,12 +1921,20 @@ export default function UserReports() {
 
   const headerContent = routeType ? reportTypeLabels[routeType] : defaultReportHeader;
 
+  const activeRole = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : null) ?? currentUser?.roleId;
+
   return (
     <div className="flex-1 overflow-auto p-6 space-y-6" data-testid="page-user-reports">
       <div className="flex items-center justify-end">
-        {currentUser && isManagerialRole(currentUser.roleId) && (
+        {scope === "company" && isCompanyWideRole(activeRole) && (
           <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
             Global View
+          </Badge>
+        )}
+        {!(scope === "company" && isCompanyWideRole(activeRole)) &&
+          isManagerialRole(activeRole) && !isCompanyWideRole(activeRole) && (
+          <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200">
+            Team View
           </Badge>
         )}
       </div>
@@ -1903,6 +1946,7 @@ export default function UserReports() {
           loanActiveSubTab={loanActiveSubTab}
           setLoanActiveSubTab={setLoanActiveSubTab}
           onDateChange={handleDateChange}
+          scope={scope}
         />
       </div>
     </div>

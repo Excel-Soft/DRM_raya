@@ -1352,8 +1352,26 @@ router.get("/reports/:type", async (req, res, next) => {
     const effectiveReportRole = (req.user as any)?.activeRoleId || user.roleId;
     const isSalesManagerReportRole = normalizeRole(effectiveReportRole) === ROLES.SALES_MANAGER;
 
+    // "Reports" sidebar group's Loan Report tags ?scope=company so HOD/
+    // Account/Admin get the whole-org view there, distinct from "User
+    // Reports" group's Loan Report (same URL otherwise) which is personal/
+    // team-scoped. Only honored for roles allowed to see everything.
+    const COMPANY_WIDE_ROLES = ["admin", "super_admin", "super_hod", "hod", ROLES.ACCOUNT_MANAGER];
+    const requestsCompanyWide = req.query.scope === "company" && COMPANY_WIDE_ROLES.includes(normalizeRole(effectiveReportRole));
+
     let filterUserIds: string[] | null = null;
-    if (isSalesManagerReportRole) {
+    if (requestsCompanyWide) {
+      filterUserIds = null;
+    } else if (queryUserId === "team") {
+      // Explicit "my team" request (e.g. a manager's personal/default Loan
+      // Report view) — direct reports via drm.users.under_works, excluding
+      // the manager's own loans (same exclusion as /hr/loan's team view —
+      // managers apply for their own loan under their executive role).
+      const teamRows = await pool.query(`select id from drm.users where under_works = $1`, [user.userId]);
+      filterUserIds = teamRows.rows.length > 0
+        ? teamRows.rows.map((r: any) => String(r.id))
+        : ["00000000-0000-0000-0000-000000000000"];
+    } else if (isSalesManagerReportRole) {
       filterUserIds = [user.userId];
     } else if (!isPrivileged) {
       filterUserIds = [user.userId];

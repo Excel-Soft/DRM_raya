@@ -42,8 +42,8 @@ export function registerLoanRoutes(app: Express) {
       }
 
       // Check if user has admin permissions
-      const userRole = (req.user.activeRoleId ?? req.user.roleId ?? "").toLowerCase();
-      const isAdmin = ["admin", "super_hod", "hod", "manager", "assistant_manager"].includes(userRole);
+      const userRole = normalizeRole(req.user.activeRoleId ?? req.user.roleId ?? "");
+      const isAdmin = isManagerialRole(userRole);
 
       if (!isAdmin) {
         console.error("[LOAN_ADMIN] Non-admin user attempted access to GET /api/admin/loans:", req.user.userId, userRole);
@@ -59,7 +59,8 @@ export function registerLoanRoutes(app: Express) {
   });
 
   // GET /api/admin/loans/team - Manager sees ONLY their direct team members' loans
-  // For sales_manager / assistant_manager: scoped to user_team_members.
+  // For any manager/assistant-manager tier: scoped to users whose
+  // drm.users.under_works points at the caller (see loan.repository.ts).
   // For HOD / super_hod / admin: falls back to all loans (same as /api/admin/loans).
   app.get("/api/admin/loans/team", async (req, res) => {
     try {
@@ -67,9 +68,9 @@ export function registerLoanRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      const userRole = (req.user.activeRoleId ?? req.user.roleId ?? "").toLowerCase();
-      const isManagerLevel = ["manager", "assistant_manager", "sales_manager"].includes(userRole);
-      const isHodLevel = ["admin", "super_hod", "hod"].includes(userRole);
+      const userRole = normalizeRole(req.user.activeRoleId ?? req.user.roleId ?? "");
+      const isHodLevel = userRole === ROLES.ADMIN || userRole === ROLES.SUPER_HOD || userRole === ROLES.HOD;
+      const isManagerLevel = !isHodLevel && isManagerialRole(userRole);
 
       if (!isManagerLevel && !isHodLevel) {
         console.error("[LOAN_TEAM] Unauthorized access attempt:", req.user.userId, userRole);
