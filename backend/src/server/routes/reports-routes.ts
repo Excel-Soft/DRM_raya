@@ -746,8 +746,209 @@ async function getLoanReport(userIds: string[] | null, fromDate: Date, toDate: D
   };
 }
 
-async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
-  // Fetch from office_vas instead of vas_progress_snapshots
+export async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+  // Reports module's own VAS Report — source of truth is `vas_reports`, the
+  // table the "+ New VAS Report" form (POST /api/vas-reports) actually saves
+  // to. Deliberately independent from the unrelated Office Account -> VAS
+  // feature (`office_vas` table / /api/office/vas), which has its own page
+  // and must not be touched by this report.
+  const vasConditions = [
+    gte(vasReports.reportDate, fromDate),
+    lte(vasReports.reportDate, toDate),
+  ];
+  if (userIds && userIds.length > 0) {
+    vasConditions.push(inArray(vasReports.userId, userIds));
+  }
+
+  const rows = await db
+    .select()
+    .from(vasReports)
+    .where(and(...vasConditions))
+    .orderBy(desc(vasReports.reportDate));
+
+  // Only fields actually stored on vas_reports are surfaced here. No
+  // company/amount/method/commission values are fabricated — the current
+  // form/table has no such fields (see customerId note below).
+  const vasReportDetails: any[] = rows.map(r => ({
+    id: r.id,
+    title: r.title,
+    // vas_reports has no company/method concept — left null (rendered as
+    // "—") rather than fabricated, unlike the merged invoice rows below
+    // which have real company/method values.
+    company: null,
+    method: null,
+    status: r.status,
+    date: r.reportDate,
+    createdAt: r.reportDate,
+    summary: r.summary,
+    notes: r.notes,
+    totalTasks: Number(r.totalTasks) || 0,
+    valueSold: Number(r.valueSold) || 0,
+    successRate: Number(r.successRate) || 0,
+    followUpsDone: Number(r.followUpsDone) || 0,
+    missedLeads: Number(r.missedLeads) || 0,
+    // Raw stored value only — not resolved to a customer name. vas_reports.customer_id
+    // is a `varchar` column while customers.id is `uuid`; joining them would be an
+    // unverified type cast, so it's left as-is rather than risk a bad lookup.
+    customerId: r.customerId,
+    userId: r.userId,
+    source: "vas_reports",
+  }));
+
+  // Per explicit request: also surface the selected user's invoices that have
+  // been approved by Account, alongside their vas_reports entries. "Approved
+  // by Account" uses the exact status values the real approval endpoints set
+  // (verified against account-routes.ts / product-posting-workflow-routes.ts,
+  // not guessed):
+  //   - product_posting_invoices: status 'APPROVED' only — 'PENDING_ACCOUNT'
+  //     means HOD approved, still awaiting Account, so it's excluded. Dated
+  //     by accounts_approved_at, which the approval endpoint stamps.
+  //   - invoices: status 'Paid' — the only Account-approved value in the
+  //     invoice_status enum ('Approved' does not exist in it). Dated by
+  //     updated_at because the approval transition does not populate paid_at.
+  // totalTasks/successRate/followUpsDone/missedLeads are genuinely not
+  // tracked per-invoice, so they're left `null` (rendered as "—") rather than
+  // a fabricated 0.
+  const productInvoiceConditions = [
+    eq(productPostingInvoices.status, "APPROVED"),
+    gte(productPostingInvoices.accountsApprovedAt, fromDate),
+    lte(productPostingInvoices.accountsApprovedAt, toDate),
+  ];
+  if (userIds && userIds.length > 0) {
+    productInvoiceConditions.push(inArray(productPostingInvoices.salesExecId, userIds));
+  }
+  const approvedProductInvoices = await db
+    .select()
+    .from(productPostingInvoices)
+    .where(and(...productInvoiceConditions));
+
+  const standardInvoiceConditions = [
+    eq(invoices.status, "Paid"),
+    gte(invoices.updatedAt, fromDate),
+    lte(invoices.updatedAt, toDate),
+  ];
+  if (userIds && userIds.length > 0) {
+    standardInvoiceConditions.push(inArray(invoices.createdByUserId, userIds));
+  }
+  const approvedStandardInvoices = await db
+    .select()
+    .from(invoices)
+    .where(and(...standardInvoiceConditions));
+
+  const invoiceDetails: any[] = [
+    ...approvedProductInvoices.map(i => ({
+      id: i.id,
+      title: `Invoice: ${i.companyName || i.projectName || "Untitled"}`,
+      company: i.companyName || i.projectName || null,
+      method: i.paymentMethod || null,
+      status: i.status,
+      date: i.accountsApprovedAt,
+      createdAt: i.accountsApprovedAt,
+      summary: null,
+      notes: null,
+      totalTasks: null,
+      // Unlike `invoices`, product_posting_invoices has no stored exchange
+      // rate anywhere (confirmed: other code that unions this table hardcodes
+      // its rate as NULL) — there is no real USD->PKR rate to apply, so this
+      // is left as the raw stored amount rather than guessing one.
+      // A "Free" payment method means no money actually changed hands, so its
+      // value for this report is 0 regardless of whatever amount the invoice
+      // record happens to carry.
+      valueSold: (i.paymentMethod || "").toLowerCase() === "free" ? 0 : (Number(i.amount) || 0),
+      successRate: null,
+      followUpsDone: null,
+      missedLeads: null,
+      customerId: null,
+      userId: i.salesExecId,
+      source: "product_posting_invoice",
+    })),
+    ...approvedStandardInvoices.map(i => ({
+      id: i.id,
+      title: `Invoice: ${i.customerName || "Untitled"}`,
+      company: i.customerName || null,
+      method: i.paymentMethod || null,
+      status: i.status,
+      date: i.updatedAt,
+      createdAt: i.updatedAt,
+      summary: null,
+      notes: null,
+      totalTasks: null,
+      // invoices stores its own currency + the USD->PKR rate that applied at
+      // invoice time (dollar_rate) — converting with that real, per-row rate
+      // (amount_usd * dollar_rate, the same formula already used elsewhere in
+      // account-routes.ts) rather than a guessed/global rate. Only applied
+      // when the invoice is actually in USD.
+      // A "Free" payment method means no money actually changed hands, so its
+      // value for this report is 0 regardless of whatever amount the invoice
+      // record happens to carry.
+      valueSold: (i.paymentMethod || "").toLowerCase() === "free"
+        ? 0
+        : (i.currency === "USD" ? (Number(i.total) || 0) * (Number(i.dollarRate) || 0) : (Number(i.total) || 0)),
+      successRate: null,
+      followUpsDone: null,
+      missedLeads: null,
+      customerId: null,
+      userId: i.createdByUserId,
+      source: "invoice",
+    })),
+  ];
+
+  const combinedDetails: any[] = [...vasReportDetails, ...invoiceDetails].sort(
+    (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+  );
+
+  // Commission is intentionally NOT attached here. Neither vas_reports nor
+  // these invoices have a defined commission rule — see
+  // services/gm-commission.service.ts (stub) and the investigation notes for
+  // what business rule would need to be specified before any commission
+  // figure could be shown without being fabricated.
+
+  const totalValue = combinedDetails.reduce((sum, item) => sum + (item.valueSold ?? 0), 0);
+  const totalTasksSum = combinedDetails.reduce((sum, item) => sum + (item.totalTasks ?? 0), 0);
+  const followUpsSum = combinedDetails.reduce((sum, item) => sum + (item.followUpsDone ?? 0), 0);
+  const missedLeadsSum = combinedDetails.reduce((sum, item) => sum + (item.missedLeads ?? 0), 0);
+  // Averaged only over rows that actually carry a success rate (vas_reports
+  // entries) — invoice rows have no such concept and would otherwise
+  // silently drag the average down.
+  const successRateRows = combinedDetails.filter(item => item.successRate != null);
+  const avgSuccessRate = successRateRows.length > 0
+    ? successRateRows.reduce((sum, item) => sum + item.successRate, 0) / successRateRows.length
+    : null;
+
+  const chartData = generateChartData(combinedDetails, fromDate, toDate, 'valueSold');
+
+  return {
+    type: "vas",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+    metrics: {
+      totalTasks: totalTasksSum,
+      valueOfServiceSold: totalValue,
+      successRate: avgSuccessRate,
+      followUpsCompleted: followUpsSum,
+      missedLeads: missedLeadsSum,
+    },
+    chartData,
+    details: combinedDetails,
+    totals: {
+      totalAdvance: totalValue,
+      totalRemaining: 0
+    }
+  };
+}
+
+// "User Reports" sidebar group's VAS Report (plain /reports/vas, no ?scope=
+// company) intentionally kept on its original office_vas + invoices behavior,
+// unchanged from before the vas_reports fix — a separate, pre-existing report
+// the business still relies on as-is. Only the "Reports" sidebar group's VAS
+// Report (/reports/vas?scope=company) uses the vas_reports-backed
+// getVasReport() above. Do not merge these two back together without an
+// explicit decision to retire one of them.
+async function getVasReportLegacyOfficeVas(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
   const vasConditions = [
     gte(officeVas.vasDate, fromDate),
     lte(officeVas.vasDate, toDate)
@@ -844,7 +1045,7 @@ async function getVasReport(userIds: string[] | null, fromDate: Date, toDate: Da
     if (!vasCommissionSummaryCache.has(cacheKey)) {
       if (!vasSyncedUserIds.has(row.userId)) {
         vasSyncedUserIds.add(row.userId);
-        await syncGmCommissionLedger(row.userId).catch((err) => console.error("[VAS report] GM commission sync failed:", err));
+        await syncGmCommissionLedger(row.userId).catch((err: any) => console.error("[VAS report] GM commission sync failed:", err));
       }
       const summary = await getGmCommissionQuarterSummary(row.userId, quarterKey).catch(() => null);
       if (summary) vasCommissionSummaryCache.set(cacheKey, summary);
@@ -1009,16 +1210,40 @@ function buildReportCsv(report: ReportData) {
         break;
       }
       case "vas": {
-        lines.push("Period,Amount,Target,Achievement%");
-        report.details.forEach((item: any) => {
-          const achievement =
-            item.targetAmount && Number(item.targetAmount) > 0
-              ? Math.round((Number(item.amount || 0) / Number(item.targetAmount)) * 100)
-              : 0;
-          lines.push(
-            `${item.month}/${item.year},${item.amount ?? 0},${item.targetAmount ?? 0},${achievement}`
-          );
-        });
+        // Two distinct VAS reports share this export path (see getVasReport vs
+        // getVasReportLegacyOfficeVas): tell them apart by shape, not by a
+        // flag threaded through ReportData, since legacy rows carry
+        // `companyName` and vas_reports rows never do.
+        const isLegacyVas = report.details.length > 0 && Object.prototype.hasOwnProperty.call(report.details[0], "companyName");
+        if (isLegacyVas) {
+          lines.push("Company,Amount,Method,Date");
+          report.details.forEach((item: any) => {
+            lines.push(
+              `"${item.companyName ?? ""}",` +
+              `${item.amount ?? 0},` +
+              `"${item.method ?? ""}",` +
+              `${item.date ? new Date(item.date).toISOString() : ""}`
+            );
+          });
+        } else {
+          lines.push("Date,Source,Title,Company,Method,Customer ID,Status,Total Tasks,Value Sold,Success Rate,Follow-ups Done,Missed Leads");
+          report.details.forEach((item: any) => {
+            lines.push(
+              `${item.date ? new Date(item.date).toISOString().split("T")[0] : ""},` +
+              `"${item.source ?? "vas_reports"}",` +
+              `"${item.title ?? ""}",` +
+              `"${item.company ?? ""}",` +
+              `"${item.method ?? ""}",` +
+              `"${item.customerId ?? ""}",` +
+              `"${item.status ?? ""}",` +
+              `${item.totalTasks ?? ""},` +
+              `${item.valueSold ?? 0},` +
+              `${item.successRate ?? ""},` +
+              `${item.followUpsDone ?? ""},` +
+              `${item.missedLeads ?? ""}`
+            );
+          });
+        }
         break;
       }
       case "bv": {
@@ -1361,7 +1586,13 @@ router.get("/reports/:type", async (req, res, next) => {
 
     let filterUserIds: string[] | null = null;
     if (requestsCompanyWide) {
-      filterUserIds = null;
+      // Company-wide privilege means "allowed to see everyone" — it must not
+      // override an explicit user picked in the Select User dropdown. Before,
+      // this branch forced `null` (global) unconditionally, so once a page
+      // carried ?scope=company (e.g. this VAS Report), choosing a specific
+      // user in the dropdown had no effect and every selection showed the
+      // whole company's data instead of just that user's.
+      filterUserIds = queryUserId ? [queryUserId] : null;
     } else if (queryUserId === "team") {
       // Explicit "my team" request (e.g. a manager's personal/default Loan
       // Report view) — direct reports via drm.users.under_works, excluding
@@ -1380,7 +1611,13 @@ router.get("/reports/:type", async (req, res, next) => {
     } else {
       const allowedIds = await getDepartmentFilterUserIds(req);
       if (queryUserId) {
-        filterUserIds = allowedIds && allowedIds.includes(queryUserId) ? [queryUserId] : ['00000000-0000-0000-0000-000000000000'];
+        // null from getDepartmentFilterUserIds means "unrestricted" for this role
+        // (e.g. account_manager -> global), not "nobody allowed" — treat it as
+        // the requested user being in scope. Previously `allowedIds && ...`
+        // short-circuited null to false and silently zeroed every result for
+        // any such role viewing a specific user (its own default selection
+        // included), which is what produced "No Records Found" on this page.
+        filterUserIds = (allowedIds === null || allowedIds.includes(queryUserId)) ? [queryUserId] : ['00000000-0000-0000-0000-000000000000'];
       } else {
         filterUserIds = allowedIds;
       }
@@ -1392,7 +1629,12 @@ router.get("/reports/:type", async (req, res, next) => {
         report = await getLoanReport(filterUserIds, fromDate, toDate);
         break;
       case "vas":
-        report = await getVasReport(filterUserIds, fromDate, toDate);
+        // "Reports" sidebar group's VAS Report (?scope=company) is the
+        // vas_reports-backed report; "User Reports" group's VAS Report (plain
+        // /reports/vas) stays on its original office_vas/invoices behavior.
+        report = requestsCompanyWide
+          ? await getVasReport(filterUserIds, fromDate, toDate)
+          : await getVasReportLegacyOfficeVas(filterUserIds, fromDate, toDate);
         break;
       case "gm":
         report = await getGmReport(filterUserIds, fromDate, toDate);
@@ -1450,7 +1692,11 @@ router.get("/reports/:type/export", async (req, res, next) => {
         report = await getLoanReport(filterUserIds, fromDate, toDate);
         break;
       case "vas":
-        report = await getVasReport(filterUserIds, fromDate, toDate);
+        // Same split as the main listing route: ?scope=company => vas_reports,
+        // otherwise the original office_vas/invoices-backed report.
+        report = req.query.scope === "company"
+          ? await getVasReport(filterUserIds, fromDate, toDate)
+          : await getVasReportLegacyOfficeVas(filterUserIds, fromDate, toDate);
         break;
       case "gm":
         report = await getGmReport(filterUserIds, fromDate, toDate);
