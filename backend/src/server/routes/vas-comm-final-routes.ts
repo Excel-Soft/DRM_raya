@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "../db";
 import { webxlVasCommFinal, users } from "../../shared/schema";
 import { eq, sql, and, desc, inArray, or } from "drizzle-orm";
-import { getActiveRole } from "./services/auth-service";
+import { getActiveRole } from "./middleware/penalty-permission";
 
 export function registerVasCommFinalRoutes(app: Express) {
   // GET /api/drm/vas-comm-final

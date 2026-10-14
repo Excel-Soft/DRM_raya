@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useModuleData } from "@/hooks/use-module-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,8 +41,9 @@ import {
   XCircle,
   Loader2
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { exportToCSV, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export-utils";
 import {
   AreaChart,
   Area,
@@ -703,6 +704,343 @@ function VasReportTable({
   dateRange,
   onDateChange,
   selectedUser,
+  onUserChange,
+  onRefresh,
+}: {
+  details: any[];
+  totals?: { totalAdvance: number };
+  dateRange: { from: string; to: string };
+  onDateChange: (field: "from" | "to", value: string) => void;
+  selectedUser: string;
+  onUserChange: (value: string) => void;
+  onRefresh?: () => void;
+}) {
+  const { toast } = useToast();
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", { assigned: true }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const data = await res.json();
+      return data.users || [];
+    },
+  });
+  const { data: currentUser } = useQuery({
+    queryKey: ["/api/auth/me"],
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
+  });
+
+  const [isMonthWise, setIsMonthWise] = useState(false);
+
+  // Same impersonation-aware "acting role" resolution the page already uses
+  // (ReportTab's scope effect) to decide who may pick a different user.
+  const activeRole = sessionStorage.getItem("userRole") ?? (currentUser as any)?.roleId;
+  const canSelectUser = isManagerialRole(activeRole) || isCompanyWideRole(activeRole);
+
+  // Same role-grouping convention already used for the user picker in
+  // LoanReportTable's "Add Loan" form (groupedUsers), reused here for consistency.
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    (allUsers || []).forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [allUsers]);
+
+  // The backend already scopes `details` to the selected user/date range
+  // (GET /api/reports/vas) — nothing further to filter client-side.
+  const filtered = details || [];
+
+  // "Month Wise" groups the already-fetched records by calendar month of
+  // report_date and shows a per-month subtotal, instead of a flat list.
+  // vas_reports has no target/commission concept to compute month-by-month
+  // (unlike the legacy PHP report), so this is a display-only regrouping of
+  // the same real data — no figures are invented.
+  const monthGroups = useMemo(() => {
+    if (!isMonthWise) return null;
+    const groups = new Map<string, any[]>();
+    filtered.forEach((item) => {
+      const d = item.date ? new Date(item.date) : null;
+      const key = d && !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+        : "unknown";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
+    });
+    return Array.from(groups.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, items]) => {
+        const label = key === "unknown"
+          ? "Unknown Date"
+          : new Date(`${key}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const totalTasks = items.reduce((sum, it) => sum + (it.totalTasks ?? 0), 0);
+        const valueSold = items.reduce((sum, it) => sum + (it.valueSold ?? 0), 0);
+        const followUpsDone = items.reduce((sum, it) => sum + (it.followUpsDone ?? 0), 0);
+        const missedLeads = items.reduce((sum, it) => sum + (it.missedLeads ?? 0), 0);
+        const avgSuccessRate = items.length
+          ? items.reduce((sum, it) => sum + (it.successRate ?? 0), 0) / items.length
+          : null;
+        return { key, label, items, totalTasks, valueSold, followUpsDone, missedLeads, avgSuccessRate };
+      });
+  }, [filtered, isMonthWise]);
+
+  // Confirmed business rule (user-confirmed tier thresholds/rewards, matching
+  // the existing legacy VAS commission report): applied once to the grand
+  // total Amount across every row currently shown, not per-row — there is no
+  // per-transaction commission concept, only a total-based tier lookup.
+  const vasCommission = useMemo(() => {
+    const totalAmount = filtered.reduce((sum, item) => sum + (item.valueSold ?? 0), 0);
+    let per = 0;
+    let reward = 0;
+    if (totalAmount >= 150000) {
+      per = 15; reward = 8000;
+    } else if (totalAmount >= 100000) {
+      per = 15; reward = 5000;
+    } else if (totalAmount >= 50000) {
+      per = 15; reward = 2500;
+    } else if (totalAmount >= 1000) {
+      per = 10; reward = 0;
+    }
+    const comm = (per / 100) * totalAmount;
+    const finalComm = reward + comm;
+    return { totalAmount, per, reward, comm, finalComm };
+  }, [filtered]);
+
+  const sourceLabels: Record<string, string> = {
+    vas_reports: "VAS Report",
+    product_posting_invoice: "Invoice (Product Posting)",
+    invoice: "Invoice",
+  };
+
+  const vasExportColumns: ExportColumn[] = [
+    { key: "source", header: "Source", format: (v) => sourceLabels[v] || "VAS Report" },
+    { key: "company", header: "Company", format: (v) => v ?? "" },
+    { key: "valueSold", header: "Amount", format: (v) => Number(v ?? 0) },
+    { key: "method", header: "Method", format: (v) => v ?? "" },
+    { key: "status", header: "Status" },
+    { key: "date", header: "Date", format: (v) => (v ? new Date(v).toLocaleDateString() : "") },
+  ];
+
+  const handleCopy = async () => {
+    if (!filtered.length) return;
+    const header = vasExportColumns.map((c) => c.header).join("\t");
+    const rows = filtered.map((item) =>
+      vasExportColumns.map((c) => c.format ? c.format((item as any)[c.key as string], item) : (item as any)[c.key as string] ?? "").join("\t")
+    );
+    try {
+      await navigator.clipboard.writeText([header, ...rows].join("\n"));
+      toast({ title: "Copied to clipboard" });
+    } catch {
+      toast({ title: "Failed to copy", variant: "destructive" });
+    }
+  };
+
+  const renderRow = (item: any, idx: number) => (
+    <TableRow key={item.id || idx} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+      <TableCell className="text-center font-bold text-slate-700 py-4 dark:text-zinc-400">{idx + 1}</TableCell>
+      <TableCell className="text-center text-slate-500 py-4 dark:text-zinc-400">
+        <span className="inline-block rounded-full bg-slate-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium">
+          {sourceLabels[item.source] || "VAS Report"}
+        </span>
+      </TableCell>
+      {/* vas_reports rows have no company/method (that table doesn't store either) —
+          "-" is honest here, not a loading state; invoice rows show their real values. */}
+      <TableCell className="text-center font-bold text-slate-700 py-4 dark:text-zinc-400">{item.company || item.title || "-"}</TableCell>
+      <TableCell className="text-center font-medium text-slate-700 py-4 dark:text-zinc-400">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{item.method || "-"}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{item.status || "-"}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">
+        {item.date ? new Date(item.date).toLocaleDateString() : "-"}
+      </TableCell>
+    </TableRow>
+  );
+
+  return (
+    <div className="space-y-6">
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">VAS SYSTEM</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+            <div className="md:col-span-4 space-y-2">
+              <div className="flex items-center gap-2 mb-2">
+                <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="month-wise"
+                    checked={isMonthWise}
+                    onCheckedChange={(c) => setIsMonthWise(!!c)}
+                  />
+                  <label
+                    htmlFor="month-wise"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-slate-600 dark:text-zinc-300"
+                  >
+                    Month Wise
+                  </label>
+                </div>
+              </div>
+              {canSelectUser ? (
+                <Select value={selectedUser} onValueChange={onUserChange}>
+                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-vas-user">
+                    <SelectValue placeholder="Choose..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {groupedUsers.map(({ role, users }) => (
+                      <SelectGroup key={role}>
+                        <SelectLabel>{role}</SelectLabel>
+                        {users.filter(u => u.fullName || u.username).map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.fullName || u.username}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  readOnly
+                  value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
+                  className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                />
+              )}
+            </div>
+
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Start Date</Label>
+              <div className="relative">
+                <Input
+                  type="date"
+                  value={dateRange.from}
+                  onChange={(e) => onDateChange("from", e.target.value)}
+                  className="bg-white border-slate-200 h-11 pr-10 dark:bg-zinc-900 dark:border-zinc-800"
+                />
+                <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">End Date</Label>
+              <div className="relative">
+                <Input
+                  type="date"
+                  value={dateRange.to}
+                  onChange={(e) => onDateChange("to", e.target.value)}
+                  className="bg-white border-slate-200 h-11 pr-10 dark:bg-zinc-900 dark:border-zinc-800"
+                />
+                <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <Button
+                onClick={() => onRefresh && onRefresh()}
+                className="w-full bg-[#008d4c] hover:bg-[#00733e] text-white h-11 font-bold text-lg rounded-md"
+              >
+                View
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-2 border-b">
+          <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">VAS View</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 px-0">
+          <div className="px-4 mb-4 flex bg-[#64748b] dark:bg-zinc-800 rounded-sm overflow-hidden w-fit">
+            <button onClick={handleCopy} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Copy</button>
+            <button onClick={() => exportToExcel(filtered, vasExportColumns, "VAS_Report")} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Excel</button>
+            <button onClick={() => exportToCSV(filtered, vasExportColumns, "VAS_Report")} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">CSV</button>
+            <button onClick={() => exportToPDF(filtered, vasExportColumns, "VAS_Report", { title: "VAS Report" })} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors">PDF</button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Source</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Company</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Amount</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Method</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Status</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No Records Found
+                    </TableCell>
+                  </TableRow>
+                ) : isMonthWise && monthGroups ? (
+                  monthGroups.map((group) => (
+                    <Fragment key={group.key}>
+                      <TableRow className="bg-slate-50 dark:bg-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-800/60">
+                        <TableCell colSpan={7} className="font-bold text-slate-700 dark:text-zinc-300 py-2">
+                          {group.label} ({group.items.length})
+                        </TableCell>
+                      </TableRow>
+                      {group.items.map((item: any, idx: number) => renderRow(item, idx))}
+                      <TableRow className="border-b border-slate-200 dark:border-zinc-700">
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2"><b>Subtotal</b></TableCell>
+                        <TableCell className="text-center font-semibold text-slate-700 dark:text-zinc-300 py-2">{group.valueSold.toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                      </TableRow>
+                    </Fragment>
+                  ))
+                ) : (
+                  filtered.map((item, idx) => renderRow(item, idx))
+                )}
+              </TableBody>
+              {filtered.length > 0 && (
+                <TableFooter>
+                  <TableRow className="bg-slate-50 dark:bg-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-800/60 border-t-2 border-slate-300 dark:border-zinc-700">
+                    <TableCell className="text-center text-slate-500 dark:text-zinc-400">—</TableCell>
+                    <TableCell className="text-center text-slate-500 dark:text-zinc-400">—</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">Total</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">{vasCommission.totalAmount.toLocaleString()}</TableCell>
+                    <TableCell className="text-center text-slate-600 dark:text-zinc-300">
+                      {vasCommission.totalAmount.toLocaleString()}-{vasCommission.per}% = {vasCommission.comm.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-center text-slate-600 dark:text-zinc-300">{vasCommission.reward.toLocaleString()}</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">
+                      {vasCommission.finalComm.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                </TableFooter>
+              )}
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// "User Reports" sidebar group's VAS Report (plain /reports/vas) — kept
+// exactly as it was before the vas_reports fix, a separate, pre-existing
+// report the business still relies on as-is. Only the "Reports" sidebar
+// group's VAS Report (/reports/vas?scope=company, VasReportTable above) was
+// migrated to vas_reports. Do not merge these back together without an
+// explicit decision to retire one of them.
+function LegacyVasReportTable({
+  details,
+  totals,
+  dateRange,
+  onDateChange,
+  selectedUser,
   onUserChange
 }: {
   details: any[];
@@ -749,12 +1087,12 @@ function VasReportTable({
                 <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
                 <div className="flex items-center space-x-2">
                   <Checkbox
-                    id="month-wise"
+                    id="month-wise-legacy"
                     checked={isMonthWise}
                     onCheckedChange={(c) => setIsMonthWise(!!c)}
                   />
                   <label
-                    htmlFor="month-wise"
+                    htmlFor="month-wise-legacy"
                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-slate-600 dark:text-zinc-300"
                   >
                     Month Wise
@@ -763,7 +1101,7 @@ function VasReportTable({
               </div>
               <Input
                 readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
+                value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
                 className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
               />
             </div>
@@ -1649,7 +1987,7 @@ function ReportTab({
     }
   }, [currentUser, selectedUser, scope]);
 
-  const { data: report, isLoading, isError, refetch } = useQuery<ReportData>({
+  const { data: report, isLoading, isFetching, isError, refetch } = useQuery<ReportData>({
     queryKey: ["/api/reports", type, dateRange.from, dateRange.to, selectedUser, scope],
     queryFn: async () => {
       const params = new URLSearchParams({
@@ -1662,6 +2000,14 @@ function ReportTab({
       return response.json();
     },
     retry: 1,
+    // Changing a filter (user/date) changes the queryKey, which React Query
+    // otherwise treats as a brand-new, uncached query — isLoading goes true
+    // and the whole page below is replaced with a small spinner box, then
+    // swaps back once data arrives. That collapse/expand on every filter
+    // change is what reads as "the page scrolling". Keeping the previous
+    // page's data on screen during the refetch (isFetching still reflects
+    // the in-flight request for a subtle loading cue) avoids the layout jump.
+    placeholderData: keepPreviousData,
   });
 
   const handleExport = async (format: string) => {
@@ -1732,7 +2078,7 @@ function ReportTab({
   }
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 transition-opacity ${isFetching ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">{reportTypeLabels[type].title}</h3>
@@ -1750,7 +2096,7 @@ function ReportTab({
               </Button>
             </Link>
           )}
-          {type === "vas" && (
+          {type === "vas" && scope !== "company" && (
             <Link href="/reports/vas/new">
               <Button
                 size="sm"
@@ -1815,14 +2161,26 @@ function ReportTab({
       )}
 
       {type === "vas" && (
-        <VasReportTable
-          details={report.details ?? []}
-          totals={report.totals}
-          dateRange={dateRange}
-          onDateChange={onDateChange}
-          selectedUser={selectedUser}
-          onUserChange={setSelectedUser}
-        />
+        scope === "company" ? (
+          <VasReportTable
+            details={report.details ?? []}
+            totals={report.totals}
+            dateRange={dateRange}
+            onDateChange={onDateChange}
+            selectedUser={selectedUser}
+            onUserChange={setSelectedUser}
+            onRefresh={refetch}
+          />
+        ) : (
+          <LegacyVasReportTable
+            details={report.details ?? []}
+            totals={report.totals}
+            dateRange={dateRange}
+            onDateChange={onDateChange}
+            selectedUser={selectedUser}
+            onUserChange={setSelectedUser}
+          />
+        )
       )}
 
       {type === "gm" && (
