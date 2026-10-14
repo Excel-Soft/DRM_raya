@@ -323,6 +323,13 @@ const gmPackages = [
   { id: "china-trip", name: "China Trip", priceUsd: 2200, orderDollar: 2200 },
   { id: "kwa-pro", name: "Kwa-Pro", priceUsd: 800, orderDollar: 800 },
   { id: "kap-package", name: "KAP-Package", priceUsd: 10999, orderDollar: 10999 },
+  // Matches the existing Kwa-200/500/1000/2000/5000 naming+pricing convention above.
+  { id: "kwa-3000", name: "KWA-3000 Package", priceUsd: 3000, orderDollar: 3000 },
+  { id: "2-year-vm", name: "2 Year VM", priceUsd: 0, orderDollar: 0 },
+  { id: "resubmission-of-bv", name: "Resubmission of BV", priceUsd: 0, orderDollar: 0 },
+  { id: "digisme-verified", name: "DigiSME Verified package", priceUsd: 0, orderDollar: 0 },
+  { id: "digisme-plus", name: "DigiSME Plus package", priceUsd: 0, orderDollar: 0 },
+  { id: "digisme-basic", name: "DigiSME Basic package", priceUsd: 0, orderDollar: 0 },
 ];
 
 /**

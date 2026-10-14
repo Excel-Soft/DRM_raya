@@ -1083,7 +1083,7 @@ async function getVasReportLegacyOfficeVas(userIds: string[] | null, fromDate: D
   };
 }
 
-async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Date): Promise<ReportData> {
+async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Date, onlyAccountApproved = false): Promise<ReportData> {
   const conditions = [
     gte(gmEntries.createdAt, fromDate),
     lte(gmEntries.createdAt, toDate)
@@ -1098,11 +1098,72 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
     );
   }
 
-  const entries = await db
+  let entries = await db
     .select()
     .from(gmEntries)
     .where(and(...conditions))
     .orderBy(desc(gmEntries.createdAt));
+
+  // gm_entries' real approval pipeline, BV dates, and HOD/Accountant stage
+  // statuses live in columns that exist in the live Postgres table but were
+  // never added to the Drizzle schema (confirmed via
+  // information_schema.columns, not guessed) — hod_approved_at,
+  // gm_bv_submitted_at, gm_bv_date, pay_date, hod_status, accountant_status,
+  // plus the approval_status/account_manager_status/final_status trio used
+  // below for the "Account approved" filter. Fetched once, used for both.
+  const extraById = new Map<string, {
+    status: string | null;
+    approval_status: string | null;
+    account_manager_status: string | null;
+    final_status: string | null;
+    hod_approved_at: Date | null;
+    gm_bv_submitted_at: Date | null;
+    gm_bv_date: Date | null;
+    pay_date: Date | null;
+    hod_status: string | null;
+    accountant_status: string | null;
+  }>();
+  if (entries.length > 0) {
+    const ids = entries.map(e => e.id);
+    const extraRows = await pool.query<{
+      id: string;
+      status: string | null;
+      approval_status: string | null;
+      account_manager_status: string | null;
+      final_status: string | null;
+      hod_approved_at: Date | null;
+      gm_bv_submitted_at: Date | null;
+      gm_bv_date: Date | null;
+      pay_date: Date | null;
+      hod_status: string | null;
+      accountant_status: string | null;
+    }>(
+      `SELECT id, status, approval_status, account_manager_status, final_status,
+              hod_approved_at, gm_bv_submitted_at, gm_bv_date, pay_date, hod_status, accountant_status
+         FROM drm.gm_entries WHERE id = ANY($1::uuid[])`,
+      [ids]
+    );
+    for (const r of extraRows.rows) extraById.set(r.id, r);
+  }
+
+  if (onlyAccountApproved && entries.length > 0) {
+    // "Approved by Account" = the canonical GM/BV state machine's APPROVED (or
+    // PROJECT_CREATED, which is APPROVED-plus-a-linked-project — same approval
+    // event), resolved via the existing mapToCanonical helper (verified
+    // against gm-bv-state-machine.ts and the real approval endpoints in
+    // gm-pool-routes.ts/account-routes.ts, not guessed).
+    entries = entries.filter(e => {
+      const extra = extraById.get(e.id);
+      if (!extra) return false;
+      const canonical = mapToCanonical({
+        status: extra.status,
+        approval_status: extra.approval_status,
+        account_manager_status: extra.account_manager_status,
+        final_status: extra.final_status,
+      });
+      return canonical === "APPROVED" || canonical === "PROJECT_CREATED";
+    });
+  }
 
   const totalValue = entries.reduce((sum, e) => sum + Number(e.amountUsd || 0), 0);
   const chartData = generateChartData(entries.map(e => ({ ...e, createdAt: e.createdAt })), fromDate, toDate, 'amountUsd');
@@ -1123,21 +1184,47 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
       missedLeads: 0,
     },
     chartData,
-    details: entries.map(e => ({
-      id: e.id,
-      companyName: e.companyName,
-      package: e.packageType,
-      kwa: "-", // Placeholder as not in schema
-      psa: "-", // Placeholder as not in schema
-      packageAmount: e.finalOrderUsd || e.amountUsd,
-      method: e.paymentStatus || "BankTransfer", // Default to BankTransfer if missing
-      bvSubmitDate: "-", // Placeholder
-      bvDate: "-", // Placeholder
-      person: e.salesPersonName,
-      rcNew: e.entryType,
-      date: e.createdAt,
-      gmType: resolveStoredOrDerivedGmType(e),
-    })),
+    details: entries.map(e => {
+      const extra = extraById.get(e.id);
+      return {
+        id: e.id,
+        memberId: e.memberId,
+        companyName: e.companyName,
+        package: e.packageType,
+        // KWA and PSA have no matching column anywhere on gm_entries (checked
+        // the live table's full column list, not just the Drizzle schema) —
+        // left as "-" rather than guessing which other field might mean this.
+        kwa: "-",
+        psa: "-",
+        // Unchanged — GmReportTable (user-reports.tsx) already reads this field
+        // for its own "Package Amount" column; left as-is for that page.
+        packageAmount: e.finalOrderUsd || e.amountUsd,
+        // New, separate fields for gm-report.tsx's P.A/Discount/Extra Discount
+        // columns — the catalog sticker price before any discount, and the
+        // two discount components, per gmEntries' own schema comment
+        // ("amountUsd is packagePriceUsd - alibabaDiscountUsd").
+        packagePriceUsd: e.packagePriceUsd,
+        discount: e.alibabaDiscountUsd,
+        extraDiscount: e.extraDiscountUsd,
+        method: e.paymentStatus || "BankTransfer", // Default to BankTransfer if missing
+        payDate: extra?.pay_date || null,
+        bvSubmitDate: extra?.gm_bv_submitted_at || null,
+        bvDate: extra?.gm_bv_date || null,
+        person: e.salesPersonName,
+        rcNew: e.entryType,
+        accountantStatus: extra?.accountant_status || null,
+        hodStatus: extra?.hod_status || null,
+        date: e.createdAt,
+        // gm-report.tsx's GM View splits these into two columns. hod_approved_at
+        // is the real column the HOD-approval endpoint stamps (confirmed in
+        // gm-pool-routes.ts) — gmEntries.approvedAt (Drizzle-typed) is a
+        // different, separate column and was the wrong one to use here.
+        gmCreationDate: e.createdAt,
+        hodApprovedDate: extra?.hod_approved_at || null,
+        lastUpdateDate: e.updatedAt,
+        gmType: resolveStoredOrDerivedGmType(e),
+      };
+    }),
   };
 }
 
@@ -1637,7 +1724,11 @@ router.get("/reports/:type", async (req, res, next) => {
           : await getVasReportLegacyOfficeVas(filterUserIds, fromDate, toDate);
         break;
       case "gm":
-        report = await getGmReport(filterUserIds, fromDate, toDate);
+        // GM System page (/analytics/gm) opts into "Account approved only"
+        // via ?onlyAccountApproved=true; the other GM report
+        // (GmReportTable in user-reports.tsx) doesn't send it and keeps
+        // seeing every entry regardless of approval stage, unchanged.
+        report = await getGmReport(filterUserIds, fromDate, toDate, req.query.onlyAccountApproved === "true");
         break;
       default:
         return res.status(400).json({ error: "Invalid report type" });
