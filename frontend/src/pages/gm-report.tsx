@@ -1,19 +1,35 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
+
+// Same branch list already used for the city/branch picker elsewhere in the
+// app (GmReportTable in user-reports.tsx, office-expenses.tsx) — Wazirabad
+// and Faisalabad Branch are the two this page's mock list was missing.
+const CITIES = [
+  "Sialkot-Webexcels",
+  "Lahore",
+  "Karachi",
+  "Lahore-Raya",
+  "Lahore-GulBerg",
+  "Sialkot-Welc",
+  "Gujranwala branch",
+  "Wazirabad Branch",
+  "Faisalabad Branch",
+];
 
 export default function GMReport() {
   const [selectedUser, setSelectedUser] = useState<string>("");
   const [selectedCity, setSelectedCity] = useState<string>("");
   const [selectedPackage, setSelectedPackage] = useState<string>("");
   const [selectedType, setSelectedType] = useState<string>("");
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [qWise, setQWise] = useState(false);
@@ -36,6 +52,31 @@ export default function GMReport() {
     }
   });
 
+  // Real package list, same source as the other GM report's Select Package
+  // (GmReportTable in user-reports.tsx) — not hardcoded here.
+  const { data: packagesData } = useQuery<{ packages: any[] }>({
+    queryKey: ["gm-packages"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/gm-packages");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const gmPackages = packagesData?.packages || [];
+
+  // Same role-grouping convention as the Reports -> VAS Report user picker.
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    (users || []).forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, members]) => ({ role, members }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [users]);
+
   const { data: reportData, isLoading } = useQuery<any>({
     queryKey: ["/api/reports/gm", fetchParams],
     queryFn: async () => {
@@ -44,7 +85,11 @@ export default function GMReport() {
       if (fetchParams.from) params.set("from", fetchParams.from);
       if (fetchParams.to) params.set("to", fetchParams.to);
       if (fetchParams.userId && fetchParams.userId !== "all") params.set("userId", fetchParams.userId);
-      
+      // Only this page's GM View is scoped to Account-approved entries — the
+      // other GM report (GmReportTable in user-reports.tsx) doesn't send this
+      // and keeps showing every entry regardless of approval stage.
+      params.set("onlyAccountApproved", "true");
+
       const res = await apiRequest("GET", `/api/reports/gm?${params}`);
       return res.json();
     },
@@ -108,8 +153,13 @@ export default function GMReport() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Users</SelectItem>
-                  {users.map(u => (
-                    <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>
+                  {groupedUsers.map(({ role, members }) => (
+                    <SelectGroup key={role}>
+                      <SelectLabel>{role}</SelectLabel>
+                      {members.map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -123,10 +173,9 @@ export default function GMReport() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Cities</SelectItem>
-                  {/* Mock data for cities since no API available yet */}
-                  <SelectItem value="lahore">Lahore</SelectItem>
-                  <SelectItem value="karachi">Karachi</SelectItem>
-                  <SelectItem value="islamabad">Islamabad</SelectItem>
+                  {CITIES.map((city) => (
+                    <SelectItem key={city} value={city.toLowerCase().replace(/\s+/g, "-")}>{city}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -139,9 +188,9 @@ export default function GMReport() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Packages</SelectItem>
-                  <SelectItem value="basic">Basic</SelectItem>
-                  <SelectItem value="premium">Premium</SelectItem>
-                  <SelectItem value="enterprise">Enterprise</SelectItem>
+                  {gmPackages.map((pkg) => (
+                    <SelectItem key={pkg.id} value={pkg.name}>{pkg.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -153,9 +202,28 @@ export default function GMReport() {
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="new">New</SelectItem>
-                  <SelectItem value="renewal">Renewal</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="New">New</SelectItem>
+                  <SelectItem value="Renew">Renew</SelectItem>
+                  <SelectItem value="Expire">Expire</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Same "Payment Type" filter (Full/Partial/Loan, matching item.gmType)
+                already present on the other GM report (GmReportTable in
+                user-reports.tsx) — this page didn't have it at all. */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Payment Type</label>
+              <Select value={paymentTypeFilter} onValueChange={setPaymentTypeFilter}>
+                <SelectTrigger className="bg-white dark:bg-zinc-800">
+                  <SelectValue placeholder="Choose..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="FULL">Full</SelectItem>
+                  <SelectItem value="PARTIAL">Partial</SelectItem>
+                  <SelectItem value="LOAN">Loan</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -234,49 +302,89 @@ export default function GMReport() {
               <thead className="bg-[#d1f2e2] dark:bg-emerald-900/30 text-slate-700 dark:text-zinc-300">
                 <tr>
                   <th className="py-3 px-4 font-bold border-b">#</th>
+                  <th className="py-3 px-4 font-bold border-b">Member Id</th>
                   <th className="py-3 px-4 font-bold border-b">Company</th>
                   <th className="py-3 px-4 font-bold border-b">Package</th>
                   <th className="py-3 px-4 font-bold border-b">KWA</th>
                   <th className="py-3 px-4 font-bold border-b">PSA</th>
-                  <th className="py-3 px-4 font-bold border-b">Package Amount</th>
+                  <th className="py-3 px-4 font-bold border-b">P.A</th>
+                  <th className="py-3 px-4 font-bold border-b">Discount</th>
+                  <th className="py-3 px-4 font-bold border-b">Extra Discount</th>
                   <th className="py-3 px-4 font-bold border-b">Method</th>
-                  <th className="py-3 px-4 font-bold border-b">BV Submit Date</th>
+                  <th className="py-3 px-4 font-bold border-b">Pay Date</th>
+                  <th className="py-3 px-4 font-bold border-b">BV Submit</th>
                   <th className="py-3 px-4 font-bold border-b">BV Date</th>
                   <th className="py-3 px-4 font-bold border-b">Person</th>
                   <th className="py-3 px-4 font-bold border-b">Rc/New</th>
-                  <th className="py-3 px-4 font-bold border-b">Date</th>
+                  <th className="py-3 px-4 font-bold border-b">Accountant</th>
+                  <th className="py-3 px-4 font-bold border-b">Hod</th>
+                  <th className="py-3 px-4 font-bold border-b">GM Creation Date</th>
+                  <th className="py-3 px-4 font-bold border-b">HOD Approval Date</th>
+                  <th className="py-3 px-4 font-bold border-b">Last Update Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={12} className="py-8 text-center text-slate-500">Loading data...</td>
+                    <td colSpan={20} className="py-8 text-center text-slate-500">Loading data...</td>
                   </tr>
                 ) : displayedData.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="py-8 text-center text-slate-500">No entries found</td>
+                    <td colSpan={20} className="py-8 text-center text-slate-500">No entries found</td>
                   </tr>
                 ) : (
                   displayedData.map((item: any, index: number) => (
                     <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/50 transition-colors">
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{index + 1}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.memberId || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400 font-medium">{item.companyName || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.package || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.kwa || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.psa || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.packageAmount || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.packagePriceUsd ?? "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.discount ?? "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.extraDiscount ?? "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.method || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.bvSubmitDate || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.bvDate || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.payDate ? format(new Date(item.payDate), 'yyyy-MM-dd') : "-"}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.bvSubmitDate ? format(new Date(item.bvSubmitDate), 'yyyy-MM-dd HH:mm:ss') : "-"}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.bvDate ? format(new Date(item.bvDate), 'yyyy-MM-dd') : "-"}
+                      </td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.person || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.rcNew || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.accountantStatus || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.hodStatus || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
-                        {item.date ? format(new Date(item.date), 'yyyy-MM-dd HH:mm:ss') : "-"}
+                        {item.gmCreationDate ? format(new Date(item.gmCreationDate), 'yyyy-MM-dd HH:mm:ss') : "-"}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.hodApprovedDate ? format(new Date(item.hodApprovedDate), 'yyyy-MM-dd HH:mm:ss') : "-"}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.lastUpdateDate ? format(new Date(item.lastUpdateDate), 'yyyy-MM-dd HH:mm:ss') : "-"}
                       </td>
                     </tr>
                   ))
                 )}
               </tbody>
+              {filteredDetails.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-50 dark:bg-zinc-800/60 font-bold border-t-2 border-slate-300 dark:border-zinc-700">
+                    <td className="py-3 px-4" colSpan={7}>Total</td>
+                    <td className="py-3 px-4 text-slate-700 dark:text-zinc-300">
+                      {filteredDetails.reduce((sum: number, it: any) => sum + Number(it.discount ?? 0), 0).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-slate-700 dark:text-zinc-300">
+                      {filteredDetails.reduce((sum: number, it: any) => sum + Number(it.extraDiscount ?? 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td colSpan={11}></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 
