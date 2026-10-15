@@ -27,6 +27,7 @@ import {
   gmReports,
   officeVas,
   productPostingInvoices,
+  targetSystemUserTargets,
 } from "@shared/schema";
 import { eq, and, gte, lte, sql, count, ilike, or, desc, inArray } from "drizzle-orm";
 import { bvReportsRepository, ensureBvReportsSchema } from "../repositories/bv-reports.repository";
@@ -203,12 +204,18 @@ interface ReportData {
   totals?: {
     totalAdvance: number;
     totalRemaining: number;
+    totalComm?: number;
+    totalReward?: number;
+    totalVas?: number;
+    totalKwa?: number;
   };
   meta: {
     from: string;
     to: string;
     timezone: string;
   };
+  reportCount?: number;
+  personAchievement?: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[];
 }
 
 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -297,7 +304,12 @@ async function resolveBvScope(req: any): Promise<string[] | null> {
   if (isGlobalAdmin) return queryUserId ? [queryUserId] : null;
   const allowedIds = await getDepartmentFilterUserIds(req);
   if (queryUserId) {
-    return allowedIds && allowedIds.includes(queryUserId)
+    // null from getDepartmentFilterUserIds means "unrestricted" for this role
+    // (global, department-wide access), not "nobody allowed" — the same fix
+    // already applied to the main /reports/:type dispatcher's equivalent
+    // branch. Previously `allowedIds && ...` short-circuited null to false
+    // and denied every specific-user request for such a role.
+    return (allowedIds === null || allowedIds.includes(queryUserId))
       ? [queryUserId]
       : ["00000000-0000-0000-0000-000000000000"];
   }
@@ -1228,6 +1240,253 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
   };
 }
 
+// "Reports" sidebar group's BV Report (?scope=company) — a different view from
+// the bv_reports-backed verification workflow "User Reports" -> BV Report uses.
+// The requested column layout (Company/Package/Price/.../Rc-New/Type/Receive
+// Date) matches gm_entries (package sales), confirmed by the fact that the
+// already-shipped /reports/bv-system page uses this exact same source and
+// column set. Several of its columns there are hardcoded placeholders
+// (Method="0x 1000", Pay=0, BV="Total Rc") — NOT reused here.
+//
+// Pay/BV/Method were cross-checked against func (1).php's legacy "View Gm BV
+// Reports" section (line ~22355 onward): there, Pay is the row's *pay date*
+// (not an amount), BV is the BV-verification *date* (webxl_gmaccount.bvDate),
+// and Method is the payment-status text (webxl_verify_gm.status, values like
+// "Online Paid"/"Cash Received"). Confirmed live: gm_entries.payment_status
+// already holds exactly that ("Cash Received"), and the raw pay_date/
+// gm_bv_date columns (not in the Drizzle schema, same as getGmReport's
+// extraById fetch) are real, if sparsely populated so far.
+//
+// Comm: func (1).php's $tconversion formula (line ~22534 onward) is a deeply
+// nested, repeatedly-duplicated cascade, but every branch collapses to the
+// same net rule once the redundant achievement-threshold gating (which
+// computes the identical value on every branch — confirmed by reading all of
+// them) is stripped out: a package-name base rate, overridden to a flat 1000
+// when the sale is not "New" (Rc/Ec). Ported exactly for the three package
+// buckets the legacy code hardcodes (Basic/GGS Digital/GGS Lite/Basic
+// Plus/Standard); other packages needed `getTarget()['conversion']` from the
+// legacy per-definition rate table, which has no modern equivalent — "-" for
+// those rather than a guess. Dropout-based overrides are also skipped: that
+// column doesn't exist on gm_entries at all.
+//
+// Reward/VAS/KWA: legacy read these off the *target definition* assigned to
+// the user (webxl_terget, via webxl_setterget). The modern equivalent,
+// target_system_user_targets, really is joinable by user_id — checked live,
+// some rows do carry a real UUID there (not every row is a stray name/role
+// string, which is what made the bv-system page's "pick first row" approach
+// unreliable). Matched here by salesPersonId + the target's date range
+// actually covering the entry's date, picking the most recently-started
+// match. Today this returns "-" for every current row (no admin has created
+// a target for these specific salespeople's UUIDs yet, confirmed live) — the
+// join itself is real and will surface real numbers the moment a Set Target
+// entry exists for that user, not fabricated placeholders.
+function packageBaseCommission(packageType: string | null, entryType: string | null): number | null {
+  const isNew = (entryType || "").toLowerCase() === "new";
+  switch (packageType) {
+    case "Basic":
+      return isNew ? 3000 : 1000;
+    case "GGS Digital":
+    case "GGS Lite":
+      return isNew ? 2500 : 1000;
+    case "Basic Plus":
+    case "Standard":
+      return isNew ? 5000 : 1000;
+    default:
+      return null;
+  }
+}
+
+// gm_entries.pay_date (the raw column) is written by nothing — checked live,
+// every row has it null. The real payment date lives per-installment instead,
+// in the installments jsonb array (installments: [{ dollar, pkr, dollarRate,
+// chequeNo, payDate }], populated by the actual GM payment-entry flow).
+// Multiple installments can carry different dates; the latest one is "when
+// this entry was last paid".
+function latestInstallmentPayDate(installments: unknown): Date | null {
+  if (!Array.isArray(installments)) return null;
+  let latest: Date | null = null;
+  for (const inst of installments) {
+    const raw = (inst as any)?.payDate;
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) continue;
+    if (!latest || d > latest) latest = d;
+  }
+  return latest;
+}
+
+async function getBvReportCompanyWide(
+  userIds: string[] | null,
+  fromDate: Date,
+  toDate: Date,
+): Promise<ReportData> {
+  const conditions = [
+    gte(gmEntries.createdAt, fromDate),
+    lte(gmEntries.createdAt, toDate),
+    eq(gmEntries.isDeleted, false),
+  ];
+  if (userIds && userIds.length > 0) {
+    conditions.push(inArray(gmEntries.salesPersonId, userIds));
+  }
+
+  const allEntries = await db
+    .select()
+    .from(gmEntries)
+    .where(and(...conditions))
+    .orderBy(desc(gmEntries.createdAt));
+
+  const extraById = new Map<string, { gm_bv_date: Date | null; pay_date: Date | null; gm_bv_submitted_at: Date | null }>();
+  if (allEntries.length > 0) {
+    const ids = allEntries.map((e) => e.id);
+    const extraRows = await pool.query<{ id: string; gm_bv_date: Date | null; pay_date: Date | null; gm_bv_submitted_at: Date | null }>(
+      `SELECT id, gm_bv_date, pay_date, gm_bv_submitted_at FROM drm.gm_entries WHERE id = ANY($1::uuid[])`,
+      [ids],
+    );
+    for (const r of extraRows.rows) extraById.set(r.id, r);
+  }
+
+  // This view is specifically "whose BV date is added" — rows with no real
+  // gm_bv_date are excluded rather than shown with a blank BV column.
+  const entries = allEntries.filter((e) => extraById.get(e.id)?.gm_bv_date);
+
+  const salesPersonIds = Array.from(new Set(entries.map((e) => e.salesPersonId).filter(Boolean))) as string[];
+  const targetsByUser = new Map<string, (typeof targetSystemUserTargets.$inferSelect)[]>();
+  if (salesPersonIds.length > 0) {
+    const targetRows = await db
+      .select()
+      .from(targetSystemUserTargets)
+      .where(inArray(targetSystemUserTargets.userId, salesPersonIds));
+    for (const t of targetRows) {
+      const list = targetsByUser.get(t.userId) ?? [];
+      list.push(t);
+      targetsByUser.set(t.userId, list);
+    }
+  }
+  function matchTarget(salesPersonId: string | null, entryDate: Date) {
+    if (!salesPersonId) return null;
+    const rows = targetsByUser.get(salesPersonId) ?? [];
+    const matching = rows.filter((t) => {
+      const afterStart = !t.startDate || new Date(t.startDate) <= entryDate;
+      const beforeEnd = !t.endDate || new Date(t.endDate) >= entryDate;
+      return afterStart && beforeEnd;
+    });
+    matching.sort((a, b) => {
+      const aStart = a.startDate ? new Date(a.startDate).getTime() : 0;
+      const bStart = b.startDate ? new Date(b.startDate).getTime() : 0;
+      return bStart - aStart;
+    });
+    return matching[0] ?? null;
+  }
+
+  // Achievement vs assigned target quota (func.php's T.No# concept) — for each
+  // salesperson's currently-active target (matched as of today, same
+  // targetsByUser/date-range logic as per-row matching), count how many of
+  // their BV-dated entries fall inside that target's own date range. Not
+  // scoped to package (confirmed live: Set Target's real UI assigns a target
+  // by user only, with no package field at all — matching by package would
+  // just never match anything real).
+  const personAchievement: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[] = [];
+  for (const personId of salesPersonIds) {
+    const target = matchTarget(personId, new Date());
+    if (!target) continue;
+    const rangeStart = target.startDate ? new Date(target.startDate) : null;
+    const rangeEnd = target.endDate ? new Date(target.endDate) : null;
+    const achievedCount = entries.filter(
+      (e) =>
+        e.salesPersonId === personId &&
+        (!rangeStart || e.createdAt >= rangeStart) &&
+        (!rangeEnd || e.createdAt <= rangeEnd),
+    ).length;
+    personAchievement.push({
+      personId,
+      targetName: target.targetName,
+      targetQuota: Number(target.target) || null,
+      achievedCount,
+    });
+  }
+
+  const totalValue = entries.reduce((sum, e) => sum + Number(e.amountUsd || 0), 0);
+  const chartData = generateChartData(entries, fromDate, toDate, "amountUsd");
+
+  const details = entries.map((e) => {
+    const extra = extraById.get(e.id);
+    const target = matchTarget(e.salesPersonId, e.createdAt);
+    const comm = packageBaseCommission(e.packageType, e.entryType);
+    return {
+      id: e.id,
+      companyName: e.companyName,
+      package: e.packageType,
+      // Catalog/sticker price, falling back to the real order amount when the
+      // sticker price wasn't recorded on this entry (both are real columns).
+      price: e.packagePriceUsd ?? e.amountUsd,
+      // Real per-sale extra discount (legacy "ExtraDisc++" column).
+      extraDisc: e.extraDiscountUsd ?? 0,
+      comm: comm ?? "-",
+      // 0, not "-", when no target record exists for this salesperson yet —
+      // explicit product decision (still a real 0, not a guess: it reflects
+      // "no reward/vas/kwa assigned", same as the value would be if a target
+      // row existed with these fields left at their own schema default of 0).
+      reward: target ? Number(target.reward) : 0,
+      vas: target ? Number(target.vas) : 0,
+      kwa: target ? Number(target.kwa) : 0,
+      // Real payment-status text (confirmed live: "Cash Received" etc.) —
+      // the legacy report's own "Method" column source.
+      method: e.paymentStatus || "-",
+      personName: e.salesPersonName,
+      // Real salesperson uuid — needed (not just the display name) to look up
+      // or create that person's own commission-verification record.
+      personId: e.salesPersonId,
+      // Real pay date (legacy "Pay" column), not an amount — the latest
+      // installment payDate when recorded, falling back to the gm_entries
+      // pay_date column (currently always empty, but a real column in case
+      // it's ever written), "-" only when genuinely nothing was recorded.
+      pay: latestInstallmentPayDate(e.installments) ?? extra?.pay_date ?? null,
+      // Real BV-submission date (legacy "BV Submit" column).
+      bvSubmit: extra?.gm_bv_submitted_at || null,
+      // Real BV-verification date (legacy "BV" column).
+      bv: extra?.gm_bv_date || null,
+      rcNew: e.entryType,
+      // Drives the existing Select Status dropdown (New/Renew/Expire/Rc-Up) —
+      // real gm_entries.entry_type, though in current data every row is "New".
+      status: e.entryType,
+      type: e.canonicalGmType || e.entryType,
+      date: e.createdAt,
+    };
+  });
+
+  const sumNumeric = (key: "price" | "comm" | "reward" | "vas" | "kwa") =>
+    details.reduce((sum, d) => sum + (typeof d[key] === "number" ? (d[key] as number) : Number(d[key]) || 0), 0);
+
+  return {
+    type: "bv",
+    dateRange: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      timezone: tz,
+    },
+    metrics: {
+      totalTasks: entries.length,
+      valueOfServiceSold: totalValue,
+      successRate: null,
+      followUpsCompleted: 0,
+      missedLeads: 0,
+    },
+    chartData,
+    details,
+    totals: {
+      totalAdvance: totalValue,
+      totalRemaining: 0,
+      totalComm: sumNumeric("comm"),
+      totalReward: sumNumeric("reward"),
+      totalVas: sumNumeric("vas"),
+      totalKwa: sumNumeric("kwa"),
+    },
+    reportCount: entries.length,
+    personAchievement,
+  };
+}
+
 function generateChartData(data: any[], fromDate: Date, toDate: Date, valueField?: string) {
   const chartMap = new Map<string, { value: number; count: number }>();
 
@@ -1334,21 +1593,49 @@ function buildReportCsv(report: ReportData) {
         break;
       }
       case "bv": {
-        lines.push("Date,Title,Company,Author,Status,Total Tasks,Value Sold,Success Rate,Follow-ups,Missed Leads");
-        report.details.forEach((item: any) => {
-          lines.push(
-            `${item.date ? new Date(item.date).toISOString().split("T")[0] : ""},` +
-            `"${item.title ?? ""}",` +
-            `"${item.companyName ?? ""}",` +
-            `"${item.authorName ?? ""}",` +
-            `"${item.status ?? ""}",` +
-            `${item.totalTasks ?? 0},` +
-            `${item.valueSold ?? 0},` +
-            `${item.successRate ?? 0},` +
-            `${item.followUpsDone ?? 0},` +
-            `${item.missedLeads ?? 0}`
-          );
-        });
+        // Two distinct BV reports share this export path (see getBvReportData vs
+        // getBvReportCompanyWide): tell them apart by shape, not by a flag
+        // threaded through ReportData — only the company-wide rows carry `package`.
+        const isCompanyWideBv = report.details.length > 0 && Object.prototype.hasOwnProperty.call(report.details[0], "package");
+        if (isCompanyWideBv) {
+          lines.push("Date,Company,Package,Price,ExtraDisc++,Comm,Reward,VAS,KWA,Method,Person,Pay,BV Submit,BV,Rc/New,Type");
+          report.details.forEach((item: any) => {
+            lines.push(
+              `${item.date ? new Date(item.date).toISOString().split("T")[0] : ""},` +
+              `"${item.companyName ?? ""}",` +
+              `"${item.package ?? ""}",` +
+              `${item.price ?? 0},` +
+              `${item.extraDisc ?? 0},` +
+              `${item.comm ?? ""},` +
+              `${item.reward ?? 0},` +
+              `${item.vas ?? 0},` +
+              `${item.kwa ?? 0},` +
+              `"${item.method ?? ""}",` +
+              `"${item.personName ?? ""}",` +
+              `"${item.pay ? new Date(item.pay).toISOString().split("T")[0] : ""}",` +
+              `"${item.bvSubmit ? new Date(item.bvSubmit).toISOString().split("T")[0] : ""}",` +
+              `"${item.bv ? new Date(item.bv).toISOString().split("T")[0] : ""}",` +
+              `"${item.rcNew ?? ""}",` +
+              `"${item.type ?? ""}"`
+            );
+          });
+        } else {
+          lines.push("Date,Title,Company,Author,Status,Total Tasks,Value Sold,Success Rate,Follow-ups,Missed Leads");
+          report.details.forEach((item: any) => {
+            lines.push(
+              `${item.date ? new Date(item.date).toISOString().split("T")[0] : ""},` +
+              `"${item.title ?? ""}",` +
+              `"${item.companyName ?? ""}",` +
+              `"${item.authorName ?? ""}",` +
+              `"${item.status ?? ""}",` +
+              `${item.totalTasks ?? 0},` +
+              `${item.valueSold ?? 0},` +
+              `${item.successRate ?? 0},` +
+              `${item.followUpsDone ?? 0},` +
+              `${item.missedLeads ?? 0}`
+            );
+          });
+        }
         break;
       }
       case "gm": {
@@ -1552,12 +1839,21 @@ router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (r
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "Invalid date range" });
     }
+    const { fromDate, toDate } = parsedRange;
+    const filterUserIds = await resolveBvScope(req);
+
+    // "Reports" sidebar group's BV Report link (?scope=company) shows the
+    // gm_entries-backed company-wide view instead of the bv_reports
+    // verification-workflow report "User Reports" -> BV Report keeps.
+    if (req.query.scope === "company") {
+      const report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate);
+      return res.json(report);
+    }
+
     const filterResult = parseBvFilters(req);
     if (!filterResult.ok) {
       return res.status(400).json({ error: filterResult.error });
     }
-    const { fromDate, toDate } = parsedRange;
-    const filterUserIds = await resolveBvScope(req);
     const report = await getBvReportData(filterUserIds, fromDate, toDate, {
       ...filterResult.filters,
       ...parseBvPaging(req),
@@ -1580,22 +1876,29 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "Invalid date range" });
     }
-    const filterResult = parseBvFilters(req);
-    if (!filterResult.ok) {
-      return res.status(400).json({ error: filterResult.error });
-    }
     const { fromDate, toDate } = parsedRange;
     const filterUserIds = await resolveBvScope(req);
-    // Export reflects the same filters as the list but is never paginated, so the
-    // exported row count always equals report.pagination.total / reportCount.
-    const report = await getBvReportData(filterUserIds, fromDate, toDate, filterResult.filters);
     const userPart =
       typeof req.query.userId === "string" && req.query.userId && req.query.userId !== "all"
         ? `_user-${req.query.userId.slice(0, 8)}`
         : "_user-all";
-    const statusPart = filterResult.filters.status
-      ? `_${filterResult.filters.status.toLowerCase()}`
-      : "";
+
+    // Same scope=company branch as the list route above — export must reflect
+    // whichever report is actually on screen.
+    let report: ReportData;
+    let statusPart = "";
+    if (req.query.scope === "company") {
+      report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate);
+    } else {
+      const filterResult = parseBvFilters(req);
+      if (!filterResult.ok) {
+        return res.status(400).json({ error: filterResult.error });
+      }
+      // Export reflects the same filters as the list but is never paginated, so the
+      // exported row count always equals report.pagination.total / reportCount.
+      report = await getBvReportData(filterUserIds, fromDate, toDate, filterResult.filters);
+      statusPart = filterResult.filters.status ? `_${filterResult.filters.status.toLowerCase()}` : "";
+    }
     const suffix = `bv_report_${report.meta.from.slice(0, 10)}_${report.meta.to.slice(0, 10)}${userPart}${statusPart}_${exportTimestamp()}`;
 
     if (format === "csv") {

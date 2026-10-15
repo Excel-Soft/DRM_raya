@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { pool, checkDbHealth, getDbUnavailableReason, isNetworkOrDnsError, markDbUnavailable } from "./db";
 import gradeSystemRoutes from "./routes/grade-system-routes";
 import bvSystemRoutes from "./routes/bv-system-routes";
+import bvCommissionVerificationRoutes from "./routes/bv-commission-verification-routes";
 import { storage } from "./storage";
 import aiRoutes from "./routes/ai-routes";
 import authRoutes from "./routes/auth.routes";
@@ -370,6 +371,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Custom Reports (Grade System) - Must be before registerReportsRoutes
   app.use("/api/reports/grade-system", gradeSystemRoutes);
   app.use("/api/reports/bv-system", bvSystemRoutes);
+  app.use("/api/bv-commission-verifications", bvCommissionVerificationRoutes);
 
   // Register company ledger routes here (for /api/reports/ledger)
   app.use(companyLedgerRouter);

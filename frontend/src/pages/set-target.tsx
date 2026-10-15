@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, extractApiError } from "@/lib/queryClient";
 
 export default function SetTarget() {
   const [activeTab, setActiveTab] = useState<"user" | "role" | "same">("user");
@@ -69,7 +69,14 @@ export default function SetTarget() {
   const assignRoleMutation = useMutation({
     mutationFn: async (data: { role: string, targets: any[] }) => {
       const res = await apiRequest("POST", "/api/target-system/assign-role", data);
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      // apiRequest never throws on a non-2xx response (by design — callers
+      // must check res.ok themselves). Without this check, a 400/403/500 JSON
+      // error body still resolves "successfully" here, and useMutation calls
+      // onSuccess with it — which is exactly how this silently failed before
+      // (toast said "success" while nothing was actually saved).
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
@@ -84,7 +91,9 @@ export default function SetTarget() {
   const assignUserMutation = useMutation({
     mutationFn: async (data: { targets: any[] }) => {
       const res = await apiRequest("POST", "/api/target-system/user-targets/bulk", data);
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
@@ -123,11 +132,25 @@ export default function SetTarget() {
       return;
     }
 
+    // Only the fields the backend's strict schema accepts — t is spread from
+    // the full target definition row (id, package, maxPrice, penalty, amount,
+    // createdAt, selected, ...), and userTargetItemSchema.strict() rejects
+    // any request carrying those extra fields with a 400. That 400 was being
+    // silently swallowed by the mutation (see assignUserMutation above),
+    // which is why this looked like it "succeeded" while saving nothing.
     const payloadTargets = selectedTargets.map(t => ({
-      ...t,
       userId: selectedUser,
+      targetName: t.name,
+      category: t.category,
       target: t.number,
-      targetName: t.name
+      price: t.price,
+      bonus: t.bonus,
+      vas: t.vas,
+      kwa: t.kwa,
+      reward: t.reward,
+      conversion: t.conversion,
+      startDate: t.startDate,
+      endDate: t.endDate,
     }));
 
     assignUserMutation.mutate({ targets: payloadTargets });
@@ -151,20 +174,41 @@ export default function SetTarget() {
       return;
     }
 
-    assignRoleMutation.mutate({ role: roleType, targets: selectedTargets });
+    // Same fix as handleSetUserTarget — only the fields targetItemSchema.strict()
+    // actually accepts, not the raw row (which carries id/package/maxPrice/
+    // penalty/amount/createdAt/selected and gets rejected with a 400).
+    const payloadTargets = selectedTargets.map(t => ({
+      targetName: t.name,
+      category: t.category,
+      number: t.number,
+      price: t.price,
+      bonus: t.bonus,
+      vas: t.vas,
+      kwa: t.kwa,
+      reward: t.reward,
+      conversion: t.conversion,
+      startDate: t.startDate,
+      endDate: t.endDate,
+    }));
+
+    assignRoleMutation.mutate({ role: roleType, targets: payloadTargets });
   };
 
 
   const deleteUserTargetMutation = useMutation({
     mutationFn: async (id: number) => {
-      await apiRequest("DELETE", `/api/target-system/user-targets/${id}`);
+      const res = await apiRequest("DELETE", `/api/target-system/user-targets/${id}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(extractApiError(body, res.status));
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
       toast({ title: "Target deleted successfully!" });
     },
-    onError: () => {
-      toast({ title: "Failed to delete target.", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to delete target.", variant: "destructive" });
     }
   });
 
@@ -182,6 +226,7 @@ export default function SetTarget() {
     vas: "",
     kwa: "",
     reward: "",
+    conversion: "",
     total: "",
     startDate: "",
     endDate: "",
@@ -190,7 +235,9 @@ export default function SetTarget() {
   const updateUserTargetMutation = useMutation({
     mutationFn: async (vars: { id: number; data: Record<string, any> }) => {
       const res = await apiRequest("PATCH", `/api/target-system/user-targets/${vars.id}`, vars.data);
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
@@ -211,6 +258,7 @@ export default function SetTarget() {
       vas: String(row.vas ?? ""),
       kwa: String(row.kwa ?? ""),
       reward: String(row.reward ?? ""),
+      conversion: String(row.conversion ?? ""),
       total: String(row.total ?? ""),
       startDate: toDateInputValue(row.startDate),
       endDate: toDateInputValue(row.endDate),
@@ -229,14 +277,16 @@ export default function SetTarget() {
   const assignSameTargetMutation = useMutation({
     mutationFn: async (data: { targetIds: number[], startDate: string, endDate: string }) => {
       const res = await apiRequest("PUT", "/api/target-system/user-targets/bulk-dates", data);
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/user-targets"] });
       toast({ title: "Targets successfully updated with the new timeframe!" });
     },
-    onError: () => {
-      toast({ title: "Failed to update targets.", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to update targets.", variant: "destructive" });
     }
   });
 
@@ -287,9 +337,7 @@ export default function SetTarget() {
         </span>
       </div>
 
-      {(activeTab === "user" || activeTab === "same") && (
-        <>
-          {activeTab === "same" && (
+      {activeTab === "same" && (
             <div className="mb-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
@@ -410,7 +458,12 @@ export default function SetTarget() {
                               </div>
                             </TableCell>
                             <TableCell className="text-center text-sm">{row.price}</TableCell>
-                            <TableCell className="text-center text-sm">{row.bonus}</TableCell>
+                            {/* Legacy's own "Bonus" column here actually displays the
+                                conversion value (+ "%" when the bonus type is a
+                                percentage) — not the bonus-type label itself. */}
+                            <TableCell className="text-center text-sm">
+                              {row.conversion}{row.bonus === "Percentage %" ? "%" : ""}
+                            </TableCell>
                             <TableCell className="text-center">
                               <Input type="date" value={row.startDate} onChange={(e) => handleUserFormTargetChange(index, "startDate", e.target.value)} className="h-8 text-xs w-full" />
                             </TableCell>
@@ -426,110 +479,6 @@ export default function SetTarget() {
               </Card>
             </div>
           )}
-
-          <Card className="border rounded-sm shadow-sm">
-            <CardContent className="p-0">
-              <div className="p-4 border-b">
-                <h3 className="font-semibold text-gray-700 mb-4 dark:text-zinc-400">Target Details</h3>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
-                    <span>Show</span>
-                    <Select defaultValue="10">
-                      <SelectTrigger className="w-[70px] h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="25">25</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <span>entries</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-                    <Input className="h-8 w-48" />
-                  </div>
-                </div>
-              </div>
-              
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
-                    <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
-                      <TableHead className="font-bold text-black dark:text-zinc-300 w-12 text-center">#</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Vas</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Start Date</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">End Date</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Sign Date</TableHead>
-                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {isLoadingUserTargets ? (
-                      <TableRow>
-                        <TableCell colSpan={14} className="text-center py-8 text-gray-500 dark:text-zinc-400">
-                          Loading live data...
-                        </TableCell>
-                      </TableRow>
-                    ) : userTargets.length > 0 ? (
-                      userTargets.map((row, index) => (
-                        <TableRow key={row.id}>
-                          <TableCell className="text-center font-medium">{index + 1}</TableCell>
-                          <TableCell className="text-sm">{row.targetName}</TableCell>
-                          <TableCell className="text-center">{row.category}</TableCell>
-                          <TableCell className="text-center text-[#00a65a] underline decoration-dashed cursor-pointer dark:text-zinc-400">{row.target}</TableCell>
-                          <TableCell className="text-center">{Number(row.price)}</TableCell>
-                          <TableCell className="text-center">{row.bonus}</TableCell>
-                          <TableCell className="text-center">{row.vas}</TableCell>
-                          <TableCell className="text-center">{row.kwa}</TableCell>
-                          <TableCell className="text-center">{row.reward}</TableCell>
-                          <TableCell className="text-center">{row.total}</TableCell>
-                          <TableCell className="text-center">{row.startDate ? new Date(row.startDate).toLocaleDateString('en-GB') : ""}</TableCell>
-                          <TableCell className="text-center">{row.endDate ? new Date(row.endDate).toLocaleDateString('en-GB') : ""}</TableCell>
-                          <TableCell className="text-center text-xs">{row.signDate ? new Date(row.signDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '') : ""}</TableCell>
-                          <TableCell className="text-center">
-                            <div className="flex justify-center space-x-2">
-                              <Pencil className="w-4 h-4 text-[#00a65a] cursor-pointer hover:text-[#008d4c] dark:text-zinc-400" onClick={() => handleEditUserTarget(row)} />
-                              <Trash2 
-                                className={`w-4 h-4 text-red-500 cursor-pointer hover:text-red-700 ${deleteUserTargetMutation.isPending ? 'opacity-50' : ''}`} 
-                                onClick={() => !deleteUserTargetMutation.isPending && handleDeleteUserTarget(row.id)} 
-                              />
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={14} className="text-center py-6 text-gray-500 dark:text-zinc-400">
-                          No targets available.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-                <div>Showing 1 to 6 of 6 entries</div>
-                <div className="flex space-x-1">
-                  <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
-                  <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-                  <Button variant="outline" className="h-8 px-3">Next</Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
 
       {activeTab === "role" && showRoleForm && (
         <div className="mb-6">
@@ -644,7 +593,12 @@ export default function SetTarget() {
                           </div>
                         </TableCell>
                         <TableCell className="text-center text-sm">{row.price}</TableCell>
-                        <TableCell className="text-center text-sm">{row.bonus}</TableCell>
+                        {/* Legacy's own "Bonus" column here actually displays the
+                            conversion value (+ "%" when the bonus type is a
+                            percentage) — not the bonus-type label itself. */}
+                        <TableCell className="text-center text-sm">
+                          {row.conversion}{row.bonus === "Percentage %" ? "%" : ""}
+                        </TableCell>
                         <TableCell className="text-center">
                           <Input type="date" value={row.startDate} onChange={(e) => handleRoleTargetChange(index, "startDate", e.target.value)} className="h-8 text-xs w-full" />
                         </TableCell>
@@ -660,6 +614,113 @@ export default function SetTarget() {
           </Card>
         </div>
       )}
+
+      {/* Legacy's own "Target Details" table (#loc) is always visible
+          regardless of which tab is active — not scoped to "Target For
+          User"/"Assign Same Target" only. */}
+      <Card className="border rounded-sm shadow-sm">
+        <CardContent className="p-0">
+          <div className="p-4 border-b">
+            <h3 className="font-semibold text-gray-700 mb-4 dark:text-zinc-400">Target Details</h3>
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
+                <span>Show</span>
+                <Select defaultValue="10">
+                  <SelectTrigger className="w-[70px] h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span>entries</span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
+                <Input className="h-8 w-48" />
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
+                <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
+                  <TableHead className="font-bold text-black dark:text-zinc-300 w-12 text-center">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300">Target Name</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Vas</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Start Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">End Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Sign Date</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoadingUserTargets ? (
+                  <TableRow>
+                    <TableCell colSpan={14} className="text-center py-8 text-gray-500 dark:text-zinc-400">
+                      Loading live data...
+                    </TableCell>
+                  </TableRow>
+                ) : userTargets.length > 0 ? (
+                  userTargets.map((row, index) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="text-center font-medium">{index + 1}</TableCell>
+                      <TableCell className="text-sm">{row.targetName}</TableCell>
+                      <TableCell className="text-center">{row.category}</TableCell>
+                      <TableCell className="text-center text-[#00a65a] underline decoration-dashed cursor-pointer dark:text-zinc-400">{row.target}</TableCell>
+                      <TableCell className="text-center">{Number(row.price)}</TableCell>
+                      {/* func.php's own view handler shows the conversion value here,
+                          not the bonus-type label. */}
+                      <TableCell className="text-center">{row.conversion}</TableCell>
+                      <TableCell className="text-center">{row.vas}</TableCell>
+                      <TableCell className="text-center">{row.kwa}</TableCell>
+                      <TableCell className="text-center">{row.reward}</TableCell>
+                      <TableCell className="text-center">{row.total}</TableCell>
+                      <TableCell className="text-center">{row.startDate ? new Date(row.startDate).toLocaleDateString('en-GB') : ""}</TableCell>
+                      <TableCell className="text-center">{row.endDate ? new Date(row.endDate).toLocaleDateString('en-GB') : ""}</TableCell>
+                      <TableCell className="text-center text-xs">{row.signDate ? new Date(row.signDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '') : ""}</TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex justify-center space-x-2">
+                          <Pencil className="w-4 h-4 text-[#00a65a] cursor-pointer hover:text-[#008d4c] dark:text-zinc-400" onClick={() => handleEditUserTarget(row)} />
+                          <Trash2
+                            className={`w-4 h-4 text-red-500 cursor-pointer hover:text-red-700 ${deleteUserTargetMutation.isPending ? 'opacity-50' : ''}`}
+                            onClick={() => !deleteUserTargetMutation.isPending && handleDeleteUserTarget(row.id)}
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={14} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      No targets available.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
+            <div>Showing 1 to 6 of 6 entries</div>
+            <div className="flex space-x-1">
+              <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
+              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
+              <Button variant="outline" className="h-8 px-3">Next</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
         <DialogContent className="max-w-lg">
@@ -690,6 +751,10 @@ export default function SetTarget() {
             <div>
               <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Reward</label>
               <Input value={editForm.reward} onChange={(e) => setEditForm((f) => ({ ...f, reward: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Conversion</label>
+              <Input value={editForm.conversion} onChange={(e) => setEditForm((f) => ({ ...f, conversion: e.target.value }))} />
             </div>
             <div>
               <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Total</label>

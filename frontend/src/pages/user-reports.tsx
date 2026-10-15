@@ -59,7 +59,7 @@ import {
   Pie,
   Cell
 } from "recharts";
-import { apiRequest, getAuthHeader } from "@/lib/queryClient";
+import { apiRequest, getAuthHeader, extractApiError } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import {
@@ -460,22 +460,194 @@ function GmReportTable({
   );
 }
 
+// Exact option set from func (1).php's BV "Type" (account-reclassification)
+// dropdown — same values as DropoutTiltle() plus "Next Que" and
+// "Change Commission".
+const BV_TYPE_OPTIONS = [
+  { value: "1", label: "Basic Drop" },
+  { value: "2", label: "Basic Plus Drop" },
+  { value: "3", label: "Basic P/D" },
+  { value: "4", label: "Basic Plus P/D" },
+  { value: "5", label: "Pkg Update" },
+  { value: "0", label: "Next Que" },
+  { value: "6", label: "Change Commission" },
+];
+
+// One commission-verification panel per distinct salesperson in the current
+// view (works for "All" the same as a single selected person — commission is
+// inherently per-individual). A standalone component because each person
+// needs its own useQuery/useMutation instances, which can't live in a loop
+// inside the parent.
+function BvCommissionPanelRow({
+  personId,
+  personName,
+  totals,
+  achievement,
+  commPeriod,
+  canManage,
+  currentUserId,
+}: {
+  personId: string;
+  personName: string;
+  totals: { comm: number; reward: number };
+  achievement?: { targetName: string; targetQuota: number | null; achievedCount: number };
+  commPeriod: { month: number; year: number };
+  canManage: boolean;
+  currentUserId?: string;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const queryKey = ["/api/bv-commission-verifications", personId, commPeriod.month, commPeriod.year];
+  // func.php's own panel (line ~23318) takes an AB Reward amount + a Reward
+  // Comment BEFORE the Verify action — a manual, HOD-entered bonus on top of
+  // the computed totals, not something derivable from the sale rows.
+  const [abRewardInput, setAbRewardInput] = useState("");
+  const [rewardCommentInput, setRewardCommentInput] = useState("");
+
+  const { data: commRecord, isLoading: commLoading } = useQuery<any>({
+    queryKey,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/bv-commission-verifications?userId=${personId}&month=${commPeriod.month}&year=${commPeriod.year}`,
+      );
+      const data = await res.json();
+      return data.record;
+    },
+  });
+
+  const createCommMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/bv-commission-verifications", {
+        userId: personId,
+        month: commPeriod.month,
+        year: commPeriod.year,
+        totalComm: totals.comm,
+        totalReward: totals.reward,
+        abReward: abRewardInput.trim() ? Number(abRewardInput) : undefined,
+        rewardComment: rewardCommentInput.trim() || undefined,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Commission verified", description: `Commission record created for ${personName}.` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Could not create the commission record", variant: "destructive" });
+    },
+  });
+
+  const confirmCommMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/bv-commission-verifications/${commRecord?.id}/confirm`, {});
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Confirmed", description: "Commission confirmed." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to confirm", description: err?.message || "Could not confirm", variant: "destructive" });
+    },
+  });
+
+  const isSelf = currentUserId === personId;
+
+  return (
+    <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+      <TableCell colSpan={18}>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="font-bold">{personName}:</span>
+          {achievement ? (
+            <span className="text-muted-foreground">
+              Target ({achievement.targetName}): {achievement.achievedCount}/{achievement.targetQuota ?? "-"}
+              {achievement.targetQuota ? ` (${Math.round((achievement.achievedCount / achievement.targetQuota) * 100)}%)` : ""}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">No target assigned</span>
+          )}
+          {commLoading ? (
+            <span className="text-xs text-muted-foreground">Loading commission status...</span>
+          ) : commRecord ? (
+            <>
+              <span className="font-bold">
+                Final Com: {Number(commRecord.finalPayAmount ?? commRecord.totalComm).toLocaleString()}
+              </span>
+              {commRecord.abReward != null && (
+                <span className="font-bold">AB Reward: {Number(commRecord.abReward).toLocaleString()}</span>
+              )}
+              {commRecord.rewardComment && (
+                <span className="text-muted-foreground">Reward Comment: {commRecord.rewardComment}</span>
+              )}
+              {commRecord.userStatus === "Verified" ? (
+                <Badge className="bg-green-600 text-white hover:bg-green-600">Verified</Badge>
+              ) : isSelf ? (
+                <Button size="sm" onClick={() => confirmCommMutation.mutate()} disabled={confirmCommMutation.isPending}>
+                  Confirm
+                </Button>
+              ) : (
+                <Badge className="bg-red-500 text-white hover:bg-red-500">Sale Person Side Pending</Badge>
+              )}
+            </>
+          ) : canManage ? (
+            achievement ? (
+              <>
+                <Input
+                  type="number"
+                  placeholder="AB Reward"
+                  value={abRewardInput}
+                  onChange={(e) => setAbRewardInput(e.target.value)}
+                  className="h-8 w-28 text-xs"
+                />
+                <Input
+                  placeholder="Enter Reward Description"
+                  value={rewardCommentInput}
+                  onChange={(e) => setRewardCommentInput(e.target.value)}
+                  className="h-8 w-48 text-xs"
+                />
+                <Button size="sm" onClick={() => createCommMutation.mutate()} disabled={createCommMutation.isPending}>
+                  Verify (Final Com: {(totals.comm + totals.reward + (Number(abRewardInput) || 0)).toLocaleString()})
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Commission can't be verified until a target is assigned to this salesperson (Set Target).
+              </span>
+            )
+          ) : (
+            <span className="text-xs text-muted-foreground">Not yet created by HOD/Account.</span>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function BvReportTable({
   details,
   totals,
+  personAchievement,
   dateRange,
   onDateChange,
   selectedUser,
-  onUserChange
+  onUserChange,
+  scope
 }: {
   details: any[];
   totals?: any;
+  personAchievement?: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[];
   dateRange: { from: string; to: string };
   onDateChange: (field: "from" | "to", value: string) => void;
   selectedUser: string;
   onUserChange: (value: string) => void;
+  scope?: string | null;
 }) {
-  const { data: allUsers = [] } = useQuery<any[]>({
+  const { data: allUsers = [], isLoading: usersLoading, isError: usersError } = useQuery<any[]>({
     queryKey: ["/api/users", { assigned: true }],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/users?assigned=true");
@@ -490,6 +662,16 @@ function BvReportTable({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [viewFilters, setViewFilters] = useState({ status: "all" });
+  // func (1).php's "Type" column (line ~23247 onward) is actually the
+  // account-reclassification dropdown ("changeAcoountType") shown only to
+  // specific legacy roles — same option set as the Dropout column
+  // (DropoutTiltle), plus "Next Que" and "Change Commission". It is an admin
+  // action control there, not a data display field (it writes back via
+  // onchange="changeAcoountType(...)"). gm_entries has no equivalent
+  // dropout/account-type column to write that action to, so this is wired as
+  // a visual match only (per-row local selection) — not persisted anywhere
+  // yet. Say so if you want the save action built.
+  const [typeSelections, setTypeSelections] = useState<Record<string, string>>({});
 
   const handleView = () => {
     setViewFilters({ status: selectedStatus });
@@ -500,6 +682,29 @@ function BvReportTable({
     queryKey: ["/api/auth/me"],
     queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
+
+  // Same impersonation-aware "acting role" resolution ReportTab's own scope
+  // effect uses, and the same role-based gate already used for the VAS/GM
+  // Select User pickers — only roles authorized to see other users' data get
+  // a real selector; everyone else keeps the existing readonly own-name view.
+  // Also gated on scope=company (the "Reports" sidebar group's BV Report
+  // link) so "User Reports" -> BV Report (no scope) stays exactly as it was
+  // before — same single shared component, no duplicate page.
+  const activeRole = sessionStorage.getItem("userRole") ?? (currentUser as any)?.roleId;
+  const canSelectUser = scope === "company" && (isManagerialRole(activeRole) || isCompanyWideRole(activeRole));
+
+  // Same role-grouping convention as the VAS/GM Select User pickers.
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    (allUsers || []).forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [allUsers]);
 
   useEffect(() => {
     setFilteredDetails(details);
@@ -515,13 +720,77 @@ function BvReportTable({
       return (
         item.companyName?.toLowerCase().includes(lower) ||
         item.title?.toLowerCase().includes(lower) ||
-        item.authorName?.toLowerCase().includes(lower)
+        item.authorName?.toLowerCase().includes(lower) ||
+        item.personName?.toLowerCase().includes(lower)
       );
     });
   }, [filteredDetails, searchTerm, viewFilters]);
 
+  // Total row for the scope=company view — summed over whatever is actually
+  // filtered/visible (search + Select Status), not the unfiltered backend
+  // totals, so it always matches what's shown in the table above it.
+  const bvTotals = useMemo(() => {
+    const sumNumeric = (key: string) =>
+      filtered.reduce((sum, item) => sum + (typeof item[key] === "number" ? item[key] : Number(item[key]) || 0), 0);
+    return {
+      price: sumNumeric("price"),
+      extraDisc: sumNumeric("extraDisc"),
+      comm: sumNumeric("comm"),
+      reward: sumNumeric("reward"),
+      vas: sumNumeric("vas"),
+      kwa: sumNumeric("kwa"),
+    };
+  }, [filtered]);
+
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginatedData = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
+
+  // func (1).php's commission panel keys by month/year derived from the
+  // filter range's start date (same as $VasMouth/$VasYear there).
+  const commPeriod = useMemo(() => {
+    const d = new Date(dateRange.from);
+    return { month: d.getMonth() + 1, year: d.getFullYear() };
+  }, [dateRange.from]);
+
+  // One panel per distinct salesperson actually present in the filtered rows
+  // — works the same whether "All" or one specific person is selected,
+  // because commission is inherently per-individual (same as func.php: the
+  // Verify button always targeted one $user_gm, never an aggregate).
+  const personTotals = useMemo(() => {
+    const map = new Map<string, { personId: string; personName: string; comm: number; reward: number }>();
+    filtered.forEach((item) => {
+      if (!item.personId) return;
+      const existing = map.get(item.personId) ?? {
+        personId: item.personId,
+        personName: item.personName || "Unknown",
+        comm: 0,
+        reward: 0,
+      };
+      existing.comm += typeof item.comm === "number" ? item.comm : Number(item.comm) || 0;
+      existing.reward += typeof item.reward === "number" ? item.reward : Number(item.reward) || 0;
+      map.set(item.personId, existing);
+    });
+    return Array.from(map.values());
+  }, [filtered]);
+
+  const currentUserId = (currentUser as any)?.userId || (currentUser as any)?.id;
+
+  // func.php's BV report page has a second, separate "KWA" usage ledger table
+  // below the main one (webxl_kwa records — company/sell-by/used-by/kwa/type/
+  // detail/remaining/used/reward/status/dates). target_system_kwa_records is
+  // the modern equivalent (used by the standalone Add Kwa/Kwa History pages).
+  // It has no salesPersonId — "employee" is a free-text name, same as this
+  // table's other person fields, so matched by name against whoever is
+  // currently showing in personTotals below.
+  const { data: kwaRecords = [] } = useQuery<any[]>({
+    queryKey: ["/api/target-system/kwa-records"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/target-system/kwa-records");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: scope === "company",
+  });
 
   return (
     <div className="space-y-6">
@@ -533,11 +802,38 @@ function BvReportTable({
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
             <div className="md:col-span-3 space-y-2">
               <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
-              <Input
-                readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-white border-slate-200 h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
-              />
+              {canSelectUser ? (
+                <Select value={selectedUser} onValueChange={onUserChange}>
+                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-bv-user">
+                    <SelectValue placeholder={usersLoading ? "Loading users..." : "Choose..."} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {usersError ? (
+                      <div className="px-2 py-1.5 text-sm text-destructive">Failed to load users</div>
+                    ) : !usersLoading && groupedUsers.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">No users found</div>
+                    ) : (
+                      groupedUsers.map(({ role, users }) => (
+                        <SelectGroup key={role}>
+                          <SelectLabel>{role}</SelectLabel>
+                          {users.filter(u => u.fullName || u.username).map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.fullName || u.username}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  readOnly
+                  value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
+                  className="bg-white border-slate-200 h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                />
+              )}
             </div>
 
             <div className="md:col-span-3 space-y-2">
@@ -548,10 +844,21 @@ function BvReportTable({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="Draft">Draft</SelectItem>
-                  <SelectItem value="Submitted">Submitted</SelectItem>
-                  <SelectItem value="Approved">Approved</SelectItem>
-                  <SelectItem value="Rejected">Rejected</SelectItem>
+                  {scope === "company" ? (
+                    <>
+                      <SelectItem value="New">New</SelectItem>
+                      <SelectItem value="Renew">Renew</SelectItem>
+                      <SelectItem value="Expire">Expire</SelectItem>
+                      <SelectItem value="Rc/Up">Rc/Up</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="Draft">Draft</SelectItem>
+                      <SelectItem value="Submitted">Submitted</SelectItem>
+                      <SelectItem value="Approved">Approved</SelectItem>
+                      <SelectItem value="Rejected">Rejected</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -619,46 +926,155 @@ function BvReportTable({
 
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
-                <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Date</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Title</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Author</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total Tasks</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Value Sold</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Success Rate</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Follow-ups</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Missed Leads</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedData.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                      No Records Found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  paginatedData.map((item, idx) => (
-                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                      <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
-                      <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.authorName || "-"}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.status || "-"}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.totalTasks ?? 0}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.successRate == null ? "—" : `${item.successRate}%`}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.followUpsDone ?? 0}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.missedLeads ?? 0}</TableCell>
+              {scope === "company" ? (
+                <>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Package</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">ExtraDisc++</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Comm</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">VAS</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Method</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Person</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Pay</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center" title="User BV Submit Date">BV Submit</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">BV</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Rc/New</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Dropout</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Type</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Receive Date</TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedData.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={18} className="text-center py-8 text-muted-foreground">
+                          No Records Found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedData.map((item, idx) => (
+                        <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                          <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.package || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.price != null ? Number(item.price).toLocaleString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.extraDisc != null ? Number(item.extraDisc).toLocaleString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.comm ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.reward ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.vas ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.kwa ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.method ?? "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.personName || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.pay ? new Date(item.pay).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvSubmit ? new Date(item.bvSubmit).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bv ? new Date(item.bv).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.rcNew || "-"}</TableCell>
+                          {/* func.php's Dropout column and Type dropdown share the exact same
+                              option codes (DropoutTiltle uses the same 0-6 values as
+                              changeAcoountType) — Dropout there is just the display of
+                              whatever was last picked in that same dropdown, not a separate
+                              data source. Reflects the Type selection below; still not
+                              persisted anywhere since there's no backend column to save it to. */}
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
+                            {BV_TYPE_OPTIONS.find((opt) => opt.value === typeSelections[item.id])?.label ?? "-"}
+                          </TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
+                            <Select
+                              value={typeSelections[item.id] ?? ""}
+                              onValueChange={(v) => setTypeSelections((prev) => ({ ...prev, [item.id]: v }))}
+                            >
+                              <SelectTrigger className="h-8 w-[130px] mx-auto text-xs">
+                                <SelectValue placeholder="choose..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {BV_TYPE_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                  {paginatedData.length > 0 && (
+                    <TableFooter>
+                      <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+                        <TableCell colSpan={3} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.price.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.extraDisc.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.comm.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.reward.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.vas.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.kwa.toLocaleString()}</TableCell>
+                        <TableCell colSpan={9}></TableCell>
+                      </TableRow>
+                      {personTotals.map((p) => (
+                        <BvCommissionPanelRow
+                          key={p.personId}
+                          personId={p.personId}
+                          personName={p.personName}
+                          totals={{ comm: p.comm, reward: p.reward }}
+                          achievement={personAchievement?.find((a) => a.personId === p.personId)}
+                          commPeriod={commPeriod}
+                          canManage={canSelectUser}
+                          currentUserId={currentUserId}
+                        />
+                      ))}
+                    </TableFooter>
+                  )}
+                </>
+              ) : (
+                <>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Title</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Author</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total Tasks</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Value Sold</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Success Rate</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Follow-ups</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Missed Leads</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedData.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                          No Records Found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedData.map((item, idx) => (
+                        <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                          <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.authorName || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.status || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.totalTasks ?? 0}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.successRate == null ? "—" : `${item.successRate}%`}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.followUpsDone ?? 0}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.missedLeads ?? 0}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </>
+              )}
             </Table>
           </div>
 
@@ -694,6 +1110,77 @@ function BvReportTable({
           </div>
         </CardContent>
       </Card>
+
+      {scope === "company" && personTotals.map((p) => {
+        const personKwaRecords = kwaRecords.filter(
+          (r: any) => (r.employee || "").trim().toLowerCase() === p.personName.trim().toLowerCase(),
+        );
+        if (personKwaRecords.length === 0) return null;
+        const kwaTotals = personKwaRecords.reduce(
+          (acc: any, r: any) => ({
+            remaining: acc.remaining + Number(r.remaining || 0),
+            used: acc.used + (Number(r.kwa || 0) - Number(r.remaining || 0)),
+            reward: acc.reward + Number(r.reward || 0),
+          }),
+          { remaining: 0, used: 0, reward: 0 },
+        );
+        return (
+          <Card key={p.personId} className="border border-border shadow-sm">
+            <CardHeader className="pb-2 border-b">
+              <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">KWA Usage — {p.personName}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 px-0">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">No#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Sell By</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Used By</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Type</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Detail</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Remaining</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Used</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Create Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Pay Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {personKwaRecords.map((r: any, idx: number) => (
+                      <TableRow key={r.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                        <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{idx + 1}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.company || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.employee || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.usedBy || "-"}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.kwa ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.type || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.detail || "-"}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.remaining ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${(Number(r.kwa ?? 0) - Number(r.remaining ?? 0)).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(r.reward ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.status || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.payDate ? new Date(r.payDate).toLocaleDateString() : "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+                      <TableCell colSpan={7} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.remaining.toLocaleString()}</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.used.toLocaleString()}</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">{kwaTotals.reward.toLocaleString()}</TableCell>
+                      <TableCell colSpan={3}></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -2199,10 +2686,12 @@ function ReportTab({
         <BvReportTable
           details={report.details ?? []}
           totals={report.totals}
+          personAchievement={(report as any).personAchievement}
           dateRange={dateRange}
           onDateChange={onDateChange}
           selectedUser={selectedUser}
           onUserChange={setSelectedUser}
+          scope={scope}
         />
       )}
 
