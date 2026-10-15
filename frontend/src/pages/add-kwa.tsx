@@ -26,6 +26,8 @@ export default function AddKwa() {
   const [type, setType] = useState("none");
   const [person, setPerson] = useState("none");
   const [detail, setDetail] = useState("");
+  const [reward, setReward] = useState("");
+  const [payDate, setPayDate] = useState("");
 
   // Use Kwa Modal State
   const [isUseModalOpen, setIsUseModalOpen] = useState(false);
@@ -33,21 +35,26 @@ export default function AddKwa() {
   const [useAmount, setUseAmount] = useState("");
   const [useAction, setUseAction] = useState<"Used" | "Refund">("Used");
   const [useDetail, setUseDetail] = useState("");
+  const [usedByInput, setUsedByInput] = useState("");
 
   const handleOpenUseModal = (row: any) => {
     setSelectedRow(row);
     setUseAmount("");
     setUseAction("Used");
     setUseDetail("");
+    // Defaults to whoever sold it — the same person usually records usage,
+    // but this is editable since legacy tracks Sell By / Used By separately.
+    setUsedByInput(row.employee || "");
     setIsUseModalOpen(true);
   };
 
   const useKwaMutation = useMutation({
-    mutationFn: async (vars: { id: number; amount: number; action: string; detail?: string }) => {
+    mutationFn: async (vars: { id: number; amount: number; action: string; detail?: string; usedBy?: string }) => {
       const res = await apiRequest("PATCH", `/api/target-system/kwa-records/${vars.id}/use`, {
         amount: vars.amount,
         action: vars.action,
         detail: vars.detail,
+        usedBy: vars.usedBy,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -72,28 +79,38 @@ export default function AddKwa() {
       toast({ title: "Please enter a valid amount.", variant: "destructive" });
       return;
     }
-    useKwaMutation.mutate({ id: selectedRow.id, amount, action: useAction, detail: useDetail || undefined });
+    useKwaMutation.mutate({
+      id: selectedRow.id,
+      amount,
+      action: useAction,
+      detail: useDetail || undefined,
+      usedBy: usedByInput.trim() || undefined,
+    });
   };
 
   const saveKwaMutation = useMutation({
     mutationFn: async (newRecord: any) => {
       const res = await apiRequest("POST", "/api/target-system/kwa-records", newRecord);
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || "Failed to create KWA record.");
+      return body;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/kwa-records"] });
       toast({ title: "KWA record added successfully!" });
-      
+
       // Reset form
       setCompany("");
       setKwaValue("");
       setType("none");
       setPerson("none");
       setDetail("");
+      setReward("");
+      setPayDate("");
       setIsFormOpen(false);
     },
-    onError: () => {
-      toast({ title: "Failed to create KWA record.", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: error.message || "Failed to create KWA record.", variant: "destructive" });
     }
   });
 
@@ -108,7 +125,9 @@ export default function AddKwa() {
       employee: person,
       kwa: kwaValue,
       detail,
-      type
+      type,
+      reward: reward || undefined,
+      payDate: payDate || undefined,
     });
   };
 
@@ -191,13 +210,35 @@ export default function AddKwa() {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Reward:</label>
+                <Input
+                  placeholder="Reward"
+                  type="number"
+                  value={reward}
+                  onChange={(e) => setReward(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Pay Date:</label>
+                <Input
+                  type="date"
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+            </div>
+
             <div className="mb-4">
               <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Detail</label>
-              <Input 
-                placeholder="add detail" 
+              <Input
+                placeholder="add detail"
                 value={detail}
                 onChange={(e) => setDetail(e.target.value)}
-                className="w-full" 
+                className="w-full"
               />
             </div>
 
@@ -227,6 +268,15 @@ export default function AddKwa() {
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Remaining:</label>
                   <Input value={selectedRow ? `${selectedRow.remaining}$` : ""} disabled className="bg-gray-100 text-gray-600 h-10 dark:text-zinc-300 dark:bg-zinc-900" />
+                </div>
+                <div>
+                  <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Used By:</label>
+                  <Input
+                    placeholder="Who is using this?"
+                    value={usedByInput}
+                    onChange={(e) => setUsedByInput(e.target.value)}
+                    className="h-10"
+                  />
                 </div>
 
                 <div>

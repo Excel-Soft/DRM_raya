@@ -33,6 +33,10 @@ export const createTargetSchema = z
     maxPrice: z.coerce.number().finite().nonnegative().optional().default(0),
     penalty: z.coerce.number().finite().nonnegative().optional().default(0),
     amount: z.string().trim().max(200).optional(),
+    number: z.coerce.number().int().nonnegative().optional().default(0),
+    kwa: z.coerce.number().int().nonnegative().optional().default(0),
+    vas: z.coerce.number().int().nonnegative().optional().default(0),
+    conversion: z.coerce.number().int().nonnegative().optional().default(0),
   })
   .strict();
 
@@ -51,6 +55,9 @@ export const kwaRecordSchema = z
     kwa: z.coerce.number().finite().nonnegative(),
     detail: z.string().trim().max(500).optional(),
     type: z.string().trim().min(1, "type is required").max(100),
+    reward: z.coerce.number().finite().nonnegative().optional().default(0),
+    status: z.string().trim().max(100).optional(),
+    payDate: z.string().optional(),
   })
   .strict();
 
@@ -61,6 +68,7 @@ export const kwaUseSchema = z
     amount: z.coerce.number().finite().positive("Amount must be greater than 0"),
     action: z.enum(["Used", "Refund"]).default("Used"),
     detail: z.string().trim().max(500).optional(),
+    usedBy: z.string().trim().max(200).optional(),
   })
   .strict();
 
@@ -76,6 +84,7 @@ const targetItemSchema = z
     vas: numeric.optional(),
     kwa: numeric.optional(),
     reward: numeric.optional(),
+    conversion: numeric.optional(),
     total: numeric.optional(),
     startDate: z.string().optional(),
     endDate: z.string().optional(),
@@ -108,6 +117,7 @@ const userTargetItemSchema = z
     vas: numeric.optional(),
     kwa: numeric.optional(),
     reward: numeric.optional(),
+    conversion: numeric.optional(),
     total: numeric.optional(),
     startDate: z.string().optional(),
     endDate: z.string().optional(),
@@ -131,6 +141,7 @@ const userTargetUpdateSchema = z
     vas: numeric.optional(),
     kwa: numeric.optional(),
     reward: numeric.optional(),
+    conversion: numeric.optional(),
     total: numeric.optional(),
     startDate: z.string().optional(),
     endDate: z.string().optional(),
@@ -168,9 +179,10 @@ router.post("/targets", async (req, res) => {
         maxPrice: String(data.maxPrice),
         penalty: String(data.penalty),
         amount: data.amount,
-        number: 0,
-        kwa: 0,
-        vas: 0
+        number: data.number,
+        kwa: data.kwa,
+        vas: data.vas,
+        conversion: data.conversion,
       })
       .returning();
 
@@ -296,7 +308,7 @@ router.get("/kwa-records", async (req, res) => {
 // Create a new KWA record
 router.post("/kwa-records", async (req, res) => {
   try {
-    const { company, employee, kwa, detail, type } = kwaRecordSchema.parse(req.body);
+    const { company, employee, kwa, detail, type, reward, status, payDate } = kwaRecordSchema.parse(req.body);
 
     const [newRecord] = await db
       .insert(targetSystemKwaRecords)
@@ -307,6 +319,9 @@ router.post("/kwa-records", async (req, res) => {
         detail: detail || "",
         remaining: String(kwa), // Initially remaining is equal to total KWA
         type,
+        reward: String(reward ?? 0),
+        status: status || "Sell",
+        payDate: payDate ? new Date(payDate) : null,
       })
       .returning();
 
@@ -322,7 +337,7 @@ router.post("/kwa-records", async (req, res) => {
 router.patch("/kwa-records/:id/use", async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, action, detail } = kwaUseSchema.parse(req.body);
+    const { amount, action, detail, usedBy } = kwaUseSchema.parse(req.body);
 
     const [existing] = await db
       .select()
@@ -344,9 +359,12 @@ router.patch("/kwa-records/:id/use", async (req, res) => {
     const logLine = `${action} ${amount}${detail ? `: ${detail}` : ""}`;
     const newDetail = existing.detail ? `${existing.detail}\n${logLine}` : logLine;
 
+    const updates: Record<string, unknown> = { remaining: String(newRemaining), detail: newDetail };
+    if (usedBy) updates.usedBy = usedBy;
+
     const [updated] = await db
       .update(targetSystemKwaRecords)
-      .set({ remaining: String(newRemaining), detail: newDetail })
+      .set(updates)
       .where(eq(targetSystemKwaRecords.id, parseInt(id)))
       .returning();
 
@@ -406,17 +424,28 @@ router.post("/assign-role", async (req, res) => {
     const assignmentsToInsert = [];
     for (const user of matchingUsers) {
       for (const t of targets) {
+        const vas = Number(t.vas ?? 0);
+        const kwa = Number(t.kwa ?? 0);
+        const reward = Number(t.reward ?? 0);
+        const conversion = Number(t.conversion ?? 0);
         assignmentsToInsert.push({
-          userId: user.fullName || user.username,
+          // Real user id (uuid), NOT fullName/username — the latter can
+          // never be joined back against any real id elsewhere (gm_entries
+          // etc. all key by uuid). Confirmed live: this was the source of
+          // several orphaned name-keyed rows already in the table.
+          userId: user.id,
           targetName: t.targetName || t.name || "",
           category: t.category || "none",
           target: String(t.target ?? t.number ?? "0"),
           price: String(t.price ?? "0"),
           bonus: t.bonus || "",
-          vas: String(t.vas ?? "0"),
-          kwa: String(t.kwa ?? "0"),
-          reward: String(t.reward ?? "0"),
-          total: String(t.total ?? "0"),
+          vas: String(vas),
+          kwa: String(kwa),
+          reward: String(reward),
+          conversion: String(conversion),
+          // Computed server-side (legacy's own $total = conversion+vas+kwa+reward),
+          // not trusted from the client.
+          total: String(conversion + vas + kwa + reward),
           startDate: t.startDate ? new Date(t.startDate) : null,
           endDate: t.endDate ? new Date(t.endDate) : null,
           signDate: new Date()
@@ -465,21 +494,30 @@ router.post("/user-targets/bulk", async (req, res) => {
 
     const inserted = await db
       .insert(targetSystemUserTargets)
-      .values(targets.map((t) => ({
-        userId: t.userId,
-        targetName: t.targetName,
-        category: t.category || "none",
-        target: String(t.target ?? "0"),
-        price: String(t.price ?? "0"),
-        bonus: t.bonus || "",
-        vas: String(t.vas ?? "0"),
-        kwa: String(t.kwa ?? "0"),
-        reward: String(t.reward ?? "0"),
-        total: String(t.total ?? "0"),
-        startDate: t.startDate ? new Date(t.startDate) : null,
-        endDate: t.endDate ? new Date(t.endDate) : null,
-        signDate: t.signDate ? new Date(t.signDate) : null,
-      })))
+      .values(targets.map((t) => {
+        const vas = Number(t.vas ?? 0);
+        const kwa = Number(t.kwa ?? 0);
+        const reward = Number(t.reward ?? 0);
+        const conversion = Number(t.conversion ?? 0);
+        return {
+          userId: t.userId,
+          targetName: t.targetName,
+          category: t.category || "none",
+          target: String(t.target ?? "0"),
+          price: String(t.price ?? "0"),
+          bonus: t.bonus || "",
+          vas: String(vas),
+          kwa: String(kwa),
+          reward: String(reward),
+          conversion: String(conversion),
+          // Computed server-side (legacy's own $total = conversion+vas+kwa+reward),
+          // not trusted from the client.
+          total: String(conversion + vas + kwa + reward),
+          startDate: t.startDate ? new Date(t.startDate) : null,
+          endDate: t.endDate ? new Date(t.endDate) : null,
+          signDate: t.signDate ? new Date(t.signDate) : null,
+        };
+      }))
       .returning();
 
     res.status(201).json(inserted);
@@ -499,6 +537,12 @@ router.patch("/user-targets/:id", async (req, res) => {
       return res.status(400).json({ error: "No fields to update" });
     }
 
+    const [existing] = await db
+      .select()
+      .from(targetSystemUserTargets)
+      .where(eq(targetSystemUserTargets.id, parseInt(id)));
+    if (!existing) return res.status(404).json({ error: "User target not found" });
+
     const updates: Record<string, unknown> = {};
     if (data.targetName !== undefined) updates.targetName = data.targetName;
     if (data.category !== undefined) updates.category = data.category;
@@ -508,10 +552,19 @@ router.patch("/user-targets/:id", async (req, res) => {
     if (data.vas !== undefined) updates.vas = String(data.vas);
     if (data.kwa !== undefined) updates.kwa = String(data.kwa);
     if (data.reward !== undefined) updates.reward = String(data.reward);
-    if (data.total !== undefined) updates.total = String(data.total);
+    if (data.conversion !== undefined) updates.conversion = String(data.conversion);
     if (data.startDate !== undefined) updates.startDate = new Date(data.startDate);
     if (data.endDate !== undefined) updates.endDate = new Date(data.endDate);
     if (data.signDate !== undefined) updates.signDate = new Date(data.signDate);
+
+    // Total is always recomputed from the final (existing + edited) values —
+    // never trusted from the client, same as create. Otherwise editing just
+    // conversion/vas/kwa/reward silently leaves Total stale (confirmed live).
+    const finalVas = Number(data.vas ?? existing.vas);
+    const finalKwa = Number(data.kwa ?? existing.kwa);
+    const finalReward = Number(data.reward ?? existing.reward);
+    const finalConversion = Number(data.conversion ?? existing.conversion);
+    updates.total = String(finalConversion + finalVas + finalKwa + finalReward);
 
     const [updated] = await db
       .update(targetSystemUserTargets)

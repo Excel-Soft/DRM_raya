@@ -262,7 +262,7 @@ const menuItems: MenuItem[] = [
       { title: "Attendance Report", url: "/reports/attendance", icon: FileText },
       { title: "Vas Report", url: "/reports/vas?scope=company", icon: List, permKey: "Reports Vas Report" },
       { title: "Gm Report", url: "/analytics/gm", icon: Star },
-      { title: "Bv Report", url: "/reports/bv", icon: FileText },
+      { title: "Bv Report", url: "/reports/bv?scope=company", icon: FileText },
       { title: "Bv Pending EC/NC Only", url: "/reports/bv-pending-ecnc", icon: FileText },
       { title: "Diagnose Report", url: "/reports/diagnose", icon: FileText },
       { title: "Follow Up Report", url: "/reports/follow-up", icon: FileText },

@@ -36,6 +36,10 @@ export default function CreateTarget() {
   const [maxPrice, setMaxPrice] = useState(0);
   const [penalty, setPenalty] = useState(100);
   const [amount, setAmount] = useState("");
+  const [number, setNumber] = useState(0);
+  const [kwa, setKwa] = useState(0);
+  const [vas, setVas] = useState(0);
+  const [conversion, setConversion] = useState(0);
 
   const { data: targets, isLoading } = useQuery({
     queryKey: ["/api/target-system/targets"],
@@ -80,6 +84,10 @@ export default function CreateTarget() {
       setMaxPrice(0);
       setPenalty(100);
       setAmount("");
+      setNumber(0);
+      setKwa(0);
+      setVas(0);
+      setConversion(0);
       setShowForm(false);
     },
     onError: (error: Error) => {
@@ -100,7 +108,11 @@ export default function CreateTarget() {
       price,
       maxPrice,
       penalty,
-      amount
+      amount,
+      number,
+      kwa,
+      vas,
+      conversion,
     });
   };
 
@@ -252,8 +264,27 @@ export default function CreateTarget() {
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Amount:</label>
                 <Input value={amount} onChange={e => setAmount(e.target.value)} placeholder="Enter amount name" className="h-9" />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
               <div>
-                <Button 
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Number (quota):</label>
+                <Input type="number" value={number} onChange={e => setNumber(Number(e.target.value))} className="h-9" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Conversion:</label>
+                <Input type="number" value={conversion} onChange={e => setConversion(Number(e.target.value))} className="h-9" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">KWA:</label>
+                <Input type="number" value={kwa} onChange={e => setKwa(Number(e.target.value))} className="h-9" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">VAS:</label>
+                <Input type="number" value={vas} onChange={e => setVas(Number(e.target.value))} className="h-9" />
+              </div>
+              <div>
+                <Button
                   className="w-full bg-[#00a65a] hover:bg-[#008d4c] h-9"
                   onClick={handleCreate}
                   disabled={createMutation.isPending}
@@ -306,19 +337,20 @@ export default function CreateTarget() {
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">VAS</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Conversion</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Create</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8">
+                    <TableCell colSpan={11} className="text-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400" />
                     </TableCell>
                   </TableRow>
                 ) : targets?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-gray-500 dark:text-zinc-400">
+                    <TableCell colSpan={11} className="text-center py-8 text-gray-500 dark:text-zinc-400">
                       No targets found. Create one above!
                     </TableCell>
                   </TableRow>
@@ -338,6 +370,7 @@ export default function CreateTarget() {
                       </TableCell>
                       <TableCell className="text-center">{row.kwa}</TableCell>
                       <TableCell className="text-center">{row.vas}</TableCell>
+                      <TableCell className="text-center">{row.conversion}</TableCell>
                       <TableCell className="text-center">{format(new Date(row.createdAt), "dd MMM yyyy hh:mm a")}</TableCell>
                     </TableRow>
                   ))

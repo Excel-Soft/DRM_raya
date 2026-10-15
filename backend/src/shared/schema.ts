@@ -3670,6 +3670,12 @@ export const targetSystemTargets = drmSchema.table("target_system_targets", {
   number: integer("number").notNull().default(0),
   kwa: integer("kwa").notNull().default(0),
   vas: integer("vas").notNull().default(0),
+  // Legacy webxl_terget.conversion — the actual per-definition commission
+  // amount (confirmed from the real legacy table dump: a genuine configured
+  // value, e.g. 6000/2500/5000, NOT a hardcoded constant). Was missing from
+  // this table entirely, which is why "Total" (conversion+vas+kwa+reward)
+  // always computed as 0 downstream.
+  conversion: integer("conversion").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -3693,6 +3699,11 @@ export const targetSystemUserTargets = drmSchema.table("target_system_user_targe
   vas: decimal("vas", { precision: 12, scale: 2 }).notNull().default("0"),
   kwa: decimal("kwa", { precision: 12, scale: 2 }).notNull().default("0"),
   reward: decimal("reward", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Legacy webxl_terget.conversion, snapshotted onto the assignment the same
+  // way price/vas/kwa/reward already are — was missing entirely, which is
+  // why the "Bonus" column (legacy: actually displays conversion, not the
+  // bonus-type label) had nothing real to show.
+  conversion: decimal("conversion", { precision: 12, scale: 2 }).notNull().default("0"),
   total: decimal("total", { precision: 12, scale: 2 }).notNull().default("0"),
   startDate: timestamp("start_date"),
   endDate: timestamp("end_date"),
@@ -3716,6 +3727,15 @@ export const targetSystemKwaRecords = drmSchema.table("target_system_kwa_records
   detail: text("detail"),
   remaining: decimal("remaining", { precision: 12, scale: 2 }).notNull().default("0"),
   type: text("type").notNull(),
+  // Legacy's KWA ledger (func.php's BV report "KWA" table) carries a few more
+  // fields than this table had — "Used By" (set when a Use/Refund action is
+  // recorded, can differ from who originally sold it), a reward tied to the
+  // transaction, a status label, and when it was paid out. All additive and
+  // nullable/defaulted so existing rows are unaffected.
+  usedBy: text("used_by"),
+  reward: decimal("reward", { precision: 12, scale: 2 }).notNull().default("0"),
+  status: text("status").notNull().default("Sell"),
+  payDate: timestamp("pay_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -4026,4 +4046,27 @@ export const webxlVasCommFinal = drmSchema.table("webxl_vas_comm_final", {
   finalPayAmount: decimal("final_pay_amount", { precision: 10, scale: 2 }),
   managerApproveDate: timestamp("manager_approve_date"),
   hodStatusDate: timestamp("hod_satatus_date"),
+});
+
+// GM/BV commission verification — the Reports -> BV Report "Final Com /
+// Verify" panel's data source. NOT the same table as webxlVasCommFinal above
+// (that one is declared but was never created in the live database, and keys
+// user_id as a bare legacy integer with no mapping to any real user here).
+// One row per (user, month, year).
+export const gmBvCommissionVerifications = drmSchema.table("gm_bv_commission_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  commMonth: integer("comm_month").notNull(),
+  commYear: integer("comm_year").notNull(),
+  totalComm: decimal("total_comm", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalReward: decimal("total_reward", { precision: 12, scale: 2 }).notNull().default("0"),
+  abReward: decimal("ab_reward", { precision: 12, scale: 2 }),
+  rewardComment: text("reward_comment"),
+  hodStatus: text("hod_status").notNull().default("Approved"),
+  userStatus: text("user_status").notNull().default("Pending"),
+  accountPayStatus: text("account_pay_status").notNull().default("Pending"),
+  finalPayAmount: decimal("final_pay_amount", { precision: 12, scale: 2 }),
+  createdBy: varchar("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
