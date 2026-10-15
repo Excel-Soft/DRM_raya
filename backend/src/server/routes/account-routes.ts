@@ -465,6 +465,17 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists member_id   text,
           add column if not exists dollar_rate numeric(12,4),
           add column if not exists type        text;
+
+        -- Links a per-installment Alibaba allocation back to the specific
+        -- gm_partial_receipts row it was paid against, so the "Partial Payment
+        -- Installment" modal can show whether THAT receipt has already been
+        -- paid to Alibaba instead of leaving every row's Action buttons always
+        -- clickable with no way to tell which ones were already submitted.
+        alter table drm.ab_payments
+          add column if not exists partial_receipt_id varchar;
+
+        create index if not exists ab_payments_partial_receipt_idx
+          on drm.ab_payments(partial_receipt_id);
       `);
 
       // 6. Ensure gm_entries has member_id and order_id columns (used by Paid Alibaba)
@@ -5292,9 +5303,10 @@ export function registerAccountRoutes(app: Express) {
                g.status,
                g.payment_status as "paymentStatus",
                g.hod_status as "hodStatus",
-               g.added_by_name as "accountant",
+               g.accountant_status as "accountantStatus",
                g.proof_url as "proofUrl", g.notes,
                g.installments,
+               abp.paid_date as "payDate",
                -- Target is GREATEST(customer_dollar/amount_usd, scheduled installment
                -- total) — see the matching comment in gm-pool-routes.ts's GET /gm-pool.
                (
@@ -5303,16 +5315,42 @@ export function registerAccountRoutes(app: Express) {
                    (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(g.installments, '[]'::jsonb)) elem)
                  ) - COALESCE(pr.paid, 0)
                ) <= 0.009 AS "fullyPaid",
-               COALESCE(pr.paid, 0) AS "partialPaidAmount"
+               COALESCE(pr.paid, 0) AS "partialPaidAmount",
+               COALESCE(pr.paid_pkr, 0) AS "partialPaidAmountPkr",
+               COALESCE(abpaid.paid_usd, 0) AS "abPaidAmount",
+               COALESCE(abpaid.paid_pkr, 0) AS "abPaidAmountPkr"
         FROM drm.gm_entries g
         LEFT JOIN (
-          SELECT gm_id, SUM(amount_usd) AS paid FROM drm.gm_partial_receipts GROUP BY gm_id
+          SELECT gm_id, SUM(amount_usd) AS paid, SUM(amount_pkr) AS paid_pkr FROM drm.gm_partial_receipts GROUP BY gm_id
         ) pr ON pr.gm_id = g.id::text
+        LEFT JOIN (
+          SELECT gm_entry_id, MAX(paid_date) AS paid_date FROM drm.ab_payments
+          WHERE coalesce(is_deleted, false) = false
+          GROUP BY gm_entry_id
+        ) abp ON abp.gm_entry_id = g.id
+        LEFT JOIN (
+          SELECT gm_entry_id, SUM(amount_usd) AS paid_usd, SUM(amount_pkr) AS paid_pkr FROM drm.ab_payments
+          WHERE coalesce(is_deleted, false) = false AND status IN ('paid','processing')
+          GROUP BY gm_entry_id
+        ) abpaid ON abpaid.gm_entry_id = g.id
         WHERE coalesce(g.is_deleted, false) = false
           AND (g.entry_type = 'Partial' OR coalesce(g.is_partial_payment,false) = true)
-          AND NOT EXISTS (
-            SELECT 1 FROM drm.ab_payments ap
+          -- A Partial GM pays Alibaba per-installment (see the "Pay Alibaba —
+          -- for this installment only" actions in the Partial Payment
+          -- Installment modal), so it can take several separate ab_payments
+          -- rows to clear one GM. Checking "any ab_payment exists" dropped the
+          -- whole GM out of this list the moment the FIRST installment was
+          -- allocated, even with others still outstanding. Compare the total
+          -- already allocated against the same target used for "fullyPaid"
+          -- instead, so it only drops out once every installment is covered.
+          AND COALESCE((
+            SELECT SUM(ap.amount_usd) FROM drm.ab_payments ap
             WHERE ap.gm_entry_id = g.id AND coalesce(ap.is_deleted, false) = false
+          ), 0) < (
+            GREATEST(
+              COALESCE(g.customer_dollar, g.amount_usd, 0),
+              (SELECT COALESCE(SUM((elem->>'dollar')::numeric), 0) FROM jsonb_array_elements(COALESCE(g.installments, '[]'::jsonb)) elem)
+            ) - 0.009
           )
           ${dateWhere}
         ORDER BY g.created_at DESC LIMIT 50
@@ -5424,10 +5462,15 @@ export function registerAccountRoutes(app: Express) {
       const pendingApprovals = await pool.query(`
         SELECT id, drm_id as "drmId", company_name as "company",
                sales_person_name as "salePerson",
-               amount_usd as "dollar", amount_pkr as "pkr",
+               member_id as "memberId", order_id as "orderId", created_at as "date",
+               amount_usd as "dollar", customer_dollar as "customerDollar", amount_pkr as "pkr",
                dollar_rate as "rate",
                alibaba_discount_usd as "abDisc", extra_discount_usd as "exDisc",
-               package_type as "package", gm_type as "type", status
+               extra_discount_pkr as "exDiscPkr",
+               package_type as "package", gm_type as "type", status,
+               payment_status as "paymentStatus",
+               dropout as "dropout",
+               accountant_status as "accountantStatus", hod_status as "hodStatus"
         FROM drm.gm_entries
         WHERE coalesce(is_deleted, false) = false AND status = 'Pending' ${dateWhere}
         ORDER BY created_at DESC LIMIT 50
@@ -5494,7 +5537,23 @@ export function registerAccountRoutes(app: Express) {
           COALESCE(SUM(g.amount_pkr) FILTER (
             WHERE coalesce(g.is_partial_payment,false) = true
               AND g.status = 'Approved'
-          ), 0) AS "partialCashReceivedPkr"
+          ), 0) AS "partialCashReceivedPkr",
+          COUNT(DISTINCT ap.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = false
+              AND ap.status IN ('paid','processing')
+          ) AS "fullOnlinePaidCount",
+          COUNT(DISTINCT g.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = false
+              AND g.status = 'Approved'
+          ) AS "fullCashReceivedCount",
+          COUNT(DISTINCT ap.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = true
+              AND ap.status IN ('paid','processing')
+          ) AS "partialOnlinePaidCount",
+          COUNT(DISTINCT g.id) FILTER (
+            WHERE coalesce(g.is_partial_payment,false) = true
+              AND g.status = 'Approved'
+          ) AS "partialCashReceivedCount"
         FROM drm.gm_entries g
         LEFT JOIN drm.ab_payments ap
           ON ap.gm_drm_id = g.drm_id
@@ -5502,6 +5561,18 @@ export function registerAccountRoutes(app: Express) {
         WHERE coalesce(g.is_deleted, false) = false
       `);
       const abLiabilities = abLiabilitiesRes.rows[0] || {};
+      // "Uncompleted GM Partials" — reuse the partial-payments list already
+      // queried above (#3), which is already filtered to partial GMs not yet
+      // fully paid to Alibaba. Split the same way as Full/Partial Payment:
+      // "Online Paid" = already forwarded to Alibaba (ab_payments), "Cash
+      // Received" = collected from the customer so far (gm_partial_receipts).
+      abLiabilities.uncompletedPartialsCount = partialPayments.rows.length;
+      abLiabilities.uncompletedOnlinePaidCount = partialPayments.rows.filter((r: any) => Number(r.abPaidAmount || 0) > 0).length;
+      abLiabilities.uncompletedCashReceivedCount = partialPayments.rows.filter((r: any) => Number(r.partialPaidAmount || 0) > 0).length;
+      abLiabilities.uncompletedOnlinePaidUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmount || 0), 0);
+      abLiabilities.uncompletedOnlinePaidPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.abPaidAmountPkr || 0), 0);
+      abLiabilities.uncompletedCashReceivedUsd = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmount || 0), 0);
+      abLiabilities.uncompletedCashReceivedPkr = partialPayments.rows.reduce((sum: number, r: any) => sum + Number(r.partialPaidAmountPkr || 0), 0);
 
       // 9. Monthly Totals
       const monthlyStatsRes = await pool.query(`
@@ -5872,11 +5943,22 @@ export function registerAccountRoutes(app: Express) {
       `, [gmId]);
       if (!gm.rows[0]) return res.status(404).json({ error: "GM entry not found" });
 
+      // Each receipt is paid to Alibaba as its own separate allocation (see
+      // the "Pay Alibaba — for this installment only" actions), so surface
+      // that receipt's own latest ab_payments row here — otherwise the modal
+      // has no way to show whether a given row has already been paid out.
       const receipts = await pool.query(`
         SELECT r.id, r.receipt_date as "partialDate", r.amount_usd as "partialDollar",
                r.dollar_rate as "partialDollarRate", r.amount_pkr as "partialPkr",
-               r.method as "partialStatus"
+               r.method as "partialStatus",
+               ap.id as "abPaymentId", ap.status as "abPaymentStatus"
         FROM drm.gm_partial_receipts r
+        LEFT JOIN LATERAL (
+          SELECT id, status FROM drm.ab_payments
+          WHERE partial_receipt_id = r.id AND coalesce(is_deleted, false) = false
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) ap ON true
         WHERE r.gm_id = $1
         ORDER BY r.receipt_date ASC, r.created_at ASC
       `, [gmId]);
@@ -6194,7 +6276,7 @@ export function registerAccountRoutes(app: Express) {
       const {
         gmEntryId, gmDrmId, companyName, memberId, orderId,
         targetDollar, customerPaidPkr, customDollarRate, dollarRate, profitOrLoss,
-        type, detail, allocations,
+        type, detail, allocations, partialReceiptId,
       } = req.body;
 
       const target = Number(targetDollar);
@@ -6241,14 +6323,14 @@ export function registerAccountRoutes(app: Express) {
           INSERT INTO drm.ab_payments
             (ab_id, order_id, member_id, gm_drm_id, gm_entry_id, company_name,
              amount_usd, amount_pkr, rate, dollar_rate, type, notes,
-             status, created_by, created_at, updated_at)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13,NOW(),NOW())
+             partial_receipt_id, status, created_by, created_at, updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'processing',$14,NOW(),NOW())
           RETURNING *
         `, [
           abId, orderId || null, memberId || null, gmDrmId || null, gmEntryId || null, companyName || null,
           target, Number(customerPaidPkr) || 0, customDollarRate ? Number(customDollarRate) : null,
           dollarRate ? Number(dollarRate) : null, type || null,
-          detail || null, userId,
+          detail || null, partialReceiptId || null, userId,
         ]);
         const abPayment = abRows[0];
 

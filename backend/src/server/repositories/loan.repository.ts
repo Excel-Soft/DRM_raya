@@ -74,6 +74,39 @@ export class LoanRepository {
     }));
   }
 
+  /**
+   * Returns loan requests only for users who are in the given manager's team
+   * (drm.user_team_members where manager_id = managerId).
+   * The manager's own loans are excluded — they must apply as executive role.
+   */
+  async findByManagerTeam(managerId: string): Promise<LoanRequestWithUser[]> {
+    const res = await pool.query(
+      `select lr.*, u.full_name
+         from drm.loan_requests lr
+         join drm.users u on u.id::text = lr.user_id::text
+        where u.under_works = $1
+        order by lr.created_at desc`,
+      [managerId],
+    );
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      userId: r.user_id,
+      amount: r.amount,
+      installmentAmount: r.installment_amount,
+      remainingAmount: r.remaining_amount,
+      detail: r.detail ?? r.reason ?? null,
+      status: r.status,
+      managerApprovedByUserId: r.manager_approved_by_user_id,
+      managerApprovedAt: r.manager_approved_at,
+      hodApprovedByUserId: r.hod_approved_by_user_id,
+      hodApprovedAt: r.hod_approved_at,
+      rejectionReason: r.rejection_reason,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      userName: r.full_name,
+    }));
+  }
+
   async findById(id: string): Promise<LoanRequestWithUser | null> {
     const res = await pool.query(
       `select lr.*, u.full_name

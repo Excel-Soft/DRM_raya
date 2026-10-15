@@ -882,6 +882,81 @@ async function ensureWorkflowStatusHistorySchema(client: {
   );
 }
 
+/**
+ * GM/BV commission verification — the "Final Com / Verify" panel from the
+ * legacy BV report (func.php's $user_gm commission workflow, there backed by
+ * webxl_vas_comm_final). That exact table is declared in shared/schema.ts but
+ * was never created in this database (checked live via information_schema —
+ * zero matches across every schema) and keys user_id as a bare legacy
+ * integer with no mapping to any id here. Rather than repair an unrelated,
+ * not-yet-live VAS table, this is a fresh table scoped to GM/BV with a real
+ * uuid user_id FK. One row per (user, month, year): a privileged role (HOD/
+ * Account/Admin) creates it with the computed totals — that act IS the HOD
+ * approval, there's no separate HOD-dashboard step in this scope — and the
+ * salesperson then confirms it.
+ */
+async function ensureGmBvCommissionVerificationSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.gm_bv_commission_verifications (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id uuid NOT NULL REFERENCES drm.users(id),
+       comm_month integer NOT NULL,
+       comm_year integer NOT NULL,
+       total_comm numeric(12,2) NOT NULL DEFAULT 0,
+       total_reward numeric(12,2) NOT NULL DEFAULT 0,
+       ab_reward numeric(12,2),
+       reward_comment text,
+       hod_status text NOT NULL DEFAULT 'Approved',
+       user_status text NOT NULL DEFAULT 'Pending',
+       account_pay_status text NOT NULL DEFAULT 'Pending',
+       final_pay_amount numeric(12,2),
+       created_by uuid NOT NULL REFERENCES drm.users(id),
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_gm_bv_comm_verif_user_period ON drm.gm_bv_commission_verifications (user_id, comm_month, comm_year)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_gm_bv_comm_verif_user ON drm.gm_bv_commission_verifications (user_id)`,
+  );
+}
+
+/**
+ * target_system_targets.conversion — additive column (db:push is broken
+ * repo-wide). The table itself already exists live; this just adds the
+ * legacy webxl_terget.conversion equivalent that was missing from the
+ * Drizzle schema entirely.
+ */
+async function ensureTargetSystemConversionColumn(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `ALTER TABLE drm.target_system_targets ADD COLUMN IF NOT EXISTS conversion integer NOT NULL DEFAULT 0`,
+  );
+  // Same column, snapshotted onto each assignment (target_system_user_targets)
+  // the same way price/vas/kwa/reward already are.
+  await client.query(
+    `ALTER TABLE drm.target_system_user_targets ADD COLUMN IF NOT EXISTS conversion numeric(12,2) NOT NULL DEFAULT 0`,
+  );
+  // target_system_kwa_records — legacy's KWA ledger fields the table never had.
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS used_by text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS reward numeric(12,2) NOT NULL DEFAULT 0`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'Sell'`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS pay_date timestamp`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -922,6 +997,8 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureProjectNumberSchema(client);
         await ensureWorkflowStatusHistorySchema(client);
         await ensureProductPostingSelfReviewSchema(client);
+        await ensureGmBvCommissionVerificationSchema(client);
+        await ensureTargetSystemConversionColumn(client);
         return;
       } catch (err) {
         lastErr = err;

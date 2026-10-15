@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useModuleData } from "@/hooks/use-module-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,8 +41,9 @@ import {
   XCircle,
   Loader2
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { exportToCSV, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export-utils";
 import {
   AreaChart,
   Area,
@@ -58,9 +59,9 @@ import {
   Pie,
   Cell
 } from "recharts";
-import { apiRequest, getAuthHeader } from "@/lib/queryClient";
+import { apiRequest, getAuthHeader, extractApiError } from "@/lib/queryClient";
 import { downloadAuthedFile } from "@/lib/download";
-import { Link, useLocation, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import {
   Dialog,
   DialogContent,
@@ -459,22 +460,194 @@ function GmReportTable({
   );
 }
 
+// Exact option set from func (1).php's BV "Type" (account-reclassification)
+// dropdown — same values as DropoutTiltle() plus "Next Que" and
+// "Change Commission".
+const BV_TYPE_OPTIONS = [
+  { value: "1", label: "Basic Drop" },
+  { value: "2", label: "Basic Plus Drop" },
+  { value: "3", label: "Basic P/D" },
+  { value: "4", label: "Basic Plus P/D" },
+  { value: "5", label: "Pkg Update" },
+  { value: "0", label: "Next Que" },
+  { value: "6", label: "Change Commission" },
+];
+
+// One commission-verification panel per distinct salesperson in the current
+// view (works for "All" the same as a single selected person — commission is
+// inherently per-individual). A standalone component because each person
+// needs its own useQuery/useMutation instances, which can't live in a loop
+// inside the parent.
+function BvCommissionPanelRow({
+  personId,
+  personName,
+  totals,
+  achievement,
+  commPeriod,
+  canManage,
+  currentUserId,
+}: {
+  personId: string;
+  personName: string;
+  totals: { comm: number; reward: number };
+  achievement?: { targetName: string; targetQuota: number | null; achievedCount: number };
+  commPeriod: { month: number; year: number };
+  canManage: boolean;
+  currentUserId?: string;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const queryKey = ["/api/bv-commission-verifications", personId, commPeriod.month, commPeriod.year];
+  // func.php's own panel (line ~23318) takes an AB Reward amount + a Reward
+  // Comment BEFORE the Verify action — a manual, HOD-entered bonus on top of
+  // the computed totals, not something derivable from the sale rows.
+  const [abRewardInput, setAbRewardInput] = useState("");
+  const [rewardCommentInput, setRewardCommentInput] = useState("");
+
+  const { data: commRecord, isLoading: commLoading } = useQuery<any>({
+    queryKey,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/bv-commission-verifications?userId=${personId}&month=${commPeriod.month}&year=${commPeriod.year}`,
+      );
+      const data = await res.json();
+      return data.record;
+    },
+  });
+
+  const createCommMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/bv-commission-verifications", {
+        userId: personId,
+        month: commPeriod.month,
+        year: commPeriod.year,
+        totalComm: totals.comm,
+        totalReward: totals.reward,
+        abReward: abRewardInput.trim() ? Number(abRewardInput) : undefined,
+        rewardComment: rewardCommentInput.trim() || undefined,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Commission verified", description: `Commission record created for ${personName}.` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Could not create the commission record", variant: "destructive" });
+    },
+  });
+
+  const confirmCommMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/bv-commission-verifications/${commRecord?.id}/confirm`, {});
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "Confirmed", description: "Commission confirmed." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to confirm", description: err?.message || "Could not confirm", variant: "destructive" });
+    },
+  });
+
+  const isSelf = currentUserId === personId;
+
+  return (
+    <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+      <TableCell colSpan={18}>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="font-bold">{personName}:</span>
+          {achievement ? (
+            <span className="text-muted-foreground">
+              Target ({achievement.targetName}): {achievement.achievedCount}/{achievement.targetQuota ?? "-"}
+              {achievement.targetQuota ? ` (${Math.round((achievement.achievedCount / achievement.targetQuota) * 100)}%)` : ""}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">No target assigned</span>
+          )}
+          {commLoading ? (
+            <span className="text-xs text-muted-foreground">Loading commission status...</span>
+          ) : commRecord ? (
+            <>
+              <span className="font-bold">
+                Final Com: {Number(commRecord.finalPayAmount ?? commRecord.totalComm).toLocaleString()}
+              </span>
+              {commRecord.abReward != null && (
+                <span className="font-bold">AB Reward: {Number(commRecord.abReward).toLocaleString()}</span>
+              )}
+              {commRecord.rewardComment && (
+                <span className="text-muted-foreground">Reward Comment: {commRecord.rewardComment}</span>
+              )}
+              {commRecord.userStatus === "Verified" ? (
+                <Badge className="bg-green-600 text-white hover:bg-green-600">Verified</Badge>
+              ) : isSelf ? (
+                <Button size="sm" onClick={() => confirmCommMutation.mutate()} disabled={confirmCommMutation.isPending}>
+                  Confirm
+                </Button>
+              ) : (
+                <Badge className="bg-red-500 text-white hover:bg-red-500">Sale Person Side Pending</Badge>
+              )}
+            </>
+          ) : canManage ? (
+            achievement ? (
+              <>
+                <Input
+                  type="number"
+                  placeholder="AB Reward"
+                  value={abRewardInput}
+                  onChange={(e) => setAbRewardInput(e.target.value)}
+                  className="h-8 w-28 text-xs"
+                />
+                <Input
+                  placeholder="Enter Reward Description"
+                  value={rewardCommentInput}
+                  onChange={(e) => setRewardCommentInput(e.target.value)}
+                  className="h-8 w-48 text-xs"
+                />
+                <Button size="sm" onClick={() => createCommMutation.mutate()} disabled={createCommMutation.isPending}>
+                  Verify (Final Com: {(totals.comm + totals.reward + (Number(abRewardInput) || 0)).toLocaleString()})
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Commission can't be verified until a target is assigned to this salesperson (Set Target).
+              </span>
+            )
+          ) : (
+            <span className="text-xs text-muted-foreground">Not yet created by HOD/Account.</span>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function BvReportTable({
   details,
   totals,
+  personAchievement,
   dateRange,
   onDateChange,
   selectedUser,
-  onUserChange
+  onUserChange,
+  scope
 }: {
   details: any[];
   totals?: any;
+  personAchievement?: { personId: string; targetName: string; targetQuota: number | null; achievedCount: number }[];
   dateRange: { from: string; to: string };
   onDateChange: (field: "from" | "to", value: string) => void;
   selectedUser: string;
   onUserChange: (value: string) => void;
+  scope?: string | null;
 }) {
-  const { data: allUsers = [] } = useQuery<any[]>({
+  const { data: allUsers = [], isLoading: usersLoading, isError: usersError } = useQuery<any[]>({
     queryKey: ["/api/users", { assigned: true }],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/users?assigned=true");
@@ -489,6 +662,16 @@ function BvReportTable({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [viewFilters, setViewFilters] = useState({ status: "all" });
+  // func (1).php's "Type" column (line ~23247 onward) is actually the
+  // account-reclassification dropdown ("changeAcoountType") shown only to
+  // specific legacy roles — same option set as the Dropout column
+  // (DropoutTiltle), plus "Next Que" and "Change Commission". It is an admin
+  // action control there, not a data display field (it writes back via
+  // onchange="changeAcoountType(...)"). gm_entries has no equivalent
+  // dropout/account-type column to write that action to, so this is wired as
+  // a visual match only (per-row local selection) — not persisted anywhere
+  // yet. Say so if you want the save action built.
+  const [typeSelections, setTypeSelections] = useState<Record<string, string>>({});
 
   const handleView = () => {
     setViewFilters({ status: selectedStatus });
@@ -499,6 +682,29 @@ function BvReportTable({
     queryKey: ["/api/auth/me"],
     queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
+
+  // Same impersonation-aware "acting role" resolution ReportTab's own scope
+  // effect uses, and the same role-based gate already used for the VAS/GM
+  // Select User pickers — only roles authorized to see other users' data get
+  // a real selector; everyone else keeps the existing readonly own-name view.
+  // Also gated on scope=company (the "Reports" sidebar group's BV Report
+  // link) so "User Reports" -> BV Report (no scope) stays exactly as it was
+  // before — same single shared component, no duplicate page.
+  const activeRole = sessionStorage.getItem("userRole") ?? (currentUser as any)?.roleId;
+  const canSelectUser = scope === "company" && (isManagerialRole(activeRole) || isCompanyWideRole(activeRole));
+
+  // Same role-grouping convention as the VAS/GM Select User pickers.
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    (allUsers || []).forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [allUsers]);
 
   useEffect(() => {
     setFilteredDetails(details);
@@ -514,13 +720,77 @@ function BvReportTable({
       return (
         item.companyName?.toLowerCase().includes(lower) ||
         item.title?.toLowerCase().includes(lower) ||
-        item.authorName?.toLowerCase().includes(lower)
+        item.authorName?.toLowerCase().includes(lower) ||
+        item.personName?.toLowerCase().includes(lower)
       );
     });
   }, [filteredDetails, searchTerm, viewFilters]);
 
+  // Total row for the scope=company view — summed over whatever is actually
+  // filtered/visible (search + Select Status), not the unfiltered backend
+  // totals, so it always matches what's shown in the table above it.
+  const bvTotals = useMemo(() => {
+    const sumNumeric = (key: string) =>
+      filtered.reduce((sum, item) => sum + (typeof item[key] === "number" ? item[key] : Number(item[key]) || 0), 0);
+    return {
+      price: sumNumeric("price"),
+      extraDisc: sumNumeric("extraDisc"),
+      comm: sumNumeric("comm"),
+      reward: sumNumeric("reward"),
+      vas: sumNumeric("vas"),
+      kwa: sumNumeric("kwa"),
+    };
+  }, [filtered]);
+
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginatedData = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
+
+  // func (1).php's commission panel keys by month/year derived from the
+  // filter range's start date (same as $VasMouth/$VasYear there).
+  const commPeriod = useMemo(() => {
+    const d = new Date(dateRange.from);
+    return { month: d.getMonth() + 1, year: d.getFullYear() };
+  }, [dateRange.from]);
+
+  // One panel per distinct salesperson actually present in the filtered rows
+  // — works the same whether "All" or one specific person is selected,
+  // because commission is inherently per-individual (same as func.php: the
+  // Verify button always targeted one $user_gm, never an aggregate).
+  const personTotals = useMemo(() => {
+    const map = new Map<string, { personId: string; personName: string; comm: number; reward: number }>();
+    filtered.forEach((item) => {
+      if (!item.personId) return;
+      const existing = map.get(item.personId) ?? {
+        personId: item.personId,
+        personName: item.personName || "Unknown",
+        comm: 0,
+        reward: 0,
+      };
+      existing.comm += typeof item.comm === "number" ? item.comm : Number(item.comm) || 0;
+      existing.reward += typeof item.reward === "number" ? item.reward : Number(item.reward) || 0;
+      map.set(item.personId, existing);
+    });
+    return Array.from(map.values());
+  }, [filtered]);
+
+  const currentUserId = (currentUser as any)?.userId || (currentUser as any)?.id;
+
+  // func.php's BV report page has a second, separate "KWA" usage ledger table
+  // below the main one (webxl_kwa records — company/sell-by/used-by/kwa/type/
+  // detail/remaining/used/reward/status/dates). target_system_kwa_records is
+  // the modern equivalent (used by the standalone Add Kwa/Kwa History pages).
+  // It has no salesPersonId — "employee" is a free-text name, same as this
+  // table's other person fields, so matched by name against whoever is
+  // currently showing in personTotals below.
+  const { data: kwaRecords = [] } = useQuery<any[]>({
+    queryKey: ["/api/target-system/kwa-records"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/target-system/kwa-records");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: scope === "company",
+  });
 
   return (
     <div className="space-y-6">
@@ -532,11 +802,38 @@ function BvReportTable({
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
             <div className="md:col-span-3 space-y-2">
               <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
-              <Input
-                readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-white border-slate-200 h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
-              />
+              {canSelectUser ? (
+                <Select value={selectedUser} onValueChange={onUserChange}>
+                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-bv-user">
+                    <SelectValue placeholder={usersLoading ? "Loading users..." : "Choose..."} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {usersError ? (
+                      <div className="px-2 py-1.5 text-sm text-destructive">Failed to load users</div>
+                    ) : !usersLoading && groupedUsers.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">No users found</div>
+                    ) : (
+                      groupedUsers.map(({ role, users }) => (
+                        <SelectGroup key={role}>
+                          <SelectLabel>{role}</SelectLabel>
+                          {users.filter(u => u.fullName || u.username).map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.fullName || u.username}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  readOnly
+                  value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
+                  className="bg-white border-slate-200 h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                />
+              )}
             </div>
 
             <div className="md:col-span-3 space-y-2">
@@ -547,10 +844,21 @@ function BvReportTable({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="Draft">Draft</SelectItem>
-                  <SelectItem value="Submitted">Submitted</SelectItem>
-                  <SelectItem value="Approved">Approved</SelectItem>
-                  <SelectItem value="Rejected">Rejected</SelectItem>
+                  {scope === "company" ? (
+                    <>
+                      <SelectItem value="New">New</SelectItem>
+                      <SelectItem value="Renew">Renew</SelectItem>
+                      <SelectItem value="Expire">Expire</SelectItem>
+                      <SelectItem value="Rc/Up">Rc/Up</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="Draft">Draft</SelectItem>
+                      <SelectItem value="Submitted">Submitted</SelectItem>
+                      <SelectItem value="Approved">Approved</SelectItem>
+                      <SelectItem value="Rejected">Rejected</SelectItem>
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -618,46 +926,155 @@ function BvReportTable({
 
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
-                <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
-                  <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Date</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Title</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Author</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total Tasks</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Value Sold</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Success Rate</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Follow-ups</TableHead>
-                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Missed Leads</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedData.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                      No Records Found
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  paginatedData.map((item, idx) => (
-                    <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
-                      <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
-                      <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
-                      <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.authorName || "-"}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.status || "-"}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.totalTasks ?? 0}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.successRate == null ? "—" : `${item.successRate}%`}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.followUpsDone ?? 0}</TableCell>
-                      <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.missedLeads ?? 0}</TableCell>
+              {scope === "company" ? (
+                <>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Package</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">ExtraDisc++</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Comm</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">VAS</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">KWA</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Method</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Person</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Pay</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center" title="User BV Submit Date">BV Submit</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">BV</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Rc/New</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Dropout</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Type</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Receive Date</TableHead>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedData.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={18} className="text-center py-8 text-muted-foreground">
+                          No Records Found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedData.map((item, idx) => (
+                        <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                          <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.package || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.price != null ? Number(item.price).toLocaleString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.extraDisc != null ? Number(item.extraDisc).toLocaleString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.comm ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.reward ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.vas ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.kwa ?? "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.method ?? "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.personName || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.pay ? new Date(item.pay).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bvSubmit ? new Date(item.bvSubmit).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.bv ? new Date(item.bv).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.rcNew || "-"}</TableCell>
+                          {/* func.php's Dropout column and Type dropdown share the exact same
+                              option codes (DropoutTiltle uses the same 0-6 values as
+                              changeAcoountType) — Dropout there is just the display of
+                              whatever was last picked in that same dropdown, not a separate
+                              data source. Reflects the Type selection below; still not
+                              persisted anywhere since there's no backend column to save it to. */}
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
+                            {BV_TYPE_OPTIONS.find((opt) => opt.value === typeSelections[item.id])?.label ?? "-"}
+                          </TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">
+                            <Select
+                              value={typeSelections[item.id] ?? ""}
+                              onValueChange={(v) => setTypeSelections((prev) => ({ ...prev, [item.id]: v }))}
+                            >
+                              <SelectTrigger className="h-8 w-[130px] mx-auto text-xs">
+                                <SelectValue placeholder="choose..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {BV_TYPE_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                  {paginatedData.length > 0 && (
+                    <TableFooter>
+                      <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+                        <TableCell colSpan={3} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.price.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.extraDisc.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.comm.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.reward.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.vas.toLocaleString()}</TableCell>
+                        <TableCell className="text-center font-bold text-black dark:text-zinc-300">{bvTotals.kwa.toLocaleString()}</TableCell>
+                        <TableCell colSpan={9}></TableCell>
+                      </TableRow>
+                      {personTotals.map((p) => (
+                        <BvCommissionPanelRow
+                          key={p.personId}
+                          personId={p.personId}
+                          personName={p.personName}
+                          totals={{ comm: p.comm, reward: p.reward }}
+                          achievement={personAchievement?.find((a) => a.personId === p.personId)}
+                          commPeriod={commPeriod}
+                          canManage={canSelectUser}
+                          currentUserId={currentUserId}
+                        />
+                      ))}
+                    </TableFooter>
+                  )}
+                </>
+              ) : (
+                <>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[120px]">Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Title</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[150px]">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 min-w-[130px]">Author</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Total Tasks</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Value Sold</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Success Rate</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Follow-ups</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Missed Leads</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedData.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                          No Records Found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedData.map((item, idx) => (
+                        <TableRow key={item.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                          <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{(currentPage - 1) * perPage + idx + 1}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.date ? new Date(item.date).toLocaleDateString() : "-"}</TableCell>
+                          <TableCell className="font-bold text-slate-700 py-3 dark:text-zinc-400">{item.title || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.companyName || "-"}</TableCell>
+                          <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{item.authorName || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.status || "-"}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.totalTasks ?? 0}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.successRate == null ? "—" : `${item.successRate}%`}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.followUpsDone ?? 0}</TableCell>
+                          <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{item.missedLeads ?? 0}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </>
+              )}
             </Table>
           </div>
 
@@ -693,11 +1110,419 @@ function BvReportTable({
           </div>
         </CardContent>
       </Card>
+
+      {scope === "company" && personTotals.map((p) => {
+        const personKwaRecords = kwaRecords.filter(
+          (r: any) => (r.employee || "").trim().toLowerCase() === p.personName.trim().toLowerCase(),
+        );
+        if (personKwaRecords.length === 0) return null;
+        const kwaTotals = personKwaRecords.reduce(
+          (acc: any, r: any) => ({
+            remaining: acc.remaining + Number(r.remaining || 0),
+            used: acc.used + (Number(r.kwa || 0) - Number(r.remaining || 0)),
+            reward: acc.reward + Number(r.reward || 0),
+          }),
+          { remaining: 0, used: 0, reward: 0 },
+        );
+        return (
+          <Card key={p.personId} className="border border-border shadow-sm">
+            <CardHeader className="pb-2 border-b">
+              <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">KWA Usage — {p.personName}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 px-0">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                    <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                      <TableHead className="font-bold text-black dark:text-zinc-300 w-10 text-center">No#</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Company</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Sell By</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Used By</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Type</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Detail</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Remaining</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Used</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Reward</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Status</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Create Date</TableHead>
+                      <TableHead className="font-bold text-black dark:text-zinc-300">Pay Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {personKwaRecords.map((r: any, idx: number) => (
+                      <TableRow key={r.id} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                        <TableCell className="text-center font-bold text-slate-700 py-3 dark:text-zinc-400">{idx + 1}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.company || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.employee || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.usedBy || "-"}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.kwa ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.type || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.detail || "-"}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${Number(r.remaining ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">${(Number(r.kwa ?? 0) - Number(r.remaining ?? 0)).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{Number(r.reward ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-600 py-3 dark:text-zinc-300">{r.status || "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "-"}</TableCell>
+                        <TableCell className="text-slate-600 py-3 dark:text-zinc-300">{r.payDate ? new Date(r.payDate).toLocaleDateString() : "-"}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="bg-[#e6f7f2] dark:bg-zinc-900 hover:bg-[#e6f7f2] dark:hover:bg-zinc-900">
+                      <TableCell colSpan={7} className="font-bold text-black dark:text-zinc-300">Total</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.remaining.toLocaleString()}</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">${kwaTotals.used.toLocaleString()}</TableCell>
+                      <TableCell className="text-center font-bold text-black dark:text-zinc-300">{kwaTotals.reward.toLocaleString()}</TableCell>
+                      <TableCell colSpan={3}></TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
 
 function VasReportTable({
+  details,
+  totals,
+  dateRange,
+  onDateChange,
+  selectedUser,
+  onUserChange,
+  onRefresh,
+}: {
+  details: any[];
+  totals?: { totalAdvance: number };
+  dateRange: { from: string; to: string };
+  onDateChange: (field: "from" | "to", value: string) => void;
+  selectedUser: string;
+  onUserChange: (value: string) => void;
+  onRefresh?: () => void;
+}) {
+  const { toast } = useToast();
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", { assigned: true }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const data = await res.json();
+      return data.users || [];
+    },
+  });
+  const { data: currentUser } = useQuery({
+    queryKey: ["/api/auth/me"],
+    queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
+  });
+
+  const [isMonthWise, setIsMonthWise] = useState(false);
+
+  // Same impersonation-aware "acting role" resolution the page already uses
+  // (ReportTab's scope effect) to decide who may pick a different user.
+  const activeRole = sessionStorage.getItem("userRole") ?? (currentUser as any)?.roleId;
+  const canSelectUser = isManagerialRole(activeRole) || isCompanyWideRole(activeRole);
+
+  // Same role-grouping convention already used for the user picker in
+  // LoanReportTable's "Add Loan" form (groupedUsers), reused here for consistency.
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    (allUsers || []).forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [allUsers]);
+
+  // The backend already scopes `details` to the selected user/date range
+  // (GET /api/reports/vas) — nothing further to filter client-side.
+  const filtered = details || [];
+
+  // "Month Wise" groups the already-fetched records by calendar month of
+  // report_date and shows a per-month subtotal, instead of a flat list.
+  // vas_reports has no target/commission concept to compute month-by-month
+  // (unlike the legacy PHP report), so this is a display-only regrouping of
+  // the same real data — no figures are invented.
+  const monthGroups = useMemo(() => {
+    if (!isMonthWise) return null;
+    const groups = new Map<string, any[]>();
+    filtered.forEach((item) => {
+      const d = item.date ? new Date(item.date) : null;
+      const key = d && !isNaN(d.getTime())
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`
+        : "unknown";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(item);
+    });
+    return Array.from(groups.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, items]) => {
+        const label = key === "unknown"
+          ? "Unknown Date"
+          : new Date(`${key}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        const totalTasks = items.reduce((sum, it) => sum + (it.totalTasks ?? 0), 0);
+        const valueSold = items.reduce((sum, it) => sum + (it.valueSold ?? 0), 0);
+        const followUpsDone = items.reduce((sum, it) => sum + (it.followUpsDone ?? 0), 0);
+        const missedLeads = items.reduce((sum, it) => sum + (it.missedLeads ?? 0), 0);
+        const avgSuccessRate = items.length
+          ? items.reduce((sum, it) => sum + (it.successRate ?? 0), 0) / items.length
+          : null;
+        return { key, label, items, totalTasks, valueSold, followUpsDone, missedLeads, avgSuccessRate };
+      });
+  }, [filtered, isMonthWise]);
+
+  // Confirmed business rule (user-confirmed tier thresholds/rewards, matching
+  // the existing legacy VAS commission report): applied once to the grand
+  // total Amount across every row currently shown, not per-row — there is no
+  // per-transaction commission concept, only a total-based tier lookup.
+  const vasCommission = useMemo(() => {
+    const totalAmount = filtered.reduce((sum, item) => sum + (item.valueSold ?? 0), 0);
+    let per = 0;
+    let reward = 0;
+    if (totalAmount >= 150000) {
+      per = 15; reward = 8000;
+    } else if (totalAmount >= 100000) {
+      per = 15; reward = 5000;
+    } else if (totalAmount >= 50000) {
+      per = 15; reward = 2500;
+    } else if (totalAmount >= 1000) {
+      per = 10; reward = 0;
+    }
+    const comm = (per / 100) * totalAmount;
+    const finalComm = reward + comm;
+    return { totalAmount, per, reward, comm, finalComm };
+  }, [filtered]);
+
+  const sourceLabels: Record<string, string> = {
+    vas_reports: "VAS Report",
+    product_posting_invoice: "Invoice (Product Posting)",
+    invoice: "Invoice",
+  };
+
+  const vasExportColumns: ExportColumn[] = [
+    { key: "source", header: "Source", format: (v) => sourceLabels[v] || "VAS Report" },
+    { key: "company", header: "Company", format: (v) => v ?? "" },
+    { key: "valueSold", header: "Amount", format: (v) => Number(v ?? 0) },
+    { key: "method", header: "Method", format: (v) => v ?? "" },
+    { key: "status", header: "Status" },
+    { key: "date", header: "Date", format: (v) => (v ? new Date(v).toLocaleDateString() : "") },
+  ];
+
+  const handleCopy = async () => {
+    if (!filtered.length) return;
+    const header = vasExportColumns.map((c) => c.header).join("\t");
+    const rows = filtered.map((item) =>
+      vasExportColumns.map((c) => c.format ? c.format((item as any)[c.key as string], item) : (item as any)[c.key as string] ?? "").join("\t")
+    );
+    try {
+      await navigator.clipboard.writeText([header, ...rows].join("\n"));
+      toast({ title: "Copied to clipboard" });
+    } catch {
+      toast({ title: "Failed to copy", variant: "destructive" });
+    }
+  };
+
+  const renderRow = (item: any, idx: number) => (
+    <TableRow key={item.id || idx} className="border-b border-slate-100 hover:bg-slate-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
+      <TableCell className="text-center font-bold text-slate-700 py-4 dark:text-zinc-400">{idx + 1}</TableCell>
+      <TableCell className="text-center text-slate-500 py-4 dark:text-zinc-400">
+        <span className="inline-block rounded-full bg-slate-100 dark:bg-zinc-800 px-2 py-0.5 text-xs font-medium">
+          {sourceLabels[item.source] || "VAS Report"}
+        </span>
+      </TableCell>
+      {/* vas_reports rows have no company/method (that table doesn't store either) —
+          "-" is honest here, not a loading state; invoice rows show their real values. */}
+      <TableCell className="text-center font-bold text-slate-700 py-4 dark:text-zinc-400">{item.company || item.title || "-"}</TableCell>
+      <TableCell className="text-center font-medium text-slate-700 py-4 dark:text-zinc-400">{Number(item.valueSold ?? 0).toLocaleString()}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{item.method || "-"}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">{item.status || "-"}</TableCell>
+      <TableCell className="text-center text-slate-600 py-4 dark:text-zinc-300">
+        {item.date ? new Date(item.date).toLocaleDateString() : "-"}
+      </TableCell>
+    </TableRow>
+  );
+
+  return (
+    <div className="space-y-6">
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">VAS SYSTEM</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+            <div className="md:col-span-4 space-y-2">
+              <div className="flex items-center gap-2 mb-2">
+                <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="month-wise"
+                    checked={isMonthWise}
+                    onCheckedChange={(c) => setIsMonthWise(!!c)}
+                  />
+                  <label
+                    htmlFor="month-wise"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-slate-600 dark:text-zinc-300"
+                  >
+                    Month Wise
+                  </label>
+                </div>
+              </div>
+              {canSelectUser ? (
+                <Select value={selectedUser} onValueChange={onUserChange}>
+                  <SelectTrigger className="bg-white border-slate-200 h-11 dark:bg-zinc-900 dark:border-zinc-800" data-testid="select-vas-user">
+                    <SelectValue placeholder="Choose..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {groupedUsers.map(({ role, users }) => (
+                      <SelectGroup key={role}>
+                        <SelectLabel>{role}</SelectLabel>
+                        {users.filter(u => u.fullName || u.username).map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.fullName || u.username}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  readOnly
+                  value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
+                  className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
+                />
+              )}
+            </div>
+
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Start Date</Label>
+              <div className="relative">
+                <Input
+                  type="date"
+                  value={dateRange.from}
+                  onChange={(e) => onDateChange("from", e.target.value)}
+                  className="bg-white border-slate-200 h-11 pr-10 dark:bg-zinc-900 dark:border-zinc-800"
+                />
+                <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="md:col-span-3 space-y-2">
+              <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">End Date</Label>
+              <div className="relative">
+                <Input
+                  type="date"
+                  value={dateRange.to}
+                  onChange={(e) => onDateChange("to", e.target.value)}
+                  className="bg-white border-slate-200 h-11 pr-10 dark:bg-zinc-900 dark:border-zinc-800"
+                />
+                <CalendarIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="md:col-span-2">
+              <Button
+                onClick={() => onRefresh && onRefresh()}
+                className="w-full bg-[#008d4c] hover:bg-[#00733e] text-white h-11 font-bold text-lg rounded-md"
+              >
+                View
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border border-border shadow-sm">
+        <CardHeader className="pb-2 border-b">
+          <CardTitle className="text-lg font-bold text-slate-700 dark:text-zinc-400">VAS View</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 px-0">
+          <div className="px-4 mb-4 flex bg-[#64748b] dark:bg-zinc-800 rounded-sm overflow-hidden w-fit">
+            <button onClick={handleCopy} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Copy</button>
+            <button onClick={() => exportToExcel(filtered, vasExportColumns, "VAS_Report")} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Excel</button>
+            <button onClick={() => exportToCSV(filtered, vasExportColumns, "VAS_Report")} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">CSV</button>
+            <button onClick={() => exportToPDF(filtered, vasExportColumns, "VAS_Report", { title: "VAS Report" })} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors">PDF</button>
+          </div>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-[#e6f7f2] dark:bg-zinc-900">
+                <TableRow className="border-b-0 hover:bg-[#e6f7f2] dark:hover:bg-zinc-800">
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">#</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Source</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Company</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Amount</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Method</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Status</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center h-12">Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No Records Found
+                    </TableCell>
+                  </TableRow>
+                ) : isMonthWise && monthGroups ? (
+                  monthGroups.map((group) => (
+                    <Fragment key={group.key}>
+                      <TableRow className="bg-slate-50 dark:bg-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-800/60">
+                        <TableCell colSpan={7} className="font-bold text-slate-700 dark:text-zinc-300 py-2">
+                          {group.label} ({group.items.length})
+                        </TableCell>
+                      </TableRow>
+                      {group.items.map((item: any, idx: number) => renderRow(item, idx))}
+                      <TableRow className="border-b border-slate-200 dark:border-zinc-700">
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2"><b>Subtotal</b></TableCell>
+                        <TableCell className="text-center font-semibold text-slate-700 dark:text-zinc-300 py-2">{group.valueSold.toLocaleString()}</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                        <TableCell className="text-center text-slate-500 dark:text-zinc-400 py-2">—</TableCell>
+                      </TableRow>
+                    </Fragment>
+                  ))
+                ) : (
+                  filtered.map((item, idx) => renderRow(item, idx))
+                )}
+              </TableBody>
+              {filtered.length > 0 && (
+                <TableFooter>
+                  <TableRow className="bg-slate-50 dark:bg-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-800/60 border-t-2 border-slate-300 dark:border-zinc-700">
+                    <TableCell className="text-center text-slate-500 dark:text-zinc-400">—</TableCell>
+                    <TableCell className="text-center text-slate-500 dark:text-zinc-400">—</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">Total</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">{vasCommission.totalAmount.toLocaleString()}</TableCell>
+                    <TableCell className="text-center text-slate-600 dark:text-zinc-300">
+                      {vasCommission.totalAmount.toLocaleString()}-{vasCommission.per}% = {vasCommission.comm.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-center text-slate-600 dark:text-zinc-300">{vasCommission.reward.toLocaleString()}</TableCell>
+                    <TableCell className="text-center font-bold text-slate-700 dark:text-zinc-300">
+                      {vasCommission.finalComm.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                </TableFooter>
+              )}
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// "User Reports" sidebar group's VAS Report (plain /reports/vas) — kept
+// exactly as it was before the vas_reports fix, a separate, pre-existing
+// report the business still relies on as-is. Only the "Reports" sidebar
+// group's VAS Report (/reports/vas?scope=company, VasReportTable above) was
+// migrated to vas_reports. Do not merge these back together without an
+// explicit decision to retire one of them.
+function LegacyVasReportTable({
   details,
   totals,
   dateRange,
@@ -749,12 +1574,12 @@ function VasReportTable({
                 <Label className="text-sm font-semibold text-slate-700 dark:text-zinc-400">Select User</Label>
                 <div className="flex items-center space-x-2">
                   <Checkbox
-                    id="month-wise"
+                    id="month-wise-legacy"
                     checked={isMonthWise}
                     onCheckedChange={(c) => setIsMonthWise(!!c)}
                   />
                   <label
-                    htmlFor="month-wise"
+                    htmlFor="month-wise-legacy"
                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 text-slate-600 dark:text-zinc-300"
                   >
                     Month Wise
@@ -763,7 +1588,7 @@ function VasReportTable({
               </div>
               <Input
                 readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
+                value={(currentUser as any)?.fullName || (currentUser as any)?.name || (currentUser as any)?.username || "Loading..."}
                 className="bg-[#f0f4f8] border-none h-11 text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0 dark:bg-zinc-900"
               />
             </div>
@@ -1602,13 +2427,15 @@ function ReportTab({
   dateRange,
   loanActiveSubTab,
   setLoanActiveSubTab,
-  onDateChange
+  onDateChange,
+  scope,
 }: {
   type: ReportType;
   dateRange: { from: string; to: string };
   loanActiveSubTab: "list" | "add" | "history";
   setLoanActiveSubTab: (tab: "list" | "add" | "history") => void;
   onDateChange: (field: "from" | "to", value: string) => void;
+  scope?: string | null;
 }) {
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState<string | null>(null);
@@ -1620,24 +2447,54 @@ function ReportTab({
 
   const [selectedUser, setSelectedUser] = useState<string>("all");
 
+  // Switching between the "User Reports" and "Reports" sidebar links doesn't
+  // remount this component (same route, only ?scope differs), so re-arm the
+  // smart-default effect below whenever scope changes — otherwise whatever
+  // selectedUser got resolved for the FIRST link visited would stick forever.
   useEffect(() => {
-    if (currentUser && selectedUser === "all") {
+    setSelectedUser("all");
+  }, [scope]);
+
+  // Default scope:
+  //  - "Reports" group link (?scope=company) + HOD/Account/Admin -> stays "all" (whole company).
+  //  - "User Reports" group link (no scope) + a manager with a team -> "team" (their direct reports).
+  //  - Everyone else (plain executives, or HOD/Account/Admin on their personal link) -> their own record.
+  useEffect(() => {
+    if (!currentUser || selectedUser !== "all") return;
+    // The currently-ACTING role (impersonation-aware) lives in sessionStorage,
+    // same as every other role-gated view in this app — currentUser.roleId
+    // from /api/auth/me reflects the underlying authenticated identity, not
+    // the active "acting as" role, so it's the wrong source for this check.
+    const role = sessionStorage.getItem("userRole") ?? currentUser.roleId;
+    if (scope === "company" && isCompanyWideRole(role)) return;
+    if (isManagerialRole(role) && !isCompanyWideRole(role)) {
+      setSelectedUser("team");
+    } else {
       setSelectedUser(currentUser.userId || currentUser.id);
     }
-  }, [currentUser, selectedUser]);
+  }, [currentUser, selectedUser, scope]);
 
-  const { data: report, isLoading, isError, refetch } = useQuery<ReportData>({
-    queryKey: ["/api/reports", type, dateRange.from, dateRange.to, selectedUser],
+  const { data: report, isLoading, isFetching, isError, refetch } = useQuery<ReportData>({
+    queryKey: ["/api/reports", type, dateRange.from, dateRange.to, selectedUser, scope],
     queryFn: async () => {
       const params = new URLSearchParams({
         from: dateRange.from,
         to: dateRange.to,
         userId: selectedUser
       });
+      if (scope) params.set("scope", scope);
       const response = await apiRequest("GET", `/api/reports/${type}?${params}`);
       return response.json();
     },
     retry: 1,
+    // Changing a filter (user/date) changes the queryKey, which React Query
+    // otherwise treats as a brand-new, uncached query — isLoading goes true
+    // and the whole page below is replaced with a small spinner box, then
+    // swaps back once data arrives. That collapse/expand on every filter
+    // change is what reads as "the page scrolling". Keeping the previous
+    // page's data on screen during the refetch (isFetching still reflects
+    // the in-flight request for a subtle loading cue) avoids the layout jump.
+    placeholderData: keepPreviousData,
   });
 
   const handleExport = async (format: string) => {
@@ -1649,6 +2506,7 @@ function ReportTab({
         format,
         userId: selectedUser,
       });
+      if (scope) params.set("scope", scope);
       await downloadAuthedFile(
         `/api/reports/${type}/export?${params}`,
         `${type}_report.${format}`,
@@ -1707,7 +2565,7 @@ function ReportTab({
   }
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 transition-opacity ${isFetching ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">{reportTypeLabels[type].title}</h3>
@@ -1725,7 +2583,7 @@ function ReportTab({
               </Button>
             </Link>
           )}
-          {type === "vas" && (
+          {type === "vas" && scope !== "company" && (
             <Link href="/reports/vas/new">
               <Button
                 size="sm"
@@ -1790,14 +2648,26 @@ function ReportTab({
       )}
 
       {type === "vas" && (
-        <VasReportTable
-          details={report.details ?? []}
-          totals={report.totals}
-          dateRange={dateRange}
-          onDateChange={onDateChange}
-          selectedUser={selectedUser}
-          onUserChange={setSelectedUser}
-        />
+        scope === "company" ? (
+          <VasReportTable
+            details={report.details ?? []}
+            totals={report.totals}
+            dateRange={dateRange}
+            onDateChange={onDateChange}
+            selectedUser={selectedUser}
+            onUserChange={setSelectedUser}
+            onRefresh={refetch}
+          />
+        ) : (
+          <LegacyVasReportTable
+            details={report.details ?? []}
+            totals={report.totals}
+            dateRange={dateRange}
+            onDateChange={onDateChange}
+            selectedUser={selectedUser}
+            onUserChange={setSelectedUser}
+          />
+        )
       )}
 
       {type === "gm" && (
@@ -1816,10 +2686,12 @@ function ReportTab({
         <BvReportTable
           details={report.details ?? []}
           totals={report.totals}
+          personAchievement={(report as any).personAchievement}
           dateRange={dateRange}
           onDateChange={onDateChange}
           selectedUser={selectedUser}
           onUserChange={setSelectedUser}
+          scope={scope}
         />
       )}
 
@@ -1830,7 +2702,7 @@ function ReportTab({
   );
 }
 
-import { isManagerialRole } from "@/lib/role-utils";
+import { isManagerialRole, isCompanyWideRole } from "@/lib/role-utils";
 
 export default function UserReports() {
   useModuleData("/reports");
@@ -1839,6 +2711,16 @@ export default function UserReports() {
     queryFn: () => apiRequest("GET", "/api/auth/me").then(r => r.json()),
   });
   const [location, setLocation] = useLocation();
+  // Both sidebar groups ("User Reports" and "Reports") link to this same
+  // /reports/:type route — "Reports" group's Loan Report additionally tags
+  // ?scope=company so HOD/Account/Admin get the whole-company view there,
+  // while the "User Reports" one (no scope param) stays personal/team-scoped.
+  // useSearch() (not a plain window.location.search read) is required here —
+  // wouter's route matching ignores the query string, so switching between
+  // these two sidebar links doesn't remount this component; without a
+  // reactive hook the scope read would go stale after the first navigation.
+  const search = useSearch();
+  const scope = new URLSearchParams(search).get("scope");
   const [match, params] = useRoute<{ type?: string }>("/reports/:type") || [false, null];
   const routeType = match && params?.type && isReportType(params.type) ? (params.type as ReportType) : null;
   const [activeTab, setActiveTab] = useState<ReportType>(routeType ?? "loan");
@@ -1886,12 +2768,20 @@ export default function UserReports() {
 
   const headerContent = routeType ? reportTypeLabels[routeType] : defaultReportHeader;
 
+  const activeRole = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : null) ?? currentUser?.roleId;
+
   return (
     <div className="flex-1 overflow-auto p-6 space-y-6" data-testid="page-user-reports">
       <div className="flex items-center justify-end">
-        {currentUser && isManagerialRole(currentUser.roleId) && (
+        {scope === "company" && isCompanyWideRole(activeRole) && (
           <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
             Global View
+          </Badge>
+        )}
+        {!(scope === "company" && isCompanyWideRole(activeRole)) &&
+          isManagerialRole(activeRole) && !isCompanyWideRole(activeRole) && (
+          <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200">
+            Team View
           </Badge>
         )}
       </div>
@@ -1903,6 +2793,7 @@ export default function UserReports() {
           loanActiveSubTab={loanActiveSubTab}
           setLoanActiveSubTab={setLoanActiveSubTab}
           onDateChange={handleDateChange}
+          scope={scope}
         />
       </div>
     </div>

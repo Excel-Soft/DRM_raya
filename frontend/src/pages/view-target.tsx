@@ -14,8 +14,21 @@ export default function ViewTarget() {
   const [selectedUser, setSelectedUser] = useState<string>("");
   const [showAllQuarters, setShowAllQuarters] = useState(false);
 
+  // Base key is a separate array element (not baked into one query-string'd
+  // URL) specifically so invalidateQueries({queryKey: ["/api/target-system/user-targets"]})
+  // elsewhere (set-target.tsx's mutations) actually matches this query via
+  // React Query's prefix matching — it didn't before, so saves on the Set
+  // page never refreshed this page's cache even though they'd persisted
+  // correctly (confirmed live: data was in the database, this page's cached
+  // empty result just never got invalidated).
   const { data: allTargets = [], isLoading } = useQuery<any[]>({
-    queryKey: [showAllQuarters ? "/api/target-system/user-targets" : "/api/target-system/user-targets?current=true"],
+    queryKey: ["/api/target-system/user-targets", { current: !showAllQuarters }],
+    queryFn: async () => {
+      const qs = showAllQuarters ? "" : "?current=true";
+      const res = await apiRequest("GET", `/api/target-system/user-targets${qs}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
   });
 
   const { data: usersRes } = useQuery<any>({
@@ -50,6 +63,9 @@ export default function ViewTarget() {
   };
 
   const displayedTargets = allTargets.filter(t => t.userId === selectedUser);
+  const selectedUserLabel = usersList.find((u: any) => u.id === selectedUser)?.fullName
+    || usersList.find((u: any) => u.id === selectedUser)?.username
+    || selectedUser;
 
 
   return (
@@ -90,7 +106,7 @@ export default function ViewTarget() {
                   {role.replace(/_/g, ' ')}
                 </SelectLabel>
                 {usersInRole.map((user: any) => (
-                  <SelectItem key={user.id} value={user.fullName || user.username}>
+                  <SelectItem key={user.id} value={user.id}>
                     {user.fullName || user.username}
                   </SelectItem>
                 ))}
@@ -140,7 +156,9 @@ export default function ViewTarget() {
                         <TableCell className="text-center text-sm">{row.category}</TableCell>
                         <TableCell className="text-center text-sm">{row.target}</TableCell>
                         <TableCell className="text-center text-sm">{row.price}</TableCell>
-                        <TableCell className="text-center text-sm">{row.bonus}</TableCell>
+                        {/* func.php's own view handler (user_id_terget_view) shows the
+                            conversion value here, not the bonus-type label. */}
+                        <TableCell className="text-center text-sm">{row.conversion}</TableCell>
                         <TableCell className="text-center text-sm">{row.vas}</TableCell>
                         <TableCell className="text-center text-sm">{row.kwa}</TableCell>
                         <TableCell className="text-center text-sm">{row.reward}</TableCell>
@@ -159,7 +177,7 @@ export default function ViewTarget() {
                   ) : (
                     <TableRow>
                       <TableCell colSpan={13} className="text-center py-8 text-gray-500 dark:text-zinc-400">
-                        No targets assigned to {selectedUser}.
+                        No targets assigned to {selectedUserLabel}.
                       </TableCell>
                     </TableRow>
                   )}

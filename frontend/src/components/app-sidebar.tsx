@@ -87,7 +87,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "@/lib/feature-flags";
 import { useState, useEffect } from "react";
@@ -255,14 +255,14 @@ const menuItems: MenuItem[] = [
     items: [
       { title: "Raw Attendance", url: "/reports/raw-attendance", icon: FileText },
       { title: "Bv Pending RC Only", url: "/reports/bv-pending-rc", icon: FileText },
-      { title: "Loan Report", url: "/reports/loan", icon: FileText },
+      { title: "Loan Report", url: "/reports/loan?scope=company", icon: FileText },
       { title: "Salary Create", url: "/reports/salary-create", icon: FileText },
       { title: "Employee Bonuses", url: "/reports/salary-bonuses", icon: FileText },
       { title: "Salary Report", url: "/reports/salary", icon: FileText },
       { title: "Attendance Report", url: "/reports/attendance", icon: FileText },
-      { title: "Vas Report", url: "/reports/vas", icon: List, permKey: "Reports Vas Report" },
+      { title: "Vas Report", url: "/reports/vas?scope=company", icon: List, permKey: "Reports Vas Report" },
       { title: "Gm Report", url: "/analytics/gm", icon: Star },
-      { title: "Bv Report", url: "/reports/bv", icon: FileText },
+      { title: "Bv Report", url: "/reports/bv?scope=company", icon: FileText },
       { title: "Bv Pending EC/NC Only", url: "/reports/bv-pending-ecnc", icon: FileText },
       { title: "Diagnose Report", url: "/reports/diagnose", icon: FileText },
       { title: "Follow Up Report", url: "/reports/follow-up", icon: FileText },
@@ -469,7 +469,23 @@ function hasAccess(
 // ─── Component ────────────────────────────────────────────────────────────────
 export function AppSidebar() {
   const [location] = useLocation();
-  const { state } = useSidebar();
+  // Active-link highlighting below compares against the full href (path +
+  // query) so entries that differ only by query string — e.g. the two "Loan
+  // Report" links, one plain and one with ?scope=company — each highlight
+  // only when that exact one was navigated to, not whichever ignores it.
+  const search = useSearch();
+  const fullLocation = search ? `${location}?${search}` : location;
+  const { state, setOpen } = useSidebar();
+
+  // AB Report is wide (lots of side-by-side cards/tables) — collapse the
+  // sidebar to icon-only automatically while viewing it, like a user would
+  // do manually on Dollar System, and restore it on navigating away.
+  useEffect(() => {
+    if (location.startsWith("/account/ab-report")) {
+      setOpen(false);
+      return () => setOpen(true);
+    }
+  }, [location, setOpen]);
 
   const sidebarBg = "bg-sidebar";
   const sidebarText = "text-sidebar-foreground";
@@ -764,7 +780,7 @@ export function AppSidebar() {
   const renderSubItems = (items: MenuItem[], parentPermKey?: string) => {
     const visibleItems = getVisibleSubItems(items, parentPermKey);
     return visibleItems.map((subItem) => {
-      const isSubActive = location === subItem.url;
+      const isSubActive = fullLocation === subItem.url;
       if (subItem.items) {
         return (
           <Collapsible key={subItem.title} defaultOpen={subItem.items.some((n) => n.url === location)} className="group/nested-collapsible">
@@ -780,7 +796,7 @@ export function AppSidebar() {
                 <SidebarMenuSub>
                   {subItem.items.map((nested) => (
                     <SidebarMenuSubItem key={nested.title}>
-                      <SidebarMenuSubButton asChild className={`${sidebarText} ${hoverSub} ${location === nested.url ? activeClass : ""} pl-8`}>
+                      <SidebarMenuSubButton asChild className={`${sidebarText} ${hoverSub} ${fullLocation === nested.url ? activeClass : ""} pl-8`}>
                         <Link href={getDynamicUrl(nested.url)!} data-testid={`link-${nested.title.toLowerCase().replace(/\s+/g, "-")}`}>
                           <nested.icon className="w-4 h-4" />
                           <span>{nested.title}</span>
@@ -845,7 +861,7 @@ export function AppSidebar() {
                             <div className="bg-[#00a65a] py-2 flex flex-col">
                               {getVisibleSubItems(item.items, item.permKey).map((subItem) => (
                                 <Link key={subItem.title} href={getDynamicUrl(subItem.url)!}
-                                  className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${location === subItem.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
+                                  className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === subItem.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
                                   <subItem.icon className="w-4 h-4 opacity-90" />
                                   <span>{subItem.title}</span>
                                 </Link>
@@ -889,7 +905,7 @@ export function AppSidebar() {
                       <HoverCard openDelay={0} closeDelay={100}>
                         <HoverCardTrigger className="w-full block">
                           <div className="w-full">
-                            <SidebarMenuButton asChild className={`${sidebarText} ${hoverMain} ${location === item.url ? activeClass : ""}`}>
+                            <SidebarMenuButton asChild className={`${sidebarText} ${hoverMain} ${fullLocation === item.url ? activeClass : ""}`}>
                               <Link href={getDynamicUrl(item.url)!} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                                 <item.icon className="w-5 h-5" />
                                 <span>{item.title}</span>
@@ -904,7 +920,7 @@ export function AppSidebar() {
                           </div>
                           <div className="bg-[#00a65a] py-2 flex flex-col">
                             <Link href={getDynamicUrl(item.url)!}
-                              className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${location === item.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
+                              className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === item.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
                               <item.icon className="w-4 h-4 opacity-90" />
                               <span>{item.title}</span>
                             </Link>
@@ -917,7 +933,7 @@ export function AppSidebar() {
 
                 return (
                   <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild className={`${sidebarText} ${hoverMain} ${location === item.url ? activeClass : ""}`}>
+                    <SidebarMenuButton asChild className={`${sidebarText} ${hoverMain} ${fullLocation === item.url ? activeClass : ""}`}>
                       <Link href={getDynamicUrl(item.url)!} data-testid={`link-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                         <item.icon className="w-5 h-5" />
                         <span>{item.title}</span>

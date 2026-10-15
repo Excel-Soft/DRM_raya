@@ -589,17 +589,18 @@ export default function GmPoolAddGm() {
     }
 
     if (form.loanMode === "loan") {
-      // Loan GM is always a single row — collapse away any extra rows left
-      // over from switching from Partial GM (which allows Add Row).
+      // Loan GM's first row auto-tracks the full Order Dollar amount — any
+      // further rows (added via "Add Row" to split the loan into
+      // installments) are preserved as-is, same as installment mode's rest.
       setLoanRows((prev) => {
         const dollarVal = numericValues.finalOrderDollar;
         const pkrVal = dollarVal * numericValues.dollarRateNum;
         const row0 = prev[0] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
-        return [{
-          ...row0,
-          dollar: dollarVal.toString(),
-          pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : ""
-        }];
+        const rest = prev.slice(1);
+        return [
+          { ...row0, dollar: dollarVal.toString(), pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : "" },
+          ...rest,
+        ];
       });
     } else if (form.loanMode === "installment") {
       // Installment mode keeps rows 1 & 2 continuously synced to the Extra $
@@ -1384,11 +1385,14 @@ export default function GmPoolAddGm() {
                             const delta = newDollar - oldDollar;
                             copy[index] = { ...copy[index], dollar: val, pkrAmount: pkr };
 
-                            // For a manually-added 3rd+ row, whatever amount is typed
-                            // here must come out of the currently-largest other row,
-                            // so the total keeps matching Total Order Dollar instead of
-                            // the user having to adjust it themselves.
-                            if (index >= 2 && delta !== 0) {
+                            // For a manually-added row beyond the auto-synced ones
+                            // (row 2+ for Partial GM, row 1+ for Loan GM), whatever
+                            // amount is typed here must come out of the currently-
+                            // largest other row, so the total keeps matching Total
+                            // Order Dollar instead of the user having to adjust it
+                            // themselves.
+                            const reservedRows = form.loanMode === "installment" ? 2 : 1;
+                            if (index >= reservedRows && delta !== 0) {
                               let largestIdx = -1;
                               let largestVal = -Infinity;
                               copy.forEach((r, i) => {
@@ -1465,7 +1469,7 @@ export default function GmPoolAddGm() {
                           }}
                         />
                       </div>
-                      {form.loanMode === "installment" && loanRows.length > 1 && (
+                      {(form.loanMode === "installment" || form.loanMode === "loan") && loanRows.length > 1 && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1481,7 +1485,7 @@ export default function GmPoolAddGm() {
                   </div>
                 ))}
                 <div className="flex items-center justify-between pt-2">
-                  {form.loanMode === "installment" && (
+                  {(form.loanMode === "installment" || form.loanMode === "loan") && (
                     <Button
                       type="button"
                       size="sm"
