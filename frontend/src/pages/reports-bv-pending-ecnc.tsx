@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
@@ -18,30 +18,47 @@ export default function ReportsBvPendingEcnc() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showEntries, setShowEntries] = useState("10");
 
-  const [fetchParams, setFetchParams] = useState<{ 
-    userId: string; 
-    from: string; 
+  const [fetchParams, setFetchParams] = useState<{
+    userId: string;
+    from: string;
     to: string;
+    pendingBv: boolean;
   } | null>(null);
 
-  // Fetch users for the dropdown
+  // Fetch users for the dropdown — same role-grouping convention as the
+  // BV SYSTEM / VAS / GM / Target System Select User pickers elsewhere.
   const { data: users = [] } = useQuery<any[]>({
-    queryKey: ["/api/account/users-list"],
+    queryKey: ["/api/users", { assigned: true }],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/account/users-list");
-      return res.json();
+      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const body = await res.json().catch(() => null);
+      return body?.users || [];
     }
   });
 
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    users.forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [users]);
+
   const { data: reportData, isLoading } = useQuery<any>({
-    queryKey: ["/api/reports/bv", fetchParams],
+    queryKey: ["/api/reports/bv", "pending", fetchParams],
     queryFn: async () => {
       if (!fetchParams) return null;
       const params = new URLSearchParams();
+      params.set("scope", "pending");
+      if (fetchParams.pendingBv) params.set("pendingOnly", "true");
       if (fetchParams.from) params.set("from", fetchParams.from);
       if (fetchParams.to) params.set("to", fetchParams.to);
       if (fetchParams.userId && fetchParams.userId !== "all") params.set("userId", fetchParams.userId);
-      
+
       const res = await apiRequest("GET", `/api/reports/bv?${params}`);
       return res.json();
     },
@@ -52,8 +69,18 @@ export default function ReportsBvPendingEcnc() {
     setFetchParams({
       userId: selectedUser,
       from: startDate,
-      to: endDate
+      to: endDate,
+      pendingBv
     });
+  };
+
+  // Once a search is already showing, "Pending Bv" is a filter toggle, not a
+  // separate field needing another "View" click — flip it and re-fetch right
+  // away. Before the first View, it just arms the next search like the rest
+  // of the filters do.
+  const handlePendingBvChange = (checked: boolean) => {
+    setPendingBv(checked);
+    setFetchParams((prev) => (prev ? { ...prev, pendingBv: checked } : prev));
   };
 
   const details = reportData?.details || [];
@@ -63,7 +90,7 @@ export default function ReportsBvPendingEcnc() {
       return false;
     }
     // Filter by type if not "all"
-    if (selectedType && selectedType !== "all" && item.entryType?.toLowerCase() !== selectedType.toLowerCase()) {
+    if (selectedType && selectedType !== "all" && item.rcNew?.toLowerCase() !== selectedType.toLowerCase()) {
       return false;
     }
     return true;
@@ -86,10 +113,10 @@ export default function ReportsBvPendingEcnc() {
                 <div className="flex items-center gap-2 mb-1">
                   <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Select User</label>
                   <div className="flex items-center gap-1">
-                    <Checkbox 
-                      id="pendingBv" 
-                      checked={pendingBv} 
-                      onCheckedChange={(c) => setPendingBv(!!c)} 
+                    <Checkbox
+                      id="pendingBv"
+                      checked={pendingBv}
+                      onCheckedChange={(c) => handlePendingBvChange(!!c)}
                       className="h-3 w-3"
                     />
                     <label htmlFor="pendingBv" className="text-[10px] text-slate-500">Pending Bv</label>
@@ -100,9 +127,16 @@ export default function ReportsBvPendingEcnc() {
                     <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Users</SelectItem>
-                    {users.map(u => (
-                      <SelectItem key={u.id} value={u.id}>{u.full_name}</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
+                    {groupedUsers.map(({ role, users }) => (
+                      <SelectGroup key={role}>
+                        <SelectLabel>{role}</SelectLabel>
+                        {users.filter(u => u.fullName || u.username).map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.fullName || u.username}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
                     ))}
                   </SelectContent>
                 </Select>
@@ -115,10 +149,11 @@ export default function ReportsBvPendingEcnc() {
                     <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="new">New</SelectItem>
-                    <SelectItem value="renewal">Renewal</SelectItem>
-                    <SelectItem value="rc">Rc</SelectItem>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="New">New</SelectItem>
+                    <SelectItem value="Renew">Renew</SelectItem>
+                    <SelectItem value="Expire">Expire</SelectItem>
+                    <SelectItem value="Rc/Up">Rc/Up</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -201,7 +236,7 @@ export default function ReportsBvPendingEcnc() {
                   <th className="py-3 px-4 font-bold border-b">Company</th>
                   <th className="py-3 px-4 font-bold border-b">Package</th>
                   <th className="py-3 px-4 font-bold border-b">Method</th>
-                  <th className="py-3 px-4 font-bold border-b">BV</th>
+                  <th className="py-3 px-4 font-bold border-b">BV Submit</th>
                   <th className="py-3 px-4 font-bold border-b">Person</th>
                   <th className="py-3 px-4 font-bold border-b">Rc/New</th>
                   <th className="py-3 px-4 font-bold border-b">Date</th>
@@ -221,11 +256,13 @@ export default function ReportsBvPendingEcnc() {
                     <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/50 transition-colors">
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{index + 1}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400 font-medium">{item.companyName || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.packageType || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.package || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.method || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.bvAmount || item.amount || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
+                        {item.bvSubmit ? format(new Date(item.bvSubmit), 'yyyy-MM-dd') : "-"}
+                      </td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.personName || "-"}</td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.entryType || "-"}</td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">{item.rcNew || "-"}</td>
                       <td className="py-3 px-4 text-slate-600 dark:text-zinc-400">
                         {item.date ? format(new Date(item.date), 'yyyy-MM-dd HH:mm:ss') : "-"}
                       </td>

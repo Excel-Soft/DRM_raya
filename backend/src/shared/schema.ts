@@ -3739,6 +3739,25 @@ export const targetSystemKwaRecords = drmSchema.table("target_system_kwa_records
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Legacy's webxl_kwa_history — a real transaction log (one row per Sell/Use/
+// Refund event), distinct from target_system_kwa_records which only tracks
+// current balance. That table alone can't answer "what happened over time"
+// (a Use action there just overwrites `remaining` in place), so KWA History
+// needs its own append-only ledger, written alongside every create/use action.
+export const targetSystemKwaHistory = drmSchema.table("target_system_kwa_history", {
+  id: serial("id").primaryKey(),
+  kwaRecordId: integer("kwa_record_id").notNull(),
+  company: text("company").notNull(),
+  employee: text("employee").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  // The action performed — "Sell" (initial grant) or the Use/Refund action
+  // type — distinct from the parent record's own `type` (what the KWA is for).
+  actionType: text("action_type").notNull(),
+  detail: text("detail"),
+  payDate: timestamp("pay_date").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const SOFTWARE_PHASE_KEYS = [
   "PENDING_PROJECT",
   "DATA_VERIFY",
@@ -4069,4 +4088,30 @@ export const gmBvCommissionVerifications = drmSchema.table("gm_bv_commission_ver
   createdBy: varchar("created_by").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Legacy's webxl_followup_service — a customer follow-up / account-health
+// survey (ratings, upsell, RFQ, product mix, samples, orders, revenue,
+// satisfaction flags), a completely different concept from the ticket-based
+// drm.diagnosis_reports this replaces at the "Diagnose Report" page. Legacy
+// itself stores each field as a composed string (e.g. "Old-3/ New-4" for a
+// before/after rating) rather than clean structured data, so these stay free
+// text rather than inventing a normalized shape nobody asked for.
+export const diagnoseFollowups = drmSchema.table("diagnose_followups", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: uuid("company_id").references(() => customers.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  startRating: text("start_rating"),
+  upSalling: text("up_salling"),
+  rfq: text("rfq"),
+  products: text("products"),
+  followRate: text("follow_rate"),
+  sample: text("sample"),
+  orderInfo: text("order_info"),
+  revenue: text("revenue"),
+  happyAlibaba: text("happy_alibaba"),
+  happyWebxl: text("happy_webxl"),
+  report: text("report"),
+  createDate: timestamp("create_date").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });

@@ -1319,6 +1319,12 @@ async function getBvReportCompanyWide(
   userIds: string[] | null,
   fromDate: Date,
   toDate: Date,
+  // "confirmed" (default, main BV Report): entries with a real gm_bv_date.
+  // "submitted" (BV Pending page, default): any entry ever submitted for BV
+  // (gm_bv_submitted_at set), confirmed or not — the user's full BV worklist.
+  // "pending": submitted but still awaiting confirmation (the "Pending Bv"
+  // checkbox narrows "submitted" down to this).
+  options: { bvFilter?: "confirmed" | "pending" | "submitted" } = {},
 ): Promise<ReportData> {
   const conditions = [
     gte(gmEntries.createdAt, fromDate),
@@ -1345,9 +1351,15 @@ async function getBvReportCompanyWide(
     for (const r of extraRows.rows) extraById.set(r.id, r);
   }
 
-  // This view is specifically "whose BV date is added" — rows with no real
-  // gm_bv_date are excluded rather than shown with a blank BV column.
-  const entries = allEntries.filter((e) => extraById.get(e.id)?.gm_bv_date);
+  const bvFilter = options.bvFilter ?? "confirmed";
+  const entries = allEntries.filter((e) => {
+    const extra = extraById.get(e.id);
+    const hasBvDate = Boolean(extra?.gm_bv_date);
+    const hasSubmission = Boolean(extra?.gm_bv_submitted_at);
+    if (bvFilter === "confirmed") return hasBvDate;
+    if (bvFilter === "pending") return hasSubmission && !hasBvDate;
+    return hasSubmission;
+  });
 
   const salesPersonIds = Array.from(new Set(entries.map((e) => e.salesPersonId).filter(Boolean))) as string[];
   const targetsByUser = new Map<string, (typeof targetSystemUserTargets.$inferSelect)[]>();
@@ -1684,13 +1696,6 @@ function parseDayTargetParams(
   const toDate = new Date(e);
   toDate.setHours(23, 59, 59, 999);
 
-  let page = parseInt(String(req.query.page ?? "1"), 10);
-  let limit = parseInt(String(req.query.limit ?? "25"), 10);
-  if (!Number.isFinite(page) || page < 1) page = 1;
-  if (!Number.isFinite(limit) || limit < 1) limit = 25;
-  if (limit > 200) limit = 200;
-
-  const str = (v: any) => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
   return {
     value: {
       fromDate,
@@ -1699,11 +1704,6 @@ function parseDayTargetParams(
       endDateStr: String(endDate).slice(0, 10),
       userId: req.query.userId && req.query.userId !== "all" ? String(req.query.userId) : null,
       ourTeam: req.query.ourTeam === "true" || req.query.ourTeam === true,
-      department: str(req.query.department),
-      role: str(req.query.role),
-      targetType: str(req.query.targetType),
-      page,
-      limit,
     },
   };
 }
@@ -1779,15 +1779,10 @@ router.get(
         return res.status(400).json(errorEnvelope("VALIDATION_ERROR", parsed.error));
       }
       const filterUserIds = await resolveDayTargetScope(req);
-      // Export the full filtered result set (not just one page), honoring scope.
-      const report = await getDayTargetReport({
-        ...parsed.value,
-        filterUserIds,
-        page: 1,
-        limit: 1_000_000,
-      });
+      const report = await getDayTargetReport({ ...parsed.value, filterUserIds });
       const format = (typeof req.query.format === "string" ? req.query.format : "csv").toLowerCase();
       const suffix = `day_target_${report.filters.startDate}_${report.filters.endDate}_${exportTimestamp()}`;
+      const rowCount = report.tables.reduce((sum, t) => sum + t.rows.length, 0);
 
       if (format === "json") {
         res.setHeader("Content-Type", "application/json");
@@ -1797,7 +1792,7 @@ router.get(
           action: "day_target.export",
           resourceType: "report",
           resourceId: "day_target",
-          details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: report.rows.length }),
+          details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: rowCount }),
         });
         return res.send(JSON.stringify(report, null, 2));
       }
@@ -1814,7 +1809,7 @@ router.get(
         action: "day_target.export",
         resourceType: "report",
         resourceId: "day_target",
-        details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: report.rows.length }),
+        details: JSON.stringify({ format, from: report.filters.startDate, to: report.filters.endDate, count: rowCount }),
       });
       return res.send(csv);
     } catch (error) {
@@ -1847,6 +1842,16 @@ router.get("/reports/bv", requireReportPermission("bv_report", "view"), async (r
     // verification-workflow report "User Reports" -> BV Report keeps.
     if (req.query.scope === "company") {
       const report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate);
+      return res.json(report);
+    }
+
+    // "BV Pending EC/NC Only" report (?scope=pending) — same real gm_entries
+    // source. Default shows the selected user's full BV-submission worklist
+    // (confirmed or not); the page's "Pending Bv" checkbox sends
+    // pendingOnly=true to narrow it to entries still awaiting confirmation.
+    if (req.query.scope === "pending") {
+      const bvFilter = req.query.pendingOnly === "true" ? "pending" : "submitted";
+      const report = await getBvReportCompanyWide(filterUserIds, fromDate, toDate, { bvFilter });
       return res.json(report);
     }
 

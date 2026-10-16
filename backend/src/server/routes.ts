@@ -23,7 +23,12 @@ import { registerLeaveRoutes } from "./routes/leave-routes";
 import { registerOvertimeRoutes } from "./routes/overtime-routes";
 import { registerLoanRoutes } from "./routes/loan-routes";
 import { registerReportsRoutes } from "./routes/reports-routes";
-import { registerDiagnosisReportRoutes } from "./routes/diagnosis-report-routes";
+// diagnosis-report-routes.ts (ticket-based diagnosis_reports) is retired —
+// "Diagnose Report" now means legacy's webxl_followup_service customer
+// follow-up survey (diagnose-followup-routes.ts). The old file/table are left
+// in place, just unregistered, so no real data is destroyed.
+import { registerDiagnoseFollowupRoutes } from "./routes/diagnose-followup-routes";
+import { registerFollowUpReportRoutes } from "./routes/follow-up-report-routes";
 import { registerTodoRoutes } from "./routes/todo-routes";
 // Manager routes removed
 import { registerAccountRoutes } from "./routes/account-routes";
@@ -366,7 +371,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerStage3ReportsRoutes(app);
 
   console.log("registering DiagnosisReportRoutes");
-  registerDiagnosisReportRoutes(app);
+  registerDiagnoseFollowupRoutes(app);
+  registerFollowUpReportRoutes(app);
   
   // Custom Reports (Grade System) - Must be before registerReportsRoutes
   app.use("/api/reports/grade-system", gradeSystemRoutes);

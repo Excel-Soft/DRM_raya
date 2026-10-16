@@ -1,67 +1,118 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 
-const usersList = [
-  "Zohaib Nisar Ahmad",
-  "Faiza Khalid",
-  "Hina Arij",
-  "Waqas Ahmed",
-  "Amir Nafees",
-  "M. Arslan Janjua",
-  "19-10-2023" // from screenshot data
-];
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "-";
+  return d
+    .toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true })
+    .replace(/,/g, "");
+}
 
 export default function KwaHistory() {
   const { toast } = useToast();
-  
-  const { data: kwaData = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/target-system/kwa-records"],
+
+  // Same role-grouping convention as the other Select User pickers in this
+  // app — the KWA tables match people by free-text name, so the value sent
+  // is the person's name, not their id.
+  const { data: users = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", { assigned: true }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const body = await res.json().catch(() => null);
+      return body?.users || [];
+    },
   });
 
-  // Filter States
-  const [selectedUser, setSelectedUser] = useState("none");
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    users.forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [users]);
+
+  const [selectedUser, setSelectedUser] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [isFiltered, setIsFiltered] = useState(false);
+  const [queryParams, setQueryParams] = useState<{ employee: string; startDate: string; endDate: string } | null>(null);
 
-  // Derive displayed data
-  const displayedData = (() => {
-    if (!isFiltered) return kwaData;
-    
-    let filtered = [...kwaData];
-    if (selectedUser !== "none") {
-      filtered = filtered.filter(item => item.employee === selectedUser);
-    }
-    // Simulate date filtering if needed in frontend
-    return filtered;
-  })();
+  const { data: historyData = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/target-system/kwa-history", queryParams],
+    queryFn: async () => {
+      if (!queryParams) return [];
+      const params = new URLSearchParams();
+      params.set("employee", queryParams.employee);
+      params.set("startDate", queryParams.startDate);
+      params.set("endDate", queryParams.endDate);
+      const res = await apiRequest("GET", `/api/target-system/kwa-history?${params}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!queryParams,
+  });
 
   const handleView = () => {
-    setIsFiltered(true);
-    if (displayedData.length === 0) {
-      toast({ title: "No records found for these filters", variant: "destructive" });
+    if (!selectedUser || !startDate || !endDate) {
+      toast({ title: "Select a user and both dates first.", variant: "destructive" });
+      return;
     }
+    setQueryParams({ employee: selectedUser, startDate, endDate });
   };
 
-  const handleViewAllData = () => {
-    setSelectedUser("none");
-    setStartDate("");
-    setEndDate("");
-    setIsFiltered(false);
-    toast({ title: "Filters reset. Showing all data." });
-  };
+  // "View All Data" modal — legacy's unfiltered richer view (webxl_kwa_history
+  // joined with the company/person/kwa record), with the same client-side
+  // search + date-range filtering kwahistory.php's own JS applies.
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalSearch, setModalSearch] = useState("");
+  const [modalFrom, setModalFrom] = useState("");
+  const [modalTo, setModalTo] = useState("");
+
+  const { data: allHistory = [], isLoading: isModalLoading } = useQuery<any[]>({
+    queryKey: ["/api/target-system/kwa-history", "all"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/target-system/kwa-history");
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: isModalOpen,
+  });
+
+  const filteredModalData = useMemo(() => {
+    return allHistory.filter((row) => {
+      if (modalSearch) {
+        const q = modalSearch.toLowerCase();
+        const matches = [row.company, row.employee, row.kwaType, row.actionType, row.detail].some((v) =>
+          (v || "").toString().toLowerCase().includes(q),
+        );
+        if (!matches) return false;
+      }
+      if (modalFrom || modalTo) {
+        const rowDate = row.payDate ? new Date(row.payDate) : null;
+        if (!rowDate) return false;
+        if (modalFrom && rowDate < new Date(modalFrom)) return false;
+        if (modalTo && rowDate > new Date(`${modalTo}T23:59:59`)) return false;
+      }
+      return true;
+    });
+  }, [allHistory, modalSearch, modalFrom, modalTo]);
 
   return (
     <div className="p-6">
-      <div className="mb-6 font-bold text-lg uppercase text-gray-700 dark:text-zinc-400">
-        KWA HISTORY
-      </div>
+      <div className="mb-6 font-bold text-lg uppercase text-gray-700 dark:text-zinc-400">KWA HISTORY</div>
 
       <Card className="mb-6 border rounded-sm shadow-sm bg-white dark:bg-zinc-900">
         <CardContent className="p-6">
@@ -73,85 +124,48 @@ export default function KwaHistory() {
                   <SelectValue placeholder="Choose ..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Choose ...</SelectItem>
-                  {usersList.map(u => (
-                    <SelectItem key={u} value={u}>{u}</SelectItem>
+                  {groupedUsers.map(({ role, users }) => (
+                    <SelectGroup key={role}>
+                      <SelectLabel>{role}</SelectLabel>
+                      {users.filter((u) => u.fullName || u.username).map((u) => (
+                        <SelectItem key={u.id} value={u.fullName || u.username}>
+                          {u.fullName || u.username}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div>
               <label className="block text-sm mb-2 text-gray-700 font-medium dark:text-zinc-400">Start Date</label>
-              <div className="relative">
-                <Input 
-                  type="date" 
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="h-10 border-gray-300 dark:border-zinc-800" 
-                />
-              </div>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-10 border-gray-300 dark:border-zinc-800" />
             </div>
 
             <div>
               <label className="block text-sm mb-2 text-gray-700 font-medium dark:text-zinc-400">End Date</label>
-              <div className="relative">
-                <Input 
-                  type="date" 
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="h-10 border-gray-300 dark:border-zinc-800" 
-                />
-              </div>
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-10 border-gray-300 dark:border-zinc-800" />
             </div>
 
-            <div>
-              <Button 
-                className="bg-[#00a65a] hover:bg-[#008d4c] px-8 h-10 w-full md:w-auto"
-                onClick={handleView}
-              >
+            <div className="flex gap-2">
+              <Button className="bg-[#00a65a] hover:bg-[#008d4c] px-8 h-10" onClick={handleView}>
                 View
               </Button>
+              <Button
+                variant="secondary"
+                className="bg-[#78829d] hover:bg-[#5e667b] text-white h-10"
+                onClick={() => setIsModalOpen(true)}
+              >
+                View All Data
+              </Button>
             </div>
-          </div>
-
-          <div className="mt-4">
-            <Button 
-              variant="secondary" 
-              className="bg-[#78829d] hover:bg-[#5e667b] text-white"
-              onClick={handleViewAllData}
-            >
-              View All Data
-            </Button>
           </div>
         </CardContent>
       </Card>
 
       <Card className="border rounded-sm shadow-sm">
         <CardContent className="p-0">
-          <div className="p-4 border-b flex justify-between items-center bg-white dark:bg-zinc-900">
-            <div className="flex flex-col space-y-2">
-              <span className="text-sm text-gray-600 dark:text-zinc-300">Show</span>
-              <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
-                <Select defaultValue="10">
-                  <SelectTrigger className="w-[70px] h-8 border-gray-300 dark:border-zinc-800">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="25">25</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                  </SelectContent>
-                </Select>
-                <span>entries</span>
-              </div>
-            </div>
-            <div className="flex flex-col space-y-2 text-right">
-              <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-              <Input className="h-8 w-48 border-gray-300 dark:border-zinc-800" />
-            </div>
-          </div>
-          
           <div className="overflow-x-auto">
             <Table>
               <TableHeader className="bg-[#f3f4f6] dark:bg-zinc-900">
@@ -160,52 +174,126 @@ export default function KwaHistory() {
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Company</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Person</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Pay</TableHead>
-                  <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Used</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Remaining</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Detail</TableHead>
                   <TableHead className="font-bold text-gray-700 dark:text-zinc-400">Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
+                {!queryParams ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-6 text-gray-500 dark:text-zinc-400">Loading live data...</TableCell>
+                    <TableCell colSpan={7} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      Select a user and date range, then click View.
+                    </TableCell>
+                  </TableRow>
+                ) : isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      Loading live data...
+                    </TableCell>
+                  </TableRow>
+                ) : historyData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      No records found matching your filters.
+                    </TableCell>
                   </TableRow>
                 ) : (
-                  <>
-                    {displayedData.map((row) => (
-                      <TableRow key={row.id}>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.id}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.company}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.employee}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.kwa}$</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{(Number(row.kwa) - Number(row.remaining)).toFixed(2)}$</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.remaining}$</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.detail}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{new Date(row.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }).replace(/,/g, '')}</TableCell>
-                      </TableRow>
-                    ))}
-                    {displayedData.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center py-6 text-gray-500 dark:text-zinc-400">No records found matching your filters.</TableCell>
-                      </TableRow>
-                    )}
-                  </>
+                  historyData.map((row, index) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{index + 1}</TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.company}</TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.employee}</TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.amount}$</TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">
+                        {row.remaining != null ? `${row.remaining}$` : "-"}
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.detail || "-"}</TableCell>
+                      <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{formatDateTime(row.payDate)}</TableCell>
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
           </div>
-          
+
           <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 bg-white dark:bg-zinc-900 dark:text-zinc-300">
-            <div>Showing 1 to {displayedData.length} of {displayedData.length} entries</div>
-            <div className="flex space-x-1">
-              <Button variant="outline" className="h-8 px-3 text-gray-500 border-gray-300 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800">Previous</Button>
-              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-              <Button variant="outline" className="h-8 px-3 border-gray-300 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400 dark:border-zinc-800">Next</Button>
-            </div>
+            <div>Showing 1 to {historyData.length} of {historyData.length} entries</div>
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>All Records</DialogTitle>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
+            <div className="md:col-span-2">
+              <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Search</label>
+              <Input value={modalSearch} onChange={(e) => setModalSearch(e.target.value)} placeholder="Search in all columns..." />
+            </div>
+            <div>
+              <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">From</label>
+              <Input type="date" value={modalFrom} onChange={(e) => setModalFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">To</label>
+              <Input type="date" value={modalTo} onChange={(e) => setModalTo(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="overflow-x-auto max-h-[60vh]">
+            <Table>
+              <TableHeader className="bg-[#f3f4f6] dark:bg-zinc-900">
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Person</TableHead>
+                  <TableHead>KWA Type</TableHead>
+                  <TableHead>KWA Remaining</TableHead>
+                  <TableHead>Pay Date</TableHead>
+                  <TableHead>Details</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Action Type</TableHead>
+                  <TableHead>Create At</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isModalLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      Loading data...
+                    </TableCell>
+                  </TableRow>
+                ) : filteredModalData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={10} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                      No matching records found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredModalData.map((row, index) => (
+                    <TableRow key={row.id}>
+                      <TableCell>{index + 1}</TableCell>
+                      <TableCell>{row.company}</TableCell>
+                      <TableCell>{row.employee}</TableCell>
+                      <TableCell>{row.kwaType || "-"}</TableCell>
+                      <TableCell>{row.remaining != null ? `${row.remaining}$` : "-"}</TableCell>
+                      <TableCell>{formatDateTime(row.payDate)}</TableCell>
+                      <TableCell>{row.detail || "-"}</TableCell>
+                      <TableCell>{row.amount}$</TableCell>
+                      <TableCell>{row.actionType}</TableCell>
+                      <TableCell>{formatDateTime(row.createdAt)}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

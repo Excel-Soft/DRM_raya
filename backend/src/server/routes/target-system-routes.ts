@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { db } from "../db";
-import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemUserTargets, users } from "../../shared/schema";
-import { eq, desc, and, or, inArray, lte, gte, isNull } from "drizzle-orm";
+import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemKwaHistory, targetSystemUserTargets, users } from "../../shared/schema";
+import { eq, desc, and, or, inArray, lte, gte, isNull, ilike } from "drizzle-orm";
 import { requireRole } from "../middleware/auth.middleware";
 
 const router = Router();
@@ -325,6 +325,18 @@ router.post("/kwa-records", async (req, res) => {
       })
       .returning();
 
+    // Legacy also writes a webxl_kwa_history row the moment a KWA is sold —
+    // the grant itself is transaction #1 in that KWA's history.
+    await db.insert(targetSystemKwaHistory).values({
+      kwaRecordId: newRecord.id,
+      company,
+      employee,
+      amount: String(kwa),
+      actionType: "Sell",
+      detail: detail || "",
+      payDate: payDate ? new Date(payDate) : new Date(),
+    });
+
     res.status(201).json(newRecord);
   } catch (error) {
     if (error instanceof z.ZodError) return sendValidationError(res, error);
@@ -368,11 +380,69 @@ router.patch("/kwa-records/:id/use", async (req, res) => {
       .where(eq(targetSystemKwaRecords.id, parseInt(id)))
       .returning();
 
+    // Record this specific transaction in the ledger — the balance-only update
+    // above can't answer "what happened over time" once overwritten.
+    await db.insert(targetSystemKwaHistory).values({
+      kwaRecordId: existing.id,
+      company: existing.company,
+      employee: usedBy || existing.employee,
+      amount: String(amount),
+      actionType: action,
+      detail: detail || "",
+    });
+
     res.json(updated);
   } catch (error) {
     if (error instanceof z.ZodError) return sendValidationError(res, error);
     console.error("Error using KWA record:", error);
     res.status(500).json({ error: "Failed to use KWA record" });
+  }
+});
+
+// GET /kwa-history — the KWA History page's data source: the transaction
+// ledger, joined with each record's CURRENT balance (legacy's own equivalent
+// query reused one arbitrary row's balance for every result row — a real bug,
+// fixed here by joining the correct record per transaction).
+// ?employee=<name>&startDate=&endDate= filters to one person's history in a
+// date range (the page's main filtered table); called with no params it
+// returns everything (the page's "View All Data" modal).
+router.get("/kwa-history", async (req, res) => {
+  try {
+    const { employee, startDate, endDate } = req.query as Record<string, string | undefined>;
+    const conditions = [];
+    if (employee && employee.trim()) {
+      conditions.push(ilike(targetSystemKwaHistory.employee, employee.trim()));
+    }
+    if (startDate) conditions.push(gte(targetSystemKwaHistory.payDate, new Date(startDate)));
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      conditions.push(lte(targetSystemKwaHistory.payDate, end));
+    }
+
+    const rows = await db
+      .select({
+        id: targetSystemKwaHistory.id,
+        kwaRecordId: targetSystemKwaHistory.kwaRecordId,
+        company: targetSystemKwaHistory.company,
+        employee: targetSystemKwaHistory.employee,
+        amount: targetSystemKwaHistory.amount,
+        actionType: targetSystemKwaHistory.actionType,
+        detail: targetSystemKwaHistory.detail,
+        payDate: targetSystemKwaHistory.payDate,
+        createdAt: targetSystemKwaHistory.createdAt,
+        remaining: targetSystemKwaRecords.remaining,
+        kwaType: targetSystemKwaRecords.type,
+      })
+      .from(targetSystemKwaHistory)
+      .leftJoin(targetSystemKwaRecords, eq(targetSystemKwaHistory.kwaRecordId, targetSystemKwaRecords.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(targetSystemKwaHistory.payDate));
+
+    res.json(rows);
+  } catch (error) {
+    console.error("Error fetching KWA history:", error);
+    res.status(500).json({ error: "Failed to fetch KWA history" });
   }
 });
 
