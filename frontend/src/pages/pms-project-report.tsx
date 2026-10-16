@@ -27,6 +27,7 @@ interface ProjectReportRow {
   hodDate: string | null;
   depDate: string | null;
   p15: number;
+  p15Penalty: boolean;
   assignDate: string | null;
   finish: string | null;
   remaining: number;
@@ -288,7 +289,13 @@ export default function PmsProjectReport() {
                     <TableCell className={tdClass}>{fmtDate(row.dataDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.hodDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.depDate)}</TableCell>
-                    <TableCell className={tdClass}>{row.p15 ?? 0}</TableCell>
+                    <TableCell className={tdClass}>
+                      {row.p15Penalty ? (
+                        <span className="text-red-600 font-semibold">{row.p15 ?? 0}-p</span>
+                      ) : (
+                        row.p15 ?? 0
+                      )}
+                    </TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.assignDate)}</TableCell>
                     <TableCell className={tdClass}>{fmtDate(row.finish)}</TableCell>
                     <TableCell className={tdClass}>{row.remaining ?? 0}</TableCell>

@@ -957,6 +957,75 @@ async function ensureTargetSystemConversionColumn(client: {
   );
 }
 
+/**
+ * target_system_kwa_history — legacy's webxl_kwa_history equivalent. A real
+ * append-only transaction ledger (one row per Sell/Use/Refund), separate from
+ * target_system_kwa_records (current balance only) — needed because the KWA
+ * History page shows what happened over time, which the balance-only table
+ * cannot answer once a Use action has overwritten `remaining` in place.
+ */
+async function ensureTargetSystemKwaHistorySchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.target_system_kwa_history (
+       id serial PRIMARY KEY,
+       kwa_record_id integer NOT NULL,
+       company text NOT NULL,
+       employee text NOT NULL,
+       amount numeric(12,2) NOT NULL,
+       action_type text NOT NULL,
+       detail text,
+       pay_date timestamp NOT NULL DEFAULT now(),
+       created_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_target_system_kwa_history_record ON drm.target_system_kwa_history (kwa_record_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_target_system_kwa_history_employee ON drm.target_system_kwa_history (employee)`,
+  );
+}
+
+/**
+ * diagnose_followups — legacy's webxl_followup_service equivalent, backing the
+ * real "Diagnose Report" page (a customer follow-up/account-health survey).
+ * Replaces the unrelated ticket-based drm.diagnosis_reports at that same page
+ * — that table and its routes are left in place but unregistered, not
+ * dropped, so no real data is destroyed.
+ */
+async function ensureDiagnoseFollowupsSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.diagnose_followups (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       company_id uuid REFERENCES drm.customers(id),
+       user_id uuid NOT NULL REFERENCES drm.users(id),
+       start_rating text,
+       up_salling text,
+       rfq text,
+       products text,
+       follow_rate text,
+       sample text,
+       order_info text,
+       revenue text,
+       happy_alibaba text,
+       happy_webxl text,
+       report text,
+       create_date timestamp NOT NULL DEFAULT now(),
+       created_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_diagnose_followups_user ON drm.diagnose_followups (user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_diagnose_followups_date ON drm.diagnose_followups (create_date)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -999,6 +1068,8 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureProductPostingSelfReviewSchema(client);
         await ensureGmBvCommissionVerificationSchema(client);
         await ensureTargetSystemConversionColumn(client);
+        await ensureTargetSystemKwaHistorySchema(client);
+        await ensureDiagnoseFollowupsSchema(client);
         return;
       } catch (err) {
         lastErr = err;

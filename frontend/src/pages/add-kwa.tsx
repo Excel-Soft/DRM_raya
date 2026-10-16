@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { PlusCircle } from "lucide-react";
+import { PlusCircle, Search } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -20,14 +20,55 @@ export default function AddKwa() {
     queryKey: ["/api/target-system/kwa-records"],
   });
 
+  // Real customers for the Company Name autocomplete — same
+  // /api/account/customers-list endpoint and search-dropdown convention used
+  // by the Temp GM form.
+  const { data: customers = [] } = useQuery<any[]>({
+    queryKey: ["/api/account/customers-list"],
+  });
+
+  // Real users for the Person dropdown — same role-grouping convention used
+  // elsewhere (KWA History, Target System, BV Report Select User pickers).
+  const { data: users = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", { assigned: true }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?assigned=true");
+      const body = await res.json().catch(() => null);
+      return body?.users || [];
+    },
+  });
+
+  const groupedUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    users.forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, users]) => ({ role, users }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [users]);
+
   // Form State
   const [company, setCompany] = useState("");
+  const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const [kwaValue, setKwaValue] = useState("");
   const [type, setType] = useState("none");
   const [person, setPerson] = useState("none");
   const [detail, setDetail] = useState("");
-  const [reward, setReward] = useState("");
-  const [payDate, setPayDate] = useState("");
+
+  const filteredCustomers = useMemo(() => {
+    if (!company.trim()) return customers.slice(0, 20);
+    const q = company.toLowerCase();
+    return customers
+      .filter((c) =>
+        c.company_name?.toLowerCase().includes(q) ||
+        c.drm_id?.toLowerCase().includes(q) ||
+        c.person_name?.toLowerCase().includes(q),
+      )
+      .slice(0, 30);
+  }, [company, customers]);
 
   // Use Kwa Modal State
   const [isUseModalOpen, setIsUseModalOpen] = useState(false);
@@ -105,8 +146,6 @@ export default function AddKwa() {
       setType("none");
       setPerson("none");
       setDetail("");
-      setReward("");
-      setPayDate("");
       setIsFormOpen(false);
     },
     onError: (error: any) => {
@@ -126,8 +165,6 @@ export default function AddKwa() {
       kwa: kwaValue,
       detail,
       type,
-      reward: reward || undefined,
-      payDate: payDate || undefined,
     });
   };
 
@@ -147,23 +184,40 @@ export default function AddKwa() {
         <Card className="mb-6 border rounded-sm shadow-sm">
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-              <div>
+              <div className="relative">
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Company Name</label>
-                <Select value={company} onValueChange={setCompany}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Search Company Through Id/Name" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <div className="p-2">
-                      <Input placeholder="" className="h-8" />
-                    </div>
-                    <SelectItem value="WARPRO INDUSTRY">WARPRO INDUSTRY</SelectItem>
-                    <SelectItem value="Dyna international">Dyna international</SelectItem>
-                    <SelectItem value="IMRAN USMAN ENTERPRISES">IMRAN USMAN ENTERPRISES</SelectItem>
-                    <SelectItem value="AL NOLAN ENTERPRISES">AL NOLAN ENTERPRISES</SelectItem>
-                    <SelectItem value="APTO ENTERPRISES">APTO ENTERPRISES</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="relative">
+                  <Input
+                    value={company}
+                    onChange={(e) => {
+                      setCompany(e.target.value);
+                      setShowCompanyDropdown(true);
+                    }}
+                    onFocus={() => setShowCompanyDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCompanyDropdown(false), 200)}
+                    placeholder="Search Company Through Id/Name"
+                    className="h-9 pr-7"
+                  />
+                  <Search className="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+                </div>
+                {showCompanyDropdown && filteredCustomers.length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 bg-white border border-gray-200 rounded shadow-lg max-h-48 overflow-y-auto dark:bg-zinc-900 dark:border-zinc-800">
+                    {filteredCustomers.map((c) => (
+                      <div
+                        key={c.id}
+                        onMouseDown={() => {
+                          setCompany(c.company_name);
+                          setShowCompanyDropdown(false);
+                        }}
+                        className="px-2 py-1.5 text-sm cursor-pointer hover:bg-green-50 border-b border-gray-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
+                      >
+                        <span className="font-medium text-gray-800 dark:text-zinc-100">{c.company_name}</span>
+                        {c.drm_id && <span className="text-gray-400 ml-1">({c.drm_id})</span>}
+                        {c.person_name && <span className="text-gray-500 ml-1 dark:text-zinc-400">• {c.person_name}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               
               <div>
@@ -186,7 +240,11 @@ export default function AddKwa() {
                   <SelectContent>
                     <SelectItem value="none">Choose ...</SelectItem>
                     <SelectItem value="Kwa">Kwa</SelectItem>
+                    <SelectItem value="Cat">Cat</SelectItem>
+                    <SelectItem value="Ai">Ai</SelectItem>
                     <SelectItem value="Psa">Psa</SelectItem>
+                    <SelectItem value="SA">SA</SelectItem>
+                    <SelectItem value="Resubmission of BV">Resubmission of BV</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -199,36 +257,18 @@ export default function AddKwa() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Choose...</SelectItem>
-                    <SelectItem value="Zohaib Nisar Ahmad">Zohaib Nisar Ahmad</SelectItem>
-                    <SelectItem value="Faiza Khalid">Faiza Khalid</SelectItem>
-                    <SelectItem value="Hina Arij">Hina Arij</SelectItem>
-                    <SelectItem value="Waqas Ahmed">Waqas Ahmed</SelectItem>
-                    <SelectItem value="Amir Nafees">Amir Nafees</SelectItem>
-                    <SelectItem value="M. Arslan Janjua">M. Arslan Janjua</SelectItem>
+                    {groupedUsers.map(({ role, users }) => (
+                      <SelectGroup key={role}>
+                        <SelectLabel>{role}</SelectLabel>
+                        {users.filter((u) => u.fullName || u.username).map((u) => (
+                          <SelectItem key={u.id} value={u.fullName || u.username}>
+                            {u.fullName || u.username}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Reward:</label>
-                <Input
-                  placeholder="Reward"
-                  type="number"
-                  value={reward}
-                  onChange={(e) => setReward(e.target.value)}
-                  className="h-9"
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Pay Date:</label>
-                <Input
-                  type="date"
-                  value={payDate}
-                  onChange={(e) => setPayDate(e.target.value)}
-                  className="h-9"
-                />
               </div>
             </div>
 
