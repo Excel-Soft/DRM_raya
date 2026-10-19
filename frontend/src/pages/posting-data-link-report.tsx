@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon, AlertTriangle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
@@ -27,12 +28,26 @@ interface LinkRow {
   date: string | null;
   sourceModule: string;
   sourceRecordId: string;
+  verifyStatus: string;
+  verifyNote: string | null;
+}
+
+interface ReportSummary {
+  total: number;
+  totalLinks: number;
+  totalDuplicates: number;
+  actualLinks: number;
+  reward: number;
+  commissionVerified: boolean;
+  commissionPending: boolean;
+  verificationId: string | null;
 }
 
 interface ReportResponse {
   rows: LinkRow[];
-  summary: { total: number; reward: number; commissionVerified: boolean };
+  summary: ReportSummary;
   canVerify: boolean;
+  isSelf: boolean;
 }
 
 interface FetchParams {
@@ -46,9 +61,11 @@ export default function PostingDataLinkReport() {
   const queryClient = useQueryClient();
 
   const [selectedUser, setSelectedUser] = useState<string>("");
+  const [userSearch, setUserSearch] = useState("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [fetchParams, setFetchParams] = useState<FetchParams | null>(null);
+  const [popupDismissedFor, setPopupDismissedFor] = useState<string | null>(null);
 
   const { data: usersData } = useQuery<{ users: ReportUser[] }>({
     queryKey: [`${BASE}/users`],
@@ -59,6 +76,14 @@ export default function PostingDataLinkReport() {
     },
   });
   const users = usersData?.users ?? [];
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(
+      (u) => u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q),
+    );
+  }, [users, userSearch]);
 
   const { data: reportData, isLoading } = useQuery<ReportResponse>({
     queryKey: [BASE, fetchParams],
@@ -84,7 +109,6 @@ export default function PostingDataLinkReport() {
         userId: fetchParams.userId,
         startDate: fetchParams.startDate,
         endDate: fetchParams.endDate,
-        linkReportIds: (reportData?.rows ?? []).map((r) => r.id),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -101,6 +125,42 @@ export default function PostingDataLinkReport() {
     },
   });
 
+  const confirmMutation = useMutation({
+    mutationFn: async (verificationId: string) => {
+      const res = await apiRequest("POST", `${BASE}/${verificationId}/confirm`, {});
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Failed to confirm commission");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Commission confirmed" });
+      queryClient.invalidateQueries({ queryKey: [BASE, fetchParams] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Confirmation failed", description: err?.message, variant: "destructive" });
+    },
+  });
+
+  const verifyLinkMutation = useMutation({
+    mutationFn: async (vars: { linkId: string; status: "Verified" | "Rejected" }) => {
+      const res = await apiRequest("PATCH", `${BASE}/${vars.linkId}/verify`, { status: vars.status });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Failed to update link status");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.status === "Verified" ? "Link verified" : "Link rejected" });
+      queryClient.invalidateQueries({ queryKey: [BASE, fetchParams] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err?.message, variant: "destructive" });
+    },
+  });
+
   const handleView = () => {
     if (!selectedUser || !startDate || !endDate) {
       toast({ title: "Please select a user and date range", variant: "destructive" });
@@ -113,6 +173,10 @@ export default function PostingDataLinkReport() {
   const summary = reportData?.summary;
   const canVerify = reportData?.canVerify ?? false;
   const commissionVerified = summary?.commissionVerified ?? false;
+  const isSelf = reportData?.isSelf ?? false;
+  const verificationId = summary?.verificationId ?? null;
+  const showConfirmPrompt = isSelf && !!summary?.commissionPending && !!verificationId;
+  const popupOpen = showConfirmPrompt && popupDismissedFor !== verificationId;
 
   const fmtDate = (d: string | null) => (d ? format(new Date(d), "dd-MM-yyyy") : "-");
 
@@ -147,16 +211,35 @@ export default function PostingDataLinkReport() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-end">
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Select User</label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
+              <Select
+                value={selectedUser}
+                onValueChange={(v) => {
+                  setSelectedUser(v);
+                  setUserSearch("");
+                }}
+              >
                 <SelectTrigger className="bg-white dark:bg-zinc-800" data-testid="select-user">
                   <SelectValue placeholder="Choose..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>
-                      {u.name}
-                    </SelectItem>
-                  ))}
+                  <div className="p-2" onKeyDown={(e) => e.stopPropagation()}>
+                    <Input
+                      placeholder="Search user..."
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      className="h-8"
+                      data-testid="input-user-search"
+                    />
+                  </div>
+                  {filteredUsers.length === 0 ? (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">No users found</div>
+                  ) : (
+                    filteredUsers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -213,6 +296,23 @@ export default function PostingDataLinkReport() {
           )}
         </div>
         <CardContent className="p-0">
+          {fetchParams && !isLoading && showConfirmPrompt && (
+            <div className="m-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-300">
+              <span>
+                Your commission for this period has been calculated ({summary?.actualLinks} links, reward{" "}
+                {summary?.reward}). Please confirm it.
+              </span>
+              <Button
+                size="sm"
+                onClick={() => verificationId && confirmMutation.mutate(verificationId)}
+                disabled={confirmMutation.isPending}
+                className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
+                data-testid="button-confirm-commission-banner"
+              >
+                Confirm My Commission
+              </Button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-[#d1f2e2] dark:bg-emerald-900/30 text-slate-700 dark:text-zinc-300">
@@ -223,18 +323,19 @@ export default function PostingDataLinkReport() {
                   <th className="py-4 px-4 font-bold border-b">Links</th>
                   <th className="py-4 px-4 font-bold border-b">Date</th>
                   <th className="py-4 px-4 font-bold border-b">Duplicate</th>
+                  <th className="py-4 px-4 font-bold border-b">Verify</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-500">
+                    <td colSpan={7} className="py-8 text-center text-slate-500">
                       Loading data...
                     </td>
                   </tr>
                 ) : rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-500">
+                    <td colSpan={7} className="py-8 text-center text-slate-500">
                       No entries found
                     </td>
                   </tr>
@@ -272,6 +373,35 @@ export default function PostingDataLinkReport() {
                           <Badge variant="outline">Unique</Badge>
                         )}
                       </td>
+                      <td className="py-4 px-4">
+                        {item.verifyStatus === "Verified" ? (
+                          <Badge className="bg-emerald-600 hover:bg-emerald-600">Already Verified</Badge>
+                        ) : item.verifyStatus === "Rejected" ? (
+                          <Badge variant="destructive">Rejected</Badge>
+                        ) : canVerify ? (
+                          <div className="flex gap-1.5">
+                            <Button
+                              size="sm"
+                              className="h-7 px-2.5 text-xs bg-[#00a65a] hover:bg-[#008d4c] text-white"
+                              disabled={verifyLinkMutation.isPending}
+                              onClick={() => verifyLinkMutation.mutate({ linkId: item.id, status: "Verified" })}
+                            >
+                              Verify
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="h-7 px-2.5 text-xs"
+                              disabled={verifyLinkMutation.isPending}
+                              onClick={() => verifyLinkMutation.mutate({ linkId: item.id, status: "Rejected" })}
+                            >
+                              Reject
+                            </Button>
+                          </div>
+                        ) : (
+                          <Badge variant="outline">Pending</Badge>
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -286,7 +416,13 @@ export default function PostingDataLinkReport() {
             >
               <div className="flex flex-wrap items-center gap-6 text-sm text-slate-700 dark:text-zinc-300">
                 <span className="font-semibold">
-                  Total: <span data-testid="summary-total">{summary?.total ?? rows.length}</span>
+                  Total: <span data-testid="summary-total">{summary?.totalLinks ?? rows.length}</span>
+                </span>
+                <span className="font-semibold">
+                  Total Duplicate Links: <span data-testid="summary-duplicates">{summary?.totalDuplicates ?? 0}</span>
+                </span>
+                <span className="font-semibold">
+                  Actual Links: <span data-testid="summary-actual">{summary?.actualLinks ?? rows.length}</span>
                 </span>
                 <span className="font-semibold">
                   Reward: <span data-testid="summary-reward">{summary?.reward ?? 0}</span>
@@ -306,6 +442,36 @@ export default function PostingDataLinkReport() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={popupOpen}
+        onOpenChange={(open) => {
+          if (!open) setPopupDismissedFor(verificationId);
+        }}
+      >
+        <DialogContent data-testid="dialog-confirm-commission">
+          <DialogHeader>
+            <DialogTitle>Confirm Your Commission</DialogTitle>
+            <DialogDescription>
+              Your Product Posting link commission for {fetchParams?.startDate} to {fetchParams?.endDate} has been
+              calculated: {summary?.actualLinks} links, reward {summary?.reward}. Please confirm it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPopupDismissedFor(verificationId)}>
+              Later
+            </Button>
+            <Button
+              onClick={() => verificationId && confirmMutation.mutate(verificationId)}
+              disabled={confirmMutation.isPending}
+              className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
+              data-testid="button-confirm-commission-popup"
+            >
+              Confirm My Commission
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MapPin } from "lucide-react";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequestJson, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const EVENT_STATUSES = ["Draft", "Completed", "Cancelled"] as const;
@@ -54,7 +55,6 @@ const EMPTY_EVENT_FORM = {
   attendeeCount: "",
   eventDate: "",
   mapUrl: "",
-  location: "",
   amount: "",
   venue: "",
   status: "Draft",
@@ -67,6 +67,15 @@ const EMPTY_SPEAKER_FORM = {
   startTime: "",
   endTime: "",
   detail: "",
+};
+
+const ATTENDANCE_STATUSES = ["Present", "Absent"] as const;
+
+const EMPTY_ATTENDEE_FORM = {
+  eventId: "",
+  customerId: "",
+  attendanceStatus: "Present" as (typeof ATTENDANCE_STATUSES)[number],
+  resultedInSale: false,
 };
 
 function isHttpUrl(value: string): boolean {
@@ -82,13 +91,16 @@ function fmtDate(v: string | null): string {
 
 export default function EventsAdd() {
   const { toast } = useToast();
-  const [showEventForm, setShowEventForm] = useState(true);
-  const [showSpeakerForm, setShowSpeakerForm] = useState(true);
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [showSpeakerForm, setShowSpeakerForm] = useState(false);
+  const [showAttendeeForm, setShowAttendeeForm] = useState(false);
 
   const [eventForm, setEventForm] = useState({ ...EMPTY_EVENT_FORM });
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
   const [speakerForm, setSpeakerForm] = useState({ ...EMPTY_SPEAKER_FORM });
+  const [attendeeForm, setAttendeeForm] = useState({ ...EMPTY_ATTENDEE_FORM });
+  const [customerSearch, setCustomerSearch] = useState("");
 
   const eventsQuery = useQuery<EventsListResult>({
     queryKey: ["/api/events", { pageSize: 100 }],
@@ -111,7 +123,6 @@ export default function EventsAdd() {
         attendeeCount: eventForm.attendeeCount === "" ? 0 : Number(eventForm.attendeeCount),
         eventDate: eventForm.eventDate,
         mapUrl: eventForm.mapUrl.trim() || null,
-        location: eventForm.location.trim() || null,
         amount: eventForm.amount === "" ? 0 : Number(eventForm.amount),
         venue: eventForm.venue || null,
         status: eventForm.status,
@@ -167,6 +178,35 @@ export default function EventsAdd() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const trimmedCustomerSearch = customerSearch.trim();
+  const { data: customerOptions = [] } = useQuery({
+    queryKey: ["/api/customers", "event-attendee", trimmedCustomerSearch],
+    enabled: trimmedCustomerSearch.length >= 2,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/customers?search=${encodeURIComponent(trimmedCustomerSearch)}&page=1&pageSize=15`);
+      const data = await res.json();
+      return (data?.customers as { id: string; companyName: string }[]) ?? [];
+    },
+  });
+
+  const addAttendeeMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        customerId: attendeeForm.customerId,
+        attendanceStatus: attendeeForm.attendanceStatus,
+        resultedInSale: attendeeForm.resultedInSale,
+      };
+      return apiRequestJson("POST", `/api/events/${attendeeForm.eventId}/attendees`, body);
+    },
+    onSuccess: () => {
+      toast({ title: "Attendee added" });
+      setAttendeeForm({ ...EMPTY_ATTENDEE_FORM });
+      setCustomerSearch("");
+      invalidateEvents();
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   function validateEvent(): string | null {
     if (!eventForm.name.trim()) return "Event name is required";
     if (!eventForm.eventDate) return "Date is required";
@@ -204,7 +244,6 @@ export default function EventsAdd() {
       attendeeCount: ev.attendeeCount != null ? String(ev.attendeeCount) : "",
       eventDate: ev.eventDate ? String(ev.eventDate).slice(0, 10) : "",
       mapUrl: ev.mapUrl ?? "",
-      location: ev.location ?? "",
       amount: ev.amount != null ? String(ev.amount) : "",
       venue: ev.venue ?? "",
       status: ev.status ?? "Draft",
@@ -224,6 +263,12 @@ export default function EventsAdd() {
     addSpeakerMutation.mutate();
   }
 
+  function handleAddAttendee() {
+    if (!attendeeForm.eventId) return toast({ title: "Please select an event", variant: "destructive" });
+    if (!attendeeForm.customerId) return toast({ title: "Please select a company", variant: "destructive" });
+    addAttendeeMutation.mutate();
+  }
+
   return (
     <div className="min-h-screen bg-[#f4f6f9] p-4 font-sans dark:bg-zinc-950">
       <div className="mb-6 flex items-center text-sm font-bold tracking-wide uppercase">
@@ -236,11 +281,18 @@ export default function EventsAdd() {
           ADD EVENT
         </button>
         <span className="mx-2">/</span>
-        <button 
+        <button
           onClick={() => setShowSpeakerForm(!showSpeakerForm)}
           className={`transition-colors uppercase font-bold text-sm hover:underline ${showSpeakerForm ? 'text-[#00a65a]' : 'text-gray-500 dark:text-slate-400'}`}
         >
           ADD SPEAKER
+        </button>
+        <span className="mx-2">/</span>
+        <button
+          onClick={() => setShowAttendeeForm(!showAttendeeForm)}
+          className={`transition-colors uppercase font-bold text-sm hover:underline ${showAttendeeForm ? 'text-[#00a65a]' : 'text-gray-500 dark:text-slate-400'}`}
+        >
+          ADD ATTENDEE
         </button>
       </div>
 
@@ -287,10 +339,6 @@ export default function EventsAdd() {
               <div>
                 <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Date</label>
                 <Input type="date" value={eventForm.eventDate} onChange={e => setEventForm(f => ({ ...f, eventDate: e.target.value }))} className="text-sm h-9" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Location</label>
-                <Input value={eventForm.location} onChange={e => setEventForm(f => ({ ...f, location: e.target.value }))} placeholder="Address or coordinates (lat, long)" className="text-sm h-9" />
               </div>
               <div>
                 <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Map</label>
@@ -383,6 +431,90 @@ export default function EventsAdd() {
         </Card>
         )}
 
+        {/* Add Attendee Form */}
+        {showAttendeeForm && (
+        <Card className="shadow-sm border-t border-t-gray-200">
+          <CardContent className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Event</label>
+                <Select value={attendeeForm.eventId} onValueChange={v => setAttendeeForm(f => ({ ...f, eventId: v }))}>
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Select Event" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {events.map(ev => (
+                      <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Company</label>
+                <Select
+                  value={attendeeForm.customerId}
+                  onValueChange={v => setAttendeeForm(f => ({ ...f, customerId: v }))}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue placeholder="Search & select company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <div className="p-2" onKeyDown={(e) => e.stopPropagation()}>
+                      <Input
+                        placeholder="Type at least 2 characters..."
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    {customerOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                        {trimmedCustomerSearch.length >= 2 ? "No companies found" : "Type to search..."}
+                      </div>
+                    ) : (
+                      customerOptions.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.companyName}</SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Present/Absent</label>
+                <Select
+                  value={attendeeForm.attendanceStatus}
+                  onValueChange={v => setAttendeeForm(f => ({ ...f, attendanceStatus: v as typeof f.attendanceStatus }))}
+                >
+                  <SelectTrigger className="h-9 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ATTENDANCE_STATUSES.map(s => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 mb-6">
+              <Checkbox
+                id="resultedInSale"
+                checked={attendeeForm.resultedInSale}
+                onCheckedChange={(checked) => setAttendeeForm(f => ({ ...f, resultedInSale: checked === true }))}
+              />
+              <label htmlFor="resultedInSale" className="text-xs text-gray-600 font-semibold dark:text-zinc-300 cursor-pointer">
+                Resulted in a sale
+              </label>
+            </div>
+
+            <Button onClick={handleAddAttendee} disabled={addAttendeeMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 text-sm font-semibold rounded">
+              Submit
+            </Button>
+          </CardContent>
+        </Card>
+        )}
+
         {/* Data Table */}
         <Card className="shadow-sm border-t border-t-gray-200 bg-white dark:bg-zinc-900">
           <CardContent className="p-0 overflow-x-auto">
@@ -397,7 +529,6 @@ export default function EventsAdd() {
                   <th className="px-4 py-4 whitespace-nowrap">Attending</th>
                   <th className="px-4 py-4 whitespace-nowrap w-[350px]">Speaker</th>
                   <th className="px-4 py-4 whitespace-nowrap">Venue</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Location</th>
                   <th className="px-4 py-4 whitespace-nowrap">Status</th>
                   <th className="px-4 py-4 whitespace-nowrap">Map</th>
                   <th className="px-4 py-4 whitespace-nowrap">Event Date</th>
@@ -473,7 +604,6 @@ export default function EventsAdd() {
                       )}
                     </td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.venue}</td>
-                    <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.location || "-"}</td>
                     <td className="px-4 py-4 text-gray-600 align-top dark:text-zinc-300">{ev.status}</td>
                     <td className="px-4 py-4 text-[#00a65a] align-top dark:text-zinc-400">
                       {ev.mapUrl ? (

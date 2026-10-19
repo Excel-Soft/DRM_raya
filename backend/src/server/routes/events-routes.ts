@@ -160,6 +160,11 @@ export async function ensureEventsTables(): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_menu_items_event_id ON drm.event_menu_items (event_id)`);
+  // Legacy's webxl_event_menu — this is a budget/expense line item (Item +
+  // Amount + Detail against an event), not the task-assignment concept the
+  // rest of this table's columns model. Added additively; the real
+  // eventReport.php "Cost" total is the SUM of these, not events.amount.
+  await pool.query(`ALTER TABLE drm.event_menu_items ADD COLUMN IF NOT EXISTS amount numeric(12,2) NOT NULL DEFAULT 0`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS drm.event_duties (
@@ -178,6 +183,26 @@ export async function ensureEventsTables(): Promise<void> {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_duties_event_id ON drm.event_duties (event_id)`);
+
+  // Legacy's webxl_event_history — which companies attended a given event, and
+  // whether that attendance resulted in a sale. Had no modern equivalent at
+  // all (confirmed: nothing like this existed anywhere in the schema) until
+  // this table — built fresh to back the real eventreport.php "Select Event"
+  // attendance report.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS drm.event_attendees (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_id uuid NOT NULL REFERENCES drm.events(id) ON DELETE CASCADE,
+      customer_id uuid REFERENCES drm.customers(id) ON DELETE SET NULL,
+      attendance_status text NOT NULL DEFAULT 'Absent',
+      resulted_in_sale boolean NOT NULL DEFAULT false,
+      created_by uuid REFERENCES drm.users(id) ON DELETE SET NULL,
+      created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now(),
+      UNIQUE (event_id, customer_id)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_attendees_event_id ON drm.event_attendees (event_id)`);
 }
 
 // Idempotent one-time table-setup guard. ensureEventsTables() uses CREATE TABLE IF
@@ -230,11 +255,36 @@ function mapSpeaker(r: any) {
   };
 }
 
+const ATTENDANCE_STATUSES = ["Present", "Absent"] as const;
+type AttendanceStatus = (typeof ATTENDANCE_STATUSES)[number];
+
+function normalizeAttendanceStatus(value: unknown): AttendanceStatus | null {
+  if (value === undefined || value === null || value === "") return null;
+  const s = String(value).trim();
+  const match = ATTENDANCE_STATUSES.find((st) => st.toLowerCase() === s.toLowerCase());
+  return match ?? null;
+}
+
+function mapAttendee(r: any) {
+  return {
+    id: r.id,
+    eventId: r.event_id,
+    customerId: r.customer_id ?? null,
+    companyName: r.company_name ?? null,
+    attendanceStatus: r.attendance_status,
+    resultedInSale: !!r.resulted_in_sale,
+    createdBy: r.created_by ?? null,
+    createdAt: r.created_at ?? null,
+    updatedAt: r.updated_at ?? null,
+  };
+}
+
 function mapMenuItem(r: any) {
   return {
     id: r.id,
     eventId: r.event_id,
     itemName: r.item_name ?? null,
+    amount: r.amount === null || r.amount === undefined ? 0 : Number(r.amount),
     assignedUserId: r.assigned_user_id ?? null,
     assignedUserName: r.assigned_user_name ?? null,
     assignedRole: r.assigned_role ?? null,
@@ -695,6 +745,31 @@ export async function registerEventsRoutes(app: Express) {
     }
   });
 
+  // GET /api/events/menu-items — the real addeventmenu.php list: ALL menu
+  // items across events, restricted to events that haven't happened yet
+  // (legacy's own `$event_date >= $today` filter), with a cost Total.
+  // Registered BEFORE /api/events/:id so "menu-items" is never captured as
+  // an :id param.
+  app.get("/api/events/menu-items", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const { rows } = await pool.query(
+        `SELECT mi.*, au.name AS assigned_user_name, e.name AS event_name, e.event_date
+         FROM drm.event_menu_items mi
+         JOIN drm.events e ON e.id = mi.event_id
+         LEFT JOIN drm.users au ON au.id = mi.assigned_user_id
+         WHERE e.deleted_at IS NULL AND e.event_date >= CURRENT_DATE
+         ORDER BY mi.created_at DESC`,
+      );
+      const data = rows.map((r) => ({ ...mapMenuItem(r), eventName: r.event_name, eventDate: r.event_date }));
+      const totalAmount = data.reduce((sum, r) => sum + r.amount, 0);
+      res.json({ data, total: data.length, totalAmount });
+    } catch (err) {
+      console.error("[events] global menu-items list error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch menu items" });
+    }
+  });
+
   // GET /api/events/:id — event + speakers[] + menuItems[] + duties[]
   app.get("/api/events/:id", async (req: Request, res: Response) => {
     try {
@@ -1011,16 +1086,23 @@ export async function registerEventsRoutes(app: Express) {
       if (scheduledDate !== undefined && scheduledDate !== null && String(scheduledDate).trim() !== "" && !isValidDate(String(scheduledDate))) {
         return badRequest(res, "scheduled_date must be a valid date");
       }
+      let amount = 0;
+      if (b.amount !== undefined && b.amount !== null && b.amount !== "") {
+        const n = Number(b.amount);
+        if (isNaN(n) || n < 0) return badRequest(res, "amount must be >= 0");
+        amount = n;
+      }
 
       const { rows } = await pool.query(
         `INSERT INTO drm.event_menu_items
-          (event_id, item_name, assigned_user_id, assigned_role, scheduled_date,
+          (event_id, item_name, amount, assigned_user_id, assigned_role, scheduled_date,
            scheduled_time, status, notes, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          RETURNING *`,
         [
           eventId,
           (b.itemName ?? b.item_name) ? String(b.itemName ?? b.item_name) : null,
+          amount,
           (b.assignedUserId ?? b.assigned_user_id) ? String(b.assignedUserId ?? b.assigned_user_id) : null,
           (b.assignedRole ?? b.assigned_role) ? String(b.assignedRole ?? b.assigned_role) : null,
           scheduledDate ? String(scheduledDate) : null,
@@ -1060,6 +1142,11 @@ export async function registerEventsRoutes(app: Express) {
 
       if (b.itemName !== undefined) addSet("item_name", b.itemName ? String(b.itemName) : null);
       else if (b.item_name !== undefined) addSet("item_name", b.item_name ? String(b.item_name) : null);
+      if (b.amount !== undefined && b.amount !== null && b.amount !== "") {
+        const n = Number(b.amount);
+        if (isNaN(n) || n < 0) return badRequest(res, "amount must be >= 0");
+        addSet("amount", n);
+      }
       if (b.assignedUserId !== undefined) addSet("assigned_user_id", b.assignedUserId ? String(b.assignedUserId) : null);
       else if (b.assigned_user_id !== undefined) addSet("assigned_user_id", b.assigned_user_id ? String(b.assigned_user_id) : null);
       if (b.assignedRole !== undefined) addSet("assigned_role", b.assignedRole ? String(b.assignedRole) : null);
@@ -1249,6 +1336,215 @@ export async function registerEventsRoutes(app: Express) {
     } catch (err) {
       console.error("[events] duty delete error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to delete duty" });
+    }
+  });
+
+  // ---- Attendees (legacy webxl_event_history equivalent) --------------------
+
+  // GET /api/events/:id/attendees
+  app.get("/api/events/:id/attendees", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const eventId = String(req.params.id);
+      const { rows } = await pool.query(
+        `SELECT a.*, c.company_name
+         FROM drm.event_attendees a
+         LEFT JOIN drm.customers c ON c.id = a.customer_id
+         WHERE a.event_id::text = $1::text ORDER BY a.created_at`,
+        [eventId],
+      );
+      res.json({ data: rows.map(mapAttendee), total: rows.length, page: 1, pageSize: rows.length });
+    } catch (err) {
+      console.error("[events] attendees list error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch attendees" });
+    }
+  });
+
+  // POST /api/events/:id/attendees
+  app.post("/api/events/:id/attendees", async (req: Request, res: Response) => {
+    try {
+      if (denyEventMutation(req, res)) return;
+      const eventId = String(req.params.id);
+      const raw = await getEventRaw(eventId);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Event not found" });
+
+      const b = req.body ?? {};
+      const customerId = (b.customerId ?? b.customer_id) ? String(b.customerId ?? b.customer_id) : null;
+      if (!customerId) return badRequest(res, "customerId is required");
+
+      let attendanceStatus: AttendanceStatus = "Absent";
+      if (b.attendanceStatus !== undefined || b.attendance_status !== undefined) {
+        const st = normalizeAttendanceStatus(b.attendanceStatus ?? b.attendance_status);
+        if (!st) return badRequest(res, `attendanceStatus must be one of ${ATTENDANCE_STATUSES.join(", ")}`);
+        attendanceStatus = st;
+      }
+      const resultedInSale = !!(b.resultedInSale ?? b.resulted_in_sale);
+
+      let created;
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO drm.event_attendees
+            (event_id, customer_id, attendance_status, resulted_in_sale, created_by)
+           VALUES ($1,$2,$3,$4,$5)
+           RETURNING *`,
+          [eventId, customerId, attendanceStatus, resultedInSale, getUserId(req) ?? null],
+        );
+        created = rows[0];
+      } catch (err: any) {
+        if (err?.code === "23505") {
+          return badRequest(res, "This company is already recorded as an attendee for this event.");
+        }
+        throw err;
+      }
+
+      const { rows: withCompany } = await pool.query(
+        `SELECT a.*, c.company_name FROM drm.event_attendees a LEFT JOIN drm.customers c ON c.id = a.customer_id WHERE a.id = $1`,
+        [created.id],
+      );
+      res.status(201).json({ success: true, attendee: mapAttendee(withCompany[0]) });
+    } catch (err) {
+      console.error("[events] attendee create error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to add attendee" });
+    }
+  });
+
+  // PATCH /api/events/:id/attendees/:attendeeId
+  app.patch("/api/events/:id/attendees/:attendeeId", async (req: Request, res: Response) => {
+    try {
+      if (denyEventMutation(req, res)) return;
+      const eventId = String(req.params.id);
+      const attendeeId = String(req.params.attendeeId);
+
+      const b = req.body ?? {};
+      const sets: string[] = [];
+      const params: any[] = [];
+      const addSet = (col: string, val: any) => {
+        params.push(val);
+        sets.push(`${col} = $${params.length}`);
+      };
+
+      if (b.attendanceStatus !== undefined || b.attendance_status !== undefined) {
+        const st = normalizeAttendanceStatus(b.attendanceStatus ?? b.attendance_status);
+        if (!st) return badRequest(res, `attendanceStatus must be one of ${ATTENDANCE_STATUSES.join(", ")}`);
+        addSet("attendance_status", st);
+      }
+      if (b.resultedInSale !== undefined || b.resulted_in_sale !== undefined) {
+        addSet("resulted_in_sale", !!(b.resultedInSale ?? b.resulted_in_sale));
+      }
+
+      if (sets.length === 0) return badRequest(res, "No fields to update");
+      sets.push("updated_at = now()");
+      params.push(attendeeId);
+      params.push(eventId);
+
+      const { rows } = await pool.query(
+        `UPDATE drm.event_attendees SET ${sets.join(", ")}
+         WHERE id::text = $${params.length - 1}::text AND event_id::text = $${params.length}::text
+         RETURNING *`,
+        params,
+      );
+      if (!rows[0]) return res.status(404).json({ error: "NotFound", message: "Attendee not found" });
+
+      const { rows: withCompany } = await pool.query(
+        `SELECT a.*, c.company_name FROM drm.event_attendees a LEFT JOIN drm.customers c ON c.id = a.customer_id WHERE a.id = $1`,
+        [rows[0].id],
+      );
+      res.json({ success: true, attendee: mapAttendee(withCompany[0]) });
+    } catch (err) {
+      console.error("[events] attendee update error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to update attendee" });
+    }
+  });
+
+  // DELETE /api/events/:id/attendees/:attendeeId
+  app.delete("/api/events/:id/attendees/:attendeeId", async (req: Request, res: Response) => {
+    try {
+      if (denyEventMutation(req, res)) return;
+      const eventId = String(req.params.id);
+      const attendeeId = String(req.params.attendeeId);
+      const result = await pool.query(
+        `DELETE FROM drm.event_attendees WHERE id::text = $1::text AND event_id::text = $2::text`,
+        [attendeeId, eventId],
+      );
+      if (result.rowCount === 0) return res.status(404).json({ error: "NotFound", message: "Attendee not found" });
+      res.json({ success: true });
+    } catch (err) {
+      console.error("[events] attendee delete error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to delete attendee" });
+    }
+  });
+
+  // GET /api/reports/event/attendance?eventId=X — the REAL eventreport.php
+  // report: pick one event, see which companies attended (Present/Absent),
+  // whether it resulted in a sale, plus that event's speaker/topic/timing.
+  // Distinct from the Stage 8 /api/reports/event multi-event dashboard above
+  // (which answers a different question — internal event/duty planning, not
+  // per-company attendance — and is left untouched for back-compat).
+  app.get("/api/reports/event/attendance", requireReportPermission("event_report", "view"), async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const eventId = req.query.eventId ? String(req.query.eventId) : "";
+      if (!eventId) return badRequest(res, "eventId is required");
+
+      const eventRes = await pool.query(
+        `SELECT e.* FROM drm.events e WHERE e.id::text = $1::text AND e.deleted_at IS NULL LIMIT 1`,
+        [eventId],
+      );
+      const event = eventRes.rows[0];
+      if (!event) return res.status(404).json({ error: "NotFound", message: "Event not found" });
+
+      const speakersRes = await pool.query(
+        `SELECT * FROM drm.event_speakers WHERE event_id::text = $1::text ORDER BY created_at`,
+        [eventId],
+      );
+      const speakers = speakersRes.rows.map(mapSpeaker);
+      // Legacy fetched a single named speaker for this report (not the full
+      // list) — the first-added speaker is the closest honest equivalent.
+      const primarySpeaker = speakers[0] ?? null;
+
+      const attendeesRes = await pool.query(
+        `SELECT a.*, c.company_name
+         FROM drm.event_attendees a
+         LEFT JOIN drm.customers c ON c.id = a.customer_id
+         WHERE a.event_id::text = $1::text
+         ORDER BY a.created_at`,
+        [eventId],
+      );
+
+      // Legacy's "Cost" (webxl_event_menu_amount helper) sums this event's
+      // budget line items, not a flat amount on the event itself.
+      const costRes = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total FROM drm.event_menu_items WHERE event_id::text = $1::text`,
+        [eventId],
+      );
+      const cost = Number(costRes.rows[0]?.total ?? 0);
+
+      const ev = mapEvent(event);
+      const rows = attendeesRes.rows.map((r: any, idx: number) => ({
+        rowNumber: idx + 1,
+        eventType: ev.eventType,
+        company: r.company_name ?? null,
+        esTime: ev.startTime,
+        eeTime: ev.endTime,
+        location: ev.venue,
+        speaker: primarySpeaker?.speakerName ?? null,
+        topic: primarySpeaker?.topic ?? null,
+        speakerStartTime: primarySpeaker?.startTime ?? null,
+        speakerEndTime: primarySpeaker?.endTime ?? null,
+        attendanceStatus: r.attendance_status,
+        resultedInSale: !!r.resulted_in_sale,
+        eventDate: ev.eventDate,
+      }));
+
+      res.json({
+        event: ev,
+        rows,
+        total: rows.length,
+        cost,
+      });
+    } catch (err) {
+      console.error("[events] attendance report error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to build event attendance report" });
     }
   });
 }

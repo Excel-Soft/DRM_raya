@@ -236,8 +236,12 @@ export default function ReceptionDashboard() {
             return;
         }
 
+        const companyRecord = (customersData as any)?.customers?.find((c: any) => c.id === selectedCompany);
+        const companyLabel = companyRecord?.companyName || companyRecord?.accountName || "";
+
         createMeetingMutation.mutate({
-            personName: selectedCompany !== "" ? `${selectedCompany} - ${selectedPerson}` : selectedPerson,
+            companyId: selectedCompany,
+            personName: companyLabel ? `${companyLabel} - ${selectedPerson}` : selectedPerson,
             meetingType: selectedService,
         });
 
@@ -572,7 +576,7 @@ export default function ReceptionDashboard() {
                                 </SelectTrigger>
                                 <SelectContent className="max-h-[300px]">
                                     {(customersData as any)?.customers?.map((c: any) => (
-                                        <SelectItem key={c.id} value={c.companyName || c.accountName || c.id}>
+                                        <SelectItem key={c.id} value={c.id}>
                                             {c.companyName || c.accountName || c.id}
                                         </SelectItem>
                                     ))}

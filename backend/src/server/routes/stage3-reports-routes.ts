@@ -6,6 +6,13 @@ import { getDepartmentFilterUserIds } from "./dashboard-routes";
 import { eventsReportHandler, eventsReportExportHandler } from "./events-routes";
 import { ActivityLogService } from "./services/activity-service";
 import { buildExportFilename } from "../utils/export-filename";
+import {
+  listDepartmentFilters,
+  listDepartmentProjectReport,
+  getDepartmentCommission,
+  createDepartmentCommission,
+  COMPLETION_STATUS_MODES,
+} from "./services/department-report.service";
 
 const RAW_ATTENDANCE_LIMITS = [10, 25, 50, 100];
 
@@ -298,54 +305,114 @@ export function registerStage3ReportsRoutes(app: Express) {
     }
   });
 
-  // GET /api/reports/department - GM entries by sales-person department.
-  app.get("/api/reports/department", async (req: Request, res: Response) => {
+  // GET /api/reports/department/filters - real department types + cities for
+  // the two dropdowns (previously hardcoded, mismatched the actual data).
+  app.get("/api/reports/department/filters", async (req: Request, res: Response) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      // Role gate (previously entirely absent): this report's whole purpose is
-      // cross-department comparison, so it is intentionally NOT self/own-
-      // department-scoped (unlike daily-added-gm above) — it is a managerial
-      // oversight view, consistent with project-report-routes.ts's identical
-      // "cross-department visibility for managers, 403 for executives" design.
       const role = normalizeRole((req.user as any).activeRoleId || (req.user as any).roleId || "");
       if (!isManagerialRole(role)) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to view the department report" });
       }
-      const { start, end } = parseDateRange(req);
-      const { page, pageSize, offset } = parsePaging(req);
-
-      const where: string[] = ["g.is_deleted IS NOT TRUE"];
-      const params: any[] = [];
-      if (start) { params.push(start); where.push(`g.created_at >= $${params.length}`); }
-      if (end) { params.push(end); where.push(`g.created_at <= $${params.length}`); }
-      if (req.query.department) { params.push(String(req.query.department)); where.push(`u.department = $${params.length}`); }
-      if (req.query.status) { params.push(String(req.query.status)); where.push(`g.status = $${params.length}`); }
-      const clause = `WHERE ${where.join(" AND ")}`;
-
-      const countRes = await pool.query(
-        `SELECT COUNT(*)::int AS total
-         FROM drm.gm_entries g
-         LEFT JOIN drm.users u ON u.id = g.sales_person_id
-         ${clause}`,
-        params,
-      );
-      const total = countRes.rows[0]?.total ?? 0;
-
-      const rowsRes = await pool.query(
-        `SELECT g.id, g.company_name, g.package_type, g.status, g.entry_type,
-                g.amount_usd, g.amount_pkr, g.payment_status, g.created_at,
-                g.approved_at, u.department
-         FROM drm.gm_entries g
-         LEFT JOIN drm.users u ON u.id = g.sales_person_id
-         ${clause}
-         ORDER BY g.created_at DESC
-         LIMIT ${pageSize} OFFSET ${offset}`,
-        params,
-      );
-      res.json({ rows: rowsRes.rows, total, page, pageSize });
+      const filters = await listDepartmentFilters();
+      res.json(filters);
     } catch (err) {
+      console.error("Error in department report filters:", err);
+      res.status(500).json({ error: "Failed to load department report filters" });
+    }
+  });
+
+  // GET /api/reports/department - department-level project delivery report.
+  app.get("/api/reports/department", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      // Role gate: this report's whole purpose is cross-department comparison,
+      // so it is intentionally NOT self/own-department-scoped (unlike
+      // daily-added-gm above) — it is a managerial oversight view, consistent
+      // with project-report-routes.ts's identical design.
+      const role = normalizeRole((req.user as any).activeRoleId || (req.user as any).roleId || "");
+      if (!isManagerialRole(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to view the department report" });
+      }
+      const departmentType = req.query.department ? String(req.query.department) : "";
+      const status = req.query.status ? String(req.query.status) : "";
+      const city = req.query.city ? String(req.query.city) : "All";
+      const startDate = req.query.startDate ? String(req.query.startDate) : "";
+      const endDate = req.query.endDate ? String(req.query.endDate) : "";
+      if (!departmentType || !status || !startDate || !endDate) {
+        return res.status(400).json({ error: "BadRequest", message: "department, status, startDate and endDate are required" });
+      }
+      const { page, pageSize } = parsePaging(req);
+
+      const { rows, total, amountTotal } = await listDepartmentProjectReport({ departmentType, city, status, startDate, endDate, page, pageSize });
+
+      let commission: {
+        companyCount: number;
+        totalAmount: string;
+        managerAmount: string;
+        assistantAmount: string;
+        alreadyCreated: boolean;
+      } | null = null;
+      if (COMPLETION_STATUS_MODES.includes(status)) {
+        const companyCount = new Set(rows.map((r) => r.companyId).filter(Boolean)).size;
+        const month = new Date(`${startDate}T00:00:00.000Z`).getUTCMonth() + 1;
+        const year = new Date(`${startDate}T00:00:00.000Z`).getUTCFullYear();
+        const existing = await getDepartmentCommission(departmentType, month, year);
+        commission = existing
+          ? {
+              companyCount: existing.companyCount,
+              totalAmount: existing.totalAmount,
+              managerAmount: existing.managerAmount,
+              assistantAmount: existing.assistantAmount,
+              alreadyCreated: true,
+            }
+          : {
+              companyCount,
+              totalAmount: String(companyCount * 500),
+              managerAmount: String(companyCount * 300),
+              assistantAmount: String(companyCount * 200),
+              alreadyCreated: false,
+            };
+      }
+
+      res.json({ rows, total, page, pageSize, commission, amountTotal });
+    } catch (err: any) {
+      if (err?.statusCode === 400) return res.status(400).json({ error: "BadRequest", message: err.message });
       console.error("Error in department report:", err);
       res.status(500).json({ error: "Failed to load department report" });
+    }
+  });
+
+  // POST /api/reports/department/verify-commission - create the department
+  // team commission ledger row for the currently-viewed completion filter.
+  app.post("/api/reports/department/verify-commission", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const role = normalizeRole((req.user as any).activeRoleId || (req.user as any).roleId || "");
+      if (!isManagerialRole(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to verify this commission" });
+      }
+      const departmentType = req.body?.department ? String(req.body.department) : "";
+      const status = req.body?.status ? String(req.body.status) : "";
+      const startDate = req.body?.startDate ? String(req.body.startDate) : "";
+      const endDate = req.body?.endDate ? String(req.body.endDate) : "";
+      if (!departmentType || !status || !startDate || !endDate) {
+        return res.status(400).json({ error: "BadRequest", message: "department, status, startDate and endDate are required" });
+      }
+      const myId = (req.user as any).userId || (req.user as any).id;
+      const created = await createDepartmentCommission({ departmentType, status, startDate, endDate, createdByUserId: String(myId) });
+      void ActivityLogService.log({
+        userId: String(myId),
+        action: "department_report.verify_commission",
+        resourceType: "department_team_commission",
+        resourceId: String(created.id),
+        details: JSON.stringify({ departmentType, status, startDate, endDate, totalAmount: created.totalAmount }),
+      });
+      res.json({ success: true, commission: created });
+    } catch (err: any) {
+      if (err?.statusCode === 400) return res.status(400).json({ error: "BadRequest", message: err.message });
+      console.error("Error verifying department commission:", err);
+      res.status(500).json({ error: "Failed to verify department commission" });
     }
   });
 
@@ -492,6 +559,58 @@ export function registerStage3ReportsRoutes(app: Express) {
       } catch (err) {
         console.error("Error exporting reception report:", err);
         res.status(500).json({ error: "Failed to export reception report" });
+      }
+    },
+  );
+
+  // GET /api/reports/reception/team-summary - the real receptionreport.php
+  // "All Team" mode: per-receptionist totals (meetings, time, GM generated
+  // by companies they met), not a per-meeting list. Same row-scope as the
+  // main reception report. GM linkage is via gm_entries.customer_id against
+  // the set of companies this receptionist met in-range (confirmed live —
+  // same column already used by department-report.service.ts's gm_match CTE).
+  app.get(
+    "/api/reports/reception/team-summary",
+    requireReportPermission("reception_report", "view"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const { start, end } = parseDateRange(req);
+        if (!start || !end) return res.status(400).json({ error: "startDate and endDate are required" });
+
+        const scope = await resolveReceptionScope(req);
+        const where: string[] = ["m.status::text = 'ended'", "m.meeting_date >= $1", "m.meeting_date <= $2", "m.created_by IS NOT NULL"];
+        const params: any[] = [start, end];
+        if (scope !== null) {
+          params.push(scope);
+          where.push(`m.created_by = ANY($${params.length}::uuid[])`);
+        }
+
+        const { rows } = await pool.query(
+          `WITH scoped_meetings AS (
+             SELECT m.id, m.created_by, m.company_id, m.total_duration_seconds
+             FROM drm.meetings m
+             WHERE ${where.join(" AND ")}
+           )
+           SELECT sm.created_by AS receptionist_id, ru.name AS receptionist_name,
+             count(*)::int AS total_meetings,
+             COALESCE(sum(sm.total_duration_seconds), 0)::int AS total_duration_seconds,
+             (SELECT count(*)::int FROM drm.gm_entries g
+              WHERE g.customer_id = ANY(
+                ARRAY(SELECT DISTINCT sm2.company_id FROM scoped_meetings sm2 WHERE sm2.created_by = sm.created_by AND sm2.company_id IS NOT NULL)
+              )
+              AND g.created_at >= $1 AND g.created_at <= $2
+             ) AS total_gm
+           FROM scoped_meetings sm
+           LEFT JOIN drm.users ru ON ru.id = sm.created_by
+           GROUP BY sm.created_by, ru.name
+           ORDER BY total_meetings DESC`,
+          params,
+        );
+        res.json({ data: rows, startDate: req.query.startDate, endDate: req.query.endDate });
+      } catch (err) {
+        console.error("Error in reception team summary:", err);
+        res.status(500).json({ error: "Failed to load reception team summary" });
       }
     },
   );

@@ -955,6 +955,15 @@ async function ensureTargetSystemConversionColumn(client: {
   await client.query(
     `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS pay_date timestamp`,
   );
+  // Category on the definition (organizational only — see schema.ts comment)
+  // and max_price snapshotted onto assignments, needed for a real tiered
+  // commission lookup (e.g. "PP Link": price <= count <= max_price -> reward).
+  await client.query(
+    `ALTER TABLE drm.target_system_targets ADD COLUMN IF NOT EXISTS category text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_user_targets ADD COLUMN IF NOT EXISTS max_price numeric(12,2) NOT NULL DEFAULT 0`,
+  );
 }
 
 /**
@@ -1026,6 +1035,134 @@ async function ensureDiagnoseFollowupsSchema(client: {
   );
 }
 
+/**
+ * link_reports / link_report_commission_verifications — already declared in
+ * the Drizzle schema (a real, previously-designed system backing the Link
+ * Report page) but never actually migrated into the live DB, since db:push
+ * is broken repo-wide. The page's service layer was a stub calling into
+ * these tables, which is how this gap stayed hidden until now.
+ */
+async function ensureLinkReportsSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.link_reports (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       display_id serial,
+       submitted_by_user_id uuid NOT NULL REFERENCES drm.users(id),
+       company_id uuid,
+       company_name text NOT NULL DEFAULT '',
+       link_url text NOT NULL,
+       source_module text NOT NULL DEFAULT 'manual',
+       source_record_id uuid,
+       submitted_at timestamp NOT NULL DEFAULT now(),
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now(),
+       deleted_at timestamp
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_link_reports_submitted_by ON drm.link_reports (submitted_by_user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_link_reports_submitted_at ON drm.link_reports (submitted_at)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_link_reports_deleted_at ON drm.link_reports (deleted_at)`,
+  );
+
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.link_report_commission_verifications (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id uuid NOT NULL REFERENCES drm.users(id),
+       verified_by_user_id uuid NOT NULL REFERENCES drm.users(id),
+       start_date date NOT NULL,
+       end_date date NOT NULL,
+       link_report_ids jsonb NOT NULL DEFAULT '[]',
+       total_links integer NOT NULL DEFAULT 0,
+       reward numeric(12,2) NOT NULL DEFAULT 0,
+       status text NOT NULL DEFAULT 'Pending',
+       confirmed_at timestamp,
+       remarks text,
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  // Additive on a table that may already exist with the old default/shape.
+  await client.query(
+    `ALTER TABLE drm.link_report_commission_verifications ADD COLUMN IF NOT EXISTS confirmed_at timestamp`,
+  );
+  await client.query(
+    `ALTER TABLE drm.link_report_commission_verifications ALTER COLUMN status SET DEFAULT 'Pending'`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_lrcv_user ON drm.link_report_commission_verifications (user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_lrcv_verified_by ON drm.link_report_commission_verifications (verified_by_user_id)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_lrcv_start_date ON drm.link_report_commission_verifications (start_date)`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_lrcv_end_date ON drm.link_report_commission_verifications (end_date)`,
+  );
+
+  // Per-link reviewer verdict — additive columns on the real, already-live
+  // product_posting_evidence_links table (distinct from the period-based
+  // commission verification above).
+  await client.query(
+    `ALTER TABLE drm.product_posting_evidence_links ADD COLUMN IF NOT EXISTS verify_status text NOT NULL DEFAULT 'Pending'`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_evidence_links ADD COLUMN IF NOT EXISTS verify_note text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_evidence_links ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_evidence_links ADD COLUMN IF NOT EXISTS verified_at timestamp`,
+  );
+  await client.query(
+    `CREATE SEQUENCE IF NOT EXISTS drm.product_posting_evidence_links_display_id_seq`,
+  );
+  await client.query(
+    `ALTER TABLE drm.product_posting_evidence_links ADD COLUMN IF NOT EXISTS display_id integer NOT NULL DEFAULT nextval('drm.product_posting_evidence_links_display_id_seq')`,
+  );
+  await client.query(
+    `ALTER SEQUENCE drm.product_posting_evidence_links_display_id_seq OWNED BY drm.product_posting_evidence_links.display_id`,
+  );
+}
+
+async function ensureDepartmentTeamCommissionSchema(client: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS drm.department_team_commissions (
+       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+       department_type text NOT NULL,
+       comm_month integer NOT NULL,
+       comm_year integer NOT NULL,
+       company_count integer NOT NULL DEFAULT 0,
+       per_company_rate numeric(12,2) NOT NULL DEFAULT 500,
+       total_amount numeric(12,2) NOT NULL DEFAULT 0,
+       manager_amount numeric(12,2) NOT NULL DEFAULT 0,
+       assistant_amount numeric(12,2) NOT NULL DEFAULT 0,
+       final_pay_amount numeric(12,2) NOT NULL DEFAULT 0,
+       created_by_user_id uuid NOT NULL REFERENCES drm.users(id),
+       user_status text NOT NULL DEFAULT 'Verified',
+       manager_approve text NOT NULL DEFAULT 'Approved',
+       hod_status text NOT NULL DEFAULT 'Pending',
+       account_pay_status text NOT NULL DEFAULT 'Pending',
+       created_at timestamp NOT NULL DEFAULT now(),
+       updated_at timestamp NOT NULL DEFAULT now()
+     )`,
+  );
+  await client.query(
+    `CREATE INDEX IF NOT EXISTS idx_dtc_dep_month_year ON drm.department_team_commissions (department_type, comm_month, comm_year)`,
+  );
+}
+
 export async function ensureDbOnce(): Promise<void> {
   if (!isDbAvailable()) {
     console.warn("[db] skipping ensureDbOnce because database is unavailable");
@@ -1070,6 +1207,8 @@ export async function ensureDbOnce(): Promise<void> {
         await ensureTargetSystemConversionColumn(client);
         await ensureTargetSystemKwaHistorySchema(client);
         await ensureDiagnoseFollowupsSchema(client);
+        await ensureLinkReportsSchema(client);
+        await ensureDepartmentTeamCommissionSchema(client);
         return;
       } catch (err) {
         lastErr = err;

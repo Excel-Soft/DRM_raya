@@ -13,7 +13,7 @@ const DUTY_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as co
 
 export default function EventsDutyPlanner() {
   const { toast } = useToast();
-  const [showForm, setShowForm] = useState(true);
+  const [showForm, setShowForm] = useState(false);
 
   // Selected event drives both the listing and the form
   const [eventId, setEventId] = useState("");

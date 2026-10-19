@@ -24,6 +24,10 @@ export const createServerSchema = z
     provider: z.string().trim().max(200).nullable().optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
     status: z.string().trim().max(40).optional(),
+    // Legacy's addservers.php space/renewal tracking.
+    capacityMb: z.coerce.number().int().nonnegative().nullable().optional(),
+    buyingDate: z.coerce.date().nullable().optional(),
+    years: z.coerce.number().int().min(1).max(10).nullable().optional(),
   })
   .strict();
 
@@ -40,6 +44,7 @@ export const hostingPackageCreateSchema = z
   .object({
     name: z.string().trim().min(1, "Hosting package name is required").max(200),
     capacity: z.string().trim().max(200).optional(),
+    capacityMb: z.coerce.number().int().nonnegative().optional(),
     price: z.coerce.number().finite().nonnegative().optional(),
   })
   .strict();
@@ -162,6 +167,10 @@ async function createServerHandler(req: Request, res: Response) {
   const dup = await itAssetsRepository.findActiveServerByName(name);
   if (dup) return res.status(409).json({ error: "A server with this name already exists" });
 
+  const capacityMb = body.capacityMb ?? null;
+  const buyingDate = body.buyingDate ? body.buyingDate.toISOString().slice(0, 10) : null;
+  const years = body.years ?? null;
+
   const userId = actorId(req);
   const created = await itAssetsRepository.createServer({
     name,
@@ -169,6 +178,9 @@ async function createServerHandler(req: Request, res: Response) {
     provider,
     notes,
     status,
+    capacityMb,
+    buyingDate,
+    years,
     createdBy: userId,
     updatedBy: userId,
   });
@@ -178,7 +190,7 @@ async function createServerHandler(req: Request, res: Response) {
     module: "domain_hosting",
     entityType: "it_server",
     entityId: created.id,
-    after: { name, ip: host, provider, status },
+    after: { name, ip: host, provider, status, capacityMb, buyingDate, years },
     req,
   });
   res.status(201).json(serializeServer(created));
@@ -216,6 +228,9 @@ async function updateServerHandler(req: Request, res: Response) {
 
   if (body.provider !== undefined) updates.provider = body.provider;
   if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.capacityMb !== undefined) updates.capacityMb = body.capacityMb;
+  if (body.buyingDate !== undefined) updates.buyingDate = body.buyingDate ? body.buyingDate.toISOString().slice(0, 10) : null;
+  if (body.years !== undefined) updates.years = body.years;
 
   if (body.status != null && String(body.status).trim() !== "") {
     const ns = normalizeServerStatus(body.status);
@@ -359,9 +374,10 @@ router.post("/hosting-packages", requireRole(...IT_WRITE_ROLES), async (req, res
   }
   const { name } = parsed.data;
   const capacity = parsed.data.capacity && parsed.data.capacity.length > 0 ? parsed.data.capacity : null;
+  const capacityMb = parsed.data.capacityMb ?? null;
   const price = parsed.data.price !== undefined ? String(parsed.data.price) : null;
   const userId = actorId(req);
-  const created = await itAssetsRepository.createHostingPackage({ name, capacity, price });
+  const created = await itAssetsRepository.createHostingPackage({ name, capacity, capacityMb, price });
   await AuditLogService.record({
     actorUserId: userId ?? undefined,
     action: "it_hosting_package.create",

@@ -2198,6 +2198,12 @@ export const itServers = drmSchema.table("it_servers", {
   createdBy: uuid("created_by"),
   updatedBy: uuid("updated_by"),
   deletedBy: uuid("deleted_by"),
+  // Legacy's addservers.php space/renewal tracking (space + buying_date +
+  // years -> used space and an expiry countdown) — had no modern equivalent
+  // until now.
+  capacityMb: integer("capacity_mb"),
+  buyingDate: date("buying_date"),
+  years: integer("years"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -2214,6 +2220,9 @@ export const itHostingPackages = drmSchema.table("it_hosting_packages", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
   capacity: text("capacity"),
+  // Numeric MB value used to compute a server's used space (capacity is a
+  // free-text display label, e.g. "5GB SSD", not reliable to sum directly).
+  capacityMb: integer("capacity_mb"),
   price: decimal("price", { precision: 12, scale: 2 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -2900,6 +2909,19 @@ export const productPostingEvidenceLinks = drmSchema.table("product_posting_evid
   createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  // Per-link reviewer verdict for the Link Report (legacy's per-link
+  // Verify/Reject on webxl_task_links) — distinct from
+  // linkReportCommissionVerifications, which authorizes paying out a whole
+  // date-range batch rather than judging an individual link's correctness.
+  verifyStatus: text("verify_status").notNull().default("Pending"),
+  verifyNote: text("verify_note"),
+  verifiedByUserId: uuid("verified_by_user_id").references(() => users.id),
+  verifiedAt: timestamp("verified_at"),
+  // Short, real, sequential display id for the Link Report's "ID" column —
+  // the project's own projectNumber isn't reliable here (some links reference
+  // a project that's since been deleted), so this gets its own counter, the
+  // same pattern linkReports.displayId already uses.
+  displayId: serial("display_id"),
 });
 
 export const productPostingReworkHistory = drmSchema.table("product_posting_rework_history", {
@@ -3676,6 +3698,12 @@ export const targetSystemTargets = drmSchema.table("target_system_targets", {
   // this table entirely, which is why "Total" (conversion+vas+kwa+reward)
   // always computed as 0 downstream.
   conversion: integer("conversion").notNull().default(0),
+  // Legacy webxl_terget had no category of its own (only `type`: new/renewal)
+  // — the category that actually drives commission lookups (e.g. "PP Link")
+  // lives on the per-user assignment (target_system_user_targets.category,
+  // already real). This is purely so Create Target can label/organize
+  // definitions by intended category; optional, existing rows unaffected.
+  category: text("category"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -3695,6 +3723,12 @@ export const targetSystemUserTargets = drmSchema.table("target_system_user_targe
   category: text("category").notNull(),
   target: text("target").notNull().default("0"),
   price: decimal("price", { precision: 12, scale: 2 }).notNull().default("0"),
+  // Snapshotted from the selected definition's max_price the same way
+  // price/reward/conversion already are — needed to range-check a tiered
+  // commission (price <= count <= maxPrice) without re-joining back to a
+  // definition that may have since changed. Was missing entirely, which is
+  // why no real tiered reward lookup (e.g. "PP Link") was possible.
+  maxPrice: decimal("max_price", { precision: 12, scale: 2 }).notNull().default("0"),
   bonus: text("bonus"),
   vas: decimal("vas", { precision: 12, scale: 2 }).notNull().default("0"),
   kwa: decimal("kwa", { precision: 12, scale: 2 }).notNull().default("0"),
@@ -3930,7 +3964,11 @@ export const linkReportCommissionVerifications = drmSchema.table("link_report_co
   linkReportIds: jsonb("link_report_ids").notNull().default([]),
   totalLinks: integer("total_links").notNull().default(0),
   reward: decimal("reward", { precision: 12, scale: 2 }).notNull().default("0"),
-  status: text("status").notNull().default("VERIFIED"),
+  // "Pending" until the link-submitter themselves confirms (confirmedAt set);
+  // the manager/admin action only creates the request, matching the same
+  // two-step pattern gm_bv_commission_verifications already uses.
+  status: text("status").notNull().default("Pending"),
+  confirmedAt: timestamp("confirmed_at"),
   remarks: text("remarks"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -3945,6 +3983,40 @@ export type LinkReport = typeof linkReports.$inferSelect;
 export type InsertLinkReport = typeof linkReports.$inferInsert;
 export type LinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferSelect;
 export type InsertLinkReportCommissionVerification = typeof linkReportCommissionVerifications.$inferInsert;
+
+/**
+ * Department-level team commission ledger — legacy's webxl_vas_comm_final
+ * (comm_type='Department'). One row per (department, month, year): a fixed
+ * Rs 500/completed-company payout split Manager (300) / Assistant (200).
+ * Legacy set user_status/manager_approve to Verified/Approved at the exact
+ * moment this row is created (no separate confirm step, unlike the per-user
+ * link-report commission) — hod_status/account_pay_status start Pending for
+ * downstream approval screens outside this report's scope.
+ */
+export const departmentTeamCommissions = drmSchema.table("department_team_commissions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  departmentType: text("department_type").notNull(),
+  commMonth: integer("comm_month").notNull(),
+  commYear: integer("comm_year").notNull(),
+  companyCount: integer("company_count").notNull().default(0),
+  perCompanyRate: decimal("per_company_rate", { precision: 12, scale: 2 }).notNull().default("500"),
+  totalAmount: decimal("total_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  managerAmount: decimal("manager_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  assistantAmount: decimal("assistant_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  finalPayAmount: decimal("final_pay_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  createdByUserId: uuid("created_by_user_id").notNull().references(() => users.id),
+  userStatus: text("user_status").notNull().default("Verified"),
+  managerApprove: text("manager_approve").notNull().default("Approved"),
+  hodStatus: text("hod_status").notNull().default("Pending"),
+  accountPayStatus: text("account_pay_status").notNull().default("Pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("idx_dtc_dep_month_year").on(t.departmentType, t.commMonth, t.commYear),
+]);
+
+export type DepartmentTeamCommission = typeof departmentTeamCommissions.$inferSelect;
+export type InsertDepartmentTeamCommission = typeof departmentTeamCommissions.$inferInsert;
 
 // ===========================================================================
 // Stage 7 — Unified Follow-Up Communication Model
