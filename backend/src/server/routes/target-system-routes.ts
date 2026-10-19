@@ -26,6 +26,7 @@ const numeric = z.union([z.string(), z.number()]);
 export const createTargetSchema = z
   .object({
     targetName: z.string().trim().min(1, "targetName is required").max(200),
+    category: z.string().trim().max(100).optional(),
     package: z.string().trim().max(200).optional(),
     reward: z.coerce.number().int().nonnegative().optional().default(0),
     bonus: z.string().trim().max(200).optional(),
@@ -80,6 +81,7 @@ const targetItemSchema = z
     target: numeric.optional(),
     number: numeric.optional(),
     price: numeric.optional(),
+    maxPrice: numeric.optional(),
     bonus: z.string().trim().max(200).optional(),
     vas: numeric.optional(),
     kwa: numeric.optional(),
@@ -113,6 +115,7 @@ const userTargetItemSchema = z
     category: z.string().trim().max(100).optional(),
     target: numeric.optional(),
     price: numeric.optional(),
+    maxPrice: numeric.optional(),
     bonus: z.string().trim().max(200).optional(),
     vas: numeric.optional(),
     kwa: numeric.optional(),
@@ -137,6 +140,7 @@ const userTargetUpdateSchema = z
     category: z.string().trim().max(100).optional(),
     target: numeric.optional(),
     price: numeric.optional(),
+    maxPrice: numeric.optional(),
     bonus: z.string().trim().max(200).optional(),
     vas: numeric.optional(),
     kwa: numeric.optional(),
@@ -172,6 +176,7 @@ router.post("/targets", async (req, res) => {
       .insert(targetSystemTargets)
       .values({
         targetName: data.targetName,
+        category: data.category,
         package: data.package,
         reward: data.reward,
         bonus: data.bonus,
@@ -508,6 +513,7 @@ router.post("/assign-role", async (req, res) => {
           category: t.category || "none",
           target: String(t.target ?? t.number ?? "0"),
           price: String(t.price ?? "0"),
+          maxPrice: String(t.maxPrice ?? "0"),
           bonus: t.bonus || "",
           vas: String(vas),
           kwa: String(kwa),
@@ -575,6 +581,7 @@ router.post("/user-targets/bulk", async (req, res) => {
           category: t.category || "none",
           target: String(t.target ?? "0"),
           price: String(t.price ?? "0"),
+          maxPrice: String(t.maxPrice ?? "0"),
           bonus: t.bonus || "",
           vas: String(vas),
           kwa: String(kwa),
@@ -618,6 +625,7 @@ router.patch("/user-targets/:id", async (req, res) => {
     if (data.category !== undefined) updates.category = data.category;
     if (data.target !== undefined) updates.target = String(data.target);
     if (data.price !== undefined) updates.price = String(data.price);
+    if (data.maxPrice !== undefined) updates.maxPrice = String(data.maxPrice);
     if (data.bonus !== undefined) updates.bonus = data.bonus;
     if (data.vas !== undefined) updates.vas = String(data.vas);
     if (data.kwa !== undefined) updates.kwa = String(data.kwa);

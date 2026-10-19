@@ -1,16 +1,16 @@
-// Events report — reads GET /api/reports/event (Stage 8 canonical endpoint, shared
-// with /api/events/report) which returns rows from the REAL drm.events store as
-// { data, total, page, pageSize, totals: { attendance, cost } }. Filters: dateFrom,
-// dateTo, type, status, venue, speaker. Rows render real-or-empty data only. CSV
-// export is delegated to the server (GET /api/reports/event/export) so it honors the
-// same filters AND the event_report export permission (no export outside role scope).
+// Events report — the real eventreport.php: pick ONE event from "Select Event",
+// then see which companies attended it (Present/Absent + whether it resulted in
+// a Sale), plus that event's speaker/topic/timing. Backed by GET
+// /api/reports/event/attendance?eventId=X, which reads the real drm.events +
+// drm.event_speakers + drm.event_attendees tables. Distinct from the Stage 8
+// multi-event dashboard this page used to show (dateFrom/dateTo/type/status
+// filters over /api/reports/event) — that answered a different question
+// (internal event/duty planning) and had zero live usage; this page now
+// matches what eventreport.php's own form and output table actually do.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest, apiRequestJson } from "@/lib/queryClient";
-import { safeReportFilename } from "@/lib/reportApi";
-import { useToast } from "@/hooks/use-toast";
+import { apiRequestJson } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,39 +28,52 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Download } from "lucide-react";
 
-type EventSpeaker = {
-  id: string;
-  speakerName: string | null;
-  topic: string | null;
-};
+type EventOption = { id: string; name: string | null };
 
-type EventReportRow = {
-  id: string;
-  name: string | null;
-  eventName: string | null;
+type AttendanceRow = {
+  rowNumber: number;
   eventType: string | null;
+  company: string | null;
+  esTime: string | null;
+  eeTime: string | null;
+  location: string | null;
+  speaker: string | null;
+  topic: string | null;
+  speakerStartTime: string | null;
+  speakerEndTime: string | null;
+  attendanceStatus: string;
+  resultedInSale: boolean;
   eventDate: string | null;
-  startTime: string | null;
-  endTime: string | null;
-  venue: string | null;
-  attendeeCount: number | null;
-  amount: number | null;
-  status: string | null;
-  speakers: EventSpeaker[];
-  speakerCount: number | null;
-  dutyCount: number | null;
-  createdByName: string | null;
 };
 
-type EventReportResponse = {
-  data: EventReportRow[];
+type AttendanceReportResponse = {
+  event: { name: string | null; amount: number };
+  rows: AttendanceRow[];
   total: number;
-  page: number;
-  pageSize: number;
-  totals: { attendance: number; cost: number };
+  cost: number;
 };
+
+function fmtTime(value: string | null): string {
+  if (!value) return "-";
+  const [h, m] = value.split(":").map((n) => Number(n));
+  if (isNaN(h) || isNaN(m)) return value;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${String(h12).padStart(2, "0")}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function totalTime(start: string | null, end: string | null): string {
+  if (!start || !end) return "-";
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  if ([sh, sm, eh, em].some((n) => isNaN(n))) return "-";
+  let minutes = eh * 60 + em - (sh * 60 + sm);
+  if (minutes < 0) minutes += 24 * 60;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h ${m}m`;
+}
 
 function fmtDate(value: string | null): string {
   if (!value) return "-";
@@ -69,132 +82,29 @@ function fmtDate(value: string | null): string {
   return d.toISOString().slice(0, 10);
 }
 
-function fmtTime(value: string | null): string {
-  if (!value) return "-";
-  return value;
-}
-
-function fmtAmount(value: number | null): string {
-  if (value === null || value === undefined || isNaN(Number(value))) return "-";
-  return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function speakerNames(speakers: EventSpeaker[]): string {
-  if (!Array.isArray(speakers) || speakers.length === 0) return "-";
-  return speakers
-    .map((s) => (s.speakerName || "").trim())
-    .filter(Boolean)
-    .join(", ") || "-";
-}
-
-const STATUS_OPTIONS = ["Draft", "Completed", "Cancelled"] as const;
-
-// Builds the shared filter query string (no paging) used by both the list query and
-// the server-side CSV export so the export always matches the on-screen filters.
-function buildEventParams(applied: {
-  dateFrom: string;
-  dateTo: string;
-  type: string;
-  status: string;
-  venue: string;
-  speaker: string;
-}): URLSearchParams {
-  const params = new URLSearchParams();
-  if (applied.dateFrom) params.set("dateFrom", applied.dateFrom);
-  if (applied.dateTo) params.set("dateTo", applied.dateTo);
-  if (applied.type) params.set("type", applied.type);
-  if (applied.status && applied.status !== "all") params.set("status", applied.status);
-  if (applied.venue) params.set("venue", applied.venue);
-  if (applied.speaker) params.set("speaker", applied.speaker);
-  return params;
-}
-
 export default function EventReport() {
-  const { toast } = useToast();
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [type, setType] = useState("");
-  const [status, setStatus] = useState("all");
-  const [venue, setVenue] = useState("");
-  const [speaker, setSpeaker] = useState("");
-  const [entries, setEntries] = useState("10");
-  const [tableSearch, setTableSearch] = useState("");
-  const [exporting, setExporting] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState("");
+  const [applied, setApplied] = useState<string | null>(null);
 
-  const [applied, setApplied] = useState<{
-    dateFrom: string;
-    dateTo: string;
-    type: string;
-    status: string;
-    venue: string;
-    speaker: string;
-  } | null>(null);
+  const { data: eventsData } = useQuery<{ data: EventOption[] }>({
+    queryKey: ["/api/events", "picker"],
+    queryFn: async () => apiRequestJson("GET", "/api/events?pageSize=200"),
+  });
+  const eventOptions = eventsData?.data ?? [];
 
-  const query = useQuery<EventReportResponse>({
-    queryKey: ["/api/reports/event", applied],
+  const query = useQuery<AttendanceReportResponse>({
+    queryKey: ["/api/reports/event/attendance", applied],
     enabled: !!applied,
-    queryFn: async () => {
-      const params = buildEventParams(applied!);
-      params.set("page", "1");
-      params.set("pageSize", "200");
-      return apiRequestJson("GET", `/api/reports/event?${params.toString()}`);
-    },
+    queryFn: async () => apiRequestJson("GET", `/api/reports/event/attendance?eventId=${applied}`),
   });
 
   const handleView = () => {
-    setApplied({ dateFrom, dateTo, type, status, venue, speaker });
+    if (!selectedEvent) return;
+    setApplied(selectedEvent);
   };
 
-  const allRows = query.data?.data ?? [];
-  const totals = query.data?.totals ?? { attendance: 0, cost: 0 };
-  const pageSize = Number(entries) || 10;
-  const search = tableSearch.trim().toLowerCase();
-  const filtered = search
-    ? allRows.filter((r) =>
-        [r.eventName ?? r.name, r.eventType, r.venue, r.status, r.createdByName, speakerNames(r.speakers)]
-          .some((v) => (v || "").toLowerCase().includes(search)),
-      )
-    : allRows;
-  const rows = filtered.slice(0, pageSize);
-
-  const handleExport = async () => {
-    if (!applied) return;
-    setExporting(true);
-    try {
-      const params = buildEventParams(applied);
-      const res = await apiRequest("GET", `/api/reports/event/export?${params.toString()}`);
-      if (!res.ok) {
-        const msg =
-          res.status === 403
-            ? "You are not authorized to export the events report."
-            : "Could not export the events report. Please try again.";
-        toast({ title: "Export failed", description: msg, variant: "destructive" });
-        return;
-      }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = safeReportFilename("events-report", {
-        from: applied.dateFrom,
-        to: applied.dateTo,
-        timestamp: true,
-      });
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-      toast({ title: "Export started", description: "Your CSV download has begun." });
-    } catch {
-      toast({
-        title: "Export failed",
-        description: "Could not export the events report. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setExporting(false);
-    }
-  };
+  const rows = query.data?.rows ?? [];
+  const cost = query.data?.cost ?? 0;
 
   return (
     <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
@@ -208,208 +118,123 @@ export default function EventReport() {
         {/* Filter Card */}
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
           <CardContent className="p-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Start Date</Label>
-                <Input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">End Date</Label>
-                <Input
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Event Type</Label>
-                <Input
-                  placeholder="Filter by event type..."
-                  value={type}
-                  onChange={(e) => setType(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Status</Label>
-                <Select value={status} onValueChange={setStatus}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+              <div className="flex flex-col gap-2 md:col-span-2">
+                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Select Event</Label>
+                <Select value={selectedEvent} onValueChange={setSelectedEvent}>
                   <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
-                    <SelectValue placeholder="All" />
+                    <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    {STATUS_OPTIONS.map((st) => (
-                      <SelectItem key={st} value={st}>{st}</SelectItem>
-                    ))}
+                    {eventOptions.length === 0 ? (
+                      <div className="px-2 py-1.5 text-sm text-muted-foreground">No events found</div>
+                    ) : (
+                      eventOptions.map((ev) => (
+                        <SelectItem key={ev.id} value={ev.id}>
+                          {ev.name || "(unnamed event)"}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Venue</Label>
-                <Input
-                  placeholder="Filter by venue..."
-                  value={venue}
-                  onChange={(e) => setVenue(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
+              <div>
+                <Button
+                  onClick={handleView}
+                  disabled={!selectedEvent}
+                  className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-semibold rounded-sm"
+                >
+                  View
+                </Button>
               </div>
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Speaker</Label>
-                <Input
-                  placeholder="Filter by speaker..."
-                  value={speaker}
-                  onChange={(e) => setSpeaker(e.target.value)}
-                  className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
-                />
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <Button
-                onClick={handleView}
-                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-semibold rounded-sm"
-              >
-                View
-              </Button>
             </div>
           </CardContent>
         </Card>
 
         {/* Data Table Card */}
-        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm">
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300">Event List</h2>
-              <Button
-                onClick={handleExport}
-                disabled={!applied || exporting}
-                variant="outline"
-                className="h-8 px-4 text-xs font-semibold border-slate-300 text-[#555] dark:text-zinc-300"
-              >
-                <Download className="w-3.5 h-3.5 mr-2" />
-                {exporting ? "Exporting..." : "Export CSV"}
-              </Button>
-            </div>
-
-            {/* Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[#555] dark:text-zinc-300">Show</span>
-                <Select value={entries} onValueChange={setEntries}>
-                  <SelectTrigger className="h-8 w-[70px] bg-white dark:bg-zinc-900 border-slate-300 text-xs text-[#555] dark:text-zinc-300 focus:ring-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="25">25</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                    <SelectItem value="100">100</SelectItem>
-                  </SelectContent>
-                </Select>
-                <span className="text-xs text-[#555] dark:text-zinc-300">entries</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[#555] dark:text-zinc-300">Search:</span>
-                <Input
-                  value={tableSearch}
-                  onChange={(e) => setTableSearch(e.target.value)}
-                  className="h-8 w-[200px] bg-white dark:bg-zinc-900 border-slate-300 text-xs focus-visible:ring-0"
-                />
-              </div>
-            </div>
-
-            {/* Table */}
-            <div className="overflow-x-auto border border-slate-100 dark:border-zinc-800 rounded-sm">
+        <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm overflow-hidden">
+          <div className="border-b border-slate-100 dark:border-zinc-800 py-4 px-6 bg-white dark:bg-zinc-900">
+            <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300">Event List</h2>
+          </div>
+          <CardContent className="p-4">
+            <div className="overflow-x-auto">
               <Table className="w-full text-[13px] whitespace-nowrap">
                 <TableHeader>
-                  <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6] dark:bg-zinc-900 dark:hover:bg-zinc-900">
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">#</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Event Name</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Type</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Event Date</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Start</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">End</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Venue</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Speakers</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Duties</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Attendance</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-right text-xs">Amount</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Status</TableHead>
-                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left text-xs">Created By</TableHead>
+                  <TableRow className="border-b-0 bg-[#d9f2e6] dark:bg-zinc-900 hover:bg-[#d9f2e6] dark:hover:bg-zinc-900">
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">#</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Event Type</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Company</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">ES Time</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">EE Time</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Location</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Speaker</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Topic</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Start Time</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">End Time</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Total Time</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Present/Absent</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Sale</TableHead>
+                    <TableHead className="py-3 px-3 font-bold text-[#333] dark:text-zinc-300 text-left">Event Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white dark:bg-zinc-900">
                   {!applied ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
-                        Click 'View' to load the events report.
+                      <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                        Please select an event and click 'View' to display the data.
                       </TableCell>
                     </TableRow>
                   ) : query.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
                         Loading...
                       </TableCell>
                     </TableRow>
                   ) : query.isError ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center py-8">
-                        <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the events report. Please try again.</div>
-                        <Button size="sm" variant="outline" onClick={() => query.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                      <TableCell colSpan={14} className="text-center text-[#d9534f] dark:text-red-400 py-8">
+                        Could not load the events report. Please try again.
                       </TableCell>
                     </TableRow>
                   ) : rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} className="text-center text-muted-foreground py-8">
-                        No events found.
+                      <TableCell colSpan={14} className="text-center text-muted-foreground py-8">
+                        No attendees recorded for this event.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    rows.map((item, idx) => (
-                      <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.eventName || item.name || "-"}</TableCell>
+                    rows.map((item) => (
+                      <TableRow key={item.rowNumber} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.rowNumber}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.eventType || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.company || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.esTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.eeTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.location || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.speaker || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.topic || "-"}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.speakerStartTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.speakerEndTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{totalTime(item.speakerStartTime, item.speakerEndTime)}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.attendanceStatus}</TableCell>
+                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.resultedInSale ? "Yes" : "No"}</TableCell>
                         <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtDate(item.eventDate)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.startTime)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{fmtTime(item.endTime)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.venue || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{speakerNames(item.speakers)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{item.dutyCount ?? 0}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{item.attendeeCount ?? 0}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300 text-right">{fmtAmount(item.amount)}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
-                        <TableCell className="py-4 px-3 text-[#555] dark:text-zinc-300">{item.createdByName || "-"}</TableCell>
                       </TableRow>
                     ))
                   )}
-                </TableBody>
-                {applied && !query.isLoading && !query.isError && filtered.length > 0 && (
-                  <tfoot>
-                    <TableRow className="border-t-2 border-slate-200 dark:border-zinc-800 bg-[#f1f5f3] dark:bg-zinc-900 font-bold">
-                      <TableCell colSpan={9} className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">TOTALS</TableCell>
-                      <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">{totals.attendance}</TableCell>
-                      <TableCell className="py-3 px-3 text-[#333] dark:text-zinc-300 text-right">{fmtAmount(totals.cost)}</TableCell>
-                      <TableCell colSpan={2} className="py-3 px-3" />
+                  {applied && !query.isLoading && rows.length > 0 && (
+                    <TableRow className="bg-slate-50 dark:bg-zinc-800/50">
+                      <TableCell className="py-4 px-3 font-bold text-[#555] dark:text-zinc-300">Total</TableCell>
+                      <TableCell className="py-4 px-3" />
+                      <TableCell className="py-4 px-3 font-bold text-[#555] dark:text-zinc-300">{rows.length}</TableCell>
+                      <TableCell className="py-4 px-3 font-bold text-[#555] dark:text-zinc-300">Cost</TableCell>
+                      <TableCell className="py-4 px-3 font-bold text-[#555] dark:text-zinc-300">{cost}</TableCell>
+                      <TableCell className="py-4 px-3" colSpan={9} />
                     </TableRow>
-                  </tfoot>
-                )}
+                  )}
+                </TableBody>
               </Table>
             </div>
-
-            {/* Info */}
-            <div className="flex items-center justify-between mt-4">
-              <div className="text-xs text-[#555] dark:text-zinc-300">
-                Showing {rows.length} of {filtered.length} entries
-              </div>
-            </div>
-
           </CardContent>
         </Card>
       </div>

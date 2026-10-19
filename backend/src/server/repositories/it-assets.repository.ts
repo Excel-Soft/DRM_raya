@@ -1,6 +1,6 @@
 import { db, pool } from "../db";
 import { itServers, itDomains, itBackups, itRegistries, itHostingPackages, customers } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql, isNotNull } from "drizzle-orm";
 
 // Patch 4 Stage 4 — canonical "Server Names" status set. The DB column stays
 // `text` for backward-compat; we normalize at the boundary. Legacy values
@@ -81,6 +81,12 @@ async function ensureItSchema() {
     alter table it_servers add column if not exists created_by uuid;
     alter table it_servers add column if not exists updated_by uuid;
     alter table it_servers add column if not exists deleted_by uuid;
+    -- Legacy's space/renewal tracking (addservers.php) — used-space + an
+    -- expiry countdown computed from buying_date + years.
+    alter table it_servers add column if not exists capacity_mb integer;
+    alter table it_servers add column if not exists buying_date date;
+    alter table it_servers add column if not exists years integer;
+    alter table it_hosting_packages add column if not exists capacity_mb integer;
   `;
   try {
     await pool.query(ddl);
@@ -94,9 +100,36 @@ export const itAssetsRepository = {
   async listServers(opts: ListServersOptions = {}) {
     await ensureItSchema();
     const rows = await db.select().from(itServers).orderBy(desc(itServers.createdAt));
+
+    // Used space per server = sum of capacity_mb for hosting packages
+    // assigned to domains hosted there (legacy's getServerUseH). A single
+    // aggregate query, not N+1 — joined once for every server's domains.
+    const usage = await db
+      .select({ serverId: itDomains.serverId, usedMb: sql<string>`coalesce(sum(${itHostingPackages.capacityMb}), 0)` })
+      .from(itDomains)
+      .leftJoin(itHostingPackages, eq(itDomains.hostingPackageId, itHostingPackages.id))
+      .where(isNotNull(itDomains.serverId))
+      .groupBy(itDomains.serverId);
+    const usedMbByServer = new Map(usage.map((u) => [u.serverId as string, Number(u.usedMb) || 0]));
+
+    const withComputed = rows.map((r) => {
+      let expiryDate: Date | null = null;
+      if (r.buyingDate && r.years) {
+        expiryDate = new Date(r.buyingDate);
+        expiryDate.setFullYear(expiryDate.getFullYear() + r.years);
+      }
+      const daysLeft = expiryDate ? Math.round((expiryDate.getTime() - Date.now()) / 86_400_000) : null;
+      return {
+        ...r,
+        usedSpaceMb: usedMbByServer.get(r.id) ?? 0,
+        expiryDate,
+        daysLeft,
+      };
+    });
+
     const search = (opts.search || "").trim().toLowerCase();
     const statusFilter = opts.status ? normalizeServerStatus(opts.status) : null;
-    return rows.filter((r) => {
+    return withComputed.filter((r) => {
       if (!opts.includeArchived && r.deletedAt) return false;
       if (statusFilter && normalizeServerStatus(r.status) !== statusFilter) return false;
       if (search) {

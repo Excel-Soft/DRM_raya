@@ -378,7 +378,7 @@ const DEPT_NAME_TO_ROLES: Record<string, string[]> = {
   "Notice": ["admin", "super_admin", "reception_manager", "seo_smm_manager", "seo_smm_executive"],
   "Notice Board": ["admin", "super_admin", "reception_manager", "seo_smm_manager", "seo_smm_executive"],
   "DRM Policies": ["admin", "super_admin", "reception_manager"],
-  "Events": ["admin", "hod", "super_hod", "marketing_manager"],
+  "Events": ["admin", "hod", "super_hod", "marketing_manager", "reception_manager"],
   "Social Media Posting": ["admin", "hod", "super_hod", "marketing_manager"],
   "Target System": ["admin", "sales_manager", "hod", "super_hod"],
   "Daily Reports": ["admin", "super_admin"],
@@ -827,12 +827,15 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className={`${sidebarBg} ${sidebarText}`}>
       <SidebarContent className={`${sidebarBg} ${sidebarText}`}>
         <SidebarGroup>
-          <div className="px-4 py-4 border-b border-sidebar-border">
-            <div className="flex items-center justify-start h-16 min-h-16" data-testid="img-logo">
+          <div className="px-4 py-3 border-b border-sidebar-border">
+            <div
+              className="flex items-center justify-start h-24 min-h-24 dark:bg-white dark:rounded-lg dark:p-2 dark:w-fit"
+              data-testid="img-logo"
+            >
               <img
                 src="/webexcels-logo.png"
                 alt="WebExcels logo"
-                className="h-[50px] w-auto max-w-full object-contain"
+                className="h-[90px] w-auto max-w-full object-contain mix-blend-multiply dark:mix-blend-normal"
               />
             </div>
           </div>

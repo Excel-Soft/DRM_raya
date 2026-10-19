@@ -66,6 +66,9 @@ interface ServerForm {
   provider: string;
   status: string;
   notes: string;
+  capacityMb: string;
+  buyingDate: string;
+  years: string;
 }
 
 const EMPTY_SERVER_FORM: ServerForm = {
@@ -74,7 +77,21 @@ const EMPTY_SERVER_FORM: ServerForm = {
   provider: "",
   status: "ACTIVE",
   notes: "",
+  capacityMb: "",
+  buyingDate: "",
+  years: "",
 };
+
+const SERVER_YEAR_OPTIONS = ["1", "2", "3", "4", "5"];
+
+function serverExpiryInfo(server: any): { label: string; cls: string } {
+  if (server.daysLeft == null) {
+    return { label: "N/A", cls: "bg-slate-100 text-slate-500 dark:bg-zinc-800 dark:text-zinc-400" };
+  }
+  if (server.daysLeft < 0) return { label: "Expired", cls: "bg-red-100 text-red-700" };
+  if (server.daysLeft <= 30) return { label: `${server.daysLeft}d left`, cls: "bg-amber-100 text-amber-700" };
+  return { label: `${server.daysLeft}d left`, cls: "bg-emerald-100 text-emerald-700" };
+}
 
 // Patch 6 Stage 6 — controlled domain create form. Only fields that map to real
 // it_domains columns are captured. The cPanel PASSWORD is intentionally omitted:
@@ -172,6 +189,7 @@ export default function ItServers() {
   const [registryUrl, setRegistryUrl] = useState("");
   const [pkgName, setPkgName] = useState("");
   const [pkgCapacity, setPkgCapacity] = useState("");
+  const [pkgCapacityMb, setPkgCapacityMb] = useState("");
   const [pkgPrice, setPkgPrice] = useState("");
 
   const {
@@ -309,6 +327,7 @@ export default function ItServers() {
       queryClient.invalidateQueries({ queryKey: ["/api/it/hosting-packages"] });
       setPkgName("");
       setPkgCapacity("");
+      setPkgCapacityMb("");
       setPkgPrice("");
     },
     onError: (err) =>
@@ -330,6 +349,9 @@ export default function ItServers() {
       provider: server.provider ?? "",
       status: normalizeStatusLabel(server.status),
       notes: server.notes ?? "",
+      capacityMb: server.capacityMb != null ? String(server.capacityMb) : "",
+      buyingDate: server.buyingDate ? String(server.buyingDate).slice(0, 10) : "",
+      years: server.years != null ? String(server.years) : "",
     });
     setServerFormError(null);
     setServerDialogOpen(true);
@@ -355,6 +377,9 @@ export default function ItServers() {
         provider: serverForm.provider.trim() || null,
         notes: serverForm.notes.trim() || null,
         status: serverForm.status,
+        capacityMb: serverForm.capacityMb.trim() ? Number(serverForm.capacityMb) : null,
+        buyingDate: serverForm.buyingDate || null,
+        years: serverForm.years ? Number(serverForm.years) : null,
       },
     });
   };
@@ -406,6 +431,7 @@ export default function ItServers() {
     }
     const body: Record<string, any> = { name };
     if (pkgCapacity.trim()) body.capacity = pkgCapacity.trim();
+    if (pkgCapacityMb.trim()) body.capacityMb = pkgCapacityMb.trim();
     if (pkgPrice.trim()) body.price = pkgPrice.trim();
     createPackageMutation.mutate(body);
   };
@@ -947,6 +973,8 @@ export default function ItServers() {
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Server Name</TableHead>
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Host / IP</TableHead>
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Provider</TableHead>
+                  <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Space Used</TableHead>
+                  <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Expiry</TableHead>
                   <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
                   <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Actions</TableHead>
                 </TableRow>
@@ -958,6 +986,19 @@ export default function ItServers() {
                     <TableCell className="font-semibold text-slate-700 dark:text-zinc-100">{server.name}</TableCell>
                     <TableCell className="text-slate-600 dark:text-zinc-300">{server.ip}</TableCell>
                     <TableCell className="text-slate-600 dark:text-zinc-300">{server.provider || "—"}</TableCell>
+                    <TableCell className="text-slate-600 dark:text-zinc-300 text-xs">
+                      {server.capacityMb != null ? (
+                        <span>{server.usedSpaceMb ?? 0}MB / <b>{server.capacityMb}MB</b></span>
+                      ) : "N/A"}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="flex flex-col gap-0.5">
+                        <Badge variant="outline" className={serverExpiryInfo(server).cls}>{serverExpiryInfo(server).label}</Badge>
+                        {server.expiryDate && (
+                          <span className="text-slate-400">{new Date(server.expiryDate).toLocaleDateString()}</span>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className={statusBadgeClass(server.status)}>{normalizeStatusLabel(server.status)}</Badge>
@@ -983,7 +1024,7 @@ export default function ItServers() {
                 ))}
                 {filteredServers.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-10 text-slate-500 dark:text-zinc-400">
+                    <TableCell colSpan={8} className="text-center py-10 text-slate-500 dark:text-zinc-400">
                       {serversList.length === 0 ? 'No servers yet. Click "Add Server" to create one.' : "No servers match your search."}
                     </TableCell>
                   </TableRow>
@@ -1059,9 +1100,19 @@ export default function ItServers() {
                 <Input
                   value={pkgCapacity}
                   onChange={(e) => setPkgCapacity(e.target.value)}
-                  placeholder="Capacity (optional)"
+                  placeholder="Capacity label (e.g. 5GB SSD)"
                   className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
                 />
+                <Input
+                  type="number"
+                  min="0"
+                  value={pkgCapacityMb}
+                  onChange={(e) => setPkgCapacityMb(e.target.value)}
+                  placeholder="Capacity (MB)"
+                  className="h-9 bg-slate-50/50 border-slate-200 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100"
+                />
+              </div>
+              <div className="flex gap-2">
                 <Input
                   type="number"
                   min="0"
@@ -1126,6 +1177,25 @@ export default function ItServers() {
                   {SERVER_STATUS_OPTIONS.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="server-capacity">Space (MB)</Label>
+                <Input id="server-capacity" type="number" min="0" value={serverForm.capacityMb} onChange={(e) => setServerForm((f) => ({ ...f, capacityMb: e.target.value }))} placeholder="e.g. 10000" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="server-buying-date">Buying Date</Label>
+                <Input id="server-buying-date" type="date" value={serverForm.buyingDate} onChange={(e) => setServerForm((f) => ({ ...f, buyingDate: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="server-years">Years</Label>
+                <Select value={serverForm.years} onValueChange={(val) => setServerForm((f) => ({ ...f, years: val }))}>
+                  <SelectTrigger id="server-years"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                  <SelectContent>
+                    {SERVER_YEAR_OPTIONS.map((y) => (<SelectItem key={y} value={y}>{y} Year{y === "1" ? "" : "s"}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="server-notes">Notes</Label>

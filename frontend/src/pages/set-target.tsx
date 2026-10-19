@@ -144,6 +144,7 @@ export default function SetTarget() {
       category: t.category,
       target: t.number,
       price: t.price,
+      maxPrice: t.maxPrice,
       bonus: t.bonus,
       vas: t.vas,
       kwa: t.kwa,
@@ -182,6 +183,7 @@ export default function SetTarget() {
       category: t.category,
       number: t.number,
       price: t.price,
+      maxPrice: t.maxPrice,
       bonus: t.bonus,
       vas: t.vas,
       kwa: t.kwa,
@@ -222,6 +224,7 @@ export default function SetTarget() {
   const [editForm, setEditForm] = useState({
     target: "",
     price: "",
+    maxPrice: "",
     bonus: "",
     vas: "",
     kwa: "",
@@ -254,6 +257,7 @@ export default function SetTarget() {
     setEditForm({
       target: String(row.target ?? ""),
       price: String(row.price ?? ""),
+      maxPrice: String(row.maxPrice ?? ""),
       bonus: row.bonus ?? "",
       vas: String(row.vas ?? ""),
       kwa: String(row.kwa ?? ""),
@@ -400,6 +404,7 @@ export default function SetTarget() {
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-32">Number</TableHead>
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                          <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Max Price</TableHead>
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">Start Date</TableHead>
                           <TableHead className="font-bold text-black dark:text-zinc-300 text-center w-40">End Date</TableHead>
@@ -429,6 +434,7 @@ export default function SetTarget() {
                                   <SelectItem value="Team">Team</SelectItem>
                                   <SelectItem value="Dep DD">Dep DD</SelectItem>
                                   <SelectItem value="Dep PP">Dep PP</SelectItem>
+                                  <SelectItem value="PP Link">PP Link</SelectItem>
                                   <SelectItem value="Other">Other</SelectItem>
                                 </SelectContent>
                               </Select>
@@ -458,6 +464,7 @@ export default function SetTarget() {
                               </div>
                             </TableCell>
                             <TableCell className="text-center text-sm">{row.price}</TableCell>
+                            <TableCell className="text-center text-sm">{row.maxPrice}</TableCell>
                             {/* Legacy's own "Bonus" column here actually displays the
                                 conversion value (+ "%" when the bonus type is a
                                 percentage) — not the bonus-type label itself. */}
@@ -593,6 +600,7 @@ export default function SetTarget() {
                           </div>
                         </TableCell>
                         <TableCell className="text-center text-sm">{row.price}</TableCell>
+                        <TableCell className="text-center text-sm">{row.maxPrice}</TableCell>
                         {/* Legacy's own "Bonus" column here actually displays the
                             conversion value (+ "%" when the bonus type is a
                             percentage) — not the bonus-type label itself. */}
@@ -653,6 +661,7 @@ export default function SetTarget() {
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Max Price</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Vas</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Kwa</TableHead>
@@ -667,7 +676,7 @@ export default function SetTarget() {
               <TableBody>
                 {isLoadingUserTargets ? (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center py-8 text-gray-500 dark:text-zinc-400">
+                    <TableCell colSpan={15} className="text-center py-8 text-gray-500 dark:text-zinc-400">
                       Loading live data...
                     </TableCell>
                   </TableRow>
@@ -679,6 +688,7 @@ export default function SetTarget() {
                       <TableCell className="text-center">{row.category}</TableCell>
                       <TableCell className="text-center text-[#00a65a] underline decoration-dashed cursor-pointer dark:text-zinc-400">{row.target}</TableCell>
                       <TableCell className="text-center">{Number(row.price)}</TableCell>
+                      <TableCell className="text-center">{Number(row.maxPrice)}</TableCell>
                       {/* func.php's own view handler shows the conversion value here,
                           not the bonus-type label. */}
                       <TableCell className="text-center">{row.conversion}</TableCell>
@@ -702,7 +712,7 @@ export default function SetTarget() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center py-6 text-gray-500 dark:text-zinc-400">
+                    <TableCell colSpan={15} className="text-center py-6 text-gray-500 dark:text-zinc-400">
                       No targets available.
                     </TableCell>
                   </TableRow>
@@ -735,6 +745,10 @@ export default function SetTarget() {
             <div>
               <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Price</label>
               <Input value={editForm.price} onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Max Price</label>
+              <Input value={editForm.maxPrice} onChange={(e) => setEditForm((f) => ({ ...f, maxPrice: e.target.value }))} />
             </div>
             <div>
               <label className="block text-xs mb-1 text-gray-600 dark:text-zinc-400">Bonus</label>

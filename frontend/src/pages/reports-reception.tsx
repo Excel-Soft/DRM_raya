@@ -11,9 +11,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
+  SelectGroup,
+  SelectLabel,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -97,8 +100,22 @@ function buildReceptionParams(applied: {
   return params;
 }
 
+type TeamSummaryRow = {
+  receptionist_id: string;
+  receptionist_name: string | null;
+  total_meetings: number;
+  total_duration_seconds: number;
+  total_gm: number;
+};
+
 export default function ReceptionReport() {
   const { toast } = useToast();
+  // Legacy's own single "Select User" dropdown: "Reception Report" (all
+  // meetings) / "All Team" (per-receptionist aggregate) / a specific user
+  // grouped by role — not three separate controls.
+  const [selectedOption, setSelectedOption] = useState("Reception Report");
+  const [monthWise, setMonthWise] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "team">("list");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [month, setMonth] = useState("");
@@ -123,14 +140,50 @@ export default function ReceptionReport() {
     queryFn: async () => apiRequestJson("GET", "/api/account/users-list"),
   });
 
+  const usersByRole = users.reduce((acc: Record<string, any[]>, u: any) => {
+    const roleKey = u.role || "Other";
+    (acc[roleKey] ||= []).push(u);
+    return acc;
+  }, {});
+
+  const handleSelectOption = (value: string) => {
+    setSelectedOption(value);
+    if (value === "Reception Report") {
+      setViewMode("list");
+      setUser("all");
+    } else if (value === "All Team") {
+      setViewMode("team");
+      setUser("all");
+    } else {
+      setViewMode("list");
+      setUser(value);
+    }
+  };
+
+  // Legacy's "Month Wise" + a specific (non-"Reception Report"/"All Team")
+  // user triggers a tiered monthly commission calculator. No modern
+  // payments-received ledger exists to compute that honestly yet — show a
+  // clear blocked state instead of silently ignoring the checkbox.
+  const isSpecificUser = selectedOption !== "Reception Report" && selectedOption !== "All Team";
+  const showMonthlyBlocked = monthWise && isSpecificUser;
+
   const report = useQuery<ReceptionResponse>({
     queryKey: ["/api/reports/reception", applied, page],
-    enabled: !!applied,
+    enabled: !!applied && viewMode === "list" && !showMonthlyBlocked,
     queryFn: async () => {
       const params = buildReceptionParams(applied!);
       params.set("page", String(page));
       params.set("pageSize", "50");
       return apiRequestJson("GET", `/api/reports/reception?${params.toString()}`);
+    },
+  });
+
+  const teamSummary = useQuery<{ data: TeamSummaryRow[] }>({
+    queryKey: ["/api/reports/reception/team-summary", applied?.startDate, applied?.endDate],
+    enabled: !!applied && viewMode === "team" && !!applied.startDate && !!applied.endDate,
+    queryFn: async () => {
+      const params = new URLSearchParams({ startDate: applied!.startDate, endDate: applied!.endDate });
+      return apiRequestJson("GET", `/api/reports/reception/team-summary?${params.toString()}`);
     },
   });
 
@@ -199,25 +252,40 @@ export default function ReceptionReport() {
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
 
-              {/* Select User */}
-              <div className="flex flex-col gap-2">
-                <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Select User</Label>
-                <Select value={user} onValueChange={setUser}>
+              {/* Select User — legacy's single dropdown: Reception Report /
+                  All Team / every role's users grouped by role, plus the
+                  "Month Wise" checkbox beside the label. */}
+              <div className="flex flex-col gap-2 md:col-span-2">
+                <div className="flex items-center gap-2">
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Select User</Label>
+                  <Checkbox id="monthWise" checked={monthWise} onCheckedChange={(c) => setMonthWise(c === true)} />
+                  <label htmlFor="monthWise" className="text-[13px] font-semibold text-[#555] dark:text-zinc-300 cursor-pointer">
+                    Month Wise
+                  </label>
+                </div>
+                <Select value={selectedOption} onValueChange={handleSelectOption}>
                   <SelectTrigger className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus:ring-0">
                     <SelectValue placeholder="Choose..." />
                   </SelectTrigger>
-                  <SelectContent className="max-h-[300px]">
-                    <SelectItem value="all">All Users</SelectItem>
-                    {users.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
-                        {u.full_name} {u.role ? `(${u.role})` : ""}
-                      </SelectItem>
+                  <SelectContent className="max-h-[320px]">
+                    <SelectItem value="Reception Report">Reception Report</SelectItem>
+                    <SelectItem value="All Team">All Team</SelectItem>
+                    {Object.entries(usersByRole).map(([role, roleUsers]) => (
+                      <SelectGroup key={role}>
+                        <SelectLabel>{role}</SelectLabel>
+                        {(roleUsers as any[]).map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.full_name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
               {/* Status */}
+              {viewMode === "list" && (
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Status</Label>
                 <Select value={status} onValueChange={setStatus}>
@@ -232,6 +300,7 @@ export default function ReceptionReport() {
                   </SelectContent>
                 </Select>
               </div>
+              )}
 
               {/* Start Date */}
               <div className="flex flex-col gap-2">
@@ -267,6 +336,7 @@ export default function ReceptionReport() {
               </div>
 
               {/* Company */}
+              {viewMode === "list" && (
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Company</Label>
                 <Input
@@ -277,8 +347,10 @@ export default function ReceptionReport() {
                   className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
+              )}
 
               {/* Branch */}
+              {viewMode === "list" && (
               <div className="flex flex-col gap-2">
                 <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-300">Branch</Label>
                 <Input
@@ -289,6 +361,7 @@ export default function ReceptionReport() {
                   className="h-9 bg-white dark:bg-zinc-900 border-slate-200 text-[#555] dark:text-zinc-300 text-[13px] focus-visible:ring-0"
                 />
               </div>
+              )}
             </div>
 
             <div className="mt-6 flex items-center gap-3">
@@ -298,6 +371,7 @@ export default function ReceptionReport() {
               >
                 View
               </Button>
+              {viewMode === "list" && (
               <Button
                 onClick={handleExport}
                 disabled={!applied || exporting}
@@ -306,6 +380,7 @@ export default function ReceptionReport() {
               >
                 {exporting ? "Exporting..." : "Export CSV"}
               </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -314,94 +389,171 @@ export default function ReceptionReport() {
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm overflow-hidden">
           <CardHeader className="border-b border-slate-100 dark:border-zinc-800 py-4 px-6 bg-white dark:bg-zinc-900">
             <CardTitle className="text-[15px] font-bold text-[#555] dark:text-zinc-300">
-              View Reception Report
+              {showMonthlyBlocked ? "Monthly Achievement" : viewMode === "team" ? "All Team Summary" : "View Reception Report"}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4">
-            <div className="overflow-x-auto">
-              <Table className="w-full text-[13px] whitespace-nowrap">
-                <TableHeader>
-                  <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6] dark:bg-zinc-900 dark:hover:bg-zinc-900">
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Company</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Person</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Receptionist</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Meeting Type</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Date</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Start</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">End</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Duration</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody className="bg-white dark:bg-zinc-900">
-                  {!applied ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                        Set your filters and click View to load the reception report.
-                      </TableCell>
-                    </TableRow>
-                  ) : report.isLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                        Loading...
-                      </TableCell>
-                    </TableRow>
-                  ) : report.isError ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center py-8">
-                        <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the reception report. Please try again.</div>
-                        <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
-                      </TableCell>
-                    </TableRow>
-                  ) : rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                        No reception records found.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    rows.map((item) => (
-                      <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.company_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.person_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.receptionist_name || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.meeting_type || "-"}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtDate(item.meeting_date)}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtTime(item.start_time)}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtTime(item.end_time)}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtDuration(item.total_duration_seconds)}</TableCell>
-                        <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
+            {showMonthlyBlocked ? (
+              <div className="text-center text-muted-foreground py-10 text-sm max-w-xl mx-auto">
+                The monthly tiered commission calculator isn't available yet — it needs a payments-received
+                record tied to a specific user, which doesn't exist in this system yet. Uncheck "Month Wise"
+                to see this user's meeting list instead.
+              </div>
+            ) : viewMode === "list" ? (
+              <>
+                <div className="overflow-x-auto">
+                  <Table className="w-full text-[13px] whitespace-nowrap">
+                    <TableHeader>
+                      <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6] dark:bg-zinc-900 dark:hover:bg-zinc-900">
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Company</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Person</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Receptionist</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Meeting Type</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Date</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Start</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">End</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Duration</TableHead>
+                        <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Status</TableHead>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                    </TableHeader>
+                    <TableBody className="bg-white dark:bg-zinc-900">
+                      {!applied ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                            Set your filters and click View to load the reception report.
+                          </TableCell>
+                        </TableRow>
+                      ) : report.isLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                            Loading...
+                          </TableCell>
+                        </TableRow>
+                      ) : report.isError ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center py-8">
+                            <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the reception report. Please try again.</div>
+                            <Button size="sm" variant="outline" onClick={() => report.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                          </TableCell>
+                        </TableRow>
+                      ) : rows.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
+                            No reception records found.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        rows.map((item) => (
+                          <TableRow key={item.id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.company_name || "-"}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.person_name || "-"}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.receptionist_name || "-"}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.meeting_type || "-"}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtDate(item.meeting_date)}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtTime(item.start_time)}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtTime(item.end_time)}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtDuration(item.total_duration_seconds)}</TableCell>
+                            <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
 
-            {/* Pagination */}
-            {applied && !report.isLoading && !report.isError && total > 0 && (
-              <div className="flex items-center justify-between mt-4">
-                <div className="text-xs text-[#555] dark:text-zinc-300">
-                  Showing {rows.length} of {total} entries — page {page} of {totalPages}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    className="h-8 px-3 text-xs border-slate-300 text-[#555] dark:text-zinc-300"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="h-8 px-3 text-xs border-slate-300 text-[#555] dark:text-zinc-300"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    Next
-                  </Button>
-                </div>
+                {/* Pagination */}
+                {applied && !report.isLoading && !report.isError && total > 0 && (
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="text-xs text-[#555] dark:text-zinc-300">
+                      Showing {rows.length} of {total} entries — page {page} of {totalPages}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="h-8 px-3 text-xs border-slate-300 text-[#555] dark:text-zinc-300"
+                        disabled={page <= 1}
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="h-8 px-3 text-xs border-slate-300 text-[#555] dark:text-zinc-300"
+                        disabled={page >= totalPages}
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table className="w-full text-[13px] whitespace-nowrap">
+                  <TableHeader>
+                    <TableRow className="border-b-0 bg-[#d9f2e6] hover:bg-[#d9f2e6] dark:bg-zinc-900 dark:hover:bg-zinc-900">
+                      <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">#</TableHead>
+                      <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Meeting By</TableHead>
+                      <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Total Meeting</TableHead>
+                      <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Total Time</TableHead>
+                      <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Total Gm</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="bg-white dark:bg-zinc-900">
+                    {!applied ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          Set your date range and click View to load the team summary.
+                        </TableCell>
+                      </TableRow>
+                    ) : teamSummary.isLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          Loading...
+                        </TableCell>
+                      </TableRow>
+                    ) : teamSummary.isError ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8">
+                          <div className="text-[#d9534f] dark:text-red-400 mb-2">Could not load the team summary. Please try again.</div>
+                          <Button size="sm" variant="outline" onClick={() => teamSummary.refetch()} className="h-7 px-3 text-xs">Retry</Button>
+                        </TableCell>
+                      </TableRow>
+                    ) : (teamSummary.data?.data ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                          No reception meetings found for this period.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      (teamSummary.data?.data ?? []).map((row, idx) => (
+                        <TableRow key={row.receptionist_id} className="border-b border-slate-100 dark:border-zinc-800 hover:bg-[#f8f9fa] dark:hover:bg-zinc-800 transition-colors">
+                          <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
+                          <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{row.receptionist_name || "-"}</TableCell>
+                          <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{row.total_meetings}</TableCell>
+                          <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{fmtDuration(row.total_duration_seconds)}</TableCell>
+                          <TableCell className="py-3 px-4 text-[#555] dark:text-zinc-300">{row.total_gm}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                  {applied && !teamSummary.isLoading && !teamSummary.isError && (teamSummary.data?.data?.length ?? 0) > 0 && (
+                    <tfoot>
+                      <TableRow className="border-t-2 border-slate-200 dark:border-zinc-800 bg-[#f1f5f3] dark:bg-zinc-900 font-bold">
+                        <TableCell className="py-3 px-4" />
+                        <TableCell className="py-3 px-4 text-[#333] dark:text-zinc-300">Total</TableCell>
+                        <TableCell className="py-3 px-4 text-[#333] dark:text-zinc-300">
+                          {(teamSummary.data?.data ?? []).reduce((sum, r) => sum + r.total_meetings, 0)}
+                        </TableCell>
+                        <TableCell className="py-3 px-4" />
+                        <TableCell className="py-3 px-4 text-[#333] dark:text-zinc-300">
+                          {(teamSummary.data?.data ?? []).reduce((sum, r) => sum + r.total_gm, 0)}
+                        </TableCell>
+                      </TableRow>
+                    </tfoot>
+                  )}
+                </Table>
               </div>
             )}
           </CardContent>

@@ -2947,12 +2947,15 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // GET /api/account/users-list - Return real users for person dropdown
+  // No is_active filter — legacy's own equivalent (SELECT * FROM webxl_user)
+  // never filtered by active status either, and ~25 real users in the live
+  // data are marked is_active=false without actually being deactivated
+  // accounts (confirmed: normal staff like admins/managers, not placeholders).
   app.get("/api/account/users-list", async (_req, res) => {
     try {
       const result = await pool.query(
         `SELECT id, full_name, email, role
          FROM drm.users
-         WHERE is_active = true
          ORDER BY full_name
          LIMIT 200`
       );

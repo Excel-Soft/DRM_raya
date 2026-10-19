@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiRequestJson } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequestJson, mutationRequest } from "@/lib/queryClient";
+import { exportToCSV, exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,47 +23,10 @@ import {
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 
-const departments = [
-  "Sales Department",
-  "Admin",
-  "Service Department",
-  "Reception Department",
-  "Project Department",
-  "SEO/SMM Department",
-  "Product Posting",
-  "D&D Department",
-  "Internship & Trainee",
-  "Accounts Department",
-  "IT Department",
-  "Other",
-  "Web Excels",
-  "R&D",
-  "WELC",
-  "Deactive",
-  "Lead Department",
-  "QA Department",
-  "Complaint Department",
-  "Marketing Department",
-  "Media Department",
-  "Head of Department",
-  "Software Department",
-  "Trade Assurance",
-  "Super HOD",
-  "Verification Department"
-];
-
-const cities = [
-  "All",
-  "Sialkot",
-  "Lahore",
-  "Karachi",
-  "Lahore-Raya",
-  "Lahore-GulBerg",
-  "Sialkot-Welc",
-  "Sialkot-Webexcels",
-  "Gujranwala branch"
-];
-
+// Legacy's status filter values map 1:1 to department-report.service.ts's
+// MODE_MAP keys — "Project Create"/"Data Verify" are historical-event modes,
+// the other 4 are workflow-completion gates that also unlock a per-period
+// team commission (see COMPLETION_STATUSES below).
 const statuses = [
   "Project Create",
   "Data Verify",
@@ -72,12 +36,18 @@ const statuses = [
   "Verification Pending"
 ];
 
+const COMPLETION_STATUSES = ["Manager Complete", "Qa Completed", "Verification Completed", "Verification Pending"];
+
+type DeptFilterOption = { value: string; label: string };
+type DeptFiltersResponse = { departments: DeptFilterOption[]; cities: string[] };
+
 type DeptRow = {
   id: string;
   company_name: string | null;
   package_type: string | null;
   status: string | null;
   entry_type: string | null;
+  project: string | null;
   amount_usd: string | null;
   amount_pkr: string | null;
   payment_status: string | null;
@@ -86,11 +56,21 @@ type DeptRow = {
   department: string | null;
 };
 
+type DepartmentCommission = {
+  companyCount: number;
+  totalAmount: string;
+  managerAmount: string;
+  assistantAmount: string;
+  alreadyCreated: boolean;
+} | null;
+
 type DeptResponse = {
   rows: DeptRow[];
   total: number;
   page: number;
   pageSize: number;
+  commission: DepartmentCommission;
+  amountTotal: string;
 };
 
 function fmtDate(value: string | null): string {
@@ -102,6 +82,7 @@ function fmtDate(value: string | null): string {
 
 export default function DepartmentReport() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [deptSearch, setDeptSearch] = useState("");
   const [citySearch, setCitySearch] = useState("");
   const [statusSearch, setStatusSearch] = useState("");
@@ -111,22 +92,49 @@ export default function DepartmentReport() {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [applied, setApplied] = useState<{ dept: string; status: string; start: string; end: string } | null>(null);
+  const [applied, setApplied] = useState<{ dept: string; city: string; status: string; start: string; end: string } | null>(null);
 
-  const filteredDepts = departments.filter(d => d.toLowerCase().includes(deptSearch.toLowerCase()));
-  const filteredCities = cities.filter(c => c.toLowerCase().includes(citySearch.toLowerCase()));
+  const { data: filtersData } = useQuery<DeptFiltersResponse>({
+    queryKey: ["/api/reports/department/filters"],
+    queryFn: async () => apiRequestJson("GET", "/api/reports/department/filters"),
+  });
+  const departmentOptions = filtersData?.departments ?? [];
+  const cityOptions = ["All", ...(filtersData?.cities ?? [])];
+
+  const filteredDepts = departmentOptions.filter(d => d.label.toLowerCase().includes(deptSearch.toLowerCase()));
+  const filteredCities = cityOptions.filter(c => c.toLowerCase().includes(citySearch.toLowerCase()));
   const filteredStatuses = statuses.filter(s => s.toLowerCase().includes(statusSearch.toLowerCase()));
 
   const query = useQuery<DeptResponse>({
-    queryKey: ["/api/reports/department", applied?.dept, applied?.status, applied?.start, applied?.end],
+    queryKey: ["/api/reports/department", applied?.dept, applied?.city, applied?.status, applied?.start, applied?.end],
     enabled: !!applied,
     queryFn: async () => {
       const params = new URLSearchParams({ page: "1", pageSize: "100" });
       if (applied?.dept) params.set("department", applied.dept);
+      if (applied?.city) params.set("city", applied.city);
       if (applied?.status) params.set("status", applied.status);
       if (applied?.start) params.set("startDate", applied.start);
       if (applied?.end) params.set("endDate", applied.end);
       return apiRequestJson("GET", `/api/reports/department?${params.toString()}`);
+    },
+  });
+
+  const verifyCommissionMutation = useMutation({
+    mutationFn: async () => {
+      if (!applied) return;
+      return mutationRequest("POST", "/api/reports/department/verify-commission", {
+        department: applied.dept,
+        status: applied.status,
+        startDate: applied.start,
+        endDate: applied.end,
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Commission verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/department"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify commission", description: err?.message, variant: "destructive" });
     },
   });
 
@@ -147,10 +155,41 @@ export default function DepartmentReport() {
       });
       return;
     }
-    setApplied({ dept: selectedDept, status: selectedStatus, start: startDate, end: endDate });
+    setApplied({ dept: selectedDept, city: selectedCity, status: selectedStatus, start: startDate, end: endDate });
   };
 
   const rows = query.data?.rows ?? [];
+  const commission = query.data?.commission ?? null;
+  const showCommissionPanel = !!applied && COMPLETION_STATUSES.includes(applied.status) && !!commission;
+  // Legacy's "Project Create" mode (func.php ~line 20836-20845) appends a
+  // simpler Amount-only total row — "Data Verify" and the completion modes
+  // (handled by showCommissionPanel above) don't have one.
+  const showAmountTotal = !!applied && applied.status === "Project Create" && rows.length > 0;
+  const amountTotal = query.data?.amountTotal ?? "0";
+
+  const exportColumns: ExportColumn<DeptRow>[] = [
+    { key: "company_name", header: "Company", format: (v) => v ?? "" },
+    { key: "package_type", header: "Package", format: (v) => v ?? "" },
+    { key: "status", header: "Status", format: (v) => v ?? "" },
+    { key: "project", header: "Project", format: (v) => v ?? "" },
+    { key: "amount_pkr", header: "Amount", format: (v, row) => v ?? row.amount_usd ?? "" },
+    { key: "payment_status", header: "Method", format: (v) => v ?? "" },
+    { key: "approved_at", header: "Create/verify/Complete", format: (v, row) => fmtDate(v ?? row.created_at) },
+  ];
+
+  const handleCopy = async () => {
+    if (!rows.length) return;
+    const header = exportColumns.map((c) => c.header).join("\t");
+    const lines = rows.map((row) =>
+      exportColumns.map((c) => (c.format ? c.format((row as any)[c.key as string], row) : (row as any)[c.key as string] ?? "")).join("\t"),
+    );
+    try {
+      await navigator.clipboard.writeText([header, ...lines].join("\n"));
+      toast({ title: "Copied to clipboard" });
+    } catch {
+      toast({ title: "Failed to copy", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="flex-1 overflow-auto bg-[#f4f6f9] dark:bg-zinc-950 min-h-screen">
@@ -183,9 +222,9 @@ export default function DepartmentReport() {
                       />
                     </div>
                     <div className="max-h-[250px] overflow-y-auto p-1">
-                      {filteredDepts.map((d, idx) => (
-                        <SelectItem key={idx} value={d} className="text-[13px] focus:bg-[#00a65a] focus:text-white cursor-pointer py-2">
-                          {d}
+                      {filteredDepts.map((d) => (
+                        <SelectItem key={d.value} value={d.value} className="text-[13px] focus:bg-[#00a65a] focus:text-white cursor-pointer py-2">
+                          {d.label}
                         </SelectItem>
                       ))}
                     </div>
@@ -286,7 +325,21 @@ export default function DepartmentReport() {
         {/* Data Table Card */}
         <Card className="border-none shadow-sm bg-white dark:bg-zinc-900 rounded-sm overflow-hidden mt-6">
           <div className="border-b border-slate-100 dark:border-zinc-800 py-4 px-6 bg-white dark:bg-zinc-900">
-            <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300">List</h2>
+            <h2 className="text-[15px] font-bold text-[#555] dark:text-zinc-300 mb-3">List</h2>
+            <div className="flex flex-wrap gap-[1px] bg-[#6c757d] p-[1px] rounded-sm overflow-hidden w-fit">
+              <Button variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={handleCopy}>
+                Copy
+              </Button>
+              <Button variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={() => exportToExcel(rows, exportColumns, "Department_Project")}>
+                Excel
+              </Button>
+              <Button variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={() => exportToCSV(rows, exportColumns, "Department_Project")}>
+                CSV
+              </Button>
+              <Button variant="ghost" size="sm" className="px-4 bg-[#6c757d] text-white hover:bg-[#5a6268] hover:text-white h-8 text-xs font-semibold rounded-none" onClick={() => exportToPDF(rows, exportColumns, "Department_Project", { title: "Department Project" })}>
+                PDF
+              </Button>
+            </div>
           </div>
           <CardContent className="p-4">
             <div className="overflow-x-auto">
@@ -297,10 +350,10 @@ export default function DepartmentReport() {
                     <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Company</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Package</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Status</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Type</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Project</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Amount</TableHead>
                     <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Method</TableHead>
-                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Create/verify</TableHead>
+                    <TableHead className="py-3 px-4 font-bold text-[#333] dark:text-zinc-300 text-left">Create/verify/Complete</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="bg-white dark:bg-zinc-900">
@@ -335,12 +388,59 @@ export default function DepartmentReport() {
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.company_name || "-"}</TableCell>
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.package_type || "-"}</TableCell>
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.status || "-"}</TableCell>
-                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.entry_type || "-"}</TableCell>
+                        <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.project || "-"}</TableCell>
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.amount_pkr ?? item.amount_usd ?? "-"}</TableCell>
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{item.payment_status || "-"}</TableCell>
                         <TableCell className="py-4 px-4 text-[#555] dark:text-zinc-300">{fmtDate(item.approved_at || item.created_at)}</TableCell>
                       </TableRow>
                     ))
+                  )}
+                  {showAmountTotal && (
+                    <TableRow className="border-b border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-800/50">
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">{amountTotal}</TableCell>
+                      <TableCell className="py-4 px-4" />
+                      <TableCell className="py-4 px-4" />
+                    </TableRow>
+                  )}
+                  {/* Legacy's own Total row (func.php ~line 21029-21046) reuses
+                      the SAME 8-column grid as the data rows above, rather than
+                      a separate summary block: #=Total, Company={count} x 500,
+                      Package={count*500}, Status=Assistant, Project={count} x
+                      200 = {amount}, Amount=Manager, Method={count} x 300 =
+                      {amount}, Create/verify/Complete=button/Already Created. */}
+                  {showCommissionPanel && commission && (
+                    <TableRow className="border-b border-slate-100 dark:border-zinc-800 bg-slate-50 dark:bg-zinc-800/50">
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">Total</TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">{commission.companyCount} x 500</TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">{commission.totalAmount}</TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">Assistant</TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">
+                        {commission.companyCount} x 200 = {commission.assistantAmount}
+                      </TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">Manager</TableCell>
+                      <TableCell className="py-4 px-4 font-bold text-[#555] dark:text-zinc-300">
+                        {commission.companyCount} x 300 = {commission.managerAmount}
+                      </TableCell>
+                      <TableCell className="py-4 px-4">
+                        {commission.alreadyCreated ? (
+                          <span className="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">Already Created</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => verifyCommissionMutation.mutate()}
+                            disabled={verifyCommissionMutation.isPending || rows.length === 0}
+                            className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-4 h-8 text-xs font-semibold rounded-sm"
+                          >
+                            Verify Commission
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>

@@ -326,9 +326,9 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/target-system/kwa-history", component: "KwaHistory", title: "KWA History", module: "Target System", sidebarVisible: true, sidebarGroup: "Target System", permissionKey: "Target System", allowedRoles: ["admin", "sales_manager", "hod", "super_hod", "account_manager"] },
 
   // ── Events ────────────────────────────────────────────────────────────
-  { path: "/events/add", component: "EventsAdd", title: "Add Event", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager"] },
-  { path: "/events/menu", component: "EventsMenu", title: "Add Event Menu", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager"] },
-  { path: "/events/duty-planner", component: "EventsDutyPlanner", title: "Event Duty Planner", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager"] },
+  { path: "/events/add", component: "EventsAdd", title: "Add Event", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager", "reception_manager"] },
+  { path: "/events/menu", component: "EventsMenu", title: "Add Event Menu", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager", "reception_manager"] },
+  { path: "/events/duty-planner", component: "EventsDutyPlanner", title: "Event Duty Planner", module: "Events", sidebarVisible: true, sidebarGroup: "Events", permissionKey: "Events", allowedRoles: ["admin", "hod", "super_hod", "marketing_manager", "reception_manager"] },
 ];
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,10 @@ import {
   listLinkReport,
   getVerification,
   verifyCommission,
+  confirmCommission,
   createLinkReport,
+  verifyLink,
+  getLinkReportSummary,
 } from "./services/link-report.service";
 import { ActivityLogService } from "./services/activity-service";
 
@@ -139,17 +142,23 @@ function registerLinkReportRoutes(app: Express, base: string) {
 
       const rows = await listLinkReport(userId, startDate, endDate);
       const verification = await getVerification(userId, startDate, endDate);
+      const summary = await getLinkReportSummary(userId, startDate, endDate);
 
       res.json({
         filters: { userId, startDate, endDate },
         rows,
         summary: {
-          total: rows.length,
-          reward: verification ? Number(verification.reward) : 0,
-          commissionVerified: !!verification,
+          total: summary.actualLinks,
+          totalLinks: summary.totalLinks,
+          totalDuplicates: summary.totalDuplicates,
+          actualLinks: summary.actualLinks,
+          reward: verification ? Number(verification.reward) : summary.reward,
+          commissionVerified: verification?.status === "Verified",
+          commissionPending: verification?.status === "Pending",
           verificationId: verification ? verification.id : null,
         },
         canVerify: canVerify(role),
+        isSelf: String(myId) === userId,
       });
     } catch (err) {
       console.error("[link-report] list error", err);
@@ -171,9 +180,6 @@ function registerLinkReportRoutes(app: Express, base: string) {
       const userId = req.body?.userId ? String(req.body.userId) : "";
       const startDate = req.body?.startDate ? String(req.body.startDate) : "";
       const endDate = req.body?.endDate ? String(req.body.endDate) : "";
-      const linkReportIds: string[] = Array.isArray(req.body?.linkReportIds)
-        ? req.body.linkReportIds.map(String)
-        : [];
 
       if (!userId) return badRequest(res, "userId is required");
       if (!canViewUser(allowed, userId)) {
@@ -191,7 +197,6 @@ function registerLinkReportRoutes(app: Express, base: string) {
         verifiedByUserId: String(myId),
         startDate,
         endDate,
-        linkReportIds,
       });
       // Audit fix (P00): verify-commission is a financial approval-like action
       // that previously had no audit trail at all.
@@ -200,13 +205,67 @@ function registerLinkReportRoutes(app: Express, base: string) {
         action: "link_report.verify_commission",
         resourceType: "link_report_verification",
         resourceId: result?.id ? String(result.id) : userId,
-        details: JSON.stringify({ forUserId: userId, startDate, endDate, linkReportIds }),
+        details: JSON.stringify({ forUserId: userId, startDate, endDate, reward: result?.reward }),
       });
       res.json({ success: true, verification: result });
     } catch (err: any) {
       if (err?.statusCode === 400) return badRequest(res, err.message);
       console.error("[link-report] verify-commission error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to verify commission" });
+    }
+  });
+
+  // POST the link-submitter's own confirmation of a Pending commission request.
+  app.post(`${base}/:id/confirm`, async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const myId = getUserId(req);
+      const result = await confirmCommission(req.params.id, String(myId));
+      void ActivityLogService.log({
+        userId: String(myId),
+        action: "link_report.confirm_commission",
+        resourceType: "link_report_verification",
+        resourceId: req.params.id,
+        details: JSON.stringify({ reward: result?.reward }),
+      });
+      res.json({ success: true, verification: result });
+    } catch (err: any) {
+      if (err?.statusCode === 403) return res.status(403).json({ error: "Forbidden", message: err.message });
+      if (err?.statusCode === 404) return res.status(404).json({ error: "NotFound", message: err.message });
+      console.error("[link-report] confirm-commission error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to confirm commission" });
+    }
+  });
+
+  // PATCH verify/reject a single link (legacy's per-row Verify/Reject on
+  // webxl_task_links) — distinct from verify-commission above, which
+  // authorizes paying out a whole date-range batch.
+  app.patch(`${base}/:id/verify`, async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const role = getActiveRole(req);
+      if (!canVerify(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to verify links" });
+      }
+      const myId = getUserId(req);
+      const linkId = req.params.id;
+      const status = req.body?.status === "Rejected" ? "Rejected" : req.body?.status === "Verified" ? "Verified" : null;
+      if (!status) return badRequest(res, "status must be 'Verified' or 'Rejected'");
+      const note = typeof req.body?.note === "string" ? req.body.note : undefined;
+
+      const updated = await verifyLink({ linkId, status, verifiedByUserId: String(myId), note });
+      void ActivityLogService.log({
+        userId: String(myId),
+        action: "link_report.verify_link",
+        resourceType: "product_posting_evidence_link",
+        resourceId: linkId,
+        details: JSON.stringify({ status, note }),
+      });
+      res.json({ success: true, link: updated });
+    } catch (err: any) {
+      if (err?.statusCode === 404) return res.status(404).json({ error: "NotFound", message: err.message });
+      console.error("[link-report] verify-link error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to verify link" });
     }
   });
 

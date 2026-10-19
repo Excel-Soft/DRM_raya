@@ -29,6 +29,7 @@ export default function CreateTarget() {
   
   // State for form fields
   const [targetName, setTargetName] = useState("");
+  const [category, setCategory] = useState("none");
   const [pkg, setPkg] = useState("");
   const [reward, setReward] = useState(0);
   const [bonus, setBonus] = useState("");
@@ -77,6 +78,7 @@ export default function CreateTarget() {
       queryClient.invalidateQueries({ queryKey: ["/api/target-system/targets"] });
       toast({ title: "Target created successfully" });
       setTargetName("");
+      setCategory("none");
       setPkg("");
       setReward(0);
       setBonus("");
@@ -102,6 +104,7 @@ export default function CreateTarget() {
     }
     createMutation.mutate({
       targetName,
+      category: category === "none" ? undefined : category,
       package: pkg,
       reward,
       bonus,
@@ -132,10 +135,29 @@ export default function CreateTarget() {
       {showForm && (
         <Card className="mb-6 border rounded-sm shadow-sm">
           <CardContent className="p-4 pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Target Name:</label>
                 <Input value={targetName} onChange={e => setTargetName(e.target.value)} placeholder="Target Name" className="h-9" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Category</label>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Choose..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Choose...</SelectItem>
+                    <SelectItem value="AB New Terget">AB New Terget</SelectItem>
+                    <SelectItem value="Renewal Terget">Renewal Terget</SelectItem>
+                    <SelectItem value="VAS">VAS</SelectItem>
+                    <SelectItem value="Team">Team</SelectItem>
+                    <SelectItem value="Dep DD">Dep DD</SelectItem>
+                    <SelectItem value="Dep PP">Dep PP</SelectItem>
+                    <SelectItem value="PP Link">PP Link</SelectItem>
+                    <SelectItem value="Other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Package</label>
@@ -330,6 +352,7 @@ export default function CreateTarget() {
                 <TableRow className="hover:bg-[#dcfce7] dark:hover:bg-zinc-800">
                   <TableHead className="font-bold text-black dark:text-zinc-300 w-12 text-center">#</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Target Name</TableHead>
+                  <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Category</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Number</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Price</TableHead>
                   <TableHead className="font-bold text-black dark:text-zinc-300 text-center">Bonus</TableHead>
@@ -344,13 +367,13 @@ export default function CreateTarget() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8">
+                    <TableCell colSpan={12} className="text-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400" />
                     </TableCell>
                   </TableRow>
                 ) : targets?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center py-8 text-gray-500 dark:text-zinc-400">
+                    <TableCell colSpan={12} className="text-center py-8 text-gray-500 dark:text-zinc-400">
                       No targets found. Create one above!
                     </TableCell>
                   </TableRow>
@@ -359,6 +382,7 @@ export default function CreateTarget() {
                     <TableRow key={row.id}>
                       <TableCell className="text-center font-medium">{index + 1}</TableCell>
                       <TableCell className="text-center">{row.targetName}</TableCell>
+                      <TableCell className="text-center">{row.category || "-"}</TableCell>
                       <TableCell className="text-center">{row.number}</TableCell>
                       <TableCell className="text-center">
                         {row.amount}

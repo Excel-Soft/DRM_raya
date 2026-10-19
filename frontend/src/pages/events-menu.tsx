@@ -1,3 +1,8 @@
+// Add Event Menu — the real addeventmenu.php: a budget/expense line item
+// (Item + Amount + Detail) against an event, restricted to events that
+// haven't happened yet. The list below is GLOBAL across events (not scoped
+// to one event, matching legacy), filtered server-side to upcoming events,
+// with a running cost Total — backed by GET /api/events/menu-items.
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -13,14 +18,15 @@ const MENU_STATUSES = ["pending", "in_progress", "completed", "cancelled"] as co
 
 export default function EventsMenu() {
   const { toast } = useToast();
-  const [showForm, setShowForm] = useState(true);
+  const [showForm, setShowForm] = useState(false);
 
-  // Selected event drives both the listing and the form
-  const [eventId, setEventId] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
   // State for Form
+  const [eventId, setEventId] = useState("");
   const [itemName, setItemName] = useState("");
+  const [amount, setAmount] = useState("");
   const [assignedUserId, setAssignedUserId] = useState("");
   const [assignedRole, setAssignedRole] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
@@ -38,6 +44,11 @@ export default function EventsMenu() {
     },
   });
 
+  // Legacy's own Add form only offers events whose date is still in the
+  // future (`$row['event_date'] > $today`).
+  const today = format(new Date(), "yyyy-MM-dd");
+  const upcomingEvents = eventsList.filter((ev) => ev.eventDate && String(ev.eventDate).slice(0, 10) > today);
+
   const { data: usersList = [] } = useQuery<any[]>({
     queryKey: ["/api/users", "all-for-dropdowns"],
     queryFn: async () => {
@@ -48,21 +59,24 @@ export default function EventsMenu() {
     },
   });
 
-  const menuItemsKey = ["/api/events", eventId, "menu-items"];
-  const { data: menuItems = [], isLoading } = useQuery<any[]>({
+  const menuItemsKey = ["/api/events/menu-items"];
+  const { data: menuItemsResp, isLoading } = useQuery<{ data: any[]; totalAmount: number }>({
     queryKey: menuItemsKey,
-    enabled: !!eventId,
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/events/${eventId}/menu-items`);
+      const res = await apiRequest("GET", "/api/events/menu-items");
       if (!res.ok) throw new Error("Failed to fetch menu items");
-      const json = await res.json();
-      return json.data || [];
+      return res.json();
     },
   });
+  const menuItems = menuItemsResp?.data ?? [];
+  const totalAmount = menuItemsResp?.totalAmount ?? 0;
 
   const resetForm = () => {
     setEditingId(null);
+    setEditingEventId(null);
+    setEventId("");
     setItemName("");
+    setAmount("");
     setAssignedUserId("");
     setAssignedRole("");
     setScheduledDate("");
@@ -79,6 +93,7 @@ export default function EventsMenu() {
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/events/${eventId}/menu-items`, {
         itemName,
+        amount: amount === "" ? 0 : Number(amount),
         assignedUserId: assignedUserId || undefined,
         assignedRole: assignedRole || undefined,
         scheduledDate: scheduledDate || undefined,
@@ -102,8 +117,9 @@ export default function EventsMenu() {
 
   const updateMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("PATCH", `/api/events/${eventId}/menu-items/${editingId}`, {
+      const res = await apiRequest("PATCH", `/api/events/${editingEventId}/menu-items/${editingId}`, {
         itemName,
+        amount: amount === "" ? 0 : Number(amount),
         assignedUserId: assignedUserId || null,
         assignedRole: assignedRole || null,
         scheduledDate: scheduledDate || null,
@@ -126,8 +142,8 @@ export default function EventsMenu() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await apiRequest("DELETE", `/api/events/${eventId}/menu-items/${id}`);
+    mutationFn: async ({ eventId: evId, itemId }: { eventId: string; itemId: string }) => {
+      const res = await apiRequest("DELETE", `/api/events/${evId}/menu-items/${itemId}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || "Failed to delete menu item");
@@ -142,24 +158,27 @@ export default function EventsMenu() {
   });
 
   const handleSubmit = () => {
-    if (!eventId) {
-      toast({ title: "Error", description: "Please select an event", variant: "destructive" });
-      return;
-    }
     if (!itemName.trim()) {
       toast({ title: "Error", description: "Item name is required", variant: "destructive" });
       return;
     }
     if (editingId) {
       updateMutation.mutate();
-    } else {
-      createMutation.mutate();
+      return;
     }
+    if (!eventId) {
+      toast({ title: "Error", description: "Please select an event", variant: "destructive" });
+      return;
+    }
+    createMutation.mutate();
   };
 
   const handleEdit = (m: any) => {
     setEditingId(m.id);
+    setEditingEventId(m.eventId);
+    setEventId(m.eventId);
     setItemName(m.itemName || "");
+    setAmount(m.amount != null ? String(m.amount) : "");
     setAssignedUserId(m.assignedUserId || "");
     setAssignedRole(m.assignedRole || "");
     setScheduledDate(m.scheduledDate ? String(m.scheduledDate).slice(0, 10) : "");
@@ -197,22 +216,37 @@ export default function EventsMenu() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
+                  <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Item</label>
+                  <Input value={itemName} onChange={e => setItemName(e.target.value)} placeholder="Enter the item name" className="text-sm h-9" />
+                </div>
+                <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Event</label>
-                  <Select value={eventId} onValueChange={(v) => { setEventId(v); resetForm(); }}>
+                  <Select value={eventId} onValueChange={setEventId} disabled={!!editingId}>
                     <SelectTrigger className="h-9 text-sm">
                       <SelectValue placeholder="Choose..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {eventsList.map((ev) => (
-                        <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>
-                      ))}
+                      {upcomingEvents.length === 0 ? (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">No upcoming events</div>
+                      ) : (
+                        upcomingEvents.map((ev) => (
+                          <SelectItem key={ev.id} value={ev.id}>{ev.name}</SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Item</label>
-                  <Input value={itemName} onChange={e => setItemName(e.target.value)} placeholder="Enter the item name" className="text-sm h-9" />
+                  <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Amount</label>
+                  <Input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" className="text-sm h-9" />
                 </div>
+                <div>
+                  <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Detail</label>
+                  <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="add detail" className="text-sm h-9" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Assign To</label>
                   <Select value={assignedUserId} onValueChange={setAssignedUserId}>
@@ -238,6 +272,9 @@ export default function EventsMenu() {
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Time</label>
                   <Input type="time" value={scheduledTime} onChange={e => setScheduledTime(e.target.value)} className="text-sm h-9" />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div>
                   <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Status</label>
                   <Select value={status} onValueChange={setStatus}>
@@ -250,10 +287,6 @@ export default function EventsMenu() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-600 font-semibold mb-1 block dark:text-zinc-300">Detail</label>
-                  <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="add detail" className="text-sm h-9" />
                 </div>
               </div>
 
@@ -268,7 +301,7 @@ export default function EventsMenu() {
           </Card>
         )}
 
-        {/* Data Table */}
+        {/* Data Table — all menu items for events that haven't happened yet */}
         <Card className="shadow-sm border-t border-t-gray-200 bg-white dark:bg-zinc-900">
           <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-[13px] text-left">
@@ -276,44 +309,36 @@ export default function EventsMenu() {
                 <tr>
                   <th className="px-4 py-4 whitespace-nowrap">#</th>
                   <th className="px-4 py-4 whitespace-nowrap">Item</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Assigned</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Role</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Date</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Time</th>
-                  <th className="px-4 py-4 whitespace-nowrap">Status</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Event</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Amount</th>
                   <th className="px-4 py-4 whitespace-nowrap">Detail</th>
+                  <th className="px-4 py-4 whitespace-nowrap">Create</th>
                   <th className="px-4 py-4 whitespace-nowrap text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {!eventId ? (
+                {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Select an event to view its menu items</td>
-                  </tr>
-                ) : isLoading ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Loading...</td>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">Loading...</td>
                   </tr>
                 ) : menuItems.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No menu items yet</td>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 dark:text-zinc-500">No menu items for upcoming events.</td>
                   </tr>
                 ) : (
                   menuItems.map((m, idx) => (
                     <tr key={m.id} className="border-b last:border-b-0 transition-colors">
                       <td className="px-4 py-4 text-[#d35400] dark:text-orange-400 font-medium">{idx + 1}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.itemName}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.assignedUserName || "-"}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.assignedRole || "-"}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.scheduledDate ? format(new Date(m.scheduledDate), "dd-MM-yyyy") : "-"}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.scheduledTime || "-"}</td>
-                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.status}</td>
+                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.eventName || "-"}</td>
+                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.amount}</td>
                       <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.notes || "-"}</td>
+                      <td className="px-4 py-4 text-gray-600 dark:text-zinc-300">{m.createdAt ? format(new Date(m.createdAt), "dd-MM-yyyy") : "-"}</td>
                       <td className="px-4 py-4 text-right whitespace-nowrap">
                         <button onClick={() => handleEdit(m)} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-[#00a65a] dark:hover:bg-zinc-800" title="Edit">
                           <Pencil className="w-4 h-4" />
                         </button>
-                        <button onClick={() => deleteMutation.mutate(m.id)} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-zinc-800" title="Delete">
+                        <button onClick={() => deleteMutation.mutate({ eventId: m.eventId, itemId: m.id })} className="inline-flex items-center justify-center w-8 h-8 rounded text-gray-500 hover:bg-gray-100 hover:text-red-600 dark:hover:bg-zinc-800" title="Delete">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
@@ -321,6 +346,17 @@ export default function EventsMenu() {
                   ))
                 )}
               </tbody>
+              {menuItems.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-gray-200 dark:border-zinc-800 font-bold">
+                    <td className="px-4 py-4" />
+                    <td className="px-4 py-4" />
+                    <td className="px-4 py-4 text-gray-700 dark:text-zinc-300">Total</td>
+                    <td className="px-4 py-4 text-gray-700 dark:text-zinc-300">{totalAmount}</td>
+                    <td className="px-4 py-4" colSpan={3} />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </CardContent>
         </Card>
