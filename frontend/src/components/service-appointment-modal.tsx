@@ -1,24 +1,24 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import {
+    FollowCustomerServicesPanel,
+    SubserviceDetail,
+    FollowupServiceOption,
+} from "@/components/FollowCustomerServicesPanel";
 
-// Purpose/Grade/Reservation option sets and layout verbatim-match the
-// "Follow The Customer" form in service-assistant-manager-dashboard.tsx
-// (the only real implementation of this section anywhere in the codebase).
-// That reference has no Grade or Service field of its own; both are added
-// here because the "Follow Up Details" table this section feeds
-// (service-executive-dashboard.tsx) has Grade/Main Service/Sub Type columns
-// that read from drm.followup_subservice_details, which requires a
-// service+subservice pair to write a row at all. The Grade set (A+, A, A-,
-// B+, B, B-, C+, C, D) and Method dropdown options are taken from
-// FollowCustomerServicesPanel.tsx, the only other place in the codebase that
-// defines a Grade/Method taxonomy for follow-ups.
-const FOLLOW_PURPOSE_OPTIONS = ["New Sell", "Inform", "Payment Recovery", "Ab Payment", "Project Data", "Renew Sell", "Seminar", "Webinar", "Training"];
+const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+// Reservation option set verbatim-matches the "Follow The Customer" form in
+// service-assistant-manager-dashboard.tsx. Purpose/Grade/Method/Comment are no
+// longer defined here — they're per-service-selection fields rendered by the
+// shared FollowCustomerServicesPanel (see below), the same component the
+// Sales "Follow The Customer" flow uses (service-private-pool.tsx), so both
+// flows stay on one real implementation instead of two hand-rolled ones.
 // New required multi-select ("Review") field, positioned between Purpose and
 // Grade per the confirmed screenshot layout. Options verbatim per user
 // screenshot spelling (including "Happay").
@@ -58,8 +58,6 @@ function ReviewStepper({ value, onChange }: { value: number; onChange: (v: numbe
         </div>
     );
 }
-const FOLLOW_GRADE_OPTIONS = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
-const FOLLOW_METHOD_OPTIONS = ["Mobile", "Whatsapp", "WH-Call", "In-meeting", "Out-meeting", "E-mail", "Appointment", "Seminar", "OL-Meeting"];
 const FOLLOW_RESERVATION_OPTIONS = [
     { label: "Mobile", code: "MOBILE" },
     { label: "On-Site Appointment", code: "ON_SITE_APPOINTMENT" },
@@ -68,11 +66,6 @@ const FOLLOW_RESERVATION_OPTIONS = [
     { label: "Fax", code: "FAX" },
     { label: "No Need", code: "NO_NEED" },
 ];
-// The Follow Up Details table only ever surfaces rows whose serviceType is
-// "Alibaba Membership" or "Alibaba Services" (service-executive-dashboard.tsx's
-// followUpKeptServices) — the Service picker is restricted to those two so a
-// submitted follow-up is guaranteed to actually show up there.
-const FOLLOW_KEPT_SERVICES = ["alibaba membership", "alibaba services"];
 
 // Service-Executive analog of AppointmentModal (frontend/src/components/appointment-modal.tsx).
 // Wired into TodayAppointment's "+" button via the `renderModal` override (see
@@ -109,8 +102,12 @@ export function ServiceAppointmentModal({
             setFollowCustomerId(initialCustomerId);
         }
     }, [open, initialCustomerId]);
-    const [followServiceId, setFollowServiceId] = useState("");
-    const [followPurpose, setFollowPurpose] = useState("");
+    // Multi-service selection state — same shape FollowupModal (the Sales
+    // "Follow The Customer" implementation in service-private-pool.tsx) feeds
+    // into the shared FollowCustomerServicesPanel.
+    const [selectedServiceCodes, setSelectedServiceCodes] = useState<Set<string>>(new Set());
+    const [selectedSubservices, setSelectedSubservices] = useState<Record<string, Set<string>>>({});
+    const [subserviceDetails, setSubserviceDetails] = useState<Record<string, SubserviceDetail>>({});
     const [followReview, setFollowReview] = useState<string[]>([]);
     // Only one Review popup is ever shown at a time — checking a new option
     // makes it the active one and closes whichever popup was open before
@@ -133,8 +130,6 @@ export function ServiceAppointmentModal({
     const [reviewDetails, setReviewDetails] = useState<Record<string, any>>({});
     const updateReviewDetail = (option: string, patch: Record<string, any>) =>
         setReviewDetails((prev) => ({ ...prev, [option]: { ...prev[option], ...patch } }));
-    const [followGrade, setFollowGrade] = useState("");
-    const [followMethod, setFollowMethod] = useState("");
     const [followReservation, setFollowReservation] = useState("");
     const [followNextDate, setFollowNextDate] = useState("");
     const [followNote, setFollowNote] = useState("");
@@ -157,11 +152,15 @@ export function ServiceAppointmentModal({
         name: row.customerDetails?.companyName || row.customerDetails?.email || row.serviceCustomer?.customerId,
     })).filter((c: any) => c.id);
 
-    // Service catalog for the Follow The Customer "Service" picker. This is
-    // a generic, non-owner-scoped read (any authenticated user), same
-    // endpoint the Sales "Follow The Customer" panel (FollowCustomerServicesPanel)
-    // uses via service-private-pool.tsx.
-    const { data: servicesCatalogResponse } = useQuery({
+    // Service catalog for the Follow The Customer "Select Services" panel —
+    // the full real catalog (all 5 top-level services: Alibaba Membership,
+    // Alibaba Services, Design Development, Domain Hosting, AI Services),
+    // same generic endpoint and same FollowCustomerServicesPanel component the
+    // Sales "Follow The Customer" flow uses via service-private-pool.tsx. No
+    // name-based restriction here — the previous 2-service hardcoded filter
+    // was why only a subset ever showed up regardless of what the real
+    // catalog contained.
+    const { data: servicesCatalogResponse } = useQuery<{ success: boolean; items: FollowupServiceOption[] }>({
         queryKey: ["/api/sales/services"],
         queryFn: async () => {
             const res = await apiRequest("GET", "/api/sales/services");
@@ -170,60 +169,103 @@ export function ServiceAppointmentModal({
         },
         enabled: open,
     });
-    // Exactly the 2 top-level services (no subservice breakdown) — the
-    // dropdown must show only "Alibaba Membership" / "Alibaba Services" per
-    // the reference screenshot. Each option retains its full subServices list
-    // so submitFollowup can resolve a real subServiceId behind the scenes
-    // (drm.followup_subservice_details.subservice_id is NOT NULL, and the
-    // backend's findSubservicesByIds only matches service_subservices rows —
-    // it cannot accept a bare top-level service id).
-    const followServiceOptions = Array.from(
-        ((servicesCatalogResponse as any)?.items || [])
-            .filter((s: any) => FOLLOW_KEPT_SERVICES.includes(String(s.name).toLowerCase()))
-            // The catalog has duplicate rows sharing the same name (e.g. an old
-            // legacy "Alibaba Membership" entry with zero configured
-            // subservices, alongside the real one with 14) — keep only the
-            // richest entry per name so the dropdown never shows a
-            // dead-end option with nothing to auto-resolve a subServiceId from.
-            .reduce((byName: Map<string, any>, s: any) => {
-                const key = String(s.name).toLowerCase();
-                const existing = byName.get(key);
-                if (!existing || (s.subServices?.length || 0) > (existing.subServices?.length || 0)) {
-                    byName.set(key, s);
-                }
-                return byName;
-            }, new Map<string, any>())
-            .values()
-    ).map((s: any) => ({
-        id: s.id,
-        label: s.name,
-        subServices: s.subServices || [],
-    }));
+    const followupServices = servicesCatalogResponse?.items || [];
+
+    const resetFollowupForm = () => {
+        setFollowCustomerId(initialCustomerId ?? "");
+        setSelectedServiceCodes(new Set());
+        setSelectedSubservices({});
+        setSubserviceDetails({});
+        setFollowReview([]);
+        setReviewDetails({});
+        setActiveReviewPopup(null);
+        setFollowReservation("");
+        setFollowNextDate("");
+        setFollowNote("");
+    };
+
+    const handleToggleService = (serviceId: string, checked: boolean) => {
+        const svc = followupServices.find((s) => s.id === serviceId);
+        const serviceCode = svc ? normalizeCode(svc.code) : null;
+        if (!serviceCode) return;
+        setSelectedServiceCodes((prev) => {
+            const next = new Set(prev);
+            if (checked) next.add(serviceCode);
+            else next.delete(serviceCode);
+            return next;
+        });
+        if (!checked) {
+            setSelectedSubservices((prev) => {
+                const next = { ...prev };
+                delete next[serviceCode];
+                return next;
+            });
+            setSubserviceDetails((prev) => {
+                const next = { ...prev };
+                (svc?.subServices || []).forEach((sub) => { delete next[sub.id]; });
+                return next;
+            });
+        }
+    };
+
+    const handleToggleSubservice = (serviceId: string, subserviceId: string, checked: boolean) => {
+        const svc = followupServices.find((s) => s.id === serviceId);
+        const serviceCode = svc ? normalizeCode(svc.code) : null;
+        if (!serviceCode) return;
+        if (checked) {
+            setSelectedServiceCodes((prev) => {
+                const next = new Set(prev);
+                next.add(serviceCode);
+                return next;
+            });
+        }
+        setSelectedSubservices((prev) => {
+            const next = { ...prev };
+            const current = new Set(next[serviceCode] ?? []);
+            if (checked) current.add(subserviceId);
+            else current.delete(subserviceId);
+            if (current.size > 0) next[serviceCode] = current;
+            else delete next[serviceCode];
+            return next;
+        });
+        if (!checked) {
+            setSubserviceDetails((prev) => {
+                const next = { ...prev };
+                delete next[subserviceId];
+                return next;
+            });
+        }
+    };
+
+    const handleUpdateDetail = (subId: string, patch: Partial<SubserviceDetail>) => {
+        setSubserviceDetails((prev) => ({ ...prev, [subId]: { ...(prev[subId] || {}), ...patch } }));
+    };
+
+    const selectedSubserviceIds = Object.values(selectedSubservices).flatMap((set) => Array.from(set));
 
     const followupMutation = useMutation({
         mutationFn: async (payload: any) => {
             const res = await apiRequest("POST", "/api/service/executive/follow-ups", payload);
             if (!res.ok) {
                 const errData = await res.json().catch(() => ({}));
+                if (errData.error === "ALL_SERVICES_LOCKED") {
+                    const names = (errData.locked || []).map((l: any) => `${l.name} (${l.reason})`).join(", ");
+                    throw new Error(`All selected services are currently locked: ${names}`);
+                }
                 throw new Error(errData.error || "Failed to submit follow-up");
             }
             return res.json();
         },
-        onSuccess: () => {
-            toast({ title: "Follow-up submitted successfully" });
+        onSuccess: (data: any) => {
+            if (data?.locked?.length) {
+                const names = data.locked.map((l: any) => `${l.name} (${l.reason})`).join(", ");
+                toast({ title: "Follow-up saved with some services skipped", description: names });
+            } else {
+                toast({ title: "Follow-up submitted successfully" });
+            }
             // Feeds service-executive-dashboard.tsx's "Follow Up Details" table.
             queryClient.invalidateQueries({ queryKey: ["/api/dashboard/followups?pageSize=50"] });
-            setFollowCustomerId("");
-            setFollowServiceId("");
-            setFollowPurpose("");
-            setFollowReview([]);
-            setReviewDetails({});
-            setActiveReviewPopup(null);
-            setFollowGrade("");
-            setFollowMethod("");
-            setFollowReservation("");
-            setFollowNextDate("");
-            setFollowNote("");
+            resetFollowupForm();
         },
         onError: (err: any) => {
             toast({ title: "Failed to submit follow-up", description: err.message, variant: "destructive" });
@@ -232,30 +274,59 @@ export function ServiceAppointmentModal({
 
     const submitFollowup = () => {
         if (!followCustomerId) return toast({ title: "Please select a customer", variant: "destructive" });
-        if (!followServiceId) return toast({ title: "Please select a service", variant: "destructive" });
-        if (!followPurpose) return toast({ title: "Please select a purpose", variant: "destructive" });
+        if (selectedSubserviceIds.length === 0) return toast({ title: "Please select at least one service", variant: "destructive" });
         if (!followReview.length) return toast({ title: "Please select at least one review option", variant: "destructive" });
-        if (!followGrade) return toast({ title: "Please select a grade", variant: "destructive" });
-        if (!followMethod) return toast({ title: "Please select a method", variant: "destructive" });
         if (!followReservation) return toast({ title: "Please select a reservation option", variant: "destructive" });
         if (!followNextDate) return toast({ title: "Please select a next date", variant: "destructive" });
         if (!followNote.trim()) return toast({ title: "Please add a note", variant: "destructive" });
-        // The dropdown only exposes the 2 top-level services, but
-        // drm.followup_subservice_details.subservice_id (and the backend's
-        // findSubservicesByIds lookup) require a real service_subservices id.
-        // Transparently resolve to that service's first subservice so the
-        // insert still succeeds with a valid row — the dashboard's Sub Type
-        // column will just show that subservice's name.
-        const chosenService = followServiceOptions.find((s: any) => s.id === followServiceId);
-        const resolvedSubServiceId = chosenService?.subServices?.[0]?.id;
-        if (!resolvedSubServiceId) return toast({ title: "Selected service has no configured subservice", variant: "destructive" });
+
+        const subIdToMeta = new Map<string, { serviceId: string; subCode: string; serviceCode: string }>();
+        followupServices.forEach((svc) => {
+            const svcCode = normalizeCode(svc.code);
+            svc.subServices?.forEach((sub) => {
+                subIdToMeta.set(sub.id, { serviceId: svc.id, subCode: normalizeCode(sub.code), serviceCode: svcCode });
+            });
+        });
+
+        const detailPayloads: any[] = [];
+        const incomplete: string[] = [];
+        for (const subId of selectedSubserviceIds) {
+            const meta = subIdToMeta.get(subId);
+            if (!meta) continue;
+            const detail = subserviceDetails[subId] || {};
+            const purpose = detail.purpose ?? "";
+            const grade = detail.grade ?? "";
+            const method = detail.method ?? "";
+            const comment = detail.comment ?? "";
+            if (!purpose || !grade || !method || !comment) {
+                const svc = followupServices.find((s) => s.id === meta.serviceId);
+                const sub = svc?.subServices?.find((s) => s.id === subId);
+                incomplete.push(sub?.name || subId);
+                continue;
+            }
+            detailPayloads.push({
+                subServiceId: subId,
+                purpose,
+                grade,
+                method,
+                comment,
+                note: detail.note || comment,
+                dateTime: detail.date ? new Date(detail.date).toISOString() : undefined,
+                talkTimeMinutes: method ? detail.talkTimeMinutes ?? null : null,
+            });
+        }
+        if (incomplete.length) {
+            return toast({
+                title: "Please complete every selected service",
+                description: `Missing Purpose/Grade/Method/Comment for: ${incomplete.join(", ")}`,
+                variant: "destructive",
+            });
+        }
+
         followupMutation.mutate({
             customerId: followCustomerId,
-            subServiceId: resolvedSubServiceId,
-            purpose: followPurpose,
+            subServiceDetails: detailPayloads,
             review: followReview,
-            grade: followGrade,
-            method: followMethod,
             reservationType: followReservation,
             note: followNote,
             nextDate: followNextDate,
@@ -373,7 +444,7 @@ export function ServiceAppointmentModal({
                     <div className="bg-white p-6 rounded-[10px] shadow-sm border border-slate-200 flex flex-col gap-5 dark:bg-zinc-900 dark:border-zinc-800">
                         <h3 className="text-[16px] font-bold text-slate-700 dark:text-zinc-400">Follow The Customer</h3>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="grid grid-cols-1 gap-5">
                             <div className="flex flex-col gap-1.5">
                                 <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Customer</label>
                                 {initialCustomerId ? (
@@ -393,39 +464,17 @@ export function ServiceAppointmentModal({
                                     </Select>
                                 )}
                             </div>
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service</label>
-                                <Select value={followServiceId} onValueChange={setFollowServiceId}>
-                                    <SelectTrigger className="w-full border-slate-200 shadow-sm text-slate-500 dark:text-zinc-400 dark:border-zinc-800">
-                                        <SelectValue placeholder="Select a service" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {followServiceOptions.map((s: any) => (
-                                            <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
                         </div>
 
-                        {/* Purpose */}
-                        <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
-                            <span className="text-[#059669] font-bold w-28 shrink-0 dark:text-zinc-400">Purpose *</span>
-                            <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300">
-                                {FOLLOW_PURPOSE_OPTIONS.map((p) => (
-                                    <label key={p} className="flex items-center gap-1.5 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="followPurpose"
-                                            className="accent-[#059669]"
-                                            checked={followPurpose === p}
-                                            onChange={() => setFollowPurpose(p)}
-                                        />
-                                        {p}
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
+                        <FollowCustomerServicesPanel
+                            services={followupServices}
+                            selectedServiceCodes={selectedServiceCodes}
+                            selectedSubservices={selectedSubservices}
+                            subserviceDetails={subserviceDetails}
+                            onToggleService={handleToggleService}
+                            onToggleSubservice={handleToggleSubservice}
+                            onUpdateDetail={handleUpdateDetail}
+                        />
 
                         {/* Review */}
                         <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
@@ -452,46 +501,14 @@ export function ServiceAppointmentModal({
                             </div>
                         </div>
 
-                        {/* Grade */}
-                        <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
-                            <span className="text-[#059669] font-bold w-28 shrink-0 dark:text-zinc-400">Grade *</span>
-                            <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300">
-                                {FOLLOW_GRADE_OPTIONS.map((g) => (
-                                    <label key={g} className="flex items-center gap-1.5 cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="followGrade"
-                                            className="accent-[#059669]"
-                                            checked={followGrade === g}
-                                            onChange={() => setFollowGrade(g)}
-                                        />
-                                        {g}
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Method</label>
-                                <Select value={followMethod} onValueChange={setFollowMethod}>
-                                    <SelectTrigger className="w-full border-slate-200 shadow-sm text-slate-500 dark:text-zinc-400 dark:border-zinc-800">
-                                        <SelectValue placeholder="Select a method" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {FOLLOW_METHOD_OPTIONS.map((m) => (
-                                            <SelectItem key={m} value={m}>{m}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="flex flex-col gap-1.5">
                                 <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Next Date *</label>
-                                <Input
+                                <input
                                     type="datetime-local"
                                     value={followNextDate}
                                     onChange={(e) => setFollowNextDate(e.target.value)}
-                                    className="w-full border-slate-200 shadow-sm dark:border-zinc-800"
+                                    className="w-full h-9 rounded-md border border-slate-200 shadow-sm px-3 text-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
                                 />
                             </div>
                         </div>

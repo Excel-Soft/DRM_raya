@@ -181,7 +181,7 @@ export default function HodDashboard() {
   });
 
   // Verification tabs state
-  const [verificationTab, setVerificationTab] = useState<"waiting" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
+  const [verificationTab, setVerificationTab] = useState<"waiting" | "quotation" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
 
   const invoicesCount = approvalsQuery.data?.meta?.total ?? 0;
   const approvals = approvalsQuery.data?.data ?? [];
@@ -507,6 +507,19 @@ export default function HodDashboard() {
     }
   });
 
+  // The "Pending Quotation" tab used to be wired to waitingProjectsQuery
+  // above (a GM-entry/project verification list — its rows literally
+  // rendered getTypeBadge("GM Entry")) despite the button's own label, so it
+  // never actually showed quotations. This is the real source: confirmed
+  // quotations (see POST /api/quotations/:id/confirm) awaiting HOD review.
+  const quotationsQuery = useQuery<{ success: boolean; data: any[] }>({
+    queryKey: ["hod-pending-quotations"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/sales/quotations/hod-pending");
+      return res.json();
+    },
+  });
+
   const updateRequestsQuery = useQuery<{ success: boolean; data: any[] }>({
     queryKey: ["hod-verification-updates"],
     queryFn: async () => {
@@ -626,6 +639,57 @@ export default function HodDashboard() {
       toast({ title: "Reject failed", description: error?.message ?? "Error", variant: "destructive" });
     },
   });
+
+  const quotationApproveMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/quotations/${id}/hod-approve`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to approve quotation");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Quotation approved" });
+      queryClient.invalidateQueries({ queryKey: ["hod-pending-quotations"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Approve failed", description: error?.message ?? "Error", variant: "destructive" });
+    },
+  });
+
+  const quotationRejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const res = await apiRequest("POST", `/api/quotations/${id}/hod-reject`, { reason });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to reject quotation");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Quotation rejected", variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["hod-pending-quotations"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Reject failed", description: error?.message ?? "Error", variant: "destructive" });
+    },
+  });
+
+  const handleApproveQuotation = (id: string) => quotationApproveMutation.mutate(id);
+  const [rejectQuotationId, setRejectQuotationId] = useState<string | null>(null);
+  const [rejectQuotationReason, setRejectQuotationReason] = useState("");
+  const handleRejectQuotation = (id: string) => {
+    setRejectQuotationReason("");
+    setRejectQuotationId(id);
+  };
+  const confirmRejectQuotation = () => {
+    if (!rejectQuotationId) return;
+    quotationRejectMutation.mutate(
+      { id: rejectQuotationId, reason: rejectQuotationReason.trim() },
+      { onSuccess: () => setRejectQuotationId(null) },
+    );
+  };
 
   // Quick actions state
   const [leaveModalOpen, setLeaveModalOpen] = useState(false);
@@ -973,11 +1037,13 @@ export default function HodDashboard() {
     return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Pending</Badge>;
   };
 
-  // The "Pending Quotation" tab's badge count reads waitingProjectsQuery — the
-  // table body must read the same source, not `approvals` (a different,
-  // separately-paginated /api/hod/approvals list that has no "Quotation"
-  // rows at all), or the badge and the table permanently disagree.
+  // waitingProjectsQuery/waitingItems back GM-entry/project verification —
+  // an unrelated feature that used to be mislabeled "Pending Quotation" (see
+  // quotationsQuery above for the real quotations source). Left in place
+  // since it's otherwise still wired into the "waiting" tab key, even though
+  // no button points at it anymore after that relabel.
   const waitingItems = waitingProjectsQuery.data?.data ?? [];
+  const quotationsItems = quotationsQuery.data?.data ?? [];
   // approvals is just the current page (capped at `limit`) — the query is
   // already server-filtered to status=Pending, so the real pending count is
   // meta.total, not the length of this one page's rows.
@@ -1113,15 +1179,15 @@ export default function HodDashboard() {
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => setVerificationTab("waiting")}
-                      className={`h-8 text-xs relative ${verificationTab === "waiting"
+                      onClick={() => setVerificationTab("quotation")}
+                      className={`h-8 text-xs relative ${verificationTab === "quotation"
                         ? "bg-green-600 hover:bg-green-700 text-white"
                         : "bg-gray-200 hover:bg-gray-300 text-gray-700"
                         }`}
                     >
                       Pending Quotation
                       <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-blue-600 rounded-full border border-white">
-                        {waitingProjectsQuery.data?.data?.length || 0}
+                        {quotationsQuery.data?.data?.length || 0}
                       </span>
                     </Button>
                     <Button
@@ -1299,7 +1365,7 @@ export default function HodDashboard() {
                     <Table>
                       <TableHeader className="bg-[#f8fafc] dark:bg-zinc-900">
                         <TableRow>
-                          {verificationTab === "waiting" && (
+                          {(verificationTab === "waiting" || verificationTab === "quotation") && (
                             <>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Type</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Reference ID</TableHead>
@@ -1412,6 +1478,63 @@ export default function HodDashboard() {
                                       onClick={() => handleReject(item.id)}
                                       data-testid={`button-reject-${item.id}`}
                                       disabled={approveMutation.isPending || rejectMutation.isPending}
+                                    >
+                                      <X className="h-3 w-3 mr-1" /> Reject
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </>
+                        )}
+
+                        {verificationTab === "quotation" && (
+                          <>
+                            {quotationsItems.length === 0 && (
+                              <TableRow>
+                                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                                  {quotationsQuery.isLoading ? "Loading..." : "No pending quotations"}
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {quotationsItems.map((item: any) => (
+                              <TableRow key={item.id} data-testid={`row-quotation-${item.id}`}>
+                                <TableCell>{getTypeBadge("Quotation")}</TableCell>
+                                <TableCell>
+                                  <span className="inline-block whitespace-nowrap rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-600 dark:bg-zinc-900 dark:text-zinc-300">
+                                    {item.company || "-"}
+                                  </span>
+                                </TableCell>
+                                <TableCell>{item.createdBy ?? "-"}</TableCell>
+                                <TableCell>{item.confirmedAt ? format(new Date(item.confirmedAt), "dd MMM yyyy") : "-"}</TableCell>
+                                <TableCell>{getStatusBadge("pending")}</TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs px-3"
+                                      onClick={() => setLocation(`/sales/quotation?id=${item.id}`)}
+                                      data-testid={`button-view-quotation-${item.id}`}
+                                    >
+                                      View
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs px-3"
+                                      onClick={() => handleApproveQuotation(item.id)}
+                                      data-testid={`button-approve-quotation-${item.id}`}
+                                      disabled={quotationApproveMutation.isPending || quotationRejectMutation.isPending}
+                                    >
+                                      <Check className="h-3 w-3 mr-1" /> Approve
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="text-red-600 border-red-200 hover:bg-red-50 h-7 text-xs px-3"
+                                      onClick={() => handleRejectQuotation(item.id)}
+                                      data-testid={`button-reject-quotation-${item.id}`}
+                                      disabled={quotationApproveMutation.isPending || quotationRejectMutation.isPending}
                                     >
                                       <X className="h-3 w-3 mr-1" /> Reject
                                     </Button>
@@ -2278,6 +2401,31 @@ export default function HodDashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog >
+
+      <Dialog open={!!rejectQuotationId} onOpenChange={(open) => !open && setRejectQuotationId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Quotation</DialogTitle>
+            <DialogDescription>Optionally explain why — the sales rep will see this on their dashboard.</DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Reason (optional)"
+            value={rejectQuotationReason}
+            onChange={(e) => setRejectQuotationReason(e.target.value)}
+            rows={4}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectQuotationId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={confirmRejectQuotation}
+              disabled={quotationRejectMutation.isPending}
+            >
+              Reject Quotation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={escalateOpen} onOpenChange={setEscalateOpen}>
         <DialogContent>

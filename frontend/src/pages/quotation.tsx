@@ -86,7 +86,7 @@ function parseQuery(search: string): Record<string, string> {
   return out;
 }
 
-function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { item: QuotationItemForm; products: any[]; flatProducts: any[]; updateItemProduct: (productId: string, selectedProduct: any) => void }) {
+function ProductCombobox({ item, products, flatProducts, updateItemProduct, followedUpProductIds }: { item: QuotationItemForm; products: any[]; flatProducts: any[]; updateItemProduct: (productId: string, selectedProduct: any) => void; followedUpProductIds?: Set<string> }) {
     const [open, setOpen] = useState(false);
 
     return (
@@ -115,8 +115,13 @@ function ProductCombobox({ item, products, flatProducts, updateItemProduct }: { 
                                     onSelect={() => {
                                         const allowedDeps = product.routeDepartments || [];
                                         const role = typeof window !== "undefined" ? sessionStorage.getItem("userRole") || "sales_executive" : "sales_executive";
-                                        
-                                        if (!isDepartmentAllowed(role, allowedDeps)) {
+                                        // A rep who already logged a follow-up on this exact customer +
+                                        // sub-service may quote it regardless of department routing —
+                                        // the department check exists to gate cold quoting, not to block
+                                        // someone who's actually worked the lead.
+                                        const hasFollowedUp = followedUpProductIds?.has(product.id);
+
+                                        if (!hasFollowedUp && !isDepartmentAllowed(role, allowedDeps)) {
                                             Swal.fire({
                                                 icon: "error",
                                                 title: "Access Denied",
@@ -186,6 +191,24 @@ export default function QuotationPage() {
       queryKey: ["/api/auth/me"],
   });
   const currentDepartment = meData?.data?.department;
+  const myUserId = (meData as any)?.id;
+
+  // Sub-services this rep has already logged a follow-up on for this lead —
+  // lets them quote past the department-routing check below (see
+  // ProductCombobox and the "Validate departments" pass in handleSave).
+  // Reuses the same 60-day lock data the "Follow The Customer" picker shows.
+  const { data: leadLocksRes } = useQuery<{ locks: Array<{ subServiceId: string; lockedByUserId: string }> }>({
+      queryKey: ["/api/sales/customers", leadId, "service-locks"],
+      queryFn: async () => {
+          const res = await apiRequest("GET", `/api/sales/customers/${leadId}/service-locks`);
+          return res.json();
+      },
+      enabled: !!leadId,
+  });
+  const followedUpProductIds = useMemo(
+      () => new Set((leadLocksRes?.locks || []).filter((l) => l.lockedByUserId === myUserId).map((l) => l.subServiceId)),
+      [leadLocksRes, myUserId],
+  );
 
   const { data: servicesData } = useQuery<any>({ queryKey: ["/api/sales/services"] });
   const products = useMemo(() => {
@@ -379,8 +402,10 @@ export default function QuotationPage() {
 
   const handleSave = async () => {
     try {
-      // Validate departments
+      // Validate departments — skipped for any item the rep has already
+      // logged a follow-up on (see followedUpProductIds / ProductCombobox).
       for (const item of form.items) {
+          if (followedUpProductIds.has(item.productId)) continue;
           const product = flatProducts.find(p => p.id === item.productId);
           if (product) {
               const routeDepts = product.routeDepartments || [];
@@ -555,7 +580,8 @@ export default function QuotationPage() {
                           minTime: selectedProduct ? selectedProduct.minDay ?? selectedProduct.minTime : undefined,
                           maxTime: selectedProduct ? selectedProduct.maxDay ?? selectedProduct.maxTime : undefined
                         });
-                      }} 
+                      }}
+                      followedUpProductIds={followedUpProductIds}
                     />
                   </td>
                   <td className="px-2 py-2 min-w-[200px]">

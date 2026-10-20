@@ -291,6 +291,26 @@ export default function LeadPools() {
   const [followupNote, setFollowupNote] = useState("");
   const [followupNextDate, setFollowupNextDate] = useState(() => new Date().toISOString().slice(0, 16));
   const [followupMethod, setFollowupMethod] = useState("Call");
+  const { data: meDataForLocks } = useQuery<{ id: string }>({
+    queryKey: ["/api/auth/me"],
+    queryFn: () => apiRequest("GET", "/api/auth/me").then((r) => r.json()),
+  });
+  // Which sub-services are under the 60-day exclusivity lock for this lead
+  // (see GET /api/sales/customers/:id/service-locks) — shown disabled in the
+  // panel rather than only surfacing as a 409 after the form is filled out.
+  const { data: followupLocksRes } = useQuery<{ locks: Array<{ subServiceId: string; lockedByUserId: string; lockedByName: string }> }>({
+    queryKey: ["/api/sales/customers", followupLead?.id, "service-locks"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/sales/customers/${followupLead?.id}/service-locks`);
+      return res.json();
+    },
+    enabled: !!followupLead?.id,
+  });
+  const followupLockedSubservices = Object.fromEntries(
+    (followupLocksRes?.locks || [])
+      .filter((l) => l.lockedByUserId !== meDataForLocks?.id)
+      .map((l) => [l.subServiceId, { lockedByName: l.lockedByName }]),
+  );
   const [followupReservation, setFollowupReservation] = useState<string | null>(null);
   const [followupReservationError, setFollowupReservationError] = useState<string | null>(null);
   const [followupTalkMinutes, setFollowupTalkMinutes] = useState<number | null>(null);
@@ -1540,8 +1560,20 @@ export default function LeadPools() {
         : "/api/sales/followups";
       const method = isEdit ? "PUT" : "POST";
       const res = await apiRequest(method, endpoint, payload);
-      await res.json();
-      toast({ title: isEdit ? "Follow-up updated" : "Follow-up logged" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (json?.error === "ALL_SERVICES_LOCKED") {
+          const names = (json.locked || []).map((l: any) => `${l.name} (${l.reason})`).join(", ");
+          throw new Error(`All selected services are currently locked: ${names}`);
+        }
+        throw new Error(json?.error || json?.message || "Failed to log follow-up");
+      }
+      if (json?.locked?.length) {
+        const names = json.locked.map((l: any) => `${l.name} (${l.reason})`).join(", ");
+        toast({ title: "Follow-up logged with some services skipped", description: names });
+      } else {
+        toast({ title: isEdit ? "Follow-up updated" : "Follow-up logged" });
+      }
       handleCloseFollowup();
       // refresh data to show backend state
       await Promise.all([refetchList(), refetchSummary()]);
@@ -3076,6 +3108,7 @@ export default function LeadPools() {
               onCallMethodSelect={() => {
                 setShowAdditionalDetails(true);
               }}
+              lockedSubservices={followupLockedSubservices}
             />
 
             {showAdditionalDetails && (

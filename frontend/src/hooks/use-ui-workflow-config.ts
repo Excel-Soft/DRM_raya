@@ -60,19 +60,26 @@ function readViewerRoles(): Set<string> {
  * also an always-allowed creator role) the GM / manual-invoice create actions are
  * hidden unless the corresponding config flag is enabled. The server still
  * enforces the real policy via resolveAllowedRoles / requireManualInvoiceCreator.
+ *
+ * sales_executive was previously in the always-allowed list (it had
+ * unconditional manual-invoice access), but that access was removed
+ * server-side (requireManualInvoiceCreator no longer admits
+ * ROLES.SALES_EXECUTIVE) — mirrored here so a plain Sales Executive doesn't
+ * see an Invoice action that would just 403 on submit.
  */
 export function useServiceExecutiveCreateGates() {
   const { config } = useUiWorkflowConfig();
   const roles = readViewerRoles();
   // Roles that may create regardless of the Service-Executive config flags, so a
   // multi-role user (e.g. admin who also holds service_executive) is never hidden.
-  const alwaysAllowed = ["admin", "super_admin", "administrator", "sales_executive", "sales_manager", "account_manager"];
+  const alwaysAllowed = ["admin", "super_admin", "administrator", "sales_manager", "account_manager"];
   const isPrivileged = alwaysAllowed.some((r) => roles.has(r));
   const isServiceExecutive = roles.has("service_executive");
   const gatedServiceExec = isServiceExecutive && !isPrivileged;
+  const invoiceBlockedForSalesExec = roles.has("sales_executive") && !isPrivileged;
   return {
     isServiceExecutive: gatedServiceExec,
     canCreateGm: !gatedServiceExec || config.serviceExecutiveCanCreateGM,
-    canCreateManualInvoice: !gatedServiceExec || config.serviceExecutiveCanCreateManualInvoice,
+    canCreateManualInvoice: (!gatedServiceExec || config.serviceExecutiveCanCreateManualInvoice) && !invoiceBlockedForSalesExec,
   };
 }

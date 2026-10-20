@@ -1,20 +1,23 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { ChevronRight, Loader2, Eye, PlusCircle } from "lucide-react";
+import { Loader2, Eye, MessageSquarePlus } from "lucide-react";
 import { Breadcrumb } from "@/components/breadcrumb";
-import { FollowCustomerDialog } from "@/components/FollowCustomerDialog"; // We'll assume this exists, or we redirect. Wait, let me just prefill and redirect to add-customer since it's unowned.
+import { useToast } from "@/hooks/use-toast";
+import { FollowupModal } from "@/pages/service-private-pool";
 
 export default function PublicPoolFollowup() {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [selectedMainService, setSelectedMainService] = useState<string | null>(null);
   const [selectedSubService, setSelectedSubService] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [followTarget, setFollowTarget] = useState<{ id: string; name: string } | null>(null);
 
   // 1. Fetch Main Services
   const { data: mainServices, isLoading: isLoadingMain } = useQuery({
@@ -53,11 +56,28 @@ export default function PublicPoolFollowup() {
     enabled: !!selectedSubService,
   });
 
-  const handlePickUp = (customer: any) => {
-    // Save to session storage and navigate to Add Customer (Pick Up Flow)
-    sessionStorage.setItem("pickupPublicPool", JSON.stringify(customer));
-    setLocation(`/sales/add-customer`);
-  };
+  // "Follow Up" opens the real "Follow The Customer" form directly — no claim
+  // yet. The lead is only claimed (self-assigned, via the same endpoint the
+  // Sales lead-transfer UI uses) at the moment the follow-up is actually
+  // submitted (see onBeforeSubmit below), not just from opening the modal.
+  // Claiming on open previously meant a rep who opened the form and backed
+  // out without submitting still silently stole the lead from its current
+  // owner — these are companies inactive 60+ days, often still assigned to
+  // whoever last touched them, so that reassignment should only happen when
+  // someone actually does the work.
+  const claimMutation = useMutation({
+    mutationFn: async (customerId: string) => {
+      const res = await apiRequest("POST", `/api/sales/leads/${customerId}/assign`, {});
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to claim this lead");
+      }
+      return res.json();
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to claim this lead", description: err.message, variant: "destructive" });
+    },
+  });
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-zinc-950 p-4 md:p-6 pb-24">
@@ -194,13 +214,11 @@ export default function PublicPoolFollowup() {
                                 <Button size="sm" variant="outline" onClick={() => setLocation(`/sales/customers/${customer.id}`)}>
                                   <Eye className="w-4 h-4 mr-1" /> View
                                 </Button>
-                                {/* Since user doesn't own it, we redirect to Pick Up (Add Customer page) which is how they claim and edit */}
-                                <Button size="sm" onClick={() => handlePickUp({
-                                  ...customer,
-                                  company: customer.cname,
-                                  accountHolder: customer.account_name,
-                                })}>
-                                  <PlusCircle className="w-4 h-4 mr-1" /> Pick Up / Followup
+                                <Button
+                                  size="sm"
+                                  onClick={() => setFollowTarget({ id: customer.id, name: customer.cname || "Unknown" })}
+                                >
+                                  <MessageSquarePlus className="w-4 h-4 mr-1" /> Follow Up
                                 </Button>
                               </TableCell>
                             </TableRow>
@@ -235,6 +253,23 @@ export default function PublicPoolFollowup() {
           </Card>
         )}
       </div>
+
+      {followTarget && (
+        <FollowupModal
+          open={!!followTarget}
+          onClose={() => {
+            setFollowTarget(null);
+            // The followed-up company now has recent activity, so it should
+            // drop out of this "inactive 60+ days" list on next fetch.
+            queryClient.invalidateQueries({ queryKey: ["public-pool-followup", "customers"] });
+            queryClient.invalidateQueries({ queryKey: ["public-pool-followup", "main-services"] });
+            queryClient.invalidateQueries({ queryKey: ["public-pool-followup", "sub-services"] });
+          }}
+          customerId={followTarget.id}
+          companyName={followTarget.name}
+          onBeforeSubmit={() => claimMutation.mutateAsync(followTarget.id).then(() => {})}
+        />
+      )}
     </div>
   );
 }
