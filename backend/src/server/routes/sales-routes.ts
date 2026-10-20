@@ -3915,6 +3915,53 @@ export function registerSalesRoutes(app: Express) {
       const client = await pool.connect();
       try {
         await client.query("begin");
+
+        // 60-day exclusivity lock: once a sub-service has been followed up on
+        // for this customer, no OTHER user may log another follow-up (or, per
+        // quotation-routes.ts's matching check, create a quotation) against
+        // that same customer+sub-service pair until 60 days have passed. The
+        // same user who logged the original follow-up is exempt (they may
+        // keep following up and later convert it into a quotation freely).
+        // Scoped to the Sales follow-up flow only — Service Executive's
+        // follow-up endpoint has its own narrower AI-Services-only lock.
+        const lockedSubIds = new Set<string>();
+        const lockedDetails: Array<{ subServiceId: string; name: string; reason: string }> = [];
+        if (subServiceIds.length) {
+          const lockRes = await client.query(
+            `select distinct on (d.subservice_id) d.subservice_id, f.created_by, u.name
+               from drm.followup_subservice_details d
+               join drm.follow_ups f on f.id = d.followup_id
+               left join drm.users u on u.id = f.created_by
+              where f.customer_id = $1 and d.subservice_id = any($2::uuid[])
+                and d.created_at >= now() - interval '60 days'
+              order by d.subservice_id, d.created_at desc`,
+            [parsed.customerId, subServiceIds],
+          );
+          const subMetaById = new Map(subServices.map((s) => [s.id, s]));
+          for (const row of lockRes.rows as Array<{ subservice_id: string; created_by: string; name: string | null }>) {
+            if (row.created_by === req.user.userId) continue;
+            lockedSubIds.add(row.subservice_id);
+            const meta = subMetaById.get(row.subservice_id);
+            lockedDetails.push({
+              subServiceId: row.subservice_id,
+              name: meta?.name || row.subservice_id,
+              reason: `locked by ${row.name || "another user"} until 60 days after their follow-up`,
+            });
+          }
+        }
+        if (subServiceIds.length && lockedSubIds.size === subServiceIds.length) {
+          await client.query("rollback");
+          return res.status(409).json({ error: "ALL_SERVICES_LOCKED", locked: lockedDetails });
+        }
+        const survivingSubServiceIds = subServiceIds.filter((id) => !lockedSubIds.has(id));
+        const survivingDetailPayloads = detailPayloads.filter((d) => {
+          const key = `${d.serviceCode}::${d.subServiceCode}`;
+          const meta =
+            (d.subServiceId && subServices.find((s) => s.id === d.subServiceId)) ||
+            subServices.find((s) => `${normalizeCode(s.serviceCode)}::${normalizeCode(s.code)}` === key);
+          return !meta || !lockedSubIds.has(meta.id);
+        });
+
         const dueAt = parsed.nextDate ?? new Date();
         const followupResult = await client.query(
           `insert into drm.follow_ups (customer_id, assigned_to, created_by, due_at, status, notes, method, reservation_type, talk_time_seconds, date_time, created_at, updated_at, is_deleted)
@@ -3939,21 +3986,21 @@ export function registerSalesRoutes(app: Express) {
             [followup.id, serviceId],
           );
         }
-        for (const subServiceId of subServiceIds) {
+        for (const subServiceId of survivingSubServiceIds) {
           await client.query(
             `insert into drm.followup_subservices (followup_id, subservice_id) values ($1, $2) on conflict do nothing`,
             [followup.id, subServiceId],
           );
         }
 
-        if (detailPayloads.length) {
+        if (survivingDetailPayloads.length) {
           // Build maps for lookup
           const subIdToMeta = new Map(subServices.map((s) => [s.id, s]));
           const codePairToMeta = new Map(
             subServices.map((s) => [`${normalizeCode(s.serviceCode)}::${normalizeCode(s.code)}`, s]),
           );
 
-          for (const detail of detailPayloads) {
+          for (const detail of survivingDetailPayloads) {
             const key = `${detail.serviceCode}::${detail.subServiceCode}`;
             const meta =
               (detail.subServiceId && subIdToMeta.get(detail.subServiceId)) ||
@@ -4035,6 +4082,7 @@ export function registerSalesRoutes(app: Express) {
         return res.status(201).json({
           success: true,
           data: { ...followup, services },
+          locked: lockedDetails.length ? lockedDetails : undefined,
         });
       } catch (error) {
         await client.query("rollback");
@@ -4050,6 +4098,38 @@ export function registerSalesRoutes(app: Express) {
       if (error instanceof ApiError) return sendError(res, error);
       console.error("Error creating followup", error);
       res.status(500).json({ error: "Failed to create followup" });
+    }
+  });
+
+  // Lets the "Follow The Customer" picker show which sub-services are
+  // currently under the 60-day exclusivity lock for this customer (see the
+  // matching enforcement in POST /api/sales/followups and the quotation
+  // routes) — without this, a rep only discovers a lock after filling out
+  // the whole form and getting a 409 on submit.
+  app.get("/api/sales/customers/:id/service-locks", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      const result = await pool.query(
+        `select distinct on (d.subservice_id) d.subservice_id, f.created_by, u.name, d.created_at
+           from drm.followup_subservice_details d
+           join drm.follow_ups f on f.id = d.followup_id
+           left join drm.users u on u.id = f.created_by
+          where f.customer_id = $1
+            and d.created_at >= now() - interval '60 days'
+          order by d.subservice_id, d.created_at desc`,
+        [req.params.id],
+      );
+      res.json({
+        locks: result.rows.map((r: any) => ({
+          subServiceId: r.subservice_id,
+          lockedByUserId: r.created_by,
+          lockedByName: r.name || "another user",
+          lockedUntil: new Date(new Date(r.created_at).getTime() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+        })),
+      });
+    } catch (err) {
+      console.error("Error fetching service locks", err);
+      res.status(500).json({ error: "Failed to fetch service locks" });
     }
   });
 

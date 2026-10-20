@@ -1,4 +1,5 @@
 import { Express, Request, Response } from "express";
+import { z } from "zod";
 
 import { requireRole } from "../middleware/auth.middleware";
 import { db, pool } from "../db";
@@ -348,12 +349,20 @@ export function registerServiceExecutiveRoutes(app: Express) {
   // requires the caller to be the customer's Sales owner_user_id, which a
   // service executive normally is not — it would 403. Ownership here is
   // instead scoped to the executive's own drm.service_customers assignment.
+  //
+  // Accepts multiple services/sub-services per submission (one
+  // followup_subservice_details row each), matching func.php's real
+  // "LatestfollowupMethod" handler — the previous single-subServiceId version
+  // this replaced only ever exposed 2-3 of the real catalog's 5 top-level
+  // services because the picker hard-restricted the list client-side.
   const reservationCodes = new Set(["MOBILE", "W_CALL", "ON_SITE_APPOINTMENT", "E_MAIL", "VM_APPOINTMENT", "FAX", "NO_NEED"]);
   // "Review" multi-select checklist added to the "Follow The Customer" form.
   // No existing column on drm.followup_subservice_details fits (comment is a
   // genuinely distinct field written by the Sales follow-up flow) so a new
   // nullable `review` text column is added here, idempotently, the same way
-  // sales-routes.ts's ensureFollowupDetailsTables() evolves this table.
+  // sales-routes.ts's ensureFollowupDetailsTables() evolves this table. Kept
+  // submission-wide (not per sub-service) since the form only ever presented
+  // it as a single shared checklist.
   const FOLLOW_REVIEW_OPTIONS = new Set([
     "Report", "Start Rating", "Up Selling", "Rfq", "Products", "Follow Rate",
     "Sample", "Order", "Revenue", "Happay With Alibaba", "Happay With Webxl",
@@ -364,28 +373,54 @@ export function registerServiceExecutiveRoutes(app: Express) {
     await pool.query(`alter table drm.followup_subservice_details add column if not exists review text null`);
     ensuredFollowupReviewColumn = true;
   }
+
+  const followUpDetailSchema = z.object({
+    subServiceId: z.string().uuid(),
+    purpose: z.string().trim().min(1),
+    grade: z.string().trim().min(1),
+    method: z.string().trim().min(1),
+    comment: z.string().trim().min(1),
+    note: z.string().trim().min(1),
+    dateTime: z.string().trim().optional(),
+    talkTimeMinutes: z.number().int().min(1).max(600).optional().nullable(),
+  });
+  const followUpCreateSchema = z.object({
+    customerId: z.string().uuid(),
+    subServiceDetails: z.array(followUpDetailSchema).min(1, "At least one service must be selected"),
+    review: z.array(z.string()).min(1),
+    note: z.string().trim().optional(),
+    nextDate: z.string().trim().optional(),
+    method: z.string().trim().max(50).optional(),
+    reservationType: z.string().trim().optional(),
+  });
+
+  // AI Services' real sub-services (AI Cloud CRM, AI RAG ChatBot, etc.) carry
+  // a 60-day exclusivity lock per func.php's "LatestfollowupMethod" handler:
+  // once one rep follows up on a given AI sub-service for a company, no other
+  // rep can touch that same sub-service for 60 days, and selecting the "AI
+  // Bundel" sub-service locks out every other AI sub-service for that
+  // company (and vice versa) for the same window. No other service (Alibaba
+  // Membership/Services, Design Development, Domain Hosting) has this rule in
+  // the legacy source — scoped here to service_code === 'AI_SERVICES' only.
+  const AI_SERVICES_CODE = "AI_SERVICES";
+  const AI_BUNDEL_CODE = "AI_BUNDEL";
+
   app.post("/api/service/executive/follow-ups", serviceExecutiveGate, async (req: Request, res: Response) => {
     try {
       const execId = req.user!.userId || (req.user as any)!.id;
-      const { customerId, purpose, grade, method, reservationType, note, nextDate, subServiceId, review } = req.body || {};
+      const parsed = followUpCreateSchema.parse(req.body || {});
 
-      if (!Array.isArray(review) || review.length === 0 || !review.every((r: any) => FOLLOW_REVIEW_OPTIONS.has(r))) {
-        return res.status(400).json({ error: "review must be a non-empty array of valid options", allowed: Array.from(FOLLOW_REVIEW_OPTIONS) });
+      if (!parsed.review.every((r) => FOLLOW_REVIEW_OPTIONS.has(r))) {
+        return res.status(400).json({ error: "review contains an invalid option", allowed: Array.from(FOLLOW_REVIEW_OPTIONS) });
       }
+      const reviewValue = parsed.review.join(", ");
 
-      const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
-      if (!customerId || !uuidPattern.test(String(customerId))) {
-        return res.status(400).json({ error: "Valid customerId (uuid) is required" });
-      }
-      if (!subServiceId || !uuidPattern.test(String(subServiceId))) {
-        return res.status(400).json({ error: "Valid subServiceId (uuid) is required" });
-      }
-      if (!purpose || !grade || !method || !reservationType || !note) {
-        return res.status(400).json({ error: "purpose, grade, method, reservationType and note are required" });
-      }
-      const reservationNormalized = String(reservationType).trim().toUpperCase().replace(/[\s-]+/g, "_");
-      if (!reservationCodes.has(reservationNormalized)) {
-        return res.status(400).json({ error: "Invalid reservationType", allowed: Array.from(reservationCodes) });
+      let reservationNormalized: string | undefined;
+      if (parsed.reservationType) {
+        reservationNormalized = parsed.reservationType.trim().toUpperCase().replace(/[\s-]+/g, "_");
+        if (!reservationCodes.has(reservationNormalized)) {
+          return res.status(400).json({ error: "Invalid reservationType", allowed: Array.from(reservationCodes) });
+        }
       }
 
       // Scope check: this executive must legitimately be connected to the
@@ -401,13 +436,13 @@ export function registerServiceExecutiveRoutes(app: Express) {
       const ownedViaServiceCustomers = await db
         .select({ id: serviceCustomers.id })
         .from(serviceCustomers)
-        .where(and(eq(serviceCustomers.customerId, customerId), eq(serviceCustomers.assignedTo, execId)))
+        .where(and(eq(serviceCustomers.customerId, parsed.customerId), eq(serviceCustomers.assignedTo, execId)))
         .limit(1);
       let owned = ownedViaServiceCustomers.length > 0;
       if (!owned) {
         const ownedViaPool = await pool.query(
           `select 1 from drm.service_pool_entries where customer_id = $1 and service_person_id = $2 limit 1`,
-          [customerId, execId],
+          [parsed.customerId, execId],
         );
         owned = (ownedViaPool.rowCount ?? 0) > 0;
       }
@@ -415,47 +450,114 @@ export function registerServiceExecutiveRoutes(app: Express) {
         return res.status(403).json({ error: "This customer is not in your service pool" });
       }
 
-      const subs = await servicesRepository.findSubservicesByIds([subServiceId]);
-      const sub = subs[0];
-      if (!sub) {
-        return res.status(400).json({ error: "Invalid subServiceId" });
+      const subServiceIds = Array.from(new Set(parsed.subServiceDetails.map((d) => d.subServiceId)));
+      const subs = await servicesRepository.findSubservicesByIds(subServiceIds);
+      if (subs.length !== subServiceIds.length) {
+        const foundIds = new Set(subs.map((s) => s.id));
+        return res.status(400).json({
+          error: "INVALID_SUBSERVICES",
+          invalid: subServiceIds.filter((id) => !foundIds.has(id)),
+        });
       }
+      const subsById = new Map(subs.map((s) => [s.id, s]));
 
-      const dueAt = nextDate && !Number.isNaN(Date.parse(nextDate)) ? new Date(nextDate) : new Date();
-
+      const dueAt = parsed.nextDate && !Number.isNaN(Date.parse(parsed.nextDate)) ? new Date(parsed.nextDate) : new Date();
       await ensureFollowupReviewColumn();
-      const reviewValue = (review as string[]).join(", ");
 
       const client = await pool.connect();
       try {
         await client.query("begin");
+
+        const lockedDetails: Array<{ subServiceId: string; name: string; reason: string }> = [];
+        const validDetails: typeof parsed.subServiceDetails = [];
+        const bundleInThisSubmission = subServiceIds.some((id) => subsById.get(id)?.code === AI_BUNDEL_CODE);
+
+        for (const detail of parsed.subServiceDetails) {
+          const meta = subsById.get(detail.subServiceId)!;
+          if (meta.serviceCode === AI_SERVICES_CODE) {
+            const lockRes = await client.query(
+              `select f.created_by, u.name
+                 from drm.followup_subservice_details d
+                 join drm.follow_ups f on f.id = d.followup_id
+                 left join drm.users u on u.id = f.created_by
+                where f.customer_id = $1 and d.subservice_id = $2
+                  and d.created_at >= now() - interval '60 days'
+                order by d.created_at desc limit 1`,
+              [parsed.customerId, meta.id],
+            );
+            const lockRow = lockRes.rows[0] as { created_by: string; name: string | null } | undefined;
+            if (lockRow && lockRow.created_by !== execId) {
+              lockedDetails.push({ subServiceId: meta.id, name: meta.name, reason: `locked by ${lockRow.name || "another user"}` });
+              continue;
+            }
+
+            if (meta.code !== AI_BUNDEL_CODE) {
+              const bundleRes = await client.query(
+                `select 1
+                   from drm.followup_subservice_details d
+                   join drm.follow_ups f on f.id = d.followup_id
+                   join drm.service_subservices ss on ss.id = d.subservice_id
+                  where f.customer_id = $1 and ss.code = $2
+                    and d.created_at >= now() - interval '60 days'
+                  limit 1`,
+                [parsed.customerId, AI_BUNDEL_CODE],
+              );
+              if ((bundleRes.rowCount ?? 0) > 0) {
+                lockedDetails.push({ subServiceId: meta.id, name: meta.name, reason: "locked because AI Bundel is already active for this company" });
+                continue;
+              }
+              if (bundleInThisSubmission) {
+                lockedDetails.push({ subServiceId: meta.id, name: meta.name, reason: "locked because AI Bundel is selected in this submission" });
+                continue;
+              }
+            }
+          }
+          validDetails.push(detail);
+        }
+
+        if (validDetails.length === 0) {
+          await client.query("rollback");
+          return res.status(409).json({ error: "ALL_SERVICES_LOCKED", locked: lockedDetails });
+        }
+
         const followupResult = await client.query(
           `insert into drm.follow_ups (customer_id, assigned_to, created_by, due_at, status, notes, method, reservation_type, talk_time_seconds, date_time, created_at, updated_at, is_deleted)
              values ($1, $2, $2, $3, 'Open', $4, $5, $6, 0, $3, now(), now(), false)
              returning *`,
-          [customerId, execId, dueAt, note, method, reservationNormalized],
+          [parsed.customerId, execId, dueAt, parsed.note ?? null, parsed.method ?? null, reservationNormalized ?? null],
         );
         const followup = followupResult.rows[0];
 
-        await client.query(
-          `insert into drm.followup_services (followup_id, service_id) values ($1, $2) on conflict do nothing`,
-          [followup.id, sub.serviceId],
-        );
-        await client.query(
-          `insert into drm.followup_subservices (followup_id, subservice_id) values ($1, $2) on conflict do nothing`,
-          [followup.id, sub.id],
-        );
-        await client.query(
-          `insert into drm.followup_subservice_details
-            (followup_id, service_id, subservice_id, service_code, subservice_code, purpose, grade, method, comment, note, activity_at, review)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [followup.id, sub.serviceId, sub.id, sub.serviceCode, sub.code, purpose, grade, method, note, note, dueAt, reviewValue],
-        );
+        const serviceIds = Array.from(new Set(validDetails.map((d) => subsById.get(d.subServiceId)!.serviceId)));
+        for (const serviceId of serviceIds) {
+          await client.query(
+            `insert into drm.followup_services (followup_id, service_id) values ($1, $2) on conflict do nothing`,
+            [followup.id, serviceId],
+          );
+        }
+        for (const detail of validDetails) {
+          const meta = subsById.get(detail.subServiceId)!;
+          await client.query(
+            `insert into drm.followup_subservices (followup_id, subservice_id) values ($1, $2) on conflict do nothing`,
+            [followup.id, meta.id],
+          );
+          const activityAt = detail.dateTime && !Number.isNaN(Date.parse(detail.dateTime)) ? new Date(detail.dateTime) : dueAt;
+          await client.query(
+            `insert into drm.followup_subservice_details
+              (followup_id, service_id, subservice_id, service_code, subservice_code, purpose, grade, method, comment, note, talk_time_minutes, activity_at, review)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              followup.id, meta.serviceId, meta.id, meta.serviceCode, meta.code,
+              detail.purpose, detail.grade, detail.method, detail.comment, detail.note,
+              detail.talkTimeMinutes ?? null, activityAt, reviewValue,
+            ],
+          );
+        }
 
-        await client.query("update drm.customers set last_followup_date = $1 where id = $2", [dueAt, customerId]);
+        await client.query("update drm.customers set last_followup_date = $1 where id = $2", [dueAt, parsed.customerId]);
 
         await client.query("commit");
-        res.status(201).json({ success: true, data: followup });
+        res.status(201).json({ success: true, data: followup, locked: lockedDetails.length ? lockedDetails : undefined });
       } catch (err) {
         await client.query("rollback");
         throw err;
@@ -463,6 +565,9 @@ export function registerServiceExecutiveRoutes(app: Express) {
         client.release();
       }
     } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid follow-up request", details: err.errors });
+      }
       console.error(err);
       res.status(500).json({ error: "Failed to create follow-up" });
     }

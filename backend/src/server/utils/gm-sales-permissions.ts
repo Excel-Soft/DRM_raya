@@ -20,6 +20,7 @@ import { sendError } from "./api-response";
 import { getConfig } from "../services/gm-sales-config.service";
 import { recordGmSalesAudit, GM_SALES_AUDIT_ACTIONS } from "../services/gm-sales-audit";
 import type { GmSalesConfig } from "../../shared/gm-sales-constants";
+import { pool } from "../db";
 
 export const GM_SALES_ACTION_KEYS = {
   GM_CREATE: "gm.create",
@@ -224,12 +225,21 @@ export interface ManualInvoiceCreatorOptions {
 /**
  * Manual invoice creation gate (Patch 5 Stage 4, P7).
  *
- * Preserves the canonical route's existing allowed set — sales_executive,
- * sales_manager, admin — while adding the policy that a service_executive may
- * create manual invoices ONLY when `serviceExecutiveCanCreateManualInvoice` is
- * enabled. Reads roles the same permissive way the legacy `requireRole` and the
- * invoice service do (roleId / activeRoleId / roles[]), so no existing caller
- * loses access. Every denial is audited. Fails CLOSED on config-load error.
+ * Allowed set — sales_manager, admin (and any extraAllowedRoles the caller
+ * passes, e.g. account_manager for the legacy route) — while adding the
+ * policy that a service_executive may create manual invoices ONLY when
+ * `serviceExecutiveCanCreateManualInvoice` is enabled. sales_executive was
+ * previously unconditionally allowed here; that was removed on request so a
+ * plain Sales Executive can no longer create manual invoices from any
+ * caller of this gate, not just the Customer Attribute page's "Invoice"
+ * button — EXCEPT for one controlled path added back on request: a
+ * sales_executive may create an invoice carrying `quotationId` in the body
+ * when that quotation (a) belongs to them and (b) has been HOD-approved
+ * (hod_status = 'approved'). This is the "Create Invoice" action on an
+ * Approved quotation, not a general invoicing right. Reads roles the same
+ * permissive way the legacy `requireRole` and the invoice service do
+ * (roleId / activeRoleId / roles[]). Every denial is audited. Fails CLOSED
+ * on config-load error.
  */
 export function requireManualInvoiceCreator(options: ManualInvoiceCreatorOptions = {}) {
   const entityType = options.auditEntityType ?? "invoice";
@@ -256,7 +266,7 @@ export function requireManualInvoiceCreator(options: ManualInvoiceCreatorOptions
     };
 
     if (roles.has(ROLES.ADMIN)) return next();
-    if (roles.has(ROLES.SALES_EXECUTIVE) || roles.has(ROLES.SALES_MANAGER)) return next();
+    if (roles.has(ROLES.SALES_MANAGER)) return next();
     for (const r of Array.from(extra)) {
       if (roles.has(r)) return next();
     }
@@ -272,6 +282,24 @@ export function requireManualInvoiceCreator(options: ManualInvoiceCreatorOptions
       if (config.serviceExecutiveCanCreateManualInvoice) return next();
       return auditedDeny(
         "Service Executive manual invoice creation is disabled (serviceExecutiveCanCreateManualInvoice=false)",
+      );
+    }
+
+    if (roles.has(ROLES.SALES_EXECUTIVE)) {
+      const quotationId = typeof req.body?.quotationId === "string" ? req.body.quotationId : null;
+      if (quotationId) {
+        const userId = (req.user as any).userId || (req.user as any).id;
+        const result = await pool.query(
+          `select created_by, hod_status from quotations where id = $1`,
+          [quotationId],
+        );
+        const quotation = result.rows[0];
+        if (quotation && quotation.created_by === userId && quotation.hod_status === "approved") {
+          return next();
+        }
+      }
+      return auditedDeny(
+        "Sales Executive may only create an invoice from their own HOD-approved quotation (missing/invalid quotationId)",
       );
     }
 

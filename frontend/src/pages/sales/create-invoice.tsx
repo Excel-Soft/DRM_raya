@@ -130,6 +130,31 @@ export default function CreateInvoice() {
     const customerId = params?.customerId;
     const receiptRef = useRef<HTMLDivElement>(null);
 
+    // Set when opened via "Create Invoice" on an Approved quotation (see
+    // MyQuotationsWidget) — pre-fills the items below from that quotation
+    // and tags the created invoice with quotationId so the backend can mark
+    // the quotation "Converted" (and so requireManualInvoiceCreator can
+    // verify a sales_executive owns an actually-approved quotation).
+    const quotationId = useMemo(() => {
+        if (typeof window === "undefined") return undefined;
+        return new URLSearchParams(window.location.search).get("quotationId") || undefined;
+    }, []);
+    const { data: quotationData } = useQuery<{ success: boolean; data: { quotation: any; items: any[] } }>({
+        queryKey: [`/api/quotations/${quotationId}`],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/quotations/${quotationId}`);
+            return res.json();
+        },
+        enabled: !!quotationId,
+    });
+    const [prefilledFromQuotation, setPrefilledFromQuotation] = useState(false);
+    // An invoice created from an Approved quotation must reflect exactly
+    // what the HOD approved — editing items here (or removing/adding lines)
+    // afterward would defeat the point of the approval step, so every
+    // product/pricing field becomes read-only and the Delete / Add Product
+    // actions are hidden entirely once that quotation data is locked in.
+    const isLockedFromQuotation = !!quotationId;
+
     const userRoleName = (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : "")?.toLowerCase().replace(/\s+/g, "_") || "";
     // Service Executive is admitted the same way the Private Pool's invoice
     // button is gated (useServiceExecutiveCreateGates) — this page enforced
@@ -217,6 +242,26 @@ export default function CreateInvoice() {
         }
         return list;
     }, [products]);
+
+    useEffect(() => {
+        if (!quotationId || prefilledFromQuotation) return;
+        const quotationItems = quotationData?.data?.items;
+        if (!quotationItems) return;
+        setItems(
+            quotationItems.length
+                ? quotationItems.map((it: any) => ({
+                      id: Math.random().toString(36).substr(2, 9),
+                      productId: it.productId || "",
+                      detail: it.detail || "",
+                      unitPrice: Number(it.unitPrice) || 0,
+                      quantity: Number(it.quantity) || 1,
+                      totalPkr: (Number(it.unitPrice) || 0) * (Number(it.quantity) || 1) * dollarRate,
+                      discount: 0,
+                  }))
+                : items,
+        );
+        setPrefilledFromQuotation(true);
+    }, [quotationId, quotationData, prefilledFromQuotation, dollarRate]);
 
     useEffect(() => {
         const subPkr = items.reduce((acc, item) => acc + (item.totalPkr - item.discount), 0);
@@ -339,6 +384,7 @@ export default function CreateInvoice() {
             dollarRate: dollarRate.toString(),
             status: "Pending",
             invoiceNumber: invoiceInfo?.invoiceNumber || `INV-${Math.floor(Math.random() * 100000)}`,
+            ...(quotationId ? { quotationId } : {}),
         };
         
         if (lastSavedInvoice?.id) {
@@ -482,7 +528,9 @@ export default function CreateInvoice() {
                             <Input
                                 type="number"
                                 value={dollarRate}
+                                readOnly={isLockedFromQuotation}
                                 onChange={(e) => {
+                                    if (isLockedFromQuotation) return;
                                     const newRate = Number(e.target.value);
                                     setDollarRate(newRate);
                                     // Also update existing items' totalPkr based on new rate
@@ -494,7 +542,7 @@ export default function CreateInvoice() {
                                         };
                                     }));
                                 }}
-                                className="bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800"
+                                className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                             />
                         </div>
                     </div>
@@ -514,50 +562,59 @@ export default function CreateInvoice() {
                         {items.map((item, idx) => (
                             <div key={item.id} className="grid grid-cols-12 gap-4 items-center animate-in fade-in slide-in-from-top-1 duration-200">
                                 <div className="col-span-3">
-                                    <ProductCombobox 
-                                        item={item} 
-                                        products={products} 
-                                        flatProducts={flatProducts} 
-                                        updateItemProduct={(itemId: string, productId: string, selectedProduct: any) => {
-                                            setItems(items.map(it => {
-                                                if (it.id === itemId) {
-                                                    const quantity = selectedProduct ? Number(selectedProduct.price || 0) : (it.quantity > 0 ? it.quantity : 1);
-                                                    const unitPrice = 1;
-                                                    return {
-                                                        ...it,
-                                                        productId,
-                                                        detail: selectedProduct ? (selectedProduct.description !== null && selectedProduct.description !== undefined ? selectedProduct.description : "") : "",
-                                                        unitPrice,
-                                                        quantity,
-                                                        totalPkr: isNaN(unitPrice * quantity) ? 0 : (selectedProduct?.name === 'Xlserp - Free Website' ? (quantity / 90) * 25600 : unitPrice * quantity * dollarRate)
-                                                    };
-                                                }
-                                                return it;
-                                            }));
-                                        }} 
-                                    />
+                                    {isLockedFromQuotation ? (
+                                        <div className="h-11 flex items-center px-3 rounded-md border border-slate-200 bg-slate-50 text-sm text-slate-700 truncate dark:bg-zinc-800 dark:border-zinc-800 dark:text-zinc-300">
+                                            {flatProducts.find((p: any) => p.id === item.productId)?.name || "Service"}
+                                        </div>
+                                    ) : (
+                                        <ProductCombobox
+                                            item={item}
+                                            products={products}
+                                            flatProducts={flatProducts}
+                                            updateItemProduct={(itemId: string, productId: string, selectedProduct: any) => {
+                                                setItems(items.map(it => {
+                                                    if (it.id === itemId) {
+                                                        const quantity = selectedProduct ? Number(selectedProduct.price || 0) : (it.quantity > 0 ? it.quantity : 1);
+                                                        const unitPrice = 1;
+                                                        return {
+                                                            ...it,
+                                                            productId,
+                                                            detail: selectedProduct ? (selectedProduct.description !== null && selectedProduct.description !== undefined ? selectedProduct.description : "") : "",
+                                                            unitPrice,
+                                                            quantity,
+                                                            totalPkr: isNaN(unitPrice * quantity) ? 0 : (selectedProduct?.name === 'Xlserp - Free Website' ? (quantity / 90) * 25600 : unitPrice * quantity * dollarRate)
+                                                        };
+                                                    }
+                                                    return it;
+                                                }));
+                                            }}
+                                        />
+                                    )}
                                 </div>
                                 <div className="col-span-3 text-center">
                                     <Input
                                         value={item.detail}
-                                        onChange={(e) => updateItem(item.id, "detail", e.target.value)}
-                                        className="bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800"
+                                        readOnly={isLockedFromQuotation}
+                                        onChange={(e) => !isLockedFromQuotation && updateItem(item.id, "detail", e.target.value)}
+                                        className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                                     />
                                 </div>
                                 <div className="col-span-1 text-center">
                                     <Input
                                         type="number"
                                         value={item.unitPrice}
-                                        onChange={(e) => updateItem(item.id, "unitPrice", parseFloat(e.target.value) || 0)}
-                                        className="bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800"
+                                        readOnly={isLockedFromQuotation}
+                                        onChange={(e) => !isLockedFromQuotation && updateItem(item.id, "unitPrice", parseFloat(e.target.value) || 0)}
+                                        className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                                     />
                                 </div>
                                 <div className="col-span-1 text-center">
                                     <Input
                                         type="number"
                                         value={item.quantity}
-                                        onChange={(e) => updateItem(item.id, "quantity", parseInt(e.target.value) || 0)}
-                                        className="bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800"
+                                        readOnly={isLockedFromQuotation}
+                                        onChange={(e) => !isLockedFromQuotation && updateItem(item.id, "quantity", parseInt(e.target.value) || 0)}
+                                        className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                                     />
                                 </div>
                                 <div className="col-span-1 text-center">
@@ -571,31 +628,36 @@ export default function CreateInvoice() {
                                     <Input
                                         type="number"
                                         value={item.discount}
-                                        onChange={(e) => updateItem(item.id, "discount", parseFloat(e.target.value) || 0)}
-                                        className="bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800"
+                                        readOnly={isLockedFromQuotation}
+                                        onChange={(e) => !isLockedFromQuotation && updateItem(item.id, "discount", parseFloat(e.target.value) || 0)}
+                                        className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 text-center dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                                     />
                                 </div>
                                 <div className="col-span-2 flex justify-center gap-2">
-                                    <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        className="bg-emerald-600 hover:bg-emerald-700 h-11 px-6 font-bold"
-                                        onClick={() => removeItem(item.id)}
-                                    >
-                                        Delete
-                                    </Button>
+                                    {!isLockedFromQuotation && (
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            className="bg-emerald-600 hover:bg-emerald-700 h-11 px-6 font-bold"
+                                            onClick={() => removeItem(item.id)}
+                                        >
+                                            Delete
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         ))}
 
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={addItem}
-                            className="mt-2 border-dashed border-2 border-slate-300 text-slate-500 hover:border-emerald-500 hover:text-emerald-500 hover:bg-emerald-50 transition-all dark:text-zinc-400 dark:border-zinc-800"
-                        >
-                            + Add Product
-                        </Button>
+                        {!isLockedFromQuotation && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={addItem}
+                                className="mt-2 border-dashed border-2 border-slate-300 text-slate-500 hover:border-emerald-500 hover:text-emerald-500 hover:bg-emerald-50 transition-all dark:text-zinc-400 dark:border-zinc-800"
+                            >
+                                + Add Product
+                            </Button>
+                        )}
                     </div>
 
                     {/* Totals Section */}

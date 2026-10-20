@@ -45,6 +45,8 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
+    DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -664,6 +666,69 @@ export default function SuperHODDashboard() {
         }
     });
 
+    // waitingProjects above backs GM-entry/project verification — an
+    // unrelated feature previously mislabeled "Pending Quotation" in the tab
+    // list below. Real quotations (confirmed via POST /api/quotations/:id/confirm)
+    // come from here instead.
+    const { data: pendingQuotations, isLoading: quotationsLoading } = useQuery<any[]>({
+        queryKey: ["hod-pending-quotations"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/sales/quotations/hod-pending");
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.message || "Failed to load pending quotations");
+            return json.data || [];
+        }
+    });
+
+    const quotationApproveMutation = useMutation({
+        mutationFn: async (id: string) => {
+            const res = await apiRequest("POST", `/api/quotations/${id}/hod-approve`);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err?.message || "Failed to approve quotation");
+            }
+            return res.json();
+        },
+        onSuccess: () => {
+            toast({ title: "Quotation approved" });
+            queryClient.invalidateQueries({ queryKey: ["hod-pending-quotations"] });
+        },
+        onError: (err: any) => {
+            toast({ title: "Approve failed", description: err.message, variant: "destructive" });
+        },
+    });
+
+    const quotationRejectMutation = useMutation({
+        mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+            const res = await apiRequest("POST", `/api/quotations/${id}/hod-reject`, { reason });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err?.message || "Failed to reject quotation");
+            }
+            return res.json();
+        },
+        onSuccess: () => {
+            toast({ title: "Quotation rejected", variant: "destructive" });
+            queryClient.invalidateQueries({ queryKey: ["hod-pending-quotations"] });
+        },
+        onError: (err: any) => {
+            toast({ title: "Reject failed", description: err.message, variant: "destructive" });
+        },
+    });
+    const [rejectQuotationId, setRejectQuotationId] = useState<string | null>(null);
+    const [rejectQuotationReason, setRejectQuotationReason] = useState("");
+    const handleRejectQuotation = (id: string) => {
+        setRejectQuotationReason("");
+        setRejectQuotationId(id);
+    };
+    const confirmRejectQuotation = () => {
+        if (!rejectQuotationId) return;
+        quotationRejectMutation.mutate(
+            { id: rejectQuotationId, reason: rejectQuotationReason.trim() },
+            { onSuccess: () => setRejectQuotationId(null) },
+        );
+    };
+
     const { data: leaveRequests, isError: leaveError, isLoading: leaveLoading, error: e6 } = useQuery<any[]>({
         queryKey: ["/api/hod/verification/leave-requests"],
         queryFn: async () => {
@@ -839,7 +904,7 @@ export default function SuperHODDashboard() {
                                             <CardTitle className="text-base font-bold text-slate-800 dark:text-zinc-100">Hod Quick Approvals</CardTitle>
                                             <TabsList className="bg-transparent h-auto p-0 gap-4">
                                                 {[
-                                                    { label: 'Pending Quotation', key: 'waiting', count: waitingProjects?.length || 0 },
+                                                    { label: 'Pending Quotation', key: 'quotation', count: pendingQuotations?.length || 0 },
                                                     { label: 'Leave Form', key: 'leave-form', count: leaveRequests?.length || 0 },
                                                     { label: 'Gm Approval', key: 'gm-approval', count: gmApprovals?.length || 0 },
                                                     { label: 'Update Request', key: 'update-request', count: updateRequests?.length || 0 },
@@ -860,6 +925,46 @@ export default function SuperHODDashboard() {
                                         </div>
 
                                         <div className="bg-[#F1F5F9] rounded-lg p-1 min-h-[300px] mb-4 dark:bg-zinc-900">
+                                            <TabsContent value="quotation" className="m-0">
+                                                <Table>
+                                                    <TableHeader><TableRow className="border-none hover:bg-transparent"><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">No#</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Company</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Submitted By</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Status</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Date</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 text-right dark:text-zinc-300">Action</TableHead></TableRow></TableHeader>
+                                                    <TableBody>
+                                                        {pendingQuotations?.length === 0 ? (
+                                                            <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-400 font-medium">No pending quotations</TableCell></TableRow>
+                                                        ) : (pendingQuotations || []).map((row, i) => (
+                                                            <TableRow key={row.id} className="bg-white border-b border-slate-100 hover:bg-slate-50 transition-colors dark:bg-zinc-900 dark:hover:bg-zinc-800 dark:border-zinc-800">
+                                                                <TableCell className="text-xs font-semibold text-slate-800 dark:text-zinc-100">{i + 1}</TableCell>
+                                                                <TableCell className="text-xs font-bold text-slate-800 dark:text-zinc-100">{row.company}</TableCell>
+                                                                <TableCell className="text-xs font-medium text-slate-600 dark:text-zinc-300">{row.createdBy}</TableCell>
+                                                                <TableCell><Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-600 border-amber-100 uppercase">Pending</Badge></TableCell>
+                                                                <TableCell className="text-xs text-slate-500 dark:text-zinc-400">{row.confirmedAt ? new Date(row.confirmedAt).toLocaleDateString() : "-"}</TableCell>
+                                                                <TableCell className="text-right">
+                                                                    <div className="flex justify-end gap-2">
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 text-xs px-3"
+                                                                            onClick={() => quotationApproveMutation.mutate(row.id)}
+                                                                            disabled={quotationApproveMutation.isPending || quotationRejectMutation.isPending}
+                                                                        >
+                                                                            Approve
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="text-red-600 border-red-200 hover:bg-red-50 h-7 text-xs px-3"
+                                                                            onClick={() => handleRejectQuotation(row.id)}
+                                                                            disabled={quotationApproveMutation.isPending || quotationRejectMutation.isPending}
+                                                                        >
+                                                                            Reject
+                                                                        </Button>
+                                                                    </div>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                    </TableBody>
+                                                </Table>
+                                            </TabsContent>
+
                                             <TabsContent value="waiting" className="m-0">
                                                 <Table>
                                                     <TableHeader><TableRow className="border-none hover:bg-transparent"><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">No#</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Company</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Drm Id</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Created By</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 dark:text-zinc-300">Status</TableHead><TableHead className="text-[11px] font-bold text-slate-600 uppercase py-4 text-right dark:text-zinc-300">Date</TableHead></TableRow></TableHeader>
@@ -1757,6 +1862,31 @@ export default function SuperHODDashboard() {
                             </div>
                         </div>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!rejectQuotationId} onOpenChange={(open) => !open && setRejectQuotationId(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Reject Quotation</DialogTitle>
+                        <DialogDescription>Optionally explain why — the sales rep will see this on their dashboard.</DialogDescription>
+                    </DialogHeader>
+                    <Textarea
+                        placeholder="Reason (optional)"
+                        value={rejectQuotationReason}
+                        onChange={(e) => setRejectQuotationReason(e.target.value)}
+                        rows={4}
+                    />
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setRejectQuotationId(null)}>Cancel</Button>
+                        <Button
+                            variant="destructive"
+                            onClick={confirmRejectQuotation}
+                            disabled={quotationRejectMutation.isPending}
+                        >
+                            Reject Quotation
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

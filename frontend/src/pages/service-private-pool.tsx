@@ -1698,7 +1698,19 @@ const RESERVATION_OPTIONS = [
     { value: "NO_NEED", label: "No Need" },
 ];
 
-export function FollowupModal({ open, onClose, customerId, companyName }: { open: boolean; onClose: () => void; customerId?: string; companyName?: string }) {
+export function FollowupModal({ open, onClose, customerId, companyName, onBeforeSubmit }: {
+    open: boolean;
+    onClose: () => void;
+    customerId?: string;
+    companyName?: string;
+    // Optional hook run (and awaited) right before the follow-up POST fires —
+    // e.g. Public Pool (Follow-up) uses this to claim/self-assign the lead
+    // only at actual submission time, not merely when the modal is opened.
+    // Claiming on open (an earlier version of this flow) meant opening the
+    // form and backing out without submitting still silently stole the lead
+    // from its previous owner.
+    onBeforeSubmit?: () => Promise<void>;
+}) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
 
@@ -1711,6 +1723,29 @@ export function FollowupModal({ open, onClose, customerId, companyName }: { open
         enabled: open,
     });
     const followupServices = servicesRes?.items || [];
+
+    const { data: meData } = useQuery<{ id: string }>({
+        queryKey: ["/api/auth/me"],
+        queryFn: () => apiRequest("GET", "/api/auth/me").then((r) => r.json()),
+    });
+
+    // Which sub-services are under the 60-day exclusivity lock for THIS
+    // customer (see GET /api/sales/customers/:id/service-locks) — shown
+    // disabled in the panel below rather than only surfacing as a 409 after
+    // the rep fills out the whole form and hits Submit.
+    const { data: locksRes } = useQuery<{ locks: Array<{ subServiceId: string; lockedByUserId: string; lockedByName: string }> }>({
+        queryKey: ["/api/sales/customers", customerId, "service-locks"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/sales/customers/${customerId}/service-locks`);
+            return res.json();
+        },
+        enabled: open && !!customerId,
+    });
+    const lockedSubservices = Object.fromEntries(
+        (locksRes?.locks || [])
+            .filter((l) => l.lockedByUserId !== meData?.id)
+            .map((l) => [l.subServiceId, { lockedByName: l.lockedByName }]),
+    );
 
     const [selectedServiceCodes, setSelectedServiceCodes] = useState<Set<string>>(new Set());
     const [selectedSubservices, setSelectedSubservices] = useState<Record<string, Set<string>>>({});
@@ -1786,7 +1821,9 @@ export function FollowupModal({ open, onClose, customerId, companyName }: { open
     };
 
     const followupMutation = useMutation({
-        mutationFn: () => {
+        mutationFn: async () => {
+            await onBeforeSubmit?.();
+
             const subIdToMeta = new Map<string, { serviceId: string; subCode: string; serviceCode: string }>();
             followupServices.forEach((svc) => {
                 const svcCode = normalizeCode(svc.code);
@@ -1835,7 +1872,7 @@ export function FollowupModal({ open, onClose, customerId, companyName }: { open
                 });
             });
 
-            return apiRequest("POST", "/api/sales/followups", {
+            const res = await apiRequest("POST", "/api/sales/followups", {
                 customerId,
                 services: Array.from(selectedServiceCodes),
                 subServices: subServicesPayload,
@@ -1844,9 +1881,23 @@ export function FollowupModal({ open, onClose, customerId, companyName }: { open
                 note: note || undefined,
                 nextDate: nextDate || undefined,
             });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                if (json?.error === "ALL_SERVICES_LOCKED") {
+                    const names = (json.locked || []).map((l: any) => `${l.name} (${l.reason})`).join(", ");
+                    throw new Error(`All selected services are currently locked: ${names}`);
+                }
+                throw new Error(json?.error || json?.message || "Failed to log follow-up");
+            }
+            return json;
         },
-        onSuccess: async () => {
-            toast({ title: "Follow-up logged" });
+        onSuccess: async (data: any) => {
+            if (data?.locked?.length) {
+                const names = data.locked.map((l: any) => `${l.name} (${l.reason})`).join(", ");
+                toast({ title: "Follow-up logged with some services skipped", description: names });
+            } else {
+                toast({ title: "Follow-up logged" });
+            }
             if (customerId) {
                 await queryClient.invalidateQueries({ queryKey: [`/api/sales/customers/${customerId}/followups`] });
             }
@@ -1878,6 +1929,7 @@ export function FollowupModal({ open, onClose, customerId, companyName }: { open
                             onToggleService={handleToggleService}
                             onToggleSubservice={handleToggleSubservice}
                             onUpdateDetail={handleUpdateDetail}
+                            lockedSubservices={lockedSubservices}
                         />
 
                         {/* Reservation / Method */}

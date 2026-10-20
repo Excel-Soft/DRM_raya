@@ -9,7 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { CalendarClock, ChevronDown, ChevronUp, Upload as UploadIcon } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronUp, Lock, Upload as UploadIcon } from "lucide-react";
 
 export type FollowupSubserviceOption = { id: string; code: string; name: string };
 export type FollowupServiceOption = { id: string; code: string; name: string; subServices?: FollowupSubserviceOption[] };
@@ -43,6 +43,14 @@ type Props = {
   onToggleSubservice: (serviceId: string, subId: string, checked: boolean) => void;
   onUpdateDetail: (subId: string, patch: Partial<SubserviceDetail>) => void;
   onCallMethodSelect?: () => void;
+  // Sub-services currently under another user's 60-day follow-up exclusivity
+  // lock for this customer (see GET /api/sales/customers/:id/service-locks) —
+  // rendered disabled with a lock icon/tooltip so a rep finds out before
+  // filling out the whole form, not after a 409 on submit. Keyed by
+  // sub-service id; absent entirely for callers that don't have a lock
+  // concept (e.g. the Service Executive flow's narrower AI-only lock, which
+  // is enforced server-side but not yet surfaced here).
+  lockedSubservices?: Record<string, { lockedByName: string }>;
 };
 
 const purposeOptions = [
@@ -95,9 +103,10 @@ export function FollowCustomerServicesPanel({
   onToggleSubservice,
   onUpdateDetail,
   onCallMethodSelect,
+  lockedSubservices,
 }: Props) {
   const orderedServices = useMemo(() => {
-    const order = ["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES", "DESIGN_DEVELOPMENT", "DOMAIN_HOSTING"];
+    const order = ["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES", "DESIGN_DEVELOPMENT", "DOMAIN_HOSTING", "AI_SERVICES"];
     const map = new Map(services.map((s) => [normalizeCode(s.code), s]));
     return order.map((code) => map.get(code)).filter(Boolean) as FollowupServiceOption[];
   }, [services]);
@@ -196,26 +205,36 @@ export function FollowCustomerServicesPanel({
                   {getVisibleSubservices(svc).map((sub) => {
                     const subSelected = selectedSubservices[normalizeCode(svc.code)]?.has(sub.id) ?? false;
                     const detail = subserviceDetails[sub.id] || {};
+                    const lock = lockedSubservices?.[sub.id];
                     return (
                       <div
                         key={sub.id}
+                        title={lock ? `Locked by ${lock.lockedByName} — already followed up on within the last 60 days` : undefined}
                         className={`relative border rounded-md px-4 py-3 transition-all duration-200 ${
-                          subSelected 
-                            ? "bg-emerald-50/50 border-emerald-500/30 shadow-sm ring-1 ring-emerald-500/10" 
-                            : "bg-card border-slate-200"
+                          lock
+                            ? "bg-slate-50 border-slate-200 opacity-60 dark:bg-zinc-900/40"
+                            : subSelected
+                              ? "bg-emerald-50/50 border-emerald-500/30 shadow-sm ring-1 ring-emerald-500/10"
+                              : "bg-card border-slate-200"
                         }`}
                       >
                         <div className={`grid gap-3 items-end ${subSelected ? "grid-cols-1 md:grid-cols-2 lg:flex lg:flex-nowrap lg:gap-2" : "grid-cols-1"}`}>
                           <div className={`flex items-end ${subSelected ? "lg:pb-1 lg:min-w-[140px]" : ""}`}>
-                            <label className={`flex items-center gap-2 text-sm transition-colors ${subSelected ? "text-emerald-900 font-bold" : "text-foreground"}`}>
+                            <label className={`flex items-center gap-2 text-sm transition-colors ${lock ? "cursor-not-allowed text-muted-foreground" : "cursor-pointer"} ${subSelected ? "text-emerald-900 font-bold" : "text-foreground"}`}>
                               <Checkbox
                                 checked={subSelected}
+                                disabled={!!lock}
                                 onCheckedChange={(checked) => onToggleSubservice(svc.id, sub.id, !!checked)}
                               />
                               <span className="font-medium whitespace-nowrap subServiceName">{sub.name}</span>
+                              {lock && (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-normal text-amber-600 dark:text-amber-500">
+                                  <Lock className="h-3 w-3" /> Locked by {lock.lockedByName}
+                                </span>
+                              )}
                             </label>
                           </div>
-                          {subSelected && (
+                          {subSelected && !lock && (
                             <>
                               <div className="field-block flex-1 min-w-[120px]">
                                 <span className="field-label">Purpose*</span>

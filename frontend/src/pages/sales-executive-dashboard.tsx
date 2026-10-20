@@ -12,6 +12,7 @@ import { ProductPostingSalesWidget } from "@/components/product-posting-sales-wi
 import { CustomerMonthlyWidget } from "@/components/customer-monthly";
 import { PromotionalBanner } from "@/components/promotional-banner";
 import { MyGmCommissionWidget } from "@/components/my-gm-commission-widget";
+import { MyQuotationsWidget } from "@/components/my-quotations-widget";
 import {
   Select,
   SelectContent,
@@ -514,6 +515,9 @@ export default function SalesExecutiveDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Row 5: My Quotations */}
+        <MyQuotationsWidget />
 
       </div>
     </div>

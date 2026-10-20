@@ -2623,6 +2623,28 @@ export function registerAccountRoutes(app: Express) {
   // invoice_type enum and is not part of the HOD/Accounts approval state machine,
   // so the closed-vocabulary type check and approval-completeness gates do NOT
   // apply here. New invoices should use the canonical POST /api/invoices.
+  let ensuredInvoiceQuotationLink = false;
+  async function ensureInvoiceQuotationLink(): Promise<void> {
+    if (ensuredInvoiceQuotationLink) return;
+    // quotations.id is a true `uuid` column (not varchar) — this column and
+    // its FK must match that type exactly or the constraint fails to create.
+    await pool.query(`alter table drm.invoices add column if not exists quotation_id uuid null;`);
+    try {
+      await pool.query(`alter table drm.invoices drop constraint if exists invoices_quotation_id_fkey;`);
+      await pool.query(
+        `alter table drm.invoices add constraint invoices_quotation_id_fkey foreign key (quotation_id) references quotations(id) on delete set null;`,
+      );
+    } catch (err) {
+      // Non-fatal: the column itself is what matters for read/write; the FK
+      // is a safety net. Don't let a one-time constraint hiccup permanently
+      // block invoice creation (this flag only flips once, successfully).
+      console.error("Failed to (re)create invoices_quotation_id_fkey, continuing without it:", err);
+    }
+    await pool.query(`alter table quotations add column if not exists converted_invoice_id varchar null;`);
+    await pool.query(`alter table quotations add column if not exists converted_at timestamptz null;`);
+    ensuredInvoiceQuotationLink = true;
+  }
+
   app.post(
     "/api/account/invoices",
     requireManualInvoiceCreator({ extraAllowedRoles: [ROLES.ACCOUNT_MANAGER] }),
@@ -2632,22 +2654,23 @@ export function registerAccountRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
+      await ensureInvoiceQuotationLink();
       const validated = insertInvoiceSchema.parse(req.body);
-      
+
       let invoice;
       let attempt = 0;
-      
+
       while (attempt < 3) {
         try {
           // Generate sequential invoice number
           const maxInvoiceRes = await db.execute(sql`
-            SELECT invoice_number 
-            FROM drm.invoices 
-            WHERE invoice_number ~ '^INV-\\d+$' 
-            ORDER BY CAST(SUBSTRING(invoice_number FROM 5) AS INTEGER) DESC 
+            SELECT invoice_number
+            FROM drm.invoices
+            WHERE invoice_number ~ '^INV-\\d+$'
+            ORDER BY CAST(SUBSTRING(invoice_number FROM 5) AS INTEGER) DESC
             LIMIT 1
           `);
-          
+
           let nextSeq = 1;
           if (maxInvoiceRes.rows && maxInvoiceRes.rows.length > 0) {
             const maxInv = maxInvoiceRes.rows[0].invoice_number as string;
@@ -2656,7 +2679,7 @@ export function registerAccountRoutes(app: Express) {
               nextSeq = maxNum + 1;
             }
           }
-          
+
           let currentInvoiceNumber = `INV-${String(nextSeq).padStart(5, '0')}`;
           // In rare cases (e.g., frontend forcing an ID or concurrent insert), we retry with an incremented sequence
           if (attempt > 0) {
@@ -2678,6 +2701,17 @@ export function registerAccountRoutes(app: Express) {
             throw dbError;
           }
         }
+      }
+
+      // Marks the originating quotation "Converted" on the creator's own
+      // dashboard (see GET /api/sales/quotations/my-summary) — only possible
+      // because requireManualInvoiceCreator already verified this quotation
+      // is HOD-approved and owned by the caller before letting this through.
+      if (invoice && validated.quotationId) {
+        await pool.query(
+          `update quotations set converted_invoice_id = $1, converted_at = now() where id = $2`,
+          [invoice.id, validated.quotationId],
+        );
       }
 
       res.status(201).json(invoice);

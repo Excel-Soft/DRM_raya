@@ -1387,6 +1387,13 @@ export const invoices = drmSchema.table("invoices", {
   invoiceNumber: text("invoice_number").notNull().unique()
     .default(sql`'INV-' || LPAD(nextval('drm.global_invoice_number_seq')::text, 5, '0')`),
   customerId: varchar("customer_id").references(() => customers.id),
+  // Set when this invoice was created from the "Create Invoice" action on an
+  // Approved quotation (see requireManualInvoiceCreator's sales_executive
+  // carve-out). `quotations` lives in a separately-managed (raw-SQL) table,
+  // but quotations.id is a true `uuid` column, so this must be `uuid` too —
+  // not `varchar`, or the FK constraint added in account-routes.ts's
+  // ensureInvoiceQuotationLink() fails to create (type mismatch).
+  quotationId: uuid("quotation_id"),
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email"),
   customerAddress: text("customer_address"),

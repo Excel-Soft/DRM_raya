@@ -30,6 +30,12 @@ type QuotationRow = {
   created_at: string;
   updated_at: string;
   dollar_rate: number;
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  hod_status: string | null;
+  hod_reviewed_by: string | null;
+  hod_reviewed_at: string | null;
+  hod_comment: string | null;
 };
 
 type QuotationItemRow = {
@@ -184,11 +190,139 @@ async function ensureQuotationTables() {
       await client.query(
         `create index if not exists idx_quotation_items_quotation on quotation_items(quotation_id);`,
       );
+      // Records whether a given locked follow-up (see checkServiceLocks below)
+      // was ever actually converted into a quotation by the same rep who
+      // logged it — a reporting hook requested alongside the 60-day
+      // exclusivity lock, not itself an enforcement mechanism.
+      await client.query(`
+        alter table drm.followup_subservice_details
+          add column if not exists converted_quotation_id uuid null,
+          add column if not exists converted_at timestamptz null;
+      `);
+      await client.query(`
+        alter table drm.followup_subservice_details
+          drop constraint if exists followup_subservice_details_converted_quotation_id_fkey;
+      `);
+      await client.query(`
+        alter table drm.followup_subservice_details
+          add constraint followup_subservice_details_converted_quotation_id_fkey
+          foreign key (converted_quotation_id) references quotations(id) on delete set null;
+      `);
+      // Sales-executive-side confirm step: a quotation is created "Pending"
+      // (confirmed_at null) on the creator's own dashboard, editable until
+      // they click Done — at which point it's confirmed (visible under
+      // "Approved" on their own dashboard) and becomes visible to the HOD's
+      // own pending-quotations queue. There's no reject/HOD-approve step yet
+      // (no such workflow exists elsewhere in this app for quotations) —
+      // this only models the creator's own confirm action.
+      await client.query(`
+        alter table quotations
+          add column if not exists confirmed_at timestamptz null,
+          add column if not exists confirmed_by text null;
+      `);
+      await client.query(
+        `create index if not exists idx_quotations_confirmed_at on quotations(confirmed_at);`,
+      );
+      // The real HOD decision (separate from the creator's own confirm step
+      // above) — hod_status stays null while a confirmed quotation sits in
+      // the HOD's queue, and only becomes 'approved'/'rejected' once a HOD
+      // actually acts on it. "Approved" on the creator's own dashboard is
+      // defined as hod_status = 'approved', not merely confirmed_at set.
+      await client.query(`
+        alter table quotations
+          add column if not exists hod_status text null,
+          add column if not exists hod_reviewed_by text null,
+          add column if not exists hod_reviewed_at timestamptz null,
+          add column if not exists hod_comment text null;
+      `);
+      await client.query(
+        `create index if not exists idx_quotations_hod_status on quotations(hod_status);`,
+      );
+      // Set by POST /api/account/invoices when a sales_executive uses the
+      // "Create Invoice" action on their own HOD-approved quotation (see
+      // requireManualInvoiceCreator). Also ensured from that route's own
+      // ensureInvoiceQuotationLink() — duplicated here (idempotent) so this
+      // GET endpoint never fails if it's hit before any invoice was ever
+      // created from a quotation.
+      await client.query(`
+        alter table quotations
+          add column if not exists converted_invoice_id varchar null,
+          add column if not exists converted_at timestamptz null;
+      `);
     } finally {
       client.release();
     }
   })();
   return ensureQuotationTablesPromise;
+}
+
+// 60-day exclusivity lock (see sales-routes.ts's matching check on follow-up
+// creation): once a rep logs a follow-up against a customer+sub-service, no
+// OTHER user may create a quotation for that same pair until 60 days pass.
+// The original rep is exempt — they're expected to convert their own
+// follow-up into a quotation, and doing so is recorded on the follow-up
+// detail row (converted_quotation_id/converted_at) for later reporting.
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
+
+async function findLockedQuotationItems(
+  client: PoolClient,
+  customerId: string | null | undefined,
+  productIds: string[],
+  userId: string,
+): Promise<Array<{ productId: string; name: string; reason: string }>> {
+  const validIds = Array.from(new Set(productIds.filter((id) => UUID_RE.test(id))));
+  if (!customerId || validIds.length === 0) return [];
+  const subRes = await client.query(
+    `select id, name from drm.service_subservices where id = any($1::uuid[])`,
+    [validIds],
+  );
+  const subIds = subRes.rows.map((r) => r.id);
+  if (subIds.length === 0) return [];
+
+  const lockRes = await client.query(
+    `select distinct on (d.subservice_id) d.subservice_id, f.created_by, u.name
+       from drm.followup_subservice_details d
+       join drm.follow_ups f on f.id = d.followup_id
+       left join drm.users u on u.id = f.created_by
+      where f.customer_id = $1 and d.subservice_id = any($2::uuid[])
+        and d.created_at >= now() - interval '60 days'
+      order by d.subservice_id, d.created_at desc`,
+    [customerId, subIds],
+  );
+  const nameById = new Map(subRes.rows.map((r) => [r.id, r.name]));
+  return lockRes.rows
+    .filter((r: any) => r.created_by !== userId)
+    .map((r: any) => ({
+      productId: r.subservice_id,
+      name: nameById.get(r.subservice_id) || r.subservice_id,
+      reason: `locked by ${r.name || "another user"} until 60 days after their follow-up`,
+    }));
+}
+
+// After a quotation is successfully created, mark any of the creator's OWN
+// recent (<=60 day) follow-up detail rows for these sub-services as
+// converted — purely a reporting record, not an enforcement step.
+async function markFollowupsConverted(
+  client: PoolClient,
+  customerId: string | null | undefined,
+  productIds: string[],
+  userId: string,
+  quotationId: string,
+) {
+  const validIds = Array.from(new Set(productIds.filter((id) => UUID_RE.test(id))));
+  if (!customerId || validIds.length === 0) return;
+  await client.query(
+    `update drm.followup_subservice_details d
+        set converted_quotation_id = $4, converted_at = now()
+       from drm.follow_ups f
+      where f.id = d.followup_id
+        and f.customer_id = $1
+        and d.subservice_id = any($2::uuid[])
+        and f.created_by = $3
+        and d.created_at >= now() - interval '60 days'
+        and d.converted_quotation_id is null`,
+    [customerId, validIds, userId, quotationId],
+  );
 }
 
 function computeTotals(parsed: ParsedQuotation) {
@@ -261,6 +395,12 @@ function mapQuotationRow(row: QuotationRow) {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    confirmedAt: row.confirmed_at,
+    confirmedBy: row.confirmed_by,
+    hodStatus: row.hod_status,
+    hodReviewedBy: row.hod_reviewed_by,
+    hodReviewedAt: row.hod_reviewed_at,
+    hodComment: row.hod_comment,
   };
 }
 
@@ -474,7 +614,8 @@ export function registerQuotationRoutes(app: Express) {
         select id, customer_id, lead_id, account_holder, company, email, contact, delivery_time,
                gst_percent, discount_type, discount_value, sub_amount, gst_amount, total_amount,
                grand_total, pkr_total, payment_term_percent, save_status, note, amount, dollar_rate,
-               created_by, created_at, updated_at
+               created_by, created_at, updated_at, confirmed_at, confirmed_by,
+               hod_status, hod_reviewed_by, hod_reviewed_at, hod_comment
           from quotations
           ${where.length ? `where ${where.join(" and ")}` : ""}
          order by created_at desc
@@ -504,6 +645,212 @@ export function registerQuotationRoutes(app: Express) {
     }
   });
 
+  const HOD_ROLES = new Set(["hod", "super_hod", "admin", "super_admin"]);
+  function hasHodAccess(req: any): boolean {
+    const roles = [req.user?.activeRoleId, req.user?.roleId, ...(req.user?.roles || [])]
+      .filter(Boolean)
+      .map((r: string) => r.toLowerCase());
+    return roles.some((r) => HOD_ROLES.has(r));
+  }
+
+  // The creator confirms/finalizes their own quotation — this does NOT mark
+  // it "Approved" on their own dashboard; it only moves it into the HOD's
+  // pending-quotations queue (GET /api/sales/quotations/hod-pending) for a
+  // real decision. It stays under "Pending & Rejected" on the creator's side
+  // (now showing "Awaiting HOD" instead of "Pending") until the HOD actually
+  // approves it via POST .../hod-approve below.
+  app.post("/api/quotations/:id/confirm", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const existing = await pool.query<QuotationRow>(`select * from quotations where id = $1`, [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
+      if (existing.rows[0].created_by !== req.user.userId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Only the quotation's creator can confirm it" });
+      }
+      const updated = await pool.query<QuotationRow>(
+        `update quotations set confirmed_at = now(), confirmed_by = $2, updated_at = now() where id = $1 returning *`,
+        [req.params.id, req.user.userId],
+      );
+      res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
+    } catch (err: any) {
+      console.error("Error confirming quotation", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to confirm quotation" });
+    }
+  });
+
+  // The actual HOD decision — this is what moves a quotation into "Approved"
+  // on the creator's own dashboard. Only reachable once the creator has
+  // confirmed it (it must already be in the HOD queue).
+  app.post("/api/quotations/:id/hod-approve", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!hasHodAccess(req)) return res.status(403).json({ error: "FORBIDDEN", message: "Only a HOD can approve quotations" });
+      await ensureQuotationTables();
+      const existing = await pool.query<QuotationRow>(`select * from quotations where id = $1`, [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
+      if (!existing.rows[0].confirmed_at) {
+        return res.status(409).json({ error: "NOT_CONFIRMED", message: "This quotation has not been confirmed by its creator yet" });
+      }
+      const updated = await pool.query<QuotationRow>(
+        `update quotations set hod_status = 'approved', hod_reviewed_by = $2, hod_reviewed_at = now(), updated_at = now() where id = $1 returning *`,
+        [req.params.id, req.user.userId],
+      );
+      res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
+    } catch (err: any) {
+      console.error("Error approving quotation", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to approve quotation" });
+    }
+  });
+
+  app.post("/api/quotations/:id/hod-reject", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!hasHodAccess(req)) return res.status(403).json({ error: "FORBIDDEN", message: "Only a HOD can reject quotations" });
+      await ensureQuotationTables();
+      const existing = await pool.query<QuotationRow>(`select * from quotations where id = $1`, [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
+      if (!existing.rows[0].confirmed_at) {
+        return res.status(409).json({ error: "NOT_CONFIRMED", message: "This quotation has not been confirmed by its creator yet" });
+      }
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 500) : null;
+      const updated = await pool.query<QuotationRow>(
+        `update quotations set hod_status = 'rejected', hod_reviewed_by = $2, hod_reviewed_at = now(), hod_comment = $3, updated_at = now() where id = $1 returning *`,
+        [req.params.id, req.user.userId, reason],
+      );
+      res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
+    } catch (err: any) {
+      console.error("Error rejecting quotation", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to reject quotation" });
+    }
+  });
+
+  // Creator sends a HOD-rejected quotation back for another look — clears
+  // the prior decision and refreshes confirmed_at so it reappears at the
+  // top of the HOD's queue, same as a fresh confirm. Only valid from the
+  // rejected state (not approved, and not before it's ever been confirmed).
+  app.post("/api/quotations/:id/resubmit", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const existing = await pool.query<QuotationRow>(`select * from quotations where id = $1`, [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
+      if (existing.rows[0].created_by !== req.user.userId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Only the quotation's creator can resubmit it" });
+      }
+      if (existing.rows[0].hod_status !== "rejected") {
+        return res.status(409).json({ error: "NOT_REJECTED", message: "Only a rejected quotation can be resubmitted" });
+      }
+      const updated = await pool.query<QuotationRow>(
+        `update quotations
+            set hod_status = null, hod_reviewed_by = null, hod_reviewed_at = null, hod_comment = null,
+                confirmed_at = now(), confirmed_by = $2, updated_at = now()
+          where id = $1
+          returning *`,
+        [req.params.id, req.user.userId],
+      );
+      res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
+    } catch (err: any) {
+      console.error("Error resubmitting quotation", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to resubmit quotation" });
+    }
+  });
+
+  // Powers the "My Quotations" widget on the sales-executive dashboard — the
+  // creator's own quotations bucketed into: Approved (hod_status='approved')
+  // / Pending & Rejected (everything else — not yet confirmed, confirmed but
+  // still awaiting the HOD, or hod-rejected) / Converted Invoices (always
+  // empty when a quotation has never been turned into an invoice — populated
+  // once POST /api/account/invoices is called with that quotation's id (see
+  // requireManualInvoiceCreator's sales_executive carve-out), which stamps
+  // quotations.converted_invoice_id/converted_at).
+  app.get("/api/sales/quotations/my-summary", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const result = await pool.query(
+        `select q.id, q.company, q.customer_id, q.save_status, q.confirmed_at, q.hod_status, q.hod_comment,
+                q.converted_invoice_id, q.converted_at, q.created_at,
+                coalesce(string_agg(distinct qi.detail, ', ') filter (where qi.detail is not null and qi.detail != ''), '') as service_details
+           from quotations q
+           left join quotation_items qi on qi.quotation_id = q.id
+          where q.created_by = $1
+          group by q.id
+          order by q.created_at desc
+          limit 200`,
+        [req.user.userId],
+      );
+      const rows = result.rows.map((r: any, idx: number) => {
+        let statusComment = r.save_status || "Pending";
+        if (r.hod_status === "rejected") statusComment = r.hod_comment ? `Rejected: ${r.hod_comment}` : "Rejected";
+        else if (r.converted_invoice_id) statusComment = "Converted to Invoice";
+        else if (r.hod_status === "approved") statusComment = "Approved";
+        else if (r.confirmed_at) statusComment = "Awaiting HOD";
+        return {
+          rowNumber: idx + 1,
+          id: r.id,
+          company: r.company,
+          customerId: r.customer_id,
+          serviceDetails: r.service_details || "-",
+          date: r.converted_invoice_id ? r.converted_at : r.created_at,
+          statusComment,
+          isConfirmed: !!r.confirmed_at,
+          isApproved: r.hod_status === "approved",
+          isRejected: r.hod_status === "rejected",
+          isConverted: !!r.converted_invoice_id,
+          invoiceId: r.converted_invoice_id,
+        };
+      });
+      const convertedInvoices = rows.filter((r) => r.isConverted);
+      const approved = rows.filter((r) => r.isApproved && !r.isConverted);
+      const pendingRejected = rows.filter((r) => !r.isApproved && !r.isConverted);
+      res.json({
+        success: true,
+        approved: { count: approved.length, items: approved },
+        pendingRejected: { count: pendingRejected.length, items: pendingRejected },
+        convertedInvoices: { count: convertedInvoices.length, items: convertedInvoices },
+      });
+    } catch (err: any) {
+      console.error("Error fetching my-quotations summary", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch quotations summary" });
+    }
+  });
+
+  // HOD-side queue: confirmed quotations still awaiting a HOD decision.
+  // Drops off this list (and its badge count) the moment a HOD approves or
+  // rejects it — this is meant to reflect actionable items only.
+  app.get("/api/sales/quotations/hod-pending", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const result = await pool.query(
+        `select q.id, q.company, q.confirmed_at, q.created_at, u.name as created_by_name,
+                coalesce(string_agg(distinct qi.detail, ', ') filter (where qi.detail is not null and qi.detail != ''), '') as service_details
+           from quotations q
+           left join quotation_items qi on qi.quotation_id = q.id
+           left join drm.users u on u.id::text = q.created_by
+          where q.confirmed_at is not null and q.hod_status is null
+          group by q.id, u.name
+          order by q.confirmed_at desc
+          limit 200`,
+      );
+      res.json({
+        success: true,
+        data: result.rows.map((r: any, idx: number) => ({
+          rowNumber: idx + 1,
+          id: r.id,
+          company: r.company,
+          serviceDetails: r.service_details || "-",
+          createdBy: r.created_by_name || "-",
+          confirmedAt: r.confirmed_at,
+        })),
+      });
+    } catch (err: any) {
+      console.error("Error fetching HOD pending quotations", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch pending quotations" });
+    }
+  });
+
   app.post("/api/quotations", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
@@ -522,7 +869,18 @@ export function registerQuotationRoutes(app: Express) {
       const client = await pool.connect();
       try {
         await client.query("begin");
+        const productIds = parsed.data.items.map((i) => i.productId).filter(Boolean);
+        const locked = await findLockedQuotationItems(client, parsed.data.customerId, productIds, req.user.userId);
+        if (locked.length) {
+          await client.query("rollback");
+          return res.status(409).json({
+            error: "SERVICES_LOCKED",
+            message: `Cannot create quotation — already locked: ${locked.map((l) => `${l.name} (${l.reason})`).join(", ")}`,
+            locked,
+          });
+        }
         const created = await insertQuotation(client, req.user.userId, parsed.data);
+        await markFollowupsConverted(client, parsed.data.customerId, productIds, req.user.userId, created.quotation.id);
         await client.query("commit");
         res.status(201).json({ success: true, data: created });
       } catch (err: any) {
@@ -559,11 +917,22 @@ export function registerQuotationRoutes(app: Express) {
       const client = await pool.connect();
       try {
         await client.query("begin");
+        const productIds = parsed.data.items.map((i) => i.productId).filter(Boolean);
+        const locked = await findLockedQuotationItems(client, parsed.data.customerId, productIds, req.user.userId);
+        if (locked.length) {
+          await client.query("rollback");
+          return res.status(409).json({
+            error: "SERVICES_LOCKED",
+            message: `Cannot save quotation — already locked: ${locked.map((l) => `${l.name} (${l.reason})`).join(", ")}`,
+            locked,
+          });
+        }
         const updated = await updateQuotation(client, req.params.id, parsed.data);
         if (!updated) {
           await client.query("rollback");
           return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
         }
+        await markFollowupsConverted(client, parsed.data.customerId, productIds, req.user.userId, updated.quotation.id);
         await client.query("commit");
         res.json({ success: true, data: updated });
       } catch (err) {
