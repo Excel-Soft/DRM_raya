@@ -6,8 +6,8 @@ import { Sparkles } from "lucide-react";
 // actually opens the assistant. `hasOpenedOnce` (not `isOpen`) gates mounting
 // so the panel — and its chat history — stays mounted across subsequent
 // close/reopen toggles, matching the previous always-mounted behavior.
-const AIAssistantChat = lazy(() =>
-  import("./ai-assistant-chat").then((m) => ({ default: m.AIAssistantChat })),
+const CopilotPanel = lazy(() =>
+  import("./copilot/copilot-panel").then((m) => ({ default: m.CopilotPanel })),
 );
 
 export function AIAssistantButton() {
@@ -35,7 +35,7 @@ export function AIAssistantButton() {
 
       {hasOpenedOnce && (
         <Suspense fallback={null}>
-          <AIAssistantChat isOpen={isOpen} onClose={() => setIsOpen(false)} />
+          <CopilotPanel isOpen={isOpen} onClose={() => setIsOpen(false)} />
         </Suspense>
       )}
     </>

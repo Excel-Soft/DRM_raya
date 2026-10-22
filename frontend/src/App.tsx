@@ -629,7 +629,7 @@ function AppContent() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ScreenContextProvider>
-          <AssistantProvider>
+          <AssistantProvider userName={userName} userRole={userRole}>
             <SidebarProvider style={style as React.CSSProperties}>
               {renderBody()}
             </SidebarProvider>

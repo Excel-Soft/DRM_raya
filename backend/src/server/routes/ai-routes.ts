@@ -1,54 +1,23 @@
 import { Router } from "express";
-import { generateAssistantResponse, type AssistantContext } from "../services/ai-assistant";
-import { z } from "zod";
 
 const router = Router();
 
-const chatRequestSchema = z.object({
-  message: z.string().min(1).max(2000),
-  context: z.object({
-    currentScreen: z.string(),
-    userRole: z.enum(["Sales Executive", "Assistant Manager", "Manager", "HOD", "Admin"]),
-    screenData: z.record(z.any()).optional(),
-    userName: z.string().optional(),
-  }),
-  conversationHistory: z.array(z.object({
-    role: z.enum(["user", "assistant"]),
-    content: z.string(),
-  })).optional(),
-});
-
-router.post("/chat", async (req, res) => {
-  try {
-    const validated = chatRequestSchema.parse(req.body);
-    
-    const response = await generateAssistantResponse(
-      validated.context as AssistantContext,
-      validated.message,
-      validated.conversationHistory || []
-    );
-
-    res.json({ 
-      success: true, 
-      response,
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("AI Chat Error:", error);
-    
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid request format",
-        details: error.errors,
-      });
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: "Failed to process your request. Please try again.",
-    });
-  }
+// DEPRECATED: this endpoint used to trust client-reported role/screenData as
+// authoritative and had no server-side identity check — see
+// docs/copilot/PROGRESS.md and SECURITY.md. The assistant panel in the app no
+// longer calls it; it now opens WebExcels DRM Copilot (/api/copilot/*), which
+// derives identity from the verified session and enforces per-tool scope.
+// This route is intentionally left non-functional rather than silently
+// "fixed in place", so it can never be used as a bypass of Copilot's
+// restrictions by a client that still points at the old path.
+router.post("/chat", (_req, res) => {
+  res.status(410).json({
+    success: false,
+    error: "Deprecated",
+    message:
+      "This endpoint has been retired. Use the WebExcels DRM Copilot panel (POST /api/copilot/ask), which is authenticated and permission-scoped.",
+    migrateTo: "/api/copilot/ask",
+  });
 });
 
 export default router;

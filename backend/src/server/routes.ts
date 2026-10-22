@@ -6,6 +6,8 @@ import bvSystemRoutes from "./routes/bv-system-routes";
 import bvCommissionVerificationRoutes from "./routes/bv-commission-verification-routes";
 import { storage } from "./storage";
 import aiRoutes from "./routes/ai-routes";
+import { registerCopilotRoutes } from "./routes/copilot-routes";
+import { ensureCopilotSchema } from "./services/copilot/ensure-schema";
 import authRoutes from "./routes/auth.routes";
 import { registerSalesRoutes } from "./routes/sales-routes";
 import { registerPublicPoolFollowupRoutes } from "./routes/public-pool-followup-routes";
@@ -315,8 +317,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // authenticated; create/delete = admin/super_hod, audited).
   app.use("/api", attributesRoutes);
 
-  // AI Assistant routes (protected)
+  // AI Assistant routes (protected) — legacy chat; superseded in the UI by
+  // Copilot below. Left running as-is for any direct caller (see
+  // docs/copilot/SECURITY.md); the panel itself no longer calls it.
   app.use("/api/ai", aiRoutes);
+
+  // WebExcels DRM Copilot V1 (protected). Disabled end-to-end unless
+  // COPILOT_ENABLED=true, a model+key are configured, and the caller is on
+  // the pilot allowlist — see backend/copilot.env.example.
+  await ensureCopilotSchema();
+  registerCopilotRoutes(app);
 
   // Sales routes (protected)
   registerSalesRoutes(app);
