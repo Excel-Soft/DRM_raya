@@ -128,15 +128,16 @@ export default function IncrementPage() {
   const [decisionRow, setDecisionRow] = useState<ReportRow | null>(null);
 
   // ─── Users (grouped) ───────────────────────────────────────────────────────
-  const { data: usersData } = useQuery<{ groups: UserGroup[] }>({
+  const { data: usersData, isError: usersIsError, error: usersError } = useQuery<{ groups: UserGroup[] }>({
     queryKey: ["/api/drm/increment/users"],
+    retry: false,
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/drm/increment/users");
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
   });
-  const groups = usersData?.groups ?? [];
+  const groups = Array.isArray(usersData?.groups) ? usersData.groups : [];
   const allUsers = useMemo(() => groups.flatMap((g) => g.users), [groups]);
   const selectedUserLabel = useMemo(() => {
     if (selectedUserId === "all") return "All visible employees";
@@ -188,6 +189,26 @@ export default function IncrementPage() {
 
   const report = reportQuery.data;
   const totalPages = report ? Math.max(1, Math.ceil(report.total / report.limit)) : 1;
+
+  if (usersIsError && String((usersError as Error)?.message ?? "").includes("under development")) {
+    return (
+      <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] dark:bg-zinc-950">
+        <h1 className="text-[16px] font-bold text-[#495057] tracking-wide uppercase mb-4 dark:text-zinc-400">
+          Increment
+        </h1>
+        <Card className="border border-gray-100 shadow-sm rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800">
+          <CardContent className="p-10 text-center">
+            <div className="text-[14px] font-medium text-[#495057] dark:text-zinc-300 mb-1">
+              This feature is under development
+            </div>
+            <div className="text-[13px] text-gray-500 dark:text-zinc-500">
+              Increment Management is being rebuilt and isn't available yet. Please check back soon.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] dark:bg-zinc-950">

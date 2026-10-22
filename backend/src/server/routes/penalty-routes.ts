@@ -14,7 +14,7 @@
  * Cross-scope access returns 403.
  */
 import type { Express, Request, Response } from "express";
-import { fetchUsers, fetchUserById, groupUsersByRole } from "./services/increment.service";
+import { fetchUsers, fetchUserById, groupUsersByRole } from "../services/increment.service";
 import {
   PENALTY_STATUSES,
   PENALTY_HEADS,
@@ -28,8 +28,8 @@ import {
   softDeletePenalty,
   voidPenalty,
   monthlyReport,
-} from "./services/penalty.service";
-import { recordAuditLog } from "./services/activity-service";
+} from "../services/penalty.service";
+import { recordAuditLog } from "../services/activity-service";
 // PEN-001: penalty permission decisions live in ONE row-aware source.
 import {
   getUserId,
@@ -43,14 +43,14 @@ import {
   getDepartment,
   getAllowedEmployeeIds,
   canViewEmployee,
-} from "./middleware/penalty-permission";
+} from "../middleware/penalty-permission";
 // PEN-001: request-shape (400) validation, mirrored from the previous inline rules.
 import {
   penaltyCreateSchema,
   penaltyUpdateSchema,
   penaltyDecisionSchema,
   penaltyVoidSchema,
-} from "./validators/penalty.validators";
+} from "../validators/penalty.validators";
 
 function badRequest(res: Response, message: string) {
   return res.status(400).json({ error: "BadRequest", message });
