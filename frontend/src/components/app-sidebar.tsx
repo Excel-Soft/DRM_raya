@@ -613,8 +613,19 @@ export function AppSidebar() {
     
     // Items with no permKey — show to all logged-in users
     if (!item.permKey) return true;
-    // Explicit admin/super_admin exception: real admins always get full nav.
-    if (isRealAdmin) return true;
+    // Explicit admin/super_admin exception: real admins always get full nav,
+    // UNLESS the menu was explicitly deactivated on the DRM Permission page —
+    // "Active/Deactive" means hidden for everyone, admin included, not just
+    // role-restricted. Without this check isRealAdmin short-circuited before
+    // hasAccess() ever consulted entry.isActive, so deactivating a module had
+    // no visible effect for admins.
+    if (isRealAdmin) {
+      const entry = menuPermissions.find(
+        (p) => p.name.trim().toLowerCase() === item.permKey!.trim().toLowerCase()
+      );
+      if (entry && !entry.isActive) return false;
+      return true;
+    }
     // Fail-closed: while permissions are still loading, hide permissioned items
     // (a skeleton is shown in their place).
     if (permsLoading) return false;
@@ -698,7 +709,14 @@ export function AppSidebar() {
       // on a plain role-list match — if the live role state doesn't literally
       // contain "admin" for any reason, the item silently disappears even for
       // a real admin, unlike top-level items which never hit that code path.
-      if (subItem.permKey && isRealAdmin) return true;
+      // Same carve-out as the top level: explicit "Active/Deactive" still wins.
+      if (subItem.permKey && isRealAdmin) {
+        const entry = menuPermissions.find(
+          (p) => p.name.trim().toLowerCase() === subItem.permKey!.trim().toLowerCase()
+        );
+        if (entry && !entry.isActive) return false;
+        return true;
+      }
 
       // If this role doesn't have blanket access to the parent group (see the
       // "Child permKey override" note in filteredItems above), only children
