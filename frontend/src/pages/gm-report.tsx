@@ -48,7 +48,12 @@ export default function GMReport() {
     queryKey: ["/api/account/users-list"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/account/users-list");
-      return res.json();
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      // A non-2xx body is JSON too (e.g. {error:"..."}) — guard so a
+      // permission/server error can never be .forEach'd as if it were the
+      // user array and crash the whole page.
+      return Array.isArray(data) ? data : [];
     }
   });
 
