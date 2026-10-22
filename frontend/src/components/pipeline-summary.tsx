@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from "recharts";
+import { TrendingUp } from "lucide-react";
 
 type StageCode = "LD" | "QF" | "AY" | "IN" | "PM" | "GM" | "BV" | "NC" | "RC" | "EC" | "FW" | "NF";
 
@@ -68,29 +69,34 @@ export function PipelineSummary({ period = "MC", title = "Target" }: { period?: 
     : [];
 
   return (
-    <Card data-testid="card-pipeline-summary" className="shadow-sm border-border bg-card">
+    <Card data-testid="card-pipeline-summary" className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <Tabs defaultValue="overall" className="w-full">
-        <CardHeader className="flex flex-row items-center justify-between pb-2 border-b border-border/10">
-          <CardTitle className="text-xl font-bold text-slate-800 dark:text-zinc-100">{title}</CardTitle>
-          <TabsList className="bg-transparent gap-2 p-0 h-auto">
-            <TabsTrigger 
-              value="overall" 
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
+          <CardTitle className="flex items-center gap-2.5 text-base font-bold text-foreground tracking-tight">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+              <TrendingUp className="h-4 w-4" />
+            </span>
+            {title}
+          </CardTitle>
+          <TabsList className="h-auto gap-1.5 bg-transparent p-0">
+            <TabsTrigger
+              value="overall"
               data-testid="tab-overall"
-              className="data-[state=active]:bg-[#059669] data-[state=active]:text-white data-[state=active]:shadow-md px-6 py-1.5 rounded-[4px] text-slate-500 font-bold transition-all text-[13px]"
+              className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:shadow-md px-3 py-1.5 rounded-lg text-muted-foreground font-bold transition-all text-[13px]"
             >
               OverAll
             </TabsTrigger>
-            <TabsTrigger 
-              value="tab" 
+            <TabsTrigger
+              value="tab"
               data-testid="tab-ab"
-              className="data-[state=active]:bg-[#059669] data-[state=active]:text-white data-[state=active]:shadow-md px-6 py-1.5 rounded-[4px] text-slate-500 font-bold transition-all text-[13px]"
+              className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:shadow-md px-3 py-1.5 rounded-lg text-muted-foreground font-bold transition-all text-[13px]"
             >
               T-AB
             </TabsTrigger>
-            <TabsTrigger 
-              value="vas" 
+            <TabsTrigger
+              value="vas"
               data-testid="tab-vas"
-              className="data-[state=active]:bg-[#059669] data-[state=active]:text-white data-[state=active]:shadow-md px-6 py-1.5 rounded-[4px] text-slate-500 font-bold transition-all text-[13px]"
+              className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:shadow-md px-3 py-1.5 rounded-lg text-muted-foreground font-bold transition-all text-[13px]"
             >
               T-VAS
             </TabsTrigger>
@@ -134,11 +140,11 @@ export function PipelineSummary({ period = "MC", title = "Target" }: { period?: 
                   />
                   <Bar
                     dataKey="count"
-                    fill="#6366f1"
+                    fill="#059669"
                     radius={[4, 4, 0, 0]}
                     barSize={24}
                   >
-                    <LabelList dataKey="count" position="top" fill="#94a3b8" fontSize={13} fontWeight={600} />
+                    <LabelList dataKey="count" position="top" fill="hsl(var(--muted-foreground))" fontSize={13} fontWeight={600} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

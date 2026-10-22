@@ -95,8 +95,8 @@ export function MyQuotationsWidget() {
   const activeLabel = tabs.find((t) => t.key === activeTab)?.label ?? "";
 
   return (
-    <div className="bg-white shadow-sm border border-slate-200 rounded-xl mt-8 dark:bg-zinc-900/50 dark:border-zinc-800/50 overflow-hidden">
-      <div className="px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 dark:border-zinc-800/50">
+    <div className="bg-card shadow-sm border border-border rounded-2xl mt-8 overflow-hidden">
+      <div className="px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border">
         <div className="flex flex-wrap gap-5">
           {tabs.map((tab) => (
             <button
@@ -104,8 +104,8 @@ export function MyQuotationsWidget() {
               onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-2 text-sm font-semibold pb-1 border-b-2 transition-colors ${
                 activeTab === tab.key
-                  ? "text-slate-900 border-emerald-500 dark:text-zinc-100"
-                  : "text-slate-500 border-transparent hover:text-slate-700 dark:text-zinc-400"
+                  ? "text-foreground border-emerald-500"
+                  : "text-muted-foreground border-transparent hover:text-foreground"
               }`}
             >
               {tab.label}
@@ -118,13 +118,13 @@ export function MyQuotationsWidget() {
         <div className="flex gap-2 shrink-0">
           <button
             onClick={() => setLocation("/customers/private-pool")}
-            className="bg-emerald-700 text-white text-sm px-4 h-9 rounded-md font-medium hover:bg-emerald-800 transition-all shadow-sm"
+            className="bg-emerald-700 text-white text-sm px-4 h-9 rounded-lg font-medium hover:bg-emerald-800 transition-all shadow-sm"
           >
             Add Follow-up
           </button>
           <button
             onClick={() => setLocation("/sales/quotation")}
-            className="bg-emerald-500 text-white text-sm px-4 h-9 rounded-md font-medium hover:bg-emerald-600 transition-all shadow-sm"
+            className="bg-emerald-500 text-white text-sm px-4 h-9 rounded-lg font-medium hover:bg-emerald-600 transition-all shadow-sm"
           >
             Add Quotation
           </button>
@@ -134,12 +134,12 @@ export function MyQuotationsWidget() {
       <div className="overflow-x-auto">
         <table className="w-full text-sm whitespace-nowrap">
           <thead>
-            <tr className="bg-slate-50 dark:bg-zinc-800/50 text-left text-slate-500 dark:text-zinc-400">
-              <th className="px-6 py-3 font-semibold">#</th>
-              <th className="px-6 py-3 font-semibold">Company</th>
-              <th className="px-6 py-3 font-semibold">Service Details</th>
-              <th className="px-6 py-3 font-semibold">Date</th>
-              <th className="px-6 py-3 font-semibold">Status / Comment</th>
+            <tr className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <th className="px-6 py-3">#</th>
+              <th className="px-6 py-3">Company</th>
+              <th className="px-6 py-3">Service Details</th>
+              <th className="px-6 py-3">Date</th>
+              <th className="px-6 py-3">Status / Comment</th>
             </tr>
           </thead>
           <tbody>
@@ -151,17 +151,17 @@ export function MyQuotationsWidget() {
               </tr>
             ) : activeItems.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-8 text-slate-400 dark:text-zinc-500">
+                <td colSpan={5} className="text-center py-8 text-muted-foreground">
                   No {activeLabel} Found
                 </td>
               </tr>
             ) : (
               activeItems.map((item) => (
-                <tr key={item.id} className="border-t border-slate-100 dark:border-zinc-800/50">
-                  <td className="px-6 py-3 text-slate-500 dark:text-zinc-400">{item.rowNumber}</td>
-                  <td className="px-6 py-3 font-medium text-slate-700 dark:text-zinc-200">{item.company}</td>
-                  <td className="px-6 py-3 text-slate-600 dark:text-zinc-300">{item.serviceDetails}</td>
-                  <td className="px-6 py-3 text-slate-500 dark:text-zinc-400">{fmtDate(item.date)}</td>
+                <tr key={item.id} className="border-t border-border hover:bg-muted/40">
+                  <td className="px-6 py-3 text-muted-foreground">{item.rowNumber}</td>
+                  <td className="px-6 py-3 font-medium text-foreground">{item.company}</td>
+                  <td className="px-6 py-3 text-muted-foreground">{item.serviceDetails}</td>
+                  <td className="px-6 py-3 text-muted-foreground">{fmtDate(item.date)}</td>
                   <td className="px-6 py-3">
                     {activeTab === "pendingRejected" && !item.isConfirmed ? (
                       <button
@@ -195,7 +195,7 @@ export function MyQuotationsWidget() {
                         )}
                       </div>
                     ) : (
-                      <span className="text-slate-600 dark:text-zinc-300">{item.statusComment}</span>
+                      <span className="text-muted-foreground">{item.statusComment}</span>
                     )}
                   </td>
                 </tr>

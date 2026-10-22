@@ -66,11 +66,14 @@ import {
   BookOpen,
   NotebookPen,
   CheckCircle2,
+  LifeBuoy,
+  LogOut,
   type LucideIcon,
 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
@@ -89,6 +92,7 @@ import {
 } from "@/components/ui/hover-card";
 import { Link, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "@/lib/feature-flags";
 import { useState, useEffect } from "react";
 
@@ -489,9 +493,9 @@ export function AppSidebar() {
 
   const sidebarBg = "bg-sidebar";
   const sidebarText = "text-sidebar-foreground";
-  const hoverMain = "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground";
-  const hoverSub = "hover:bg-sidebar-accent/80 hover:text-sidebar-accent-foreground";
-  const activeClass = "bg-emerald-50 dark:bg-emerald-900/40 text-emerald-900 dark:text-emerald-100 hover:bg-emerald-100 dark:hover:bg-emerald-800/40 font-medium transition-colors";
+  const hoverMain = "hover:bg-white/5 hover:text-white";
+  const hoverSub = "hover:bg-white/5 hover:text-white";
+  const activeClass = "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground font-semibold shadow-sm transition-colors";
 
   // ── Fetch live permissions from DB ──────────────────────────────────────────
   const { data: menuPermissions = [], isLoading: permsLoading, isError: permsError } = useQuery<MenuPermission[]>({
@@ -522,11 +526,15 @@ export function AppSidebar() {
       return s ? JSON.parse(s) : [];
     } catch { return []; }
   });
+  const [userNameDisplay, setUserNameDisplay] = useState<string | null>(
+    () => sessionStorage.getItem("userName")
+  );
 
   // Listen for sessionStorage changes (e.g. after role switch)
   useEffect(() => {
     const handleStorage = () => {
       setUserRoleName(sessionStorage.getItem("userRole"));
+      setUserNameDisplay(sessionStorage.getItem("userName"));
       try {
         const s = sessionStorage.getItem("userRoles");
         setUserAllRoles(s ? JSON.parse(s) : []);
@@ -540,6 +548,30 @@ export function AppSidebar() {
       clearInterval(interval);
     };
   }, []);
+
+  // Mirrors App.tsx's handleLogout — AppSidebar has no prop channel from
+  // App.tsx today, so it owns an identical local copy rather than threading
+  // a new prop through the render tree for one button. A hard navigation
+  // (not wouter's setLocation) so App.tsx's authStatus state machine resets
+  // cleanly via its normal cold-boot auth check instead of needing a second
+  // state setter this component doesn't have access to.
+  const handleSidebarLogout = () => {
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("userName");
+    sessionStorage.removeItem("userRole");
+    sessionStorage.removeItem("userRoles");
+    queryClient.clear();
+    window.location.href = "/auth";
+  };
+
+  const sidebarInitials = (userNameDisplay || "U")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+
+  const sidebarRoleLabel = (userRoleName || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
   // ── Admin check helper ──────────────────────────────────────────────────────
   const adminKeys = ["admin", "super_admin", "administrator", "adm"];
@@ -827,15 +859,15 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className={`${sidebarBg} ${sidebarText}`}>
       <SidebarContent className={`${sidebarBg} ${sidebarText}`}>
         <SidebarGroup>
-          <div className="px-4 py-3 border-b border-sidebar-border">
+          <div className="px-2 py-3 border-b border-sidebar-border">
             <div
-              className="flex items-center justify-start h-24 min-h-24 dark:bg-white dark:rounded-lg dark:p-2 dark:w-fit"
+              className="flex h-16 w-full items-center justify-center"
               data-testid="img-logo"
             >
               <img
-                src="/webexcels-logo.png"
+                src="/webexcels-logo-transparent.png"
                 alt="WebExcels logo"
-                className="h-[90px] w-auto max-w-full object-contain mix-blend-multiply dark:mix-blend-normal"
+                className="h-full w-full object-contain"
               />
             </div>
           </div>
@@ -857,14 +889,14 @@ export function AppSidebar() {
                             </SidebarMenuButton>
                           </HoverCardTrigger>
                           <HoverCardContent side="right" align="start" className="w-56 p-0 border-none shadow-xl overflow-hidden bg-transparent">
-                            <div className="bg-[#2c3b41] text-white px-4 py-3 flex items-center gap-2">
+                            <div className="bg-[hsl(var(--sidebar))] text-white px-4 py-3 flex items-center gap-2 border-b border-sidebar-border">
                               <item.icon className="w-4 h-4" />
                               <span className="font-medium">{item.title}</span>
                             </div>
-                            <div className="bg-[#00a65a] py-2 flex flex-col">
+                            <div className="bg-sidebar-accent py-2 flex flex-col">
                               {getVisibleSubItems(item.items, item.permKey).map((subItem) => (
                                 <Link key={subItem.title} href={getDynamicUrl(subItem.url)!}
-                                  className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === subItem.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
+                                  className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === subItem.url ? "bg-white text-sidebar-accent font-medium" : "text-white"}`}>
                                   <subItem.icon className="w-4 h-4 opacity-90" />
                                   <span>{subItem.title}</span>
                                 </Link>
@@ -917,13 +949,13 @@ export function AppSidebar() {
                           </div>
                         </HoverCardTrigger>
                         <HoverCardContent side="right" align="start" className="w-56 p-0 border-none shadow-xl overflow-hidden bg-transparent">
-                          <div className="bg-[#2c3b41] text-white px-4 py-3 flex items-center gap-2">
+                          <div className="bg-[hsl(var(--sidebar))] text-white px-4 py-3 flex items-center gap-2 border-b border-sidebar-border">
                             <item.icon className="w-4 h-4" />
                             <span className="font-medium">{item.title}</span>
                           </div>
-                          <div className="bg-[#00a65a] py-2 flex flex-col">
+                          <div className="bg-sidebar-accent py-2 flex flex-col">
                             <Link href={getDynamicUrl(item.url)!}
-                              className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === item.url ? "bg-white text-[#00a65a] font-medium dark:bg-zinc-900/60 dark:text-emerald-400" : "text-white dark:bg-zinc-900/10"}`}>
+                              className={`flex items-center gap-2 px-4 py-2 text-sm transition-colors hover:bg-black/10 ${fullLocation === item.url ? "bg-white text-sidebar-accent font-medium" : "text-white"}`}>
                               <item.icon className="w-4 h-4 opacity-90" />
                               <span>{item.title}</span>
                             </Link>
@@ -949,6 +981,55 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      {state !== "collapsed" && (
+        <SidebarFooter className="gap-3 border-t border-sidebar-border p-3">
+          {isSupportModuleEnabled() && (
+            <Link
+              href="/support/tickets"
+              className="block rounded-xl bg-white/5 p-3 transition-colors hover:bg-white/10"
+              data-testid="link-sidebar-contact-support"
+            >
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <LifeBuoy className="h-4 w-4 text-sidebar-accent" />
+                Need Help?
+              </div>
+              <p className={`mt-1 text-xs ${sidebarText} opacity-70`}>
+                Our support team is here to help you anytime.
+              </p>
+              <span className="mt-2 inline-block text-xs font-semibold text-sidebar-accent">
+                Contact Support →
+              </span>
+            </Link>
+          )}
+
+          <div className="flex items-center gap-2.5 rounded-xl bg-white/5 p-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sidebar-accent text-sm font-bold text-sidebar-accent-foreground">
+              {sidebarInitials}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white" data-testid="text-sidebar-user-name">
+                {userNameDisplay || "User"}
+              </p>
+              <p className={`flex items-center gap-1.5 truncate text-[11px] ${sidebarText} opacity-70`}>
+                <span className="truncate">{sidebarRoleLabel || "—"}</span>
+                <span aria-hidden="true">·</span>
+                <span className="flex items-center gap-1 shrink-0">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Online
+                </span>
+              </p>
+            </div>
+            <button
+              onClick={handleSidebarLogout}
+              className="shrink-0 rounded-lg p-2 text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"
+              title="Log out"
+              data-testid="button-sidebar-logout"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }

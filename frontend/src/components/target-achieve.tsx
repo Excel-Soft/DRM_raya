@@ -15,7 +15,7 @@ interface TargetSummary {
   deltaPercent: number;
 }
 
-export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
+export function TargetAchieve({ onViewMore, dark = false }: { onViewMore?: () => void; dark?: boolean }) {
   const { data, isLoading } = useQuery<TargetSummary>({
     queryKey: ["/api/sales/targets/summary?type=vas&period=thisMonth"],
     queryFn: async () => {
@@ -34,17 +34,28 @@ export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
   const isPositive = (data?.deltaPercent ?? 0) >= 0;
 
   return (
-    <Card className="overflow-hidden border border-border shadow-sm bg-card group hover:shadow-lg transition-all duration-300">
-      <CardHeader className="p-5 pb-2">
+    <Card
+      className={cn(
+        "overflow-hidden rounded-2xl shadow-sm group transition-all duration-300",
+        dark
+          ? "border-0 bg-gradient-to-br from-[hsl(var(--hero-from))] to-[hsl(var(--hero-to))] text-white hover:shadow-lg"
+          : "border border-border bg-card hover:shadow-lg",
+      )}
+    >
+      <CardHeader className={cn("p-5 pb-2 border-b", dark ? "border-white/10" : "border-border")}>
         <div className="flex items-center justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg font-bold text-foreground flex items-center gap-2">
-              <Target className="h-5 w-5 text-indigo-500" />
-              Target Achieve
+            <CardTitle className={cn("text-base font-bold flex items-center gap-2 tracking-tight", dark ? "text-white" : "text-foreground")}>
+              <Target className={cn("h-5 w-5", dark ? "text-[hsl(var(--hero-accent))]" : "text-emerald-500")} />
+              Target Achievement
             </CardTitle>
-            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest leading-none">This Month Target</p>
+            <p className={cn("text-[10px] font-black uppercase tracking-widest leading-none", dark ? "text-white/60" : "text-muted-foreground")}>This Month Target</p>
           </div>
-          {isPositive ? <TrendingUp className="h-5 w-5 text-emerald-500 opacity-50" /> : <TrendingDown className="h-5 w-5 text-rose-500 opacity-50" />}
+          {isPositive ? (
+            <TrendingUp className={cn("h-5 w-5 opacity-50", dark ? "text-[hsl(var(--hero-accent))]" : "text-emerald-500")} />
+          ) : (
+            <TrendingDown className="h-5 w-5 opacity-50 text-rose-400" />
+          )}
         </div>
       </CardHeader>
       <CardContent className="p-6 pt-2 space-y-6">
@@ -73,7 +84,7 @@ export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
                     cx="88"
                     cy="88"
                     r={radius}
-                    stroke="hsl(var(--muted))"
+                    stroke={dark ? "rgba(255,255,255,0.15)" : "hsl(var(--muted))"}
                     strokeWidth="14"
                     fill="none"
                   />
@@ -92,50 +103,55 @@ export function TargetAchieve({ onViewMore }: { onViewMore?: () => void }) {
                   />
                   <defs>
                     <linearGradient id="gauge-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#4f46e5" />
-                      <stop offset="100%" stopColor="#818cf8" />
+                      <stop offset="0%" stopColor={dark ? "#6ee7b7" : "#047857"} />
+                      <stop offset="100%" stopColor={dark ? "#d1fae5" : "#34d399"} />
                     </linearGradient>
                   </defs>
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-4xl font-black text-foreground tracking-tighter">{Math.round(percentage)}%</span>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Achieved</span>
+                  <span className={cn("text-4xl font-black tracking-tighter", dark ? "text-white" : "text-foreground")}>{Math.round(percentage)}%</span>
+                  <span className={cn("text-[10px] font-bold uppercase tracking-widest", dark ? "text-white/60" : "text-muted-foreground")}>Achieved</span>
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1 bg-muted/50 rounded-xl p-3 border border-border">
-                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Revenue</p>
-                <p className="text-xl font-black text-foreground tracking-tight leading-none">${data?.achievedAmount?.toLocaleString() ?? 0}</p>
+              <div className={cn("space-y-1 rounded-xl p-3 border", dark ? "bg-white/10 border-white/10" : "bg-muted/50 border-border")}>
+                <p className={cn("text-[9px] font-black uppercase tracking-widest leading-none", dark ? "text-white/60" : "text-muted-foreground")}>Revenue</p>
+                <p className={cn("text-xl font-black tracking-tight leading-none", dark ? "text-white" : "text-foreground")}>${data?.achievedAmount?.toLocaleString() ?? 0}</p>
               </div>
-              <div className="space-y-1 bg-muted/50 rounded-xl p-3 border border-border">
-                <p className="text-[9px] font-black text-muted-foreground uppercase tracking-widest leading-none">Target</p>
-                <p className="text-xl font-black text-foreground tracking-tight leading-none">${data?.targetAmount?.toLocaleString() ?? 0}</p>
+              <div className={cn("space-y-1 rounded-xl p-3 border", dark ? "bg-white/10 border-white/10" : "bg-muted/50 border-border")}>
+                <p className={cn("text-[9px] font-black uppercase tracking-widest leading-none", dark ? "text-white/60" : "text-muted-foreground")}>Target</p>
+                <p className={cn("text-xl font-black tracking-tight leading-none", dark ? "text-white" : "text-foreground")}>${data?.targetAmount?.toLocaleString() ?? 0}</p>
               </div>
             </div>
 
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-1.5">
-                <div className={cn("p-1.5 rounded-lg", isPositive ? "bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400" : "bg-rose-50 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400")}>
+                <div className={cn(
+                  "p-1.5 rounded-lg",
+                  dark
+                    ? "bg-white/10 text-[hsl(var(--hero-accent))]"
+                    : isPositive ? "bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400" : "bg-rose-50 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400"
+                )}>
                   {isPositive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
                 </div>
                 <div>
-                  <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest leading-none">Vs Last Period</p>
-                  <p className={cn("text-xs font-black leading-none mt-1", isPositive ? "text-emerald-600" : "text-rose-600")}>
+                  <p className={cn("text-[9px] font-bold uppercase tracking-widest leading-none", dark ? "text-white/60" : "text-muted-foreground")}>Vs Last Period</p>
+                  <p className={cn("text-xs font-black leading-none mt-1", dark ? "text-white" : isPositive ? "text-emerald-600" : "text-rose-600")}>
                     {isPositive ? "+" : ""}{Math.round(data?.deltaPercent ?? 0)}%
                   </p>
                 </div>
               </div>
 
               {onViewMore ? (
-                <Button variant="ghost" size="sm" onClick={onViewMore} className="h-8 text-[11px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-50 transition-colors">
+                <Button variant="ghost" size="sm" onClick={onViewMore} className={cn("h-8 rounded-lg text-[11px] font-black uppercase tracking-widest transition-colors", dark ? "text-white hover:bg-white/10" : "text-emerald-600 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40")}>
                   View More
                   <ChevronRight className="w-3 h-3 ml-1" />
                 </Button>
               ) : (
                 <Link href="/sales/performance-evaluation?type=vas&period=thisMonth">
-                  <Button variant="ghost" size="sm" className="h-8 text-[11px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-50 transition-colors">
+                  <Button variant="ghost" size="sm" className={cn("h-8 rounded-lg text-[11px] font-black uppercase tracking-widest transition-colors", dark ? "text-white hover:bg-white/10" : "text-emerald-600 hover:text-emerald-700 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40")}>
                     View More
                     <ChevronRight className="w-3 h-3 ml-1" />
                   </Button>

@@ -8,9 +8,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Moon, Sun, User, LayoutDashboard, ChevronDown, Check, LayoutGrid } from "lucide-react";
-import { useState } from "react";
+import { Moon, Sun, ChevronDown, Check, LayoutGrid, Search } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,21 @@ export function TopBar({
 }: TopBarProps) {
   const { toast } = useToast();
   const [period, setPeriod] = useState(() => sessionStorage.getItem("globalPeriod") || "TD");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Ctrl/Cmd+K focuses the search field. There's no search backend wired up
+  // yet (no /api/search endpoint exists in this app), so this box doesn't
+  // return results — it's a real keyboard shortcut, not a fake search.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Fetch RBAC data
   const { data: navData } = useQuery({
@@ -175,17 +191,31 @@ export function TopBar({
     onPeriodChange?.(value);
   };
 
+  const initials = userName
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
   return (
-    <header className="flex items-center justify-between gap-4 bg-background px-4 py-3">
+    <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-6 py-3">
       <div className="flex items-center gap-4">
-        <SidebarTrigger data-testid="button-sidebar-toggle" />
+        <SidebarTrigger data-testid="button-sidebar-toggle" className="rounded-lg hover:bg-[hsl(var(--hero-to))]/10" />
 
         {/* Role Switcher */}
         {/* Show dropdown for all users to allow role switching */}
         {true ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2 hover:bg-accent/50 h-9" data-testid="role-switcher-trigger">
+            <Button variant="ghost" className="flex items-center gap-2 px-2 rounded-lg hover:bg-[hsl(var(--hero-to))]/10 h-9" data-testid="role-switcher-trigger">
                 <span className="text-xs font-bold text-muted-foreground uppercase tracking-tight">Role:</span>
                 <Badge variant="secondary" className={cn("gap-1 border-primary/10 px-3 py-1 text-[10px] font-black", isImpersonating && "bg-blue-600 text-white hover:bg-blue-700 shadow-sm")}>
                   {isImpersonating ? `Acting as: ${userRole}` : userRole}
@@ -300,10 +330,30 @@ export function TopBar({
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="relative hidden flex-1 max-w-md md:block">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={searchInputRef}
+          placeholder="Search customers, follow-ups, quotations..."
+          className="h-9 rounded-lg pl-9 pr-16 text-sm"
+          data-testid="input-global-search"
+        />
+        <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+          Ctrl K
+        </kbd>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <span
+          className="hidden items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted-foreground md:flex"
+          data-testid="text-current-date"
+        >
+          {today}
+        </span>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="p-2" data-testid="button-dashboards">
+            <Button variant="outline" size="icon" className="rounded-lg" data-testid="button-dashboards">
               <LayoutGrid className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
@@ -353,7 +403,7 @@ export function TopBar({
 
         {showPeriodFilter && (
           <Select value={period} onValueChange={handlePeriodChange}>
-            <SelectTrigger className="w-32 text-sm h-9" data-testid="select-time-period">
+            <SelectTrigger className="w-32 rounded-lg text-sm h-9" data-testid="select-time-period">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -366,11 +416,14 @@ export function TopBar({
           </Select>
         )}
 
+        <div className="mx-1 h-6 w-px bg-border" />
+
         <NotificationDropdown />
 
         <Button
           variant="ghost"
           size="icon"
+          className="rounded-lg"
           onClick={() => {
             onThemeToggle?.();
           }}
@@ -381,8 +434,15 @@ export function TopBar({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" data-testid="button-user-menu">
-              <User className="w-5 h-5" />
+            <Button
+              variant="ghost"
+              className="flex h-9 items-center gap-2 rounded-lg pl-1.5 pr-2"
+              data-testid="button-user-menu"
+            >
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[hsl(var(--sidebar))] text-[11px] font-bold text-[hsl(var(--sidebar-accent-foreground))]">
+                {initials}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
@@ -390,10 +450,6 @@ export function TopBar({
             <DropdownMenuSeparator />
             <DropdownMenuItem data-testid="button-profile">Profile</DropdownMenuItem>
             <DropdownMenuItem data-testid="button-settings">Settings</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem data-testid="button-logout" onSelect={() => onLogout?.()}>
-              Logout
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

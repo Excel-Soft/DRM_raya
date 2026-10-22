@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { getAuthHeader } from "@/lib/queryClient";
+import { BarChart3 } from "lucide-react";
 
 interface ChartDataRow {
   id: string;
@@ -54,12 +55,17 @@ export function ChartDataWidget({ period }: { period?: string }) {
     const handleSearchChange = (val: string) => { setSearch(val); setPage(1); };
 
     return (
-        <Card className="shadow-sm border border-slate-100 rounded-md dark:border-zinc-800">
-            <CardHeader className="flex flex-row items-center justify-between pb-2 border-b border-slate-100 dark:border-zinc-800">
-                <CardTitle className="text-[15px] font-bold text-slate-700 dark:text-zinc-400">Chart Data</CardTitle>
+        <Card className="rounded-2xl shadow-sm border border-border">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
+                <CardTitle className="flex items-center gap-2.5 text-base font-bold text-foreground tracking-tight">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400">
+                        <BarChart3 className="h-4 w-4" />
+                    </span>
+                    Chart Data
+                </CardTitle>
                 <div className="w-[180px]">
                     <Select value={category} onValueChange={handleCategoryChange}>
-                        <SelectTrigger className="h-8 text-xs border-slate-200 text-slate-600 focus:ring-0 dark:text-zinc-300 dark:border-zinc-800">
+                        <SelectTrigger className="h-8 rounded-lg text-xs">
                             <SelectValue placeholder="LD (Lead)" />
                         </SelectTrigger>
                         <SelectContent className="max-h-[300px]">
@@ -79,12 +85,12 @@ export function ChartDataWidget({ period }: { period?: string }) {
                     </Select>
                 </div>
             </CardHeader>
-            <CardContent className="p-4 space-y-4">
+            <CardContent className="p-5 space-y-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 font-medium dark:text-zinc-400">Show</span>
+                        <span className="text-xs text-muted-foreground font-medium">Show</span>
                         <Select value={entries} onValueChange={handleEntriesChange}>
-                            <SelectTrigger className="w-[65px] h-8 text-xs border-slate-200 dark:border-zinc-800">
+                            <SelectTrigger className="w-[65px] h-8 rounded-lg text-xs">
                                 <SelectValue placeholder="10" />
                             </SelectTrigger>
                             <SelectContent>
@@ -94,55 +100,55 @@ export function ChartDataWidget({ period }: { period?: string }) {
                                 <SelectItem value="100" className="text-xs">100</SelectItem>
                             </SelectContent>
                         </Select>
-                        <span className="text-xs text-slate-500 font-medium dark:text-zinc-400">entries</span>
+                        <span className="text-xs text-muted-foreground font-medium">entries</span>
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 font-medium dark:text-zinc-400">Search:</span>
+                        <span className="text-xs text-muted-foreground font-medium">Search:</span>
                         <Input
                             value={search}
                             onChange={(e) => handleSearchChange(e.target.value)}
-                            className="h-8 w-[180px] border-slate-200 text-sm focus-visible:ring-0 dark:border-zinc-800"
+                            className="h-8 w-[180px] rounded-lg text-sm"
                         />
                     </div>
                 </div>
 
-                <div className="border border-slate-100 rounded overflow-hidden dark:border-zinc-800">
+                <div className="border border-border rounded-xl overflow-hidden">
                     <Table>
                         <TableHeader>
-                            <TableRow className="hover:bg-transparent">
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">ID</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Company</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Account</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Email</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Phone</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Grade</TableHead>
-                                <TableHead className="font-bold text-slate-700 h-10 py-2 dark:text-zinc-400">Create</TableHead>
+                            <TableRow className="hover:bg-transparent bg-muted/50">
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">ID</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Company</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Account</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Email</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Phone</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Grade</TableHead>
+                                <TableHead className="font-semibold text-xs uppercase tracking-wide text-muted-foreground h-10 py-2">Create</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {isLoading ? (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={7} className="text-center text-sm text-slate-500 py-6 dark:text-zinc-400">
+                                    <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">
                                         Loading...
                                     </TableCell>
                                 </TableRow>
                             ) : rows.length === 0 ? (
                                 <TableRow className="hover:bg-transparent">
-                                    <TableCell colSpan={7} className="text-center text-sm text-slate-500 py-6 dark:text-zinc-400">
+                                    <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">
                                         No data available in table
                                     </TableCell>
                                 </TableRow>
                             ) : (
                                 rows.map((row, idx) => (
-                                    <TableRow key={idx} className="hover:bg-slate-50 dark:hover:bg-zinc-800">
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.id}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.company}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.account}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.email}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.phone}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.grade}</TableCell>
-                                        <TableCell className="py-2 text-sm text-slate-600 dark:text-zinc-300">{row.create}</TableCell>
+                                    <TableRow key={idx} className="hover:bg-muted/40">
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.id}</TableCell>
+                                        <TableCell className="py-2 text-sm text-foreground">{row.company}</TableCell>
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.account}</TableCell>
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.email}</TableCell>
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.phone}</TableCell>
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.grade}</TableCell>
+                                        <TableCell className="py-2 text-sm text-muted-foreground">{row.create}</TableCell>
                                     </TableRow>
                                 ))
                             )}
@@ -151,12 +157,12 @@ export function ChartDataWidget({ period }: { period?: string }) {
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                    <div className="text-[13px] text-slate-500 dark:text-zinc-400">
+                    <div className="text-[13px] text-muted-foreground">
                         Showing {startIdx} to {endIdx} of {total} entries
                     </div>
                     <div className="flex items-center">
-                        <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="h-8 text-xs px-3 rounded-r-none border-r-0 text-slate-600 hover:text-slate-700 hover:bg-slate-50 dark:text-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-800">Previous</Button>
-                        <Button variant="outline" disabled={page >= totalPages || totalPages === 0} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="h-8 text-xs px-3 rounded-l-none text-slate-600 hover:text-slate-700 hover:bg-slate-50 dark:text-zinc-300 dark:border-zinc-800 dark:hover:bg-zinc-800">Next</Button>
+                        <Button variant="outline" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="h-8 text-xs px-3 rounded-l-lg rounded-r-none border-r-0">Previous</Button>
+                        <Button variant="outline" disabled={page >= totalPages || totalPages === 0} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="h-8 text-xs px-3 rounded-r-lg rounded-l-none">Next</Button>
                     </div>
                 </div>
             </CardContent>

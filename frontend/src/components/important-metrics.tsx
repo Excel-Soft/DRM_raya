@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { InServiceModal } from "./in-service-modal";
-import { Play } from "lucide-react";
+import { Play, AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type ImportantMetricKey =
@@ -64,14 +64,19 @@ export function ImportantMetrics({ inServiceApiEndpoint }: { inServiceApiEndpoin
   });
 
   return (
-    <div className="bg-white rounded-[4px] border border-slate-100 shadow-sm p-4 dark:bg-zinc-900 dark:border-zinc-800" data-testid="card-important-metrics">
-      <h2 className="text-[15px] font-bold text-slate-700 mb-4 dark:text-zinc-400">Important</h2>
+    <div className="rounded-2xl border border-border bg-card shadow-sm p-5" data-testid="card-important-metrics">
+      <h2 className="flex items-center gap-2.5 text-base font-bold text-foreground mb-4 tracking-tight">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400">
+          <AlertCircle className="h-4 w-4" />
+        </span>
+        Needs Attention
+      </h2>
       {isLoading ? (
         <div className="grid grid-cols-2 gap-x-3 gap-y-2">
           {Array.from({ length: 14 }).map((_, i) => (
-            <div key={`skel-${i}`} className="flex justify-between items-center bg-[#f1f5f9] px-3 py-1.5 rounded-[2px] dark:bg-zinc-800 h-8">
-              <Skeleton className="h-4 w-24 bg-slate-200 dark:bg-zinc-700" />
-              <Skeleton className="h-4 w-6 bg-slate-200 dark:bg-zinc-700" />
+            <div key={`skel-${i}`} className="flex justify-between items-center bg-muted px-3 py-1.5 rounded-lg h-8">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-4 w-6" />
             </div>
           ))}
         </div>
@@ -82,27 +87,27 @@ export function ImportantMetrics({ inServiceApiEndpoint }: { inServiceApiEndpoin
               {metric.key === "in_service" ? (
                 <button
                   onClick={() => setIsInServiceModalOpen(true)}
-                  className="w-full flex justify-between items-center bg-[#f1f5f9] hover:bg-[#e2e8f0] px-3 py-1.5 rounded-[2px] transition-colors dark:bg-zinc-800 dark:hover:bg-zinc-800"
+                  className="w-full flex justify-between items-center bg-muted hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 rounded-lg transition-colors"
                   data-testid={`metric-${metric.key}`}
                 >
-                  <span className="text-slate-600 font-medium text-[13px] dark:text-zinc-300">{metric.label}</span>
-                  <span className="text-slate-800 text-[13px] italic dark:text-zinc-100">
+                  <span className="text-muted-foreground font-medium text-[13px]">{metric.label}</span>
+                  <span className="text-foreground text-[13px] font-semibold">
                     {metrics?.[metric.key] || 0}
                   </span>
                 </button>
               ) : (
                 <Link
                   href={metricRoutes[metric.key]}
-                  className="flex justify-between items-center bg-[#f1f5f9] hover:bg-[#e2e8f0] px-3 py-1.5 rounded-[2px] transition-colors dark:bg-zinc-800 dark:hover:bg-zinc-800"
+                  className="flex justify-between items-center bg-muted hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 rounded-lg transition-colors"
                   data-testid={`metric-${metric.key}`}
                 >
-                  <span className="text-slate-600 font-medium text-[13px] dark:text-zinc-300">{metric.label}</span>
+                  <span className="text-muted-foreground font-medium text-[13px]">{metric.label}</span>
                   {metric.key === "todo_list" ? (
-                    <span className="text-slate-500 flex items-center pr-1 dark:text-zinc-400">
+                    <span className="text-muted-foreground flex items-center pr-1">
                       <Play className="w-3.5 h-3.5" />
                     </span>
                   ) : (
-                    <span className="text-slate-800 text-[13px] italic dark:text-zinc-100">
+                    <span className="text-foreground text-[13px] font-semibold">
                       {metrics?.[metric.key] || 0}
                     </span>
                   )}
