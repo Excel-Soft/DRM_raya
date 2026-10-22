@@ -1,24 +1,35 @@
 import { createContext, useContext, useState } from "react";
 import { useScreenContext } from "./screen-context";
 
-type UserRole = "Sales Executive" | "Assistant Manager" | "Manager" | "HOD" | "Admin";
-
 interface AssistantContextValue {
   currentScreen: string;
-  userRole: UserRole;
+  /** Server-validated role/name only — see AssistantProviderProps. Never a
+   *  client-side placeholder; Copilot's backend re-derives identity from the
+   *  auth token regardless, but the UI must not *display* a fake identity. */
+  userRole: string;
   userName: string;
   screenData: Record<string, any>;
   setScreenData: (data: Record<string, any>) => void;
-  setUserRole: (role: UserRole) => void;
-  setUserName: (name: string) => void;
 }
 
 const AssistantContext = createContext<AssistantContextValue | undefined>(undefined);
 
-export function AssistantProvider({ children }: { children: React.ReactNode }) {
+interface AssistantProviderProps {
+  children: React.ReactNode;
+  /**
+   * Real, server-validated identity (from App.tsx's `/api/auth/me` resolution).
+   * Previously this context owned its own local state defaulting to the
+   * placeholders "John Doe" / "Sales Executive" and nothing ever overwrote
+   * them, so every assistant request carried a fake identity regardless of
+   * who was actually logged in. These are now required props, sourced from
+   * the one place real identity is resolved.
+   */
+  userName: string;
+  userRole: string;
+}
+
+export function AssistantProvider({ children, userName, userRole }: AssistantProviderProps) {
   const { screenData: contextScreenData } = useScreenContext();
-  const [userRole, setUserRole] = useState<UserRole>("Sales Executive");
-  const [userName, setUserName] = useState("John Doe");
   const [additionalData, setAdditionalData] = useState<Record<string, any>>({});
 
   // Merge screen context data with additional data
@@ -38,8 +49,6 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         userName,
         screenData,
         setScreenData: setAdditionalData,
-        setUserRole,
-        setUserName,
       }}
     >
       {children}

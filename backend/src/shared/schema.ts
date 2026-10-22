@@ -4194,3 +4194,171 @@ export const diagnoseFollowups = drmSchema.table("diagnose_followups", {
   createDate: timestamp("create_date").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ─── WebExcels DRM Copilot V1 ─────────────────────────────────────────────────
+// Additive only. See migrations/20261022_copilot_core.sql and
+// docs/copilot/PROGRESS.md. Conversations/messages/runs/tool-calls/drafts/audit
+// plus an action-proposal + execution ledger for the one optional write
+// (confirmed self-follow-up creation). Nothing here changes any existing
+// business table or enum.
+//
+// Status/role columns are plain `text` with a migration-level CHECK constraint
+// rather than native Postgres enum types, matching this repo's established
+// convention for recently-added features (db:push / enum migrations are
+// unreliable here — see docs/copilot/PROGRESS.md M0 notes). The TS union types
+// below are the compile-time source of truth; the CHECK constraints are the
+// runtime backstop.
+export const COPILOT_RUN_STATUSES = ["running", "completed", "failed", "timeout"] as const;
+export type CopilotRunStatus = (typeof COPILOT_RUN_STATUSES)[number];
+export const COPILOT_MESSAGE_ROLES = ["user", "assistant", "system", "tool"] as const;
+export type CopilotMessageRole = (typeof COPILOT_MESSAGE_ROLES)[number];
+export const COPILOT_TOOL_CALL_STATUSES = ["ok", "error", "denied"] as const;
+export type CopilotToolCallStatus = (typeof COPILOT_TOOL_CALL_STATUSES)[number];
+export const COPILOT_DRAFT_STATUSES = ["draft", "discarded"] as const;
+export type CopilotDraftStatus = (typeof COPILOT_DRAFT_STATUSES)[number];
+export const COPILOT_DRAFT_TYPES = ["followup_message", "quotation_proposal", "task_plan", "internal_summary"] as const;
+export type CopilotDraftType = (typeof COPILOT_DRAFT_TYPES)[number];
+export const COPILOT_PROPOSAL_STATUSES = ["pending", "confirmed", "executed", "expired", "cancelled", "superseded"] as const;
+export type CopilotProposalStatus = (typeof COPILOT_PROPOSAL_STATUSES)[number];
+export const COPILOT_EXECUTION_STATUSES = ["success", "failed", "reconciling"] as const;
+export type CopilotExecutionStatus = (typeof COPILOT_EXECUTION_STATUSES)[number];
+
+export const copilotConversations = drmSchema.table("copilot_conversations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  title: text("title"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastMessageAt: timestamp("last_message_at"),
+}, (t) => [
+  index("idx_copilot_conv_user").on(t.userId),
+  index("idx_copilot_conv_last_msg").on(t.lastMessageAt),
+]);
+
+export const copilotMessages = drmSchema.table("copilot_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id").notNull().references(() => copilotConversations.id),
+  runId: uuid("run_id"),
+  role: text("role").notNull().$type<CopilotMessageRole>(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_msg_conv").on(t.conversationId, t.createdAt),
+]);
+
+export const copilotRuns = drmSchema.table("copilot_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id").notNull().references(() => copilotConversations.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("running").$type<CopilotRunStatus>(),
+  model: text("model"),
+  toolRounds: integer("tool_rounds").notNull().default(0),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  error: text("error"),
+  startedAt: timestamp("started_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+}, (t) => [
+  index("idx_copilot_run_conv").on(t.conversationId),
+  index("idx_copilot_run_user").on(t.userId),
+]);
+
+export const copilotToolCalls = drmSchema.table("copilot_tool_calls", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id").notNull().references(() => copilotRuns.id),
+  toolName: text("tool_name").notNull(),
+  arguments: jsonb("arguments"),
+  resultSummary: jsonb("result_summary"),
+  scopeContext: jsonb("scope_context"),
+  status: text("status").notNull().$type<CopilotToolCallStatus>(),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_toolcall_run").on(t.runId),
+  index("idx_copilot_toolcall_name").on(t.toolName),
+]);
+
+export const copilotDrafts = drmSchema.table("copilot_drafts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id").notNull().references(() => copilotConversations.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  draftType: text("draft_type").notNull().$type<CopilotDraftType>(),
+  content: jsonb("content").notNull(),
+  sourceRefs: jsonb("source_refs"),
+  missingFields: jsonb("missing_fields"),
+  version: integer("version").notNull().default(1),
+  status: text("status").notNull().default("draft").$type<CopilotDraftStatus>(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_draft_conv").on(t.conversationId),
+  index("idx_copilot_draft_user").on(t.userId, t.status),
+]);
+
+export const copilotAuditLog = drmSchema.table("copilot_audit_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  actorUserId: uuid("actor_user_id").notNull().references(() => users.id),
+  effectiveScope: jsonb("effective_scope"),
+  conversationId: uuid("conversation_id"),
+  runId: uuid("run_id"),
+  toolName: text("tool_name"),
+  targetType: text("target_type"),
+  targetId: text("target_id"),
+  action: text("action").notNull(),
+  outcome: text("outcome").notNull(),
+  sourceRefs: jsonb("source_refs"),
+  model: text("model"),
+  usage: jsonb("usage"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_audit_actor").on(t.actorUserId, t.createdAt),
+  index("idx_copilot_audit_conv").on(t.conversationId),
+]);
+
+// Optional write (M4): proposal must be confirmed explicitly; execution ledger
+// guarantees at-most-one real follow-up per proposal even under retries/races.
+export const copilotActionProposals = drmSchema.table("copilot_action_proposals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id").notNull().references(() => copilotConversations.id),
+  userId: uuid("user_id").notNull().references(() => users.id),
+  actionType: text("action_type").notNull(),
+  payload: jsonb("payload").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  targetRecordVersion: text("target_record_version"),
+  status: text("status").notNull().default("pending").$type<CopilotProposalStatus>(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_proposal_user").on(t.userId, t.status),
+  index("idx_copilot_proposal_conv").on(t.conversationId),
+]);
+
+export const copilotActionExecutions = drmSchema.table("copilot_action_executions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  proposalId: uuid("proposal_id").notNull().unique().references(() => copilotActionProposals.id),
+  actionKey: text("action_key").notNull().unique(),
+  status: text("status").notNull().$type<CopilotExecutionStatus>(),
+  resultEntityType: text("result_entity_type"),
+  resultEntityId: text("result_entity_id"),
+  errorMessage: text("error_message"),
+  executedAt: timestamp("executed_at").defaultNow(),
+}, (t) => [
+  index("idx_copilot_exec_proposal").on(t.proposalId),
+]);
+
+export type CopilotConversation = typeof copilotConversations.$inferSelect;
+export type InsertCopilotConversation = typeof copilotConversations.$inferInsert;
+export type CopilotMessage = typeof copilotMessages.$inferSelect;
+export type InsertCopilotMessage = typeof copilotMessages.$inferInsert;
+export type CopilotRun = typeof copilotRuns.$inferSelect;
+export type InsertCopilotRun = typeof copilotRuns.$inferInsert;
+export type CopilotToolCall = typeof copilotToolCalls.$inferSelect;
+export type InsertCopilotToolCall = typeof copilotToolCalls.$inferInsert;
+export type CopilotDraft = typeof copilotDrafts.$inferSelect;
+export type InsertCopilotDraft = typeof copilotDrafts.$inferInsert;
+export type CopilotAuditEntry = typeof copilotAuditLog.$inferSelect;
+export type InsertCopilotAuditEntry = typeof copilotAuditLog.$inferInsert;
+export type CopilotActionProposal = typeof copilotActionProposals.$inferSelect;
+export type InsertCopilotActionProposal = typeof copilotActionProposals.$inferInsert;
+export type CopilotActionExecution = typeof copilotActionExecutions.$inferSelect;
+export type InsertCopilotActionExecution = typeof copilotActionExecutions.$inferInsert;
