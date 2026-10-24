@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "phase": "0-finalization",
+    "description": "Legacy routes excluded from Next pilot or pending product decision"
+  },
+  "entries": [
+    {
+      "id": "AUTH-APPROVALS-01",
+      "path": "/approvals",
+      "type": "known-broken-legacy",
+      "migrationStatus": "legacy",
+      "pilotExcluded": true,
+      "productDecision": "Restore unified /api/approvals in approved backend work OR formally retire legacy route",
+      "alternatives": ["/pms/approvals", "/api/hod/approvals"]
+    },
+    {
+      "id": "SIDEBAR-ORPHAN-01",
+      "path": "/sales/active-clients",
+      "type": "sidebar-orphan",
+      "status": "review",
+      "pilotExcluded": true,
+      "evidence": "app-sidebar.tsx only; no App.tsx route",
+      "productDecision": "Remove link, implement page, or redirect — do not invent page in migration"
+    }
+  ]
+}

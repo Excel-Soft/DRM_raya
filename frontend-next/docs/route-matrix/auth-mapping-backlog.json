@@ -1,0 +1,180 @@
+{
+  "meta": {
+    "phase": "0C",
+    "description": "UI route → backend authorization evidence (code-backed only). Not full coverage.",
+    "globalAuth": {
+      "expressJwt": "Most /api/* routes after public auth/health — authMiddleware on /api in routes.ts",
+      "note": "JWT presence ≠ per-action permission"
+    },
+    "coverage": {
+      "mappedInThisFile": 18,
+      "totalLegacyUiRoutes": 207,
+      "status": "partial-backlog"
+    },
+    "phase0cFindings": {
+      "approvals": "phase-0c-critical-audit.md#task-2--approvals-unified-inbox",
+      "auditLogs": "phase-0c-critical-audit.md#task-3--adminaudit-logs"
+    }
+  },
+  "entries": [
+    {
+      "id": "AUTH-ENTRY-AUDIT-LOGS",
+      "uiPath": "/admin/audit-logs",
+      "status": "client-guard-fixed-phase-0-finalization",
+      "apiEndpoints": ["GET /api/audit-logs"],
+      "backendEvidence": {
+        "file": "backend/src/server/routes/audit-log-routes.ts",
+        "handler": "router.get('/', requireRole(...ROLES))",
+        "roles": ["admin", "super_admin", "super_hod"],
+        "resourceChecks": "None — role gate only; filtered list over drm.activity_logs"
+      },
+      "clientGuard": {
+        "file": "frontend/src/hooks/useRouteProtection.ts",
+        "mechanism": "ROUTE_PERMISSIONS prefix /admin",
+        "rolesAllowed": ["admin", "super_admin", "administrator", "service_manager", "super_hod"],
+        "auditSpecificGuard": false
+      },
+      "sidebarPermKey": "Admin",
+      "sidebarEvidence": "frontend/src/components/app-sidebar.tsx — DEPT_NAME_TO_ROLES.Admin includes administrator, junior_admin",
+      "gap": "Resolved in legacy: frontend/src/lib/route-access.ts prefix /admin/audit-logs + sidebar canShowAuditLogsNav. API unchanged.",
+      "pilotImpact": "Do not pilot until client guard aligned or UX documented",
+      "proposedOwner": "frontend-next-migration (proposed)",
+      "acceptanceCriteria": [
+        "ROUTE_PERMISSIONS entry for /admin/audit-logs matches audit-log-routes ROLES",
+        "Unauthorized roles redirected before page mount or sidebar link hidden",
+        "No change to backend requireRole list"
+      ]
+    },
+    {
+      "id": "AUTH-ENTRY-APPROVALS-UNIFIED",
+      "uiPath": "/approvals",
+      "status": "confirmed-broken",
+      "apiEndpoints": [
+        "GET /api/approvals/pending",
+        "GET /api/approvals/summary",
+        "Dynamic POST/PATCH from item.actions.*"
+      ],
+      "frontendEvidence": {
+        "page": "frontend/src/pages/approvals.tsx",
+        "queries": "useQuery queryKey /api/approvals/summary and /api/approvals/pending (default queryFn in queryClient.ts)",
+        "navigation": "No in-app links; sidebarVisible false; direct URL only",
+        "routeGuard": "None beyond App authentication"
+      },
+      "backendEvidence": {
+        "mount": "backend/src/server/routes.ts app.use('/api/approvals', approvalRouter)",
+        "router": "backend/src/server/routes/approval-routes.ts — empty stub Router",
+        "relatedService": "backend/src/server/services/cross-department-status.service.ts — makeStub; ensureSchema no-op",
+        "missingFile": "approval-visibility.service.ts referenced in UI comment — not in repo"
+      },
+      "gap": "UI is wired and reachable; unified API always 404. Not redirected to /api/hod/approvals or /api/pms/approvals.",
+      "pilotImpact": "Exclude from pilot; use /pms/approvals or HOD widgets",
+      "proposedOwner": "backend-platform (proposed)",
+      "acceptanceCriteria": [
+        "Implement GET /pending and GET /summary on approvalRouter OR remove App route",
+        "Restore CrossDepartmentStatusService or drop ensureSchema call",
+        "Integration test against mounted /api/approvals paths"
+      ]
+    },
+    {
+      "uiPath": "/account/dollar-buying",
+      "apiEndpoints": ["GET|POST /api/account/buying", "DELETE /api/account/buying/:id"],
+      "backendEvidence": "account-routes.ts requireFinancialPermission (dollarBuyingView/Create/Delete)",
+      "clientGuard": "No /account prefix in ROUTE_PERMISSIONS — authenticated users only",
+      "gap": "Relies on API financial permissions"
+    },
+    {
+      "uiPath": "/account/dollar-advance-payment",
+      "apiEndpoints": ["GET|POST /api/account/advance-payments", "DELETE /api/account/advance-payments/:id"],
+      "backendEvidence": "account-routes.ts requireFinancialPermission",
+      "clientGuard": "No /account prefix — authenticated only",
+      "gap": "Relies on API financial permissions"
+    },
+    {
+      "uiPath": "/account/history/:companyId",
+      "apiEndpoints": ["GET /api/account/history/:companyId", "POST /api/account/payment"],
+      "backendEvidence": "company-ledger-routes.ts requireFinancialPermission(accountLedgerView)",
+      "clientGuard": "Authenticated only",
+      "gap": null
+    },
+    {
+      "uiPath": "/office/general-ledger",
+      "apiEndpoints": ["GET /api/office/ledger", "POST /api/office/ledger/:id/reverse"],
+      "backendEvidence": "office-account-routes.ts requireFinancialPermission + STAGE2_FINANCIAL_ROLES",
+      "clientGuard": "No /office prefix in ROUTE_PERMISSIONS",
+      "gap": "Relies on API financial permissions"
+    },
+    {
+      "uiPath": "/office/journal-voucher",
+      "apiEndpoints": ["GET|POST /api/office/journal-vouchers", "POST .../post", "POST .../cancel"],
+      "backendEvidence": "office-account-routes.ts requireFinancialPermission(journalVoucherView/...)",
+      "clientGuard": "No /office prefix",
+      "gap": "Relies on API financial permissions"
+    },
+    {
+      "uiPath": "/drm/branches",
+      "apiEndpoints": ["GET /api/drm/branches", "POST|PATCH|DELETE /api/drm/branches/:id"],
+      "backendEvidence": "branches-routes.ts GET any auth user; writes requireRole(admin,super_admin,super_hod,hod)",
+      "clientGuard": "No /drm prefix in ROUTE_PERMISSIONS",
+      "sidebarPermKey": "Branches",
+      "gap": "Menu permKey vs write roles not fully traced to menu API"
+    },
+    {
+      "uiPath": "/pms/approvals",
+      "apiEndpoints": ["GET /api/pms/approvals", "POST /api/pms/approvals/:id/approve"],
+      "backendEvidence": "pms-routes.ts handlers (review per-handler auth in file)",
+      "clientGuard": "/pms prefix in ROUTE_PERMISSIONS",
+      "gap": "Per-handler auth not extracted in Phase 0B — backlog item PMS-APPROVALS-AUTH"
+    },
+    {
+      "uiPath": "/dashboard/complaint-manager",
+      "apiEndpoints": ["(dashboard widgets — varied)"],
+      "backendEvidence": "Widget-specific APIs",
+      "clientGuard": "ROLE_DASHBOARDS only",
+      "gap": "No route-specific prefix guard"
+    }
+  ],
+  "backlog": [
+    {
+      "id": "AUTH-APPROVALS-01",
+      "area": "/approvals vs /api/approvals",
+      "status": "confirmed-broken-phase-0c",
+      "action": "Restore approval-routes + CrossDepartmentStatusService or remove/hide unified UI route",
+      "priority": "critical",
+      "proposedOwner": "backend-platform (proposed)",
+      "evidence": "phase-0c-critical-audit.md"
+    },
+    {
+      "id": "AUTH-AUDIT-01",
+      "area": "/admin/audit-logs client vs GET /api/audit-logs",
+      "status": "legacy-client-fixed",
+      "action": "Port same rules to Next App Router in Phase 2 (route-access-policy.ts spec + tests exist)",
+      "priority": "medium",
+      "proposedOwner": "habib",
+      "evidence": "frontend/src/lib/route-access.ts; phase-0-exit-record.md"
+    },
+    {
+      "id": "AUTH-FIN-01",
+      "area": "Accounts / Office financial UI",
+      "action": "Map each account-routes.ts and office-account-routes.ts handler to UI paths",
+      "priority": "high"
+    },
+    {
+      "id": "AUTH-REPORTS-01",
+      "area": "Reports module",
+      "action": "Extract report route guards from reports-routes.ts and stage3-reports-routes.ts",
+      "priority": "high"
+    },
+    {
+      "id": "AUTH-MENU-01",
+      "area": "Sidebar permKey",
+      "action": "Trace menu permission API to backend matrix (not inferred from sidebar alone)",
+      "priority": "medium"
+    },
+    {
+      "id": "PMS-APPROVALS-AUTH",
+      "area": "/pms/approvals",
+      "action": "Document per-handler requireRole/financial checks in pms-routes.ts",
+      "priority": "medium"
+    }
+  ]
+}

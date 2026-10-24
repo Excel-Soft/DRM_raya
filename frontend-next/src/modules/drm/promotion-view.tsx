@@ -1,0 +1,521 @@
+"use client";
+
+import React, { useState } from 'react';
+import { Check, Loader2, Trash2, X } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
+import { DrmFormActions, DrmSection, drmFieldClass } from "@/modules/drm/drm-ui";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { labelClasses } from "@/styles/tokens";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/legacy/select";
+import { Switch } from "@/components/ui/legacy/switch";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequestJson, queryClient } from "@/lib/query/query-client";
+import { useToast } from "@/lib/hooks/use-legacy-toast";
+
+interface PromotionFormRow {
+    id: string;
+    title: string;
+    discount: string;
+    startDate: string;
+    endDate: string;
+    banner: File | null;
+    message: string;
+    targetRole: string;
+}
+
+interface RoleOption {
+    id: string;
+    name: string;
+}
+
+function formatRoleLabel(role: string): string {
+    return role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+interface Promotion {
+    id: string;
+    packageId: string | null;
+    packageName: string | null;
+    title: string;
+    subTitle: string | null;
+    discount: string | null;
+    bannerUrl: string | null;
+    mediaType: string | null;
+    startDate: string | null;
+    endDate: string | null;
+    isActive: boolean;
+    status: string;
+    reason: string | null;
+    createdByName: string | null;
+    createdAt: string | null;
+    targetRole: string | null;
+}
+
+interface PromotionListResponse {
+    data: Promotion[];
+    total: number;
+    page: number;
+    pageSize: number;
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+function statusBadgeClass(status: string): string {
+    switch (status) {
+        case "approved":
+            return "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300";
+        case "rejected":
+            return "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300";
+        default:
+            return "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300";
+    }
+}
+
+export function PromotionPage() {
+    const { toast } = useToast();
+    const [rows, setRows] = useState<PromotionFormRow[]>([
+        {
+            id: '1',
+            title: '',
+            discount: '0.00',
+            startDate: '',
+            endDate: '',
+            banner: null,
+            message: '',
+            targetRole: ''
+        }
+    ]);
+
+    // Query for old promotions (real-or-empty — no mock fallback)
+    const { data: promotionsData, isLoading: promotionsLoading } = useQuery<PromotionListResponse>({
+        queryKey: ["/api/drm/promotions"],
+        queryFn: () => apiRequestJson<PromotionListResponse>("GET", "/api/drm/promotions"),
+    });
+
+    const oldPromotions = promotionsData?.data ?? [];
+
+    // Real roles list (same endpoint the super-admin Roles UI uses) — lets a
+    // banner be targeted to one specific role instead of showing app-wide.
+    const { data: rolesData } = useQuery<RoleOption[]>({
+        queryKey: ["/api/settings/roles"],
+        queryFn: () => apiRequestJson<RoleOption[]>("GET", "/api/settings/roles"),
+    });
+    const roleOptions = rolesData ?? [];
+
+    function invalidate() {
+        queryClient.invalidateQueries({ queryKey: ["/api/drm/promotions"] });
+    }
+
+    const createMutation = useMutation({
+        mutationFn: async (formRows: PromotionFormRow[]) => {
+            for (const row of formRows) {
+                let bannerUrl: string | null = null;
+                let mediaType: string | null = null;
+                if (row.banner) {
+                    bannerUrl = await fileToDataUrl(row.banner);
+                    mediaType = row.banner.type.startsWith("video") ? "video" : "image";
+                }
+                await apiRequestJson("POST", "/api/drm/promotions", {
+                    title: row.title.trim(),
+                    subTitle: row.message.trim() || null,
+                    discount: row.discount ? String(row.discount) : null,
+                    startDate: row.startDate || null,
+                    endDate: row.endDate || null,
+                    bannerUrl,
+                    mediaType,
+                    targetRole: row.targetRole || null,
+                });
+            }
+        },
+        onSuccess: () => {
+            toast({ title: "Success", description: "Promotion banners submitted successfully!" });
+            setRows([{
+                id: Date.now().toString(),
+                title: '',
+                discount: '0.00',
+                startDate: '',
+                endDate: '',
+                banner: null,
+                message: '',
+                targetRole: ''
+            }]);
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to submit", variant: "destructive" }),
+    });
+
+    const toggleMutation = useMutation({
+        mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}`, { isActive }),
+        onSuccess: () => invalidate(),
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to update", variant: "destructive" }),
+    });
+
+    const targetRoleMutation = useMutation({
+        mutationFn: ({ id, targetRole }: { id: string; targetRole: string | null }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}`, { targetRole }),
+        onSuccess: () => {
+            toast({ title: "Target role updated" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to update target role", variant: "destructive" }),
+    });
+
+    const approveMutation = useMutation({
+        mutationFn: (id: string) => apiRequestJson("PATCH", `/api/drm/promotions/${id}/approve`),
+        onSuccess: () => {
+            toast({ title: "Promotion approved" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to approve", variant: "destructive" }),
+    });
+
+    const rejectMutation = useMutation({
+        mutationFn: ({ id, reason }: { id: string; reason: string | null }) =>
+            apiRequestJson("PATCH", `/api/drm/promotions/${id}/reject`, { reason }),
+        onSuccess: () => {
+            toast({ title: "Promotion rejected" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to reject", variant: "destructive" }),
+    });
+
+    const deleteMutation = useMutation({
+        mutationFn: (id: string) => apiRequestJson("DELETE", `/api/drm/promotions/${id}`),
+        onSuccess: () => {
+            toast({ title: "Promotion deleted" });
+            invalidate();
+        },
+        onError: (e: any) =>
+            toast({ title: "Error", description: e?.message || "Failed to delete", variant: "destructive" }),
+    });
+
+    const addRow = () => {
+        setRows([...rows, {
+            id: Date.now().toString(),
+            title: '',
+            discount: '0.00',
+            startDate: '',
+            endDate: '',
+            banner: null,
+            message: '',
+            targetRole: ''
+        }]);
+    };
+
+    const removeRow = (id: string) => {
+        setRows(rows.filter(row => row.id !== id));
+    };
+
+    const updateRow = (id: string, field: keyof PromotionFormRow, value: any) => {
+        setRows(rows.map(row =>
+            row.id === id ? { ...row, [field]: value } : row
+        ));
+    };
+
+    const handleSubmit = () => {
+        const validRows = rows.filter((r) => r.title.trim());
+        if (validRows.length === 0) {
+            toast({ title: "Title is required", description: "Enter a banner title before submitting.", variant: "destructive" });
+            return;
+        }
+        createMutation.mutate(validRows);
+    };
+
+    // Format date helper
+    const formatDate = (dateStr: string | null) => {
+        if (!dateStr) return "—";
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return "—";
+        return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+
+
+    return (
+        <div className="space-y-4">
+            <PageHeader
+                eyebrow="DRM Setting"
+                title="Promotion"
+                description="Create promotion banners and manage approval status."
+            />
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                <div className="lg:col-span-2">
+                    <DrmSection title="Add promotion banner" description="Fill one or more rows, then save.">
+                        <div className="space-y-6">
+
+                            {rows.map((row, index) => (
+                                <div key={row.id} className="space-y-4 pb-4 border-b border-gray-100 last:border-0 dark:border-zinc-800">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        {/* Title */}
+                                        <div className="space-y-2">
+                                            <label className={labelClasses}>Title</label>
+                                            <Input
+                                                value={row.title}
+                                                onChange={(e) => updateRow(row.id, 'title', e.target.value)}
+                                                placeholder="Banner title"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <label className={labelClasses}>Discount ($)</label>
+                                            <Input
+                                                type="number"
+                                                step="0.01"
+                                                value={row.discount}
+                                                onChange={(e) => updateRow(row.id, 'discount', e.target.value)}
+                                                placeholder="0.00"
+                                            />
+                                        </div>
+
+                                        {/* Target Role */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Target Role</label>
+                                            <Select value={row.targetRole || "static"} onValueChange={(val) => updateRow(row.id, 'targetRole', val === "static" ? "" : val)}>
+                                                <SelectTrigger className="w-full border-gray-300 rounded h-[38px] text-sm dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="static">Static (All Roles)</SelectItem>
+                                                    {roleOptions.map((r) => (
+                                                        <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        {/* Start Date */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Start Date</label>
+                                            <Input
+                                                type="date"
+                                                value={row.startDate}
+                                                onChange={(e) => updateRow(row.id, 'startDate', e.target.value)}
+                                                className="[&::-webkit-calendar-picker-indicator]:dark:invert"
+                                            />
+                                        </div>
+
+                                        {/* End Date */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">End Date</label>
+                                            <Input
+                                                type="date"
+                                                value={row.endDate}
+                                                onChange={(e) => updateRow(row.id, 'endDate', e.target.value)}
+                                                className="[&::-webkit-calendar-picker-indicator]:dark:invert"
+                                            />
+                                        </div>
+
+                                        {/* Banner Upload */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Banner</label>
+                                            <input
+                                                type="file"
+                                                accept="image/*,video/*"
+                                                onChange={(e) => updateRow(row.id, 'banner', e.target.files?.[0] || null)}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-[#00a65a] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-sm file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100 dark:file:bg-zinc-800 dark:file:text-zinc-200"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Message */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-zinc-300">Message</label>
+                                            {rows.length > 1 && (
+                                                <button
+                                                    onClick={() => removeRow(row.id)}
+                                                    className="text-red-500 hover:text-red-700"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            )}
+                                        </div>
+                                        <Textarea
+                                            value={row.message}
+                                            onChange={(e) => updateRow(row.id, 'message', e.target.value)}
+                                            rows={3}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+
+                            <DrmFormActions>
+                                <Button type="button" variant="secondary" size="sm" onClick={addRow}>
+                                    Add row
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="primary"
+                                    size="sm"
+                                    onClick={handleSubmit}
+                                    disabled={createMutation.isPending}
+                                >
+                                    {createMutation.isPending ? (
+                                        <span className="inline-flex items-center gap-2">
+                                            <Loader2 className="h-4 w-4 animate-spin" /> Saving…
+                                        </span>
+                                    ) : (
+                                        "Save promotions"
+                                    )}
+                                </Button>
+                            </DrmFormActions>
+                        </div>
+                    </DrmSection>
+                </div>
+
+                <div className="lg:col-span-1">
+                    <DrmSection title="Existing promotions" description="Approved and pending banners.">
+                        <div className="max-h-[800px] space-y-4 overflow-y-auto">
+                            {promotionsLoading ? (
+                                <div className="flex justify-center py-8">
+                                    <Loader2 className="w-8 h-8 animate-spin text-[#00a65a] dark:text-zinc-400" />
+                                </div>
+                            ) : oldPromotions.length > 0 ? (
+                                oldPromotions.map((promo) => (
+                                    <div key={promo.id} className="border border-gray-200 rounded-lg p-4 space-y-3 dark:border-zinc-800">
+                                        <div className="flex items-start gap-3">
+                                            {/* Banner Thumbnail */}
+                                            <div className="w-16 h-16 bg-gray-200 rounded flex-shrink-0 overflow-hidden">
+                                                {promo.bannerUrl ? (
+                                                    promo.mediaType === 'video' ? (
+                                                        <video
+                                                            src={promo.bannerUrl}
+                                                            className="w-full h-full object-cover"
+                                                            muted
+                                                            loop
+                                                            playsInline
+                                                        />
+                                                    ) : (
+                                                        <img
+                                                            src={promo.bannerUrl}
+                                                            alt={promo.title}
+                                                            className="w-full h-full object-cover"
+                                                            onError={(e) => {
+                                                                const target = e.target as HTMLImageElement;
+                                                                target.style.display = 'none';
+                                                                target.parentElement!.innerHTML = '<div class="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-semibold">Banner</div>';
+                                                            }}
+                                                        />
+                                                    )
+                                                ) : (
+                                                    <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-xs font-semibold">
+                                                        Banner
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Details */}
+                                            <div className="flex-1 space-y-1">
+                                                <h3 className="text-sm font-semibold text-gray-800 dark:text-zinc-100">{promo.title}</h3>
+                                                {promo.subTitle && <p className="text-xs text-gray-600 dark:text-zinc-300">{promo.subTitle}</p>}
+                                                {promo.packageName && <p className="text-xs text-gray-500 dark:text-zinc-400">{promo.packageName}</p>}
+                                                {promo.discount && <p className="text-sm font-semibold text-[#00a65a] dark:text-zinc-400">{promo.discount}</p>}
+                                                <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-medium uppercase ${statusBadgeClass(promo.status)}`}>
+                                                    {promo.status}
+                                                </span>
+                                            </div>
+
+                                            {/* Toggle */}
+                                            <Switch
+                                                checked={promo.isActive}
+                                                disabled={toggleMutation.isPending}
+                                                onCheckedChange={(checked) => toggleMutation.mutate({ id: promo.id, isActive: checked })}
+                                            />
+                                        </div>
+
+                                        {/* Date Range */}
+                                        <div className="text-xs text-gray-500 dark:text-zinc-400">
+                                            {formatDate(promo.startDate)} <span className="font-semibold">To</span> {formatDate(promo.endDate)}
+                                        </div>
+
+                                        {/* Target Role — manage who this banner shows to */}
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-400">Target Role</label>
+                                            <Select
+                                                value={promo.targetRole || "static"}
+                                                onValueChange={(val) => targetRoleMutation.mutate({ id: promo.id, targetRole: val === "static" ? null : val })}
+                                            >
+                                                <SelectTrigger className="w-full border-gray-300 rounded h-8 text-xs dark:border-zinc-800 bg-transparent dark:bg-zinc-900 dark:text-zinc-100">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="static">Static (All Roles)</SelectItem>
+                                                    {roleOptions.map((r) => (
+                                                        <SelectItem key={r.id} value={r.name}>{formatRoleLabel(r.name)}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        {/* Actions */}
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                            {promo.status === 'pending' && (
+                                                <>
+                                                    <button
+                                                        onClick={() => approveMutation.mutate(promo.id)}
+                                                        disabled={approveMutation.isPending}
+                                                        className="flex items-center gap-1 text-xs text-green-700 hover:underline disabled:opacity-50"
+                                                    >
+                                                        <Check className="w-3.5 h-3.5" /> Approve
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const reason = window.prompt("Reason for rejection (optional):") ?? "";
+                                                            rejectMutation.mutate({ id: promo.id, reason: reason.trim() || null });
+                                                        }}
+                                                        disabled={rejectMutation.isPending}
+                                                        className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50"
+                                                    >
+                                                        <X className="w-3.5 h-3.5" /> Reject
+                                                    </button>
+                                                </>
+                                            )}
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm("Delete this promotion?")) {
+                                                        deleteMutation.mutate(promo.id);
+                                                    }
+                                                }}
+                                                disabled={deleteMutation.isPending}
+                                                className="flex items-center gap-1 text-xs text-red-600 hover:underline disabled:opacity-50 ml-auto"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" /> Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center py-8 text-gray-500 dark:text-zinc-400">
+                                    No promotions found
+                                </div>
+                            )}
+                        </div>
+                    </DrmSection>
+                </div>
+            </div>
+        </div>
+    );
+}
