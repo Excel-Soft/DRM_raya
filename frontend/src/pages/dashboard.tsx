@@ -29,6 +29,7 @@ import {
   Loader2,
   DollarSign,
   UserPlus,
+  UserCheck,
   RefreshCw,
   Clock,
   Briefcase,
@@ -39,7 +40,7 @@ import {
 import { cn } from "@/lib/utils";
 import { TodayAppointment } from "@/components/today-appointment";
 
-type KpiKey = "totalRevenue" | "new" | "renew" | "expire" | "vm" | "kwa" | "psa" | "sponsorBrand";
+type KpiKey = "totalRevenue" | "new" | "renew" | "expire" | "nc" | "vm" | "kwa" | "psa" | "sponsorBrand";
 
 type KpiEntry = {
   count: number;
@@ -60,6 +61,9 @@ type ActivitiesResponse = {
     rows: Array<{
       userId: string;
       name: string;
+      role: string | null;
+      isManager: boolean;
+      managerId: string | null;
       methods: Record<
         | "mobile"
         | "whatsapp"
@@ -167,6 +171,7 @@ const kpiConfig: Array<{ key: KpiKey; label: string; icon: any; color: string; i
   { key: "new", label: "New Leads", icon: UserPlus, color: "text-blue-600", iconBg: "bg-blue-500" },
   { key: "renew", label: "Renewals", icon: RefreshCw, color: "text-indigo-600", iconBg: "bg-indigo-500" },
   { key: "expire", label: "Expiring", icon: Clock, color: "text-amber-600", iconBg: "bg-amber-500" },
+  { key: "nc", label: "NC", icon: UserCheck, color: "text-teal-600", iconBg: "bg-teal-500" },
   { key: "vm", label: "VM Orders", icon: Briefcase, color: "text-rose-600", iconBg: "bg-rose-500" },
   { key: "kwa", label: "KWA", icon: Zap, color: "text-purple-600", iconBg: "bg-purple-500" },
   { key: "psa", label: "PSA", icon: ShieldCheck, color: "text-cyan-600", iconBg: "bg-cyan-500" },
@@ -237,6 +242,8 @@ function minutesLabel(m: number) {
 export default function Dashboard() {
   const [kpiPeriod, setKpiPeriod] = useState<string>("MONTH");
   const [activityPeriod, setActivityPeriod] = useState<string>("WC");
+  const [activityPage, setActivityPage] = useState<number>(1);
+  const ACTIVITY_GROUPS_PER_PAGE = 5;
   const [queuePeriod, setQueuePeriod] = useState<string>("MONTH");
   const [queuePage, setQueuePage] = useState<number>(1);
   const [followUpFilter, setFollowUpFilter] = useState<string>("all");
@@ -362,6 +369,40 @@ export default function Dashboard() {
 
   const summary = summaryRes.data;
   const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes.data.rows ?? [];
+
+  // Group rows as manager + their direct reports (managerId -> row.userId),
+  // so a manager always renders together with their own team instead of
+  // being scattered through one flat alphabetical list.
+  const activityGroups = useMemo(() => {
+    type Row = ActivitiesResponse["data"]["rows"][number];
+    const managers = activityRows.filter((r) => r.isManager);
+    const byManager = new Map<string, Row[]>();
+    activityRows.forEach((r) => {
+      if (!r.isManager && r.managerId) {
+        const list = byManager.get(r.managerId) ?? [];
+        list.push(r);
+        byManager.set(r.managerId, list);
+      }
+    });
+    const consumed = new Set<string>();
+    const groups: Array<{ manager: Row | null; members: Row[] }> = [];
+    managers.forEach((m) => {
+      consumed.add(m.userId);
+      const team = byManager.get(m.userId) ?? [];
+      team.forEach((t) => consumed.add(t.userId));
+      groups.push({ manager: m, members: team });
+    });
+    const leftovers = activityRows.filter((r) => !consumed.has(r.userId));
+    if (leftovers.length > 0) {
+      groups.push({ manager: null, members: leftovers });
+    }
+    return groups;
+  }, [activityRows]);
+
+  const pagedActivityGroups = activityGroups.slice(
+    (activityPage - 1) * ACTIVITY_GROUPS_PER_PAGE,
+    activityPage * ACTIVITY_GROUPS_PER_PAGE,
+  );
   const queueItems: QueuePerformanceResponse["data"]["items"] = queueRes.data.items ?? [];
   const followUpItems: FollowUpsResponse["data"]["items"] = followUpsRes.data.items ?? [];
   const [viewFollowup, setViewFollowup] = useState<FollowUpsResponse["data"]["items"][number] | null>(null);
@@ -414,49 +455,60 @@ export default function Dashboard() {
                   </Select>
                 </div>
               </CardHeader>
-              <CardContent className={`${denseContent} min-w-0`}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                  {kpiConfig.map((item) => {
-                    const entry = summary?.[item.key];
-                    return (
-                      <div
-                        key={item.key}
-                        className="group relative flex items-center justify-between rounded-2xl bg-card p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 shadow-sm border border-border overflow-hidden"
-                      >
-                        {/* Background Accent Gradient */}
-                        <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-[0.05] transition-opacity duration-500 bg-gradient-to-br", item.iconBg)} />
+              <CardContent className={`${denseContent} min-w-0 space-y-3 sm:space-y-4`}>
+                {/* Two explicit rows (4 then 5) rather than one uniform grid,
+                    so the split stays 4/5 instead of however a single
+                    column-count would happen to wrap 9 cards. */}
+                {[kpiConfig.slice(0, 4), kpiConfig.slice(4)].map((row, rowIdx) => (
+                  <div
+                    key={rowIdx}
+                    className={cn(
+                      "grid grid-cols-2 gap-3 sm:gap-4",
+                      rowIdx === 0 ? "sm:grid-cols-4" : "sm:grid-cols-5",
+                    )}
+                  >
+                    {row.map((item) => {
+                      const entry = summary?.[item.key];
+                      return (
+                        <div
+                          key={item.key}
+                          className="group relative flex items-center justify-between rounded-2xl bg-card p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 shadow-sm border border-border overflow-hidden"
+                        >
+                          {/* Background Accent Gradient */}
+                          <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-[0.05] transition-opacity duration-500 bg-gradient-to-br", item.iconBg)} />
 
-                        <div className="relative space-y-2">
-                          <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest leading-none">{item.label}</div>
-                          {loadingSummary ? (
-                            <div className="flex items-center gap-2 py-1">
-                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                            </div>
-                          ) : (
-                            <div className="space-y-0.5">
-                              <div className="text-2xl font-black text-foreground tracking-tight leading-none uppercase">
-                                {entry?.count ?? 0}
+                          <div className="relative space-y-2">
+                            <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest leading-none">{item.label}</div>
+                            {loadingSummary ? (
+                              <div className="flex items-center gap-2 py-1">
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                               </div>
-                              <div className={cn("text-xs font-bold tracking-wide flex items-center gap-1", item.color)}>
-                                <span className="opacity-60">$</span>
-                                {formatCurrency(entry?.amount)}
+                            ) : (
+                              <div className="space-y-0.5">
+                                <div className="text-2xl font-black text-foreground tracking-tight leading-none uppercase">
+                                  {entry?.count ?? 0}
+                                </div>
+                                <div className={cn("text-xs font-bold tracking-wide flex items-center gap-1", item.color)}>
+                                  <span className="opacity-60">$</span>
+                                  {formatCurrency(entry?.amount)}
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                        <div className={cn(
-                          "relative flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg transition-all duration-500 group-hover:scale-110 group-hover:rotate-6",
-                          item.iconBg
-                        )}>
-                          <item.icon className="h-7 w-7 transition-all duration-500 group-hover:scale-110" strokeWidth={2.5} />
+                            )}
+                          </div>
+                          <div className={cn(
+                            "relative flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-lg transition-all duration-500 group-hover:scale-110 group-hover:rotate-6",
+                            item.iconBg
+                          )}>
+                            <item.icon className="h-7 w-7 transition-all duration-500 group-hover:scale-110" strokeWidth={2.5} />
 
-                          {/* Decorative Ring */}
-                          <div className="absolute inset-0 rounded-2xl border-2 border-white/20 scale-90 group-hover:scale-100 transition-transform duration-500" />
+                            {/* Decorative Ring */}
+                            <div className="absolute inset-0 rounded-2xl border-2 border-white/20 scale-90 group-hover:scale-100 transition-transform duration-500" />
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </CardContent>
             </Card>
 
@@ -465,7 +517,7 @@ export default function Dashboard() {
                 <CardTitle>Activities</CardTitle>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">TD / WC / Month</span>
-                  <Select value={activityPeriod} onValueChange={setActivityPeriod}>
+                  <Select value={activityPeriod} onValueChange={(val) => { setActivityPeriod(val); setActivityPage(1); }}>
                     <SelectTrigger className="w-24 h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
@@ -507,24 +559,71 @@ export default function Dashboard() {
                         </td>
                       </tr>
                     ) : (
-                      activityRows.map((row: ActivitiesResponse["data"]["rows"][number]) => (
-                        <tr key={row.userId} className="last:border-0">
-                          <td className="px-1 py-1 font-medium truncate">{row.name}</td>
-                          {activityColumns.map((col) => {
-                            const entry = row.methods[col.key as keyof typeof row.methods];
-                            const val = entry ? `${entry.done}/${entry.target}` : "-";
-                            return (
-                              <td key={col.key} className="px-0.5 py-1 text-center whitespace-nowrap">
-                                {val}
-                              </td>
-                            );
-                          })}
-                          <td className="px-0.5 py-1 text-center whitespace-nowrap">{minutesLabel(row.totals.timeMinutes)}</td>
-                        </tr>
-                      ))
+                      pagedActivityGroups.flatMap((group) => {
+                        const rowsOut: JSX.Element[] = [];
+                        if (group.manager) {
+                          const row = group.manager;
+                          rowsOut.push(
+                            <tr key={row.userId} className="last:border-0 bg-muted/40">
+                              <td className="px-1 py-1 font-bold truncate">{row.name}</td>
+                              {activityColumns.map((col) => {
+                                const entry = row.methods[col.key as keyof typeof row.methods];
+                                const val = entry ? `${entry.done}/${entry.target}` : "-";
+                                return (
+                                  <td key={col.key} className="px-0.5 py-1 text-center font-bold whitespace-nowrap">
+                                    {val}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-0.5 py-1 text-center font-bold whitespace-nowrap">{minutesLabel(row.totals.timeMinutes)}</td>
+                            </tr>,
+                          );
+                        }
+                        group.members.forEach((row) => {
+                          rowsOut.push(
+                            <tr key={row.userId} className="last:border-0">
+                              <td className="px-1 py-1 pl-4 font-medium truncate">{row.name}</td>
+                              {activityColumns.map((col) => {
+                                const entry = row.methods[col.key as keyof typeof row.methods];
+                                const val = entry ? `${entry.done}/${entry.target}` : "-";
+                                return (
+                                  <td key={col.key} className="px-0.5 py-1 text-center whitespace-nowrap">
+                                    {val}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-0.5 py-1 text-center whitespace-nowrap">{minutesLabel(row.totals.timeMinutes)}</td>
+                            </tr>,
+                          );
+                        });
+                        return rowsOut;
+                      })
                     )}
                   </tbody>
                 </table>
+                {activityGroups.length > ACTIVITY_GROUPS_PER_PAGE && (
+                  <div className="flex items-center justify-between mt-3 px-1">
+                    <span className="text-[11px] text-muted-foreground">
+                      Page {activityPage} of {Math.ceil(activityGroups.length / ACTIVITY_GROUPS_PER_PAGE)}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setActivityPage((p) => Math.max(1, p - 1))}
+                        disabled={activityPage === 1}
+                        className="px-4 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setActivityPage((p) => Math.min(Math.ceil(activityGroups.length / ACTIVITY_GROUPS_PER_PAGE), p + 1))}
+                        disabled={activityPage * ACTIVITY_GROUPS_PER_PAGE >= activityGroups.length}
+                        className="px-6 py-1.5 border border-slate-200 rounded-md text-[13px] font-medium text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed dark:border-zinc-800 dark:hover:bg-zinc-800"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

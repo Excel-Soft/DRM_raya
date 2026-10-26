@@ -1107,6 +1107,7 @@ export function registerAccountRoutes(app: Express) {
           COALESCE(e.amount_usd,0)::numeric AS amount_usd,
           COALESCE(e.alibaba_discount_usd,0)::numeric AS alibaba_discount_usd,
           e.customer_dollar,
+          e.amount_pkr,
           COALESCE(r.received,0)::numeric AS received,
           l.loan_amount, l.agreed_return_date, l.return_status, l.admin_approval_status,
           COALESCE(inv.statuses, ARRAY[]::text[]) AS invoice_statuses,
@@ -1213,6 +1214,7 @@ export function registerAccountRoutes(app: Express) {
           // discount is a separate later adjustment and must not reduce this figure).
           amountUsd: String(orderDollar),
           customerDollar: r.customer_dollar != null ? String(r.customer_dollar) : null,
+          amountPkr: r.amount_pkr != null ? String(r.amount_pkr) : null,
           partialReceivedAmount: type === "PARTIAL" ? String(received) : null,
           // Due is measured against the same Alibaba-discounted order dollar shown
           // as the row's Amount, not the raw customer/amount total, so Amount - Due

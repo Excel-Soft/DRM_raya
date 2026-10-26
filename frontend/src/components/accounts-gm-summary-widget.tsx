@@ -71,6 +71,7 @@ interface RecentGm {
     createdAt: string | null;
     amountUsd: string;
     customerDollar: string | null;
+    amountPkr: string | null;
     partialReceivedAmount: string | null;
     partialPendingAmount: string | null;
     loan: {

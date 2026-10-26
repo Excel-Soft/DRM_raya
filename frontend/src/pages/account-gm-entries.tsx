@@ -13,7 +13,7 @@ import { LoanTermsDialog } from "@/components/gm/LoanTermsDialog";
 import { GmDetailInvoicesModal } from "@/components/gm-detail-invoices-modal";
 import { AccountApprovalModal } from "@/components/account-approval-modal";
 import {
-  Plus, Eye, Pencil, Trash2, ChevronLeft, ChevronRight,
+  Plus, Eye, Trash2, ChevronLeft, ChevronRight,
   Search, Monitor, UserCog, X, Users, CheckCircle, XCircle, Wallet, Landmark
 } from "lucide-react";
 import { useState, useMemo } from "react";
@@ -132,8 +132,6 @@ export default function AccountGmEntries() {
   // ── Dialogs
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailGmId, setDetailGmId] = useState<string | null>(null);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [selectedEntry, setSelectedEntry] = useState<GmEntry | null>(null);
 
   // ── Patch 5 Stage 3 — partial receipt / loan terms dialogs
   const [partialDialogOpen, setPartialDialogOpen] = useState(false);
@@ -259,17 +257,6 @@ export default function AccountGmEntries() {
     },
   });
 
-  const updateMutation = useMutation({
-    mutationFn: (data: FormValues) =>
-      apiRequest("PATCH", `/api/gm-pool/${selectedEntry?.id}`, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
-      setEditDialogOpen(false);
-      toast({ title: "Updated", description: "GM Entry updated successfully" });
-    },
-    onError: () => toast({ title: "Error", description: "Failed to update GM entry", variant: "destructive" }),
-  });
-
   const addMemberMutation = useMutation({
     mutationFn: async (memberId: string) => {
       const token = sessionStorage.getItem("token");
@@ -386,20 +373,6 @@ export default function AccountGmEntries() {
     });
 
   const handleViewEntry = (entry: GmEntry) => { setDetailGmId(entry.id); };
-  const handleEditEntry = (entry: GmEntry) => {
-    setSelectedEntry(entry);
-    form.reset({
-      gmType: entry.gmType as any, drmId: entry.drmId,
-      memberId: entry.memberId || "", orderId: entry.orderId || "",
-      companyName: entry.companyName, salesPersonName: entry.salesPersonName || "",
-      addedByName: entry.addedByName || "", packageType: entry.packageType,
-      entryType: entry.entryType, amountUsd: entry.amountUsd,
-      customerDollar: entry.customerDollar || "", dollarRate: entry.dollarRate || "",
-      amountPkr: entry.amountPkr || "", isLoan: entry.isLoan,
-      isPartialPayment: entry.isPartialPayment, notes: entry.notes || "",
-    });
-    setEditDialogOpen(true);
-  };
 
   // ── Row background (Professional styling)
   const rowBg = (i: number) => i % 2 === 0
@@ -687,27 +660,16 @@ export default function AccountGmEntries() {
                         const isFullyApproved = entry.hodStatus?.toLowerCase() === "approved" && entry.accountManagerStatus?.toLowerCase() === "approved";
                         const isApprovedTab = statusFilter === "Approved";
                         const disableDelete = isApprovedTab || isFullyApproved || deleteMutation.isPending;
-                        const disableEdit = isFullyApproved;
 
                         return (
-                          <>
-                            <button
-                              onClick={() => !disableEdit && handleEditEntry(entry)}
-                              disabled={disableEdit}
-                              className={`p-1.5 rounded-md transition-colors ${disableEdit ? "text-slate-400 bg-slate-100 cursor-not-allowed" : "text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100"}`}
-                              title={disableEdit ? "Cannot edit fully approved entry" : "Edit"}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={() => !disableDelete && deleteMutation.mutate(entry.id)}
-                              disabled={disableDelete}
-                              className={`p-1.5 rounded-md transition-colors ${disableDelete ? "text-slate-400 bg-slate-100 cursor-not-allowed" : "text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100"}`}
-                              title={disableDelete ? (isApprovedTab ? "Delete disabled in Approved tab" : "Cannot delete fully approved entry") : "Delete"}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </>
+                          <button
+                            onClick={() => !disableDelete && deleteMutation.mutate(entry.id)}
+                            disabled={disableDelete}
+                            className={`p-1.5 rounded-md transition-colors ${disableDelete ? "text-slate-400 bg-slate-100 cursor-not-allowed" : "text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100"}`}
+                            title={disableDelete ? (isApprovedTab ? "Delete disabled in Approved tab" : "Cannot delete fully approved entry") : "Delete"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         );
                       })()}
                     </div>
@@ -879,67 +841,6 @@ export default function AccountGmEntries() {
       {/* ════════════ View Dialog ════════════ */}
       <GmDetailInvoicesModal gmId={detailGmId} onClose={() => setDetailGmId(null)} />
 
-      {/* ════════════ Edit Dialog ════════════ */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Edit GM Entry</DialogTitle></DialogHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(d => updateMutation.mutate(d))} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <FormField control={form.control} name="drmId" render={({ field }) => (
-                  <FormItem><FormLabel>DRM ID</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="companyName" render={({ field }) => (
-                  <FormItem><FormLabel>Company</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="salesPersonName" render={({ field }) => (
-                  <FormItem><FormLabel>Sale Person</FormLabel><FormControl><Input {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <FormField control={form.control} name="amountUsd" render={({ field }) => (
-                  <FormItem><FormLabel>USD</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="customerDollar" render={({ field }) => (
-                  <FormItem><FormLabel>Customer $</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="dollarRate" render={({ field }) => (
-                  <FormItem><FormLabel>$ Rate</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name="amountPkr" render={({ field }) => (
-                  <FormItem><FormLabel>PKR</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                )} />
-              </div>
-              <div className="flex items-center gap-6">
-                <FormField control={form.control} name="isLoan" render={({ field }) => (
-                  <FormItem className="flex items-center gap-2 space-y-0">
-                    <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                    <FormLabel className="font-normal">Loan</FormLabel>
-                  </FormItem>
-                )} />
-                <FormField control={form.control} name="isPartialPayment" render={({ field }) => (
-                  <FormItem className="flex items-center gap-2 space-y-0">
-                    <FormControl><Checkbox checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                    <FormLabel className="font-normal">Partial Payment</FormLabel>
-                  </FormItem>
-                )} />
-              </div>
-              <FormField control={form.control} name="notes" render={({ field }) => (
-                <FormItem><FormLabel>Notes</FormLabel><FormControl>
-                  <Textarea className="min-h-[80px]" {...field} />
-                </FormControl><FormMessage /></FormItem>
-              )} />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-                <Button type="submit" disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? "Saving..." : "Update Entry"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
       {/* ════════════ Team Members Dialog ════════════ */}
       <Dialog open={teamDialogOpen} onOpenChange={open => { setTeamDialogOpen(open); if (!open) setTeamManager(null); }}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
@@ -1054,19 +955,7 @@ export default function AccountGmEntries() {
       <AccountApprovalModal
         open={!!approveModalEntry}
         onOpenChange={(open) => !open && closeApproveModal()}
-        gmEntry={
-          approveModalEntry
-            ? {
-                ...approveModalEntry,
-                amountUsd: String(
-                  Math.max(
-                    0,
-                    Number(approveModalEntry.amountUsd || 0) - Number((approveModalEntry as any).abDiscount || 0)
-                  )
-                ),
-              }
-            : null
-        }
+        gmEntry={approveModalEntry}
       />
     </div>
   );

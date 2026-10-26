@@ -782,6 +782,13 @@ export default function HodDashboard() {
     !gmFieldErrors.extraDiscountHod &&
     Math.abs((Number(formData.extraDiscountHod) || 0) - (Number(formData.extraDiscount) || 0)) > 0.01;
 
+  // Same ratio as gm-pool-add-gm.tsx's numericValues.extraDiscountPercentage:
+  // extra $ discount over (order dollar minus Alibaba discount).
+  const finalOrderDollarForPercent = (Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0);
+  const extraDiscountPercent = finalOrderDollarForPercent > 0
+    ? ((Number(formData.extraDiscount) || 0) / finalOrderDollarForPercent) * 100
+    : 0;
+
   const updateGmForm = (field: string, value: string) => {
     const newData = { ...formData, [field]: value };
 
@@ -2642,17 +2649,12 @@ export default function HodDashboard() {
                 </div>
               </div>
 
-              {/* Row 3 */}
+              {/* Row 3: Package, Type, Customer PKR */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Package</label>
                   <Input value={formData.package || ""} readOnly className={`bg-muted ${gmFieldErrors.package ? "border-red-500" : ""}`} />
                   {gmFieldErrors.package && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Package Price</label>
-                  <Input value={formData.orderDollar || ""} readOnly className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`} />
-                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Type</label>
@@ -2673,23 +2675,18 @@ export default function HodDashboard() {
                   </Select>
                   {gmFieldErrors.type && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
-              </div>
-
-              {/* Row 4 */}
-              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Customer PKR</label>
                   <Input value={formData.pkr || ""} readOnly className={`bg-muted ${gmFieldErrors.pkr ? "border-red-500" : ""}`} />
                   {gmFieldErrors.pkr && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
+              </div>
+
+              {/* Row 4: Customer Dollar, Dollar Rate, Alibaba Discount */}
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="text-sm font-medium mb-1 block">Order Dollar</label>
-                  <Input
-                    value={(Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0)}
-                    readOnly
-                    className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`}
-                  />
-                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
+                  <label className="text-sm font-medium mb-1 block">Customer Dollar</label>
+                  <Input value={formData.customerDollar || ""} readOnly className="bg-muted" />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Dollar Rate $</label>
@@ -2709,6 +2706,24 @@ export default function HodDashboard() {
                   />
                   {gmFieldErrors.alibabaDiscount && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
                 </div>
+              </div>
+
+              {/* Row 5: Package Price, Order Dollar, $ Extra Discount */}
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Package Price</label>
+                  <Input value={formData.orderDollar || ""} readOnly className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`} />
+                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Order Dollar</label>
+                  <Input
+                    value={(Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0)}
+                    readOnly
+                    className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`}
+                  />
+                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
+                </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">$ Extra Discount</label>
                   <Input
@@ -2721,8 +2736,12 @@ export default function HodDashboard() {
                 </div>
               </div>
 
-              {/* Row 5 */}
+              {/* Row 6: Extra Discount %, Extra Pkr Discount, Request Status */}
               <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Extra Discount %</label>
+                  <Input value={`${extraDiscountPercent.toFixed(2)}%`} readOnly className="bg-muted" />
+                </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Extra Pkr Discount</label>
                   <Input
@@ -2747,6 +2766,10 @@ export default function HodDashboard() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Row 7: Extra Discount Hod */}
+              <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block text-red-500 font-semibold">
                     Extra Discount Hod <span className="text-red-500">*</span>
@@ -2769,22 +2792,6 @@ export default function HodDashboard() {
                       Must exactly match $ Extra Discount ({formData.extraDiscount}) to approve
                     </p>
                   )}
-                </div>
-              </div>
-
-              {/* Row 6 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Account Type</label>
-                  <Select defaultValue="New">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="New">New</SelectItem>
-                      <SelectItem value="Renewal">Renewal</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
 

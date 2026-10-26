@@ -353,6 +353,26 @@ export class DashboardController {
         };
       };
 
+      // NC — "New Customer" pipeline stage, same `drm.opportunities.stage`
+      // classification the Chart Data widget's "NC (New Customer)" filter
+      // uses (stage=nc), not the separate customers.status enum used above.
+      const ncRes = await pool.query(
+        `
+          select count(*)::int as count, coalesce(sum(op.value),0)::float as amount
+            from drm.opportunities op
+            inner join drm.customers c on c.id = op.customer_id
+           where lower(op.stage::text) = 'nc'
+             and coalesce(op.is_deleted,false) = false
+             and c.created_at between $1 and $2
+             ${customerFilter}
+        `,
+        customerParams,
+      );
+      const nc = {
+        count: Number(ncRes.rows[0]?.count ?? 0),
+        amount: Number(ncRes.rows[0]?.amount ?? 0),
+      };
+
       res.json({
         success: true,
         data: {
@@ -360,6 +380,7 @@ export class DashboardController {
           new: statusMap["New"] ?? { count: 0, amount: 0 },
           renew: statusMap["Renew"] ?? { count: 0, amount: 0 },
           expire: statusMap["Expire"] ?? { count: 0, amount: 0 },
+          nc,
           vm: pickService(["vm"]),
           kwa: pickService(["kwa"]),
           psa: pickService(["psa"]),
@@ -668,14 +689,31 @@ export class DashboardController {
           // the manager's own (always-empty) row.
           const teamOnlyIds = allowedUserIds.filter((id) => id !== userId);
           const uRes = await pool.query(
-            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role FROM drm.users WHERE id = ANY($1::uuid[])`,
+            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = ANY($1::uuid[])`,
             [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"]],
           );
           displayUsers = uRes.rows;
+      } else if (isManager && !allowedUserIds) {
+          // Global scope (admin/super_admin/super_hod/hod/account_manager —
+          // getDepartmentFilterUserIds returned null, i.e. "don't filter").
+          // Every other query above (activity/appointments/grades/task time/
+          // PP evidence) already treats null as "show everyone"; this list
+          // must match or their rows get computed and then thrown away.
+          // That's every manager's whole team, so list all real users.
+          const uRes = await pool.query(
+            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id != $1::uuid`,
+            [userId],
+          );
+          displayUsers = uRes.rows;
       } else {
-          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role FROM drm.users WHERE id = $1::uuid`, [userId]);
+          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid`, [userId]);
           displayUsers = uRes.rows;
       }
+
+      // under_works holds either the manager's user id or a non-uuid sentinel
+      // ("main", "", etc. — seen in the real data) — only treat it as a real
+      // manager link when it actually resolves to another user in this list.
+      const knownUserIds = new Set(displayUsers.map((u) => u.user_id));
 
       const activityMap = activityRows.rows.reduce<Record<string, any>>((acc, row) => {
           if (row.user_id) acc[row.user_id] = row;
@@ -809,9 +847,14 @@ export class DashboardController {
           methods.new = { done: ppEvidence.new, target: userTargets.new };
         }
 
+        const managerId = uRow.under_works && knownUserIds.has(uRow.under_works) ? uRow.under_works : null;
+
         return {
           userId: key,
           name: uRow.name ?? "Unknown",
+          role: uRow.role ?? null,
+          isManager: isManagerialRole(uRow.role),
+          managerId,
           methods,
           totals: {
             activities: isProductPosting ? (ppEvidence.copy + ppEvidence.new) : Number(row.total ?? 0),

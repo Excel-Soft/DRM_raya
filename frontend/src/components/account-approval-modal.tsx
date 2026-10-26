@@ -51,7 +51,7 @@ export function AccountApprovalModal({
     }
   }, [open, gmEntry?.id]);
 
-  const expectedAmount = Number(gmEntry?.amountUsd ?? 0);
+  const expectedAmount = Number(gmEntry?.amountPkr ?? 0);
   const enteredAmountNum = enteredAmount.trim() === "" ? null : Number(enteredAmount);
   const hasAmountMismatch =
     enteredAmountNum !== null &&
@@ -178,23 +178,23 @@ export function AccountApprovalModal({
               </div>
 
               <div>
-                <Label className="text-sm font-medium">Amount in Screenshot</Label>
+                <Label className="text-sm font-medium">Amount in Screenshot (PKR)</Label>
                 <Input
                   type="number"
                   step="0.01"
-                  placeholder="Enter amount shown in screenshot"
+                  placeholder="Enter PKR amount shown in screenshot"
                   className="mt-1"
                   value={enteredAmount}
                   onChange={(e) => setEnteredAmount(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Expected: ${expectedAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  Expected: Rs {expectedAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                 </p>
                 {hasAmountMismatch && (
                   <p className="text-xs text-red-600 font-medium mt-1">
                     {amountShortBy > 0
-                      ? `This amount is $${amountShortBy.toLocaleString(undefined, { maximumFractionDigits: 2 })} less than expected — cannot approve.`
-                      : `This amount is $${Math.abs(amountShortBy).toLocaleString(undefined, { maximumFractionDigits: 2 })} more than expected — cannot approve.`}
+                      ? `This amount is Rs ${amountShortBy.toLocaleString(undefined, { maximumFractionDigits: 2 })} less than expected — cannot approve.`
+                      : `This amount is Rs ${Math.abs(amountShortBy).toLocaleString(undefined, { maximumFractionDigits: 2 })} more than expected — cannot approve.`}
                   </p>
                 )}
               </div>
