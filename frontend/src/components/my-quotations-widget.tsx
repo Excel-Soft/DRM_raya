@@ -15,6 +15,9 @@ type QuotationRow = {
   statusComment: string;
   isConfirmed: boolean;
   isRejected: boolean;
+  isApproved?: boolean;
+  downstreamKind?: "gm" | "invoice" | null;
+  isGmConverted?: boolean;
 };
 
 type SummaryResponse = {
@@ -29,12 +32,8 @@ function fmtDate(value: string) {
   return d.toLocaleDateString();
 }
 
-// Backed by GET /api/sales/quotations/my-summary — the creator's own
-// quotations, bucketed into Approved (confirmed via the "Done" action
-// below) / Pending & Rejected (not yet confirmed — there's no separate
-// reject mechanism for quotations today, so this bucket is really just
-// "pending") / Converted Invoices (always empty for now — no
-// quotation-to-invoice link exists anywhere in this codebase yet).
+// Backed by GET /api/sales/quotations/my-summary — HOD-approved quotations
+// can create a GM (package) or customer invoice (service) per downstreamKind.
 export function MyQuotationsWidget() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -183,11 +182,27 @@ export function MyQuotationsWidget() {
                         </button>
                       </div>
                     ) : activeTab === "approved" ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-emerald-600 dark:text-emerald-400">{item.statusComment}</span>
-                        {item.customerId && (
+                        {item.downstreamKind === "gm" && item.customerId && !item.isGmConverted && (
                           <button
-                            onClick={() => setLocation(`/sales/create-invoice/${item.customerId}?quotationId=${item.id}`)}
+                            onClick={() =>
+                              setLocation(
+                                `/gm-pool/add-gm?quotationId=${encodeURIComponent(item.id)}&customerId=${encodeURIComponent(item.customerId!)}`,
+                              )
+                            }
+                            className="bg-sky-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-sky-700 transition-all shrink-0"
+                          >
+                            Create GM
+                          </button>
+                        )}
+                        {item.downstreamKind === "invoice" && item.customerId && !item.isConverted && (
+                          <button
+                            onClick={() =>
+                              setLocation(
+                                `/sales/create-invoice/${item.customerId}?quotationId=${item.id}`,
+                              )
+                            }
                             className="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-indigo-700 transition-all shrink-0"
                           >
                             Create Invoice

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -115,6 +115,47 @@ const fallbackPackages: GmPackage[] = [
   { id: "kwa-pro", name: "Kwa-Pro", priceUsd: 800, orderDollar: 800 },
   { id: "kap-package", name: "KAP-Package", priceUsd: 10999, orderDollar: 10999 },
 ];
+
+function normalizeQuotationPackageLabel(label: string): string {
+  return label
+    .replace(/\s+with price label.*$/i, "")
+    .replace(/\s+package\s*$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Map quotation line → GM pool package (catalog ids like basic-plus). */
+function matchGmPackageFromQuotationItem(
+  packages: GmPackage[],
+  item: { productId?: string; detail?: string; unitPrice?: number } | undefined,
+): GmPackage | undefined {
+  if (!item || packages.length === 0) return undefined;
+  const byProductId = packages.find((p) => p.id === item.productId);
+  if (byProductId) return byProductId;
+
+  const rawDetail = String(item.detail || "").trim();
+  const normalized = normalizeQuotationPackageLabel(rawDetail);
+  if (normalized) {
+    const exact = packages.find((p) => p.name.toLowerCase() === normalized);
+    if (exact) return exact;
+    const byNameLen = [...packages].sort((a, b) => b.name.length - a.name.length);
+    for (const pkg of byNameLen) {
+      const pn = pkg.name.toLowerCase();
+      if (normalized === pn || normalized.startsWith(`${pn} `) || normalized.startsWith(`${pn}-`)) {
+        return pkg;
+      }
+    }
+  }
+
+  const unitUsd = Number(item.unitPrice);
+  if (unitUsd > 0) {
+    const byPrice = packages.filter(
+      (p) => (p.orderDollar ?? p.priceUsd) === unitUsd || p.priceUsd === unitUsd,
+    );
+    if (byPrice.length === 1) return byPrice[0];
+  }
+  return undefined;
+}
 
 type CompanyOption = {
   id: string;
@@ -351,6 +392,18 @@ function CompanySearchSelect({
 export default function GmPoolAddGm() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
+  const linkedQuotationId = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("quotationId") || "";
+  }, []);
+  const linkedCustomerId = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("customerId") || "";
+  }, []);
+  const [activeQuotationId, setActiveQuotationId] = useState("");
+  useEffect(() => {
+    if (linkedQuotationId) setActiveQuotationId(linkedQuotationId);
+  }, [linkedQuotationId]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState("10");
   const [search, setSearch] = useState("");
@@ -372,6 +425,32 @@ export default function GmPoolAddGm() {
     label: "",
   });
   const { toast } = useToast();
+
+  const { data: approvedGmQuotations } = useQuery<{ success: boolean; data: Array<{ id: string; company: string; customer_id: string; service_names: string }> }>({
+    queryKey: ["/api/sales/quotations/approved-for-gm"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/sales/quotations/approved-for-gm");
+      if (!res.ok) throw new Error("Failed to load approved quotations");
+      return res.json();
+    },
+    enabled: showForm && !editRow,
+  });
+
+  const { data: linkedQuotation } = useQuery({
+    queryKey: [`/api/quotations/${activeQuotationId}`],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/quotations/${activeQuotationId}`);
+      if (!res.ok) throw new Error("Failed to load quotation");
+      return res.json();
+    },
+    enabled: !!activeQuotationId,
+  });
+
+  useEffect(() => {
+    if (linkedQuotationId) setShowForm(true);
+  }, [linkedQuotationId]);
+
+  const quotationLocked = !!activeQuotationId && !editRow;
 
   // Auto-load: once a company is selected, fetch its contact info + most
   // recent GM's package/pricing (once per selection, not per keystroke —
@@ -397,6 +476,7 @@ export default function GmPoolAddGm() {
   // editable suggestion — only when the user hasn't already typed something,
   // so re-selecting a company never clobbers in-progress input.
   useEffect(() => {
+    if (!editRow) return;
     if (!companyProfile?.lastGm) return;
     const { packageName, amountPkr, dollarRate } = companyProfile.lastGm;
     setForm((prev) => {
@@ -539,6 +619,45 @@ export default function GmPoolAddGm() {
 
 
   const packages = packagesData?.packages?.length ? packagesData.packages : fallbackPackages;
+
+  const quotationPrefillApplied = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activeQuotationId || !linkedQuotation?.data?.quotation || packages.length === 0) return;
+    if (quotationPrefillApplied.current === activeQuotationId) return;
+    const q = linkedQuotation.data.quotation;
+    const items = linkedQuotation.data.items || [];
+    const gmLine =
+      items.find(
+        (it: { detail?: string; unitPrice?: number; productId?: string; abDiscount?: number }) =>
+          matchGmPackageFromQuotationItem(packages, it),
+      ) ?? items[0];
+    const matchedPackage = matchGmPackageFromQuotationItem(packages, gmLine);
+    const customerId = q.customerId || linkedCustomerId;
+    if (customerId) {
+      setCompanySelection({ id: customerId, label: q.company || "" });
+    }
+    const catalogPrice =
+      matchedPackage?.priceUsd ?? matchedPackage?.orderDollar ?? Number(gmLine?.unitPrice ?? 0);
+    const lineAb = Number(gmLine?.abDiscount ?? 0);
+    const unitPrice = Number(gmLine?.unitPrice ?? 0);
+    const abFromQuote =
+      lineAb > 0 ? lineAb : catalogPrice > 0 && unitPrice > 0 && unitPrice < catalogPrice ? catalogPrice - unitPrice : 0;
+
+    quotationPrefillApplied.current = activeQuotationId;
+    setForm((prev) => ({
+      ...prev,
+      packageId: matchedPackage?.id ?? prev.packageId,
+      dollarRate: String(q.dollarRate ?? prev.dollarRate),
+      pkrAmount: q.pkrTotal != null ? String(Math.round(Number(q.pkrTotal))) : prev.pkrAmount,
+      alibabaDiscount: abFromQuote > 0 ? String(abFromQuote) : prev.alibabaDiscount,
+    }));
+  }, [activeQuotationId, linkedCustomerId, linkedQuotation, packages]);
+
+  useEffect(() => {
+    quotationPrefillApplied.current = null;
+  }, [activeQuotationId]);
+
   const selectedPackage = useMemo(
     () => packages.find((pkg) => pkg.id === form.packageId),
     [packages, form.packageId],
@@ -555,8 +674,11 @@ export default function GmPoolAddGm() {
       pkrAmountNum > 0 && dollarRateNum > 0
         ? Number((pkrAmountNum / dollarRateNum).toFixed(2))
         : 0;
-    const extraDollarDiscount = Number((finalOrderDollar - customerDollar).toFixed(2));
+    // Legacy Add GM: Extra $ = catalog order $ − customer $ (AB Discount is a separate column).
+    const extraDollarDiscount = Math.max(0, Number((orderDollar - customerDollar).toFixed(2)));
     const extraDiscountPkr = Number((extraDollarDiscount * dollarRateNum).toFixed(2));
+    const abDiscountPercentage =
+      packagePrice > 0 ? Number(((alibabaDiscountNum / packagePrice) * 100).toFixed(2)) : 0;
     return {
       pkrAmountNum,
       dollarRateNum,
@@ -565,11 +687,38 @@ export default function GmPoolAddGm() {
       orderDollar,
       finalOrderDollar,
       customerDollar,
+      abDiscountPercentage,
       extraDollarDiscount,
       extraDiscountPkr,
-      extraDiscountPercentage: finalOrderDollar > 0 ? (extraDollarDiscount / finalOrderDollar) * 100 : 0,
+      extraDiscountPercentage:
+        packagePrice > 0 ? Number(((extraDollarDiscount / packagePrice) * 100).toFixed(2)) : 0,
     };
   }, [form.alibabaDiscount, form.dollarRate, form.pkrAmount, selectedPackage]);
+
+  /** Partial GM: row 0 = Extra $ + row 1 = Customer $ → sum to catalog order $. Loan/Full use net after AB. */
+  const installmentTargetDollar = useMemo(() => {
+    if (form.loanMode === "installment") return numericValues.orderDollar;
+    return numericValues.finalOrderDollar;
+  }, [form.loanMode, numericValues.orderDollar, numericValues.finalOrderDollar]);
+
+  const prevLoanModeRef = useRef(form.loanMode);
+
+  // Switching into Loan GM: drop Partial/Full rows so we don't carry duplicate $799 lines.
+  useEffect(() => {
+    const prev = prevLoanModeRef.current;
+    prevLoanModeRef.current = form.loanMode;
+    if (form.loanMode !== "loan" || prev === "loan") return;
+    const dollarVal = numericValues.finalOrderDollar;
+    const pkrVal = dollarVal * numericValues.dollarRateNum;
+    setLoanRows([
+      {
+        dollar: dollarVal.toString(),
+        pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : "",
+        chequeNo: "",
+        payDate: "",
+      },
+    ]);
+  }, [form.loanMode, numericValues.finalOrderDollar, numericValues.dollarRateNum]);
 
   // Auto-fill loan dollar when package or loan mode changes
   useEffect(() => {
@@ -589,16 +738,21 @@ export default function GmPoolAddGm() {
     }
 
     if (form.loanMode === "loan") {
-      // Loan GM's first row auto-tracks the full Order Dollar amount — any
-      // further rows (added via "Add Row" to split the loan into
-      // installments) are preserved as-is, same as installment mode's rest.
+      // Loan rows must sum to net Order $ (after AB). Row 0 holds whatever is
+      // left after other installment rows — not a full duplicate per row.
       setLoanRows((prev) => {
-        const dollarVal = numericValues.finalOrderDollar;
-        const pkrVal = dollarVal * numericValues.dollarRateNum;
+        const target = numericValues.finalOrderDollar;
         const row0 = prev[0] ?? { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
         const rest = prev.slice(1);
+        const restSum = rest.reduce((sum, r) => sum + (Number(r.dollar) || 0), 0);
+        const row0Dollar = Math.max(0, Math.round((target - restSum) * 100) / 100);
+        const pkrVal = row0Dollar * numericValues.dollarRateNum;
         return [
-          { ...row0, dollar: dollarVal.toString(), pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : "" },
+          {
+            ...row0,
+            dollar: row0Dollar.toString(),
+            pkrAmount: pkrVal > 0 ? pkrVal.toFixed(0) : "",
+          },
           ...rest,
         ];
       });
@@ -672,6 +826,9 @@ export default function GmPoolAddGm() {
     else if (isMemberIdDuplicate) errs.memberId = "Member ID already exists.";
     if (!form.orderId.trim()) errs.orderId = "Order Id is required";
     else if (isOrderIdDuplicate) errs.orderId = "Order ID already exists.";
+    if (!editRow && !activeQuotationId) {
+      errs.general = "Select an HOD-approved package quotation first (Follow-up → Quotation → HOD approve → Create GM).";
+    }
     if (!form.packageId.trim() || !selectedPackage) errs.packageId = "Package is required";
 
     const pkrAmountNum = Number(form.pkrAmount);
@@ -809,6 +966,7 @@ export default function GmPoolAddGm() {
       // Full GM ("none") now carries its single Extra Discount installment row
       // too, same as Partial/Loan — no longer force-emptied.
       installments: loanRows.map(row => ({ ...row, pkr: row.pkrAmount })),
+      quotationId: activeQuotationId,
     };
 
     createMutation.mutate(payload);
@@ -1033,10 +1191,55 @@ export default function GmPoolAddGm() {
                 ? editRow.approvalStatus === "rejected_by_hod"
                   ? "This entry was rejected by the HOD. Fix the details below and resubmit — it will go straight back to the HOD's approval queue."
                   : "Update key GM fields."
-                : "Fill the details to add a new GM entry."}
+                : "Start from an HOD-approved package quotation (after follow-up and quotation approval). Member ID, Order ID, payment status, type, dropout, extension, and detail remain editable."}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!editRow ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                You cannot create a GM without the sales workflow: company follow-up (60 days) → quotation → HOD
+                approval → Create GM. Pick an approved quotation below or use{" "}
+                <strong>Create GM</strong> on your dashboard quotation list.
+              </div>
+            ) : null}
+            {!editRow ? (
+              <div className="space-y-2 max-w-xl">
+                <Label>
+                  Approved package quotation <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={activeQuotationId || undefined}
+                  onValueChange={(id) => {
+                    if (id === "__none__") return;
+                    setForm(defaultFormState);
+                    setCompanySelection({ id: "", label: "" });
+                    setLoanRows([{ dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }]);
+                    setErrors({});
+                    setActiveQuotationId(id);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select HOD-approved quotation…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(approvedGmQuotations?.data || []).length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        No approved GM quotations — add follow-up and quotation first
+                      </SelectItem>
+                    ) : (
+                      (approvedGmQuotations?.data || []).map((q) => (
+                        <SelectItem key={q.id} value={q.id}>
+                          {q.company} — {q.service_names || "Package"}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {errors.general ? (
+              <p className="text-sm text-destructive font-semibold">{errors.general}</p>
+            ) : null}
             {editRow?.approvalStatus === "rejected_by_hod" && editRow?.hodComment && (
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-400">
                 <span className="font-semibold">HOD's reason: </span>
@@ -1054,7 +1257,7 @@ export default function GmPoolAddGm() {
                     updateField("companyName", val.label);
                   }}
                   error={errors.companyName || (isCompanyDuplicate ? companyDuplicateMessage : undefined)}
-                  disabled={!!editRow}
+                  disabled={!!editRow || quotationLocked || !activeQuotationId}
                 />
               </div>
               <div className="space-y-2">
@@ -1085,22 +1288,30 @@ export default function GmPoolAddGm() {
               </div>
               <div className="space-y-2">
                 <Label>Package</Label>
-                <Select
-                  value={form.packageId}
-                  onValueChange={(val) => updateField("packageId", val)}
-                  disabled={loadingPackages}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(packages || []).map((pkg) => (
-                      <SelectItem key={pkg.id} value={pkg.id}>
-                        {pkg.name} ({pkg.orderDollar ?? pkg.priceUsd} $)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {quotationLocked && selectedPackage ? (
+                  <Input
+                    readOnly
+                    className="bg-slate-50 font-medium"
+                    value={`${selectedPackage.name} (${selectedPackage.orderDollar ?? selectedPackage.priceUsd} $)`}
+                  />
+                ) : (
+                  <Select
+                    value={form.packageId || undefined}
+                    onValueChange={(val) => updateField("packageId", val)}
+                    disabled={loadingPackages || quotationLocked}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(packages || []).map((pkg) => (
+                        <SelectItem key={pkg.id} value={pkg.id}>
+                          {pkg.name} ({pkg.orderDollar ?? pkg.priceUsd} $)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 {errors.packageId ? <p className="text-xs text-destructive">{errors.packageId}</p> : null}
               </div>
             </div>
@@ -1114,6 +1325,7 @@ export default function GmPoolAddGm() {
                   min={0}
                   placeholder="add pkr amount"
                   value={form.pkrAmount}
+                  readOnly={quotationLocked}
                   onChange={(e) => updateField("pkrAmount", e.target.value)}
                 />
                 {errors.pkrAmount ? <p className="text-xs text-destructive">{errors.pkrAmount}</p> : null}
@@ -1144,6 +1356,10 @@ export default function GmPoolAddGm() {
                   <p className="text-xs text-destructive">{errors.alibabaDiscount}</p>
                 ) : numericValues.alibabaDiscountNum > (selectedPackage?.orderDollar ?? selectedPackage?.priceUsd ?? 0) ? (
                   <p className="text-xs text-orange-500 font-medium">Warning: exceeds order dollar</p>
+                ) : numericValues.alibabaDiscountNum > 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {numericValues.abDiscountPercentage.toFixed(2)}% of package price
+                  </p>
                 ) : null}
               </div>
               <div className="space-y-2 text-blue-600">
@@ -1351,14 +1567,32 @@ export default function GmPoolAddGm() {
               <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:bg-zinc-900 dark:border-zinc-800">
                 {/* Remaining Amount Display */}
                 {(() => {
-                  const totalInstallmentDollar = loanRows.reduce((sum, row) => sum + (Number(row.dollar) || 0), 0);
-                  const remaining = numericValues.finalOrderDollar - totalInstallmentDollar;
+                  const totalInstallmentDollar = loanRows.reduce(
+                    (sum, row) => sum + (Number(row.dollar) || 0),
+                    0,
+                  );
+                  const remaining = installmentTargetDollar - totalInstallmentDollar;
                   return (
-                    <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-300 dark:border-zinc-800">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-300 dark:border-zinc-800">
                       <span className="text-sm font-medium text-gray-700 dark:text-zinc-400">
-                        Total Order Dollar: <span className="text-blue-600">${numericValues.finalOrderDollar.toFixed(2)}</span>
+                        {form.loanMode === "installment" ? (
+                          <>
+                            Total Package $:{" "}
+                            <span className="text-blue-600">${installmentTargetDollar.toFixed(2)}</span>
+                            <span className="text-muted-foreground text-xs ml-1">
+                              (Extra + Customer rows; net after AB ${numericValues.finalOrderDollar.toFixed(2)})
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            Total Order Dollar:{" "}
+                            <span className="text-blue-600">${installmentTargetDollar.toFixed(2)}</span>
+                          </>
+                        )}
                       </span>
-                      <span className={`text-sm font-semibold ${remaining < 0 ? 'text-red-600' : remaining === 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                      <span
+                        className={`text-sm font-semibold ${remaining < 0 ? "text-red-600" : remaining === 0 ? "text-green-600" : "text-orange-600"}`}
+                      >
                         Remaining: ${remaining.toFixed(2)}
                       </span>
                     </div>
@@ -1491,7 +1725,23 @@ export default function GmPoolAddGm() {
                       size="sm"
                       className="bg-emerald-600 hover:bg-emerald-700 w-fit"
                       onClick={() =>
-                        setLoanRows((prev) => [...prev, { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" }])
+                        setLoanRows((prev) => {
+                          const blank = { dollar: "", pkrAmount: "", chequeNo: "", payDate: "" };
+                          if (form.loanMode !== "loan") {
+                            return [...prev, blank];
+                          }
+                          const target = numericValues.finalOrderDollar;
+                          const restSum = prev.slice(1).reduce((s, r) => s + (Number(r.dollar) || 0), 0);
+                          const row0Dollar = Math.max(0, Math.round((target - restSum) * 100) / 100);
+                          const pkr0 =
+                            row0Dollar > 0 && numericValues.dollarRateNum > 0
+                              ? (row0Dollar * numericValues.dollarRateNum).toFixed(0)
+                              : "";
+                          const row0 = prev[0]
+                            ? { ...prev[0], dollar: row0Dollar.toString(), pkrAmount: pkr0 }
+                            : { ...blank, dollar: row0Dollar.toString(), pkrAmount: pkr0 };
+                          return [row0, ...prev.slice(1), blank];
+                        })
                       }
                     >
                       Add Row
@@ -1536,6 +1786,7 @@ export default function GmPoolAddGm() {
                 disabled={
                   createMutation.isPending ||
                   editMutation.isPending ||
+                  (!editRow && !activeQuotationId) ||
                   (!editRow && hasActiveGmForSelectedCompany)
                 }
                 title={

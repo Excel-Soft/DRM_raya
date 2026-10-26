@@ -1521,7 +1521,7 @@ export default function HodDashboard() {
                                       size="sm"
                                       variant="outline"
                                       className="h-7 text-xs px-3"
-                                      onClick={() => setLocation(`/sales/quotation?id=${item.id}`)}
+                                      onClick={() => setLocation(`/sales/quotation?id=${item.id}&view=1`)}
                                       data-testid={`button-view-quotation-${item.id}`}
                                     >
                                       View

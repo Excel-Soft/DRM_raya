@@ -1,6 +1,7 @@
 import { db, pool } from "../db";
 import { services, followupServices, type Service } from "@shared/schema";
 import { asc, eq, inArray } from "drizzle-orm";
+import { seedFollowupServicesCatalog } from "../services/followup-catalog-seed.service";
 
 export interface ServiceInput {
   name: string;
@@ -70,15 +71,7 @@ export async function ensureServicesSchema() {
     await client.query(`create index if not exists idx_followup_services_followup on followup_services(followup_id);`);
     await client.query(`create index if not exists idx_followup_services_service on followup_services(service_id);`);
 
-    await client.query(`
-      insert into services (code, name, is_active)
-      values 
-        ('ALIBABA_MEMBERSHIP','Alibaba Membership', true),
-        ('ALIBABA_SERVICES','Alibaba Services', true),
-        ('DESIGN_DEVELOPMENT','Design Development', true),
-        ('DOMAIN_HOSTING','Domain Hosting', true)
-      on conflict (code) do update set name = excluded.name, is_active = excluded.is_active;
-    `);
+    // Main + sub follow-up catalog (5 mains incl. AI Services) — see followup-services-catalog.ts
 
     await client.query(`
       create table if not exists service_subservices (
@@ -201,6 +194,8 @@ export async function ensureServicesSchema() {
         is_active = excluded.is_active,
         description = excluded.description;
     `);
+
+    await seedFollowupServicesCatalog(client);
 
     await client.query("commit");
   } catch (err) {

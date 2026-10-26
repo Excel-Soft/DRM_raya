@@ -4,6 +4,9 @@ node_modules
 # Build output
 dist
 
+# Next.js migration (local / feature branch only — not for production merges)
+frontend-next/
+
 # Environment (secrets)
 .env
 .env.*

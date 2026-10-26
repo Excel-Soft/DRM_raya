@@ -1786,6 +1786,7 @@ export default function LeadPools() {
                         { label: "Alibaba Services", value: "ALIBABA_SERVICES", color: "bg-[#f43f5e]", count: tracingSummary?.["Alibaba_Services"] ?? 0 },
                         { label: "Design Development", value: "DESIGN_DEVELOPMENT", color: "bg-[#3b82f6]", count: tracingSummary?.["Design_Development"] ?? 0 },
                         { label: "Domain Hosting", value: "DOMAIN_HOSTING", color: "bg-[#334155]", count: tracingSummary?.["Domain_Hosting"] ?? 0 },
+                        { label: "AI Services", value: "AI_SERVICES", color: "bg-[#8b5cf6]", count: tracingSummary?.["AI_Services"] ?? 0 },
                       ].map((tab, idx) => {
                         return (
                           <div
@@ -2062,24 +2063,25 @@ export default function LeadPools() {
                                             <ActionIcon onClick={() => handleEmail(customer)} icon={Mail} label="Email" />
                                             <ActionIcon onClick={() => handleWhatsApp(customer)} icon={MessageCircle} label="WhatsApp" />
                                             <ActionIcon onClick={() => handleCall(customer)} icon={Phone} label="Call" />
-                                            <Button
-                                              size="sm"
-                                              variant="default"
-                                              className={`h-5 px-1.5 rounded-sm text-white text-[8px] font-medium uppercase transition-all shadow-sm ${canCreateInvoice ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
-                                              onClick={(e) => {
-                                                if (!canCreateInvoice) {
-                                                  e.preventDefault();
-                                                  toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
-                                                  return;
-                                                }
-                                                console.log("Navigating to invoice for customer:", customer.id);
-                                                setLocation(`/sales/create-invoice/${customer.id}`);
-                                              }}
-                                              disabled={!canCreateInvoice}
-                                            >
-                                              <FileText className="w-2.5 h-2.5 mr-1" />
-                                              Invoice
-                                            </Button>
+                                            {activePool !== "Private" ? (
+                                              <Button
+                                                size="sm"
+                                                variant="default"
+                                                className={`h-5 px-1.5 rounded-sm text-white text-[8px] font-medium uppercase transition-all shadow-sm ${canCreateInvoice ? "bg-emerald-600 hover:bg-emerald-700" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
+                                                onClick={(e) => {
+                                                  if (!canCreateInvoice) {
+                                                    e.preventDefault();
+                                                    toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
+                                                    return;
+                                                  }
+                                                  setLocation(`/sales/create-invoice/${customer.id}`);
+                                                }}
+                                                disabled={!canCreateInvoice}
+                                              >
+                                                <FileText className="w-2.5 h-2.5 mr-1" />
+                                                Invoice
+                                              </Button>
+                                            ) : null}
                                             {(!isApproved || activePool !== "GMBV") && (
                                               <ActionIcon onClick={() => handleEditOpen(customer)} icon={Pencil} label="Edit" />
                                             )}
@@ -2572,24 +2574,26 @@ export default function LeadPools() {
                           <FileText className="w-4 h-4" />
                           Quotation
                         </Button>
-                        <Button
-                          size="sm"
-                          className={`text-white gap-2 ${canCreateInvoice ? "bg-indigo-500 hover:bg-indigo-600" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
-                          onClick={(e) => {
-                            if (!canCreateInvoice) {
-                              e.preventDefault();
-                              toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
-                              return;
-                            }
-                            if (viewLead) {
-                              setLocation(`/sales/create-invoice/${viewLead.id}`);
-                            }
-                          }}
-                          disabled={!canCreateInvoice}
-                        >
-                          <FileText className="w-4 h-4" />
-                          Invoice
-                        </Button>
+                        {activePool !== "Private" ? (
+                          <Button
+                            size="sm"
+                            className={`text-white gap-2 ${canCreateInvoice ? "bg-indigo-500 hover:bg-indigo-600" : "bg-slate-400 opacity-50 cursor-not-allowed"}`}
+                            onClick={(e) => {
+                              if (!canCreateInvoice) {
+                                e.preventDefault();
+                                toast({ title: "Access Denied", description: "Only Sales Executives can create invoices.", variant: "destructive" });
+                                return;
+                              }
+                              if (viewLead) {
+                                setLocation(`/sales/create-invoice/${viewLead.id}`);
+                              }
+                            }}
+                            disabled={!canCreateInvoice}
+                          >
+                            <FileText className="w-4 h-4" />
+                            Invoice
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           className="bg-rose-500 hover:bg-rose-600 text-white gap-2"
@@ -3704,7 +3708,7 @@ function PrivatePoolFollowupDetail({ activeService, onBack }: { activeService: s
     setFollowPage(1);
   };
 
-  const standardServices = ["Alibaba Membership", "Alibaba Services", "Design Development", "Domain Hosting"];
+  const standardServices = ["Alibaba Membership", "Alibaba Services", "Design Development", "Domain Hosting", "AI Services"];
   const uniqueServices = Array.from(new Set(followupsData.map((r: any) => r.serviceType || "Alibaba Membership"))).filter(Boolean) as string[];
   const allTabServices = Array.from(new Set([...standardServices, ...uniqueServices]));
 
