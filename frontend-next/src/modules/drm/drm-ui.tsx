@@ -116,12 +116,15 @@ export function DrmSection({
   actions,
   children,
   className,
+  bodyClassName,
 }: {
   title: string;
   description?: string;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  /** Pass `!p-0` for full-bleed tables (toolbar + grid flush to card edges). */
+  bodyClassName?: string;
 }) {
   return (
     <Card className={cn("!p-0", className)}>
@@ -134,7 +137,7 @@ export function DrmSection({
         </div>
         {actions}
       </div>
-      <div className="p-4">{children}</div>
+      <div className={cn("p-4", bodyClassName)}>{children}</div>
     </Card>
   );
 }

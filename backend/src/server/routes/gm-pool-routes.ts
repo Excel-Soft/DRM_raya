@@ -6,6 +6,8 @@ import { tempContactsRepository } from "../repositories/temp-contacts.repository
 import { resolveOrCreateCanonicalDrmId, generateUniqueDrmId } from "../utils/drm-id-utils";
 import { isManagerialRole, normalizeRole, ROLES } from "../utils/role-utils";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 import {
   generateDefaultInvoicesForGm,
   generateInvoicesAfterFinalGmApproval,
@@ -606,6 +608,51 @@ export function registerGmPoolRoutes(app: Express) {
 
   router.get("/gm-pool/check-duplicate", handleGmDuplicateCheck);
   router.get("/api/gm-pool/check-duplicate", handleGmDuplicateCheck);
+
+  const GM_PAYMENT_PROOF_DIR = path.join(process.cwd(), "uploads", "gm-payment-proofs");
+  fs.mkdirSync(GM_PAYMENT_PROOF_DIR, { recursive: true });
+
+  router.post(
+    "/gm-pool/upload-payment-proof",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_CREATE, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        const multer = (await import("multer")).default;
+        const storage = multer.diskStorage({
+          destination: (_req, _file, cb) => cb(null, GM_PAYMENT_PROOF_DIR),
+          filename: (_req, file, cb) => {
+            const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+            cb(null, `${unique}${path.extname(file.originalname)}`);
+          },
+        });
+        const upload = multer({
+          storage,
+          limits: { fileSize: 5 * 1024 * 1024 },
+          fileFilter: (_req, file, cb) => {
+            const ok =
+              file.mimetype.startsWith("image/") ||
+              file.mimetype === "application/pdf" ||
+              /\.(png|jpe?g|gif|webp|pdf)$/i.test(file.originalname);
+            cb(ok ? null : new Error("Only images or PDF are allowed"), ok);
+          },
+        }).single("file");
+
+        upload(req as any, res as any, (err: unknown) => {
+          if (err) {
+            const message = err instanceof Error ? err.message : "Upload failed";
+            return res.status(400).json({ error: message });
+          }
+          const file = (req as { file?: { filename: string } }).file;
+          if (!file) return res.status(400).json({ error: "No file uploaded" });
+          return res.json({ url: `/uploads/gm-payment-proofs/${file.filename}` });
+        });
+      } catch (err) {
+        console.error("[gm-pool] payment proof upload error:", err);
+        return res.status(500).json({ error: "Failed to upload payment proof" });
+      }
+    },
+  );
 
   router.get("/gm-pool", async (req, res) => {
     try {

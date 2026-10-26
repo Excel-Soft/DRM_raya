@@ -1,5 +1,5 @@
 import { Router, type Request, type Response, type Express } from "express";
-import { authMiddleware } from "../middleware/auth.middleware";
+import { authMiddleware, requireRole } from "../middleware/auth.middleware";
 import { rolesRepository } from "../repositories/roles.repository";
 import { urlPermissionsRepository } from "../repositories/url-permissions.repository";
 import { policiesRepository } from "../repositories/policies.repository";
@@ -46,6 +46,10 @@ function isValidIpOrCidr(value: string): boolean {
 
   return false;
 }
+
+/** Registry ADMIN_ONLY + Next DRM IP List — read/write on allowed IP configuration. */
+const ALLOWED_IP_CONFIG_ROLES = ["admin", "super_admin", "administrator", "super_hod"] as const;
+const allowedIpRoleGate = requireRole(...ALLOWED_IP_CONFIG_ROLES);
 
 export function registerSettingsRoutes(app: Express) {
   // Auth is enforced globally in `server/routes.ts` (or via MOCK_AUTH when enabled).
@@ -283,7 +287,7 @@ export function registerSettingsRoutes(app: Express) {
   // Allowed IPs Routes
   // ========================================
 
-  settingsRouter.get("/allowed-ips", async (req: Request, res: Response) => {
+  settingsRouter.get("/allowed-ips", allowedIpRoleGate, async (req: Request, res: Response) => {
     try {
       const allowedIps = await allowedIpsRepository.findAll();
       res.json(allowedIps);
@@ -293,7 +297,7 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  settingsRouter.get("/allowed-ips/:id", async (req: Request, res: Response) => {
+  settingsRouter.get("/allowed-ips/:id", allowedIpRoleGate, async (req: Request, res: Response) => {
     try {
       const allowedIp = await allowedIpsRepository.findById(req.params.id);
       if (!allowedIp) {
@@ -306,7 +310,7 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  settingsRouter.post("/allowed-ips", async (req: Request, res: Response) => {
+  settingsRouter.post("/allowed-ips", allowedIpRoleGate, async (req: Request, res: Response) => {
     try {
       const data = insertAllowedIpSchema.parse(req.body);
       const ipCidr = data.ip_cidr?.trim();
@@ -332,7 +336,7 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  settingsRouter.patch("/allowed-ips/:id", async (req: Request, res: Response) => {
+  settingsRouter.patch("/allowed-ips/:id", allowedIpRoleGate, async (req: Request, res: Response) => {
     try {
       const data = insertAllowedIpSchema.partial().parse(req.body);
       if (data.ip_cidr !== undefined) {
@@ -367,7 +371,7 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  settingsRouter.delete("/allowed-ips/:id", async (req: Request, res: Response) => {
+  settingsRouter.delete("/allowed-ips/:id", allowedIpRoleGate, async (req: Request, res: Response) => {
     try {
       const target = await allowedIpsRepository.findById(req.params.id);
       const deleted = await allowedIpsRepository.delete(req.params.id);

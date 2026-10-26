@@ -264,9 +264,14 @@ export const APP_NAV_GROUPS: NavGroup[] = [
     icon: "account",
     permKey: "Account",
     children: [
-      { id: "acct-gm", label: "Create GM", href: "/account/gm-entries", permKey: "Account" },
-      { id: "acct-invoice", label: "Make Invoice", href: "/account/invoices", permKey: "Account" },
-      { id: "acct-ledger", label: "Company Ledger", href: "/account/ledger", permKey: "Account" },
+      { id: "acct-gm", label: "Create GM", href: "/dashboard/account/gm-entries", permKey: "Account" },
+      { id: "acct-temp-gm", label: "Add Temp GM", href: "/dashboard/account/temp-gm", permKey: "Account" },
+      { id: "acct-refund-gm", label: "Add Refund GM", href: "/dashboard/account/refund-gm", permKey: "Account" },
+      { id: "acct-donations", label: "Donations", href: "/dashboard/account/donations", permKey: "Account" },
+      { id: "acct-invoice", label: "Make Invoice", href: "/dashboard/account/invoices", permKey: "Account" },
+      { id: "acct-ledger", label: "Company Ledger", href: "/dashboard/account/ledger", permKey: "Account" },
+      { id: "acct-ab-report", label: "AB Report", href: "/dashboard/account/ab-report", permKey: "Account" },
+      { id: "acct-dollar", label: "Dollar System", href: "/dashboard/account/dollar-system", permKey: "Account" },
     ],
   },
   {

@@ -137,16 +137,31 @@ companyLedgerRouter.get("/api/reports/ledger", requireFinancialPermission(FINANC
   }
 });
 
+function normalizeCompanyKey(raw: string): string {
+  try {
+    return decodeURIComponent(raw).trim().replace(/\s+/g, " ");
+  } catch {
+    return raw.trim().replace(/\s+/g, " ");
+  }
+}
+
 // GET /api/account/history/:companyId
 companyLedgerRouter.get("/api/account/history/:companyId", requireFinancialPermission(FINANCIAL_ACTIONS.accountLedgerView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
   try {
-    const { companyId } = req.params; // Using company name as ID for now since that's how it's linked
-    
-    // Invoices for this company
-    const companyInvoices = await db.query.invoices.findMany({
-      where: eq(invoices.customerName, companyId),
-      orderBy: [desc(invoices.createdAt)]
+    const companyKey = normalizeCompanyKey(req.params.companyId || "");
+
+    // Match invoices case-insensitively (ledger links by customer_name text)
+    let companyInvoices = await db.query.invoices.findMany({
+      where: sql`lower(trim(${invoices.customerName})) = lower(trim(${companyKey}))`,
+      orderBy: [desc(invoices.createdAt)],
     });
+
+    if (companyInvoices.length === 0 && companyKey.length > 0) {
+      companyInvoices = await db.query.invoices.findMany({
+        where: ilike(invoices.customerName, `%${companyKey.replace(/[%_]/g, "")}%`),
+        orderBy: [desc(invoices.createdAt)],
+      });
+    }
 
     // Payments for this company
     // Usually tied via referenceId = invoice.id

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:route-access": "node --import tsx --test src/lib/route-access.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

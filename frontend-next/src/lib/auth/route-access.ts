@@ -39,6 +39,7 @@ export const ROUTE_PERMISSIONS: Record<string, string[]> = {
     "/analytics": ["admin", "super_hod", "hod", "sales_manager", "account_manager", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager"],
     "/support": ["admin", "super_hod", "hod", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager", "seo_smm_executive"],
     "/gm-pool": ["admin", "super_hod", "hod", "sales_assistant_manager", "sales_manager", "sales_executive", "account_manager", "manager", "software_manager", "software_executive", "lead_manager", "lead_executive", "marketing_manager", "service_manager", "service_assistant_manager", "service_executive", "reception_manager", "product_posting_manager", "product_posting_executive", "posting_executive", "qa_manager", "verification_manager", "dd_manager", "dd_executive", "it_manager"],
+    "/account": ["admin", "super_hod", "hod", "account_manager", "sales_manager"],
     "/policies": ["admin", "super_hod", "reception_manager", "software_manager", "lead_manager", "lead_executive", "marketing_manager", "account_manager"],
     "/notice-board": ["admin", "super_hod", "reception_manager", "service_manager", "software_manager", "lead_manager", "lead_executive", "marketing_manager", "account_manager", "seo_smm_manager", "seo_smm_executive", "complaint_manager"],
     "/dashboard/software-manager": ["admin", "software_manager"],

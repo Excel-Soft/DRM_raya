@@ -119,6 +119,10 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/dashboard/software-manager", component: "SoftwareManagerDashboard", title: "Software Manager Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "software_manager"] },
   { path: "/dashboard/software-executive", component: "SoftwareExecutiveDashboard", title: "Software Executive Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "software_executive", "software_manager"] },
   { path: "/dashboard/marketing-manager", component: "MarketingManagerDashboard", title: "Marketing Manager Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "marketing_manager"] },
+  { path: "/dashboard/complaint-manager", component: "ComplaintManagerDashboard", title: "Complaint Manager Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "complaint_manager"], notes: "Documented in App.tsx; ROLE_DASHBOARDS → this path. No dedicated useRouteProtection prefix." },
+  { path: "/dashboard/developer", component: "DeveloperDashboard", title: "Developer Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "developer"], notes: "Documented in App.tsx; ROLE_DASHBOARDS → this path." },
+  { path: "/dashboard/it-executive", component: "ItExecutiveDashboard", title: "IT Executive Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "it_executive"], notes: "Documented in App.tsx; ROLE_DASHBOARDS → this path. /it/* prefix guard also lists it_executive." },
+  { path: "/dashboard/seo-smm-executive", component: "SeoSmmExecutiveDashboard", title: "SEO/SMM Executive Dashboard", module: "Dashboard", sidebarVisible: false, isInternal: true, allowedRoles: ["admin", "seo_smm_executive"], notes: "Documented in App.tsx; ROLE_DASHBOARDS → this path." },
   { path: "/product-posting", component: "ProductPostingDashboard", title: "Product Posting", module: "Product Posting", sidebarVisible: false, isInternal: true, allowedRoles: POSTING, notes: "Canonical role-aware product-posting entry." },
   { path: "/product-posting/manager", component: "ProductPostingDashboard", title: "Product Posting (Manager)", module: "Product Posting", sidebarVisible: false, isInternal: true, allowedRoles: POSTING, notes: "Role-specific entry to the shared ProductPostingDashboard; targeted by the top-bar role switcher. Intentionally kept (not merged)." },
   { path: "/product-posting/executive", component: "ProductPostingDashboard", title: "Product Posting (Executive)", module: "Product Posting", sidebarVisible: false, isInternal: true, allowedRoles: POSTING, notes: "Role-specific entry to the shared ProductPostingDashboard; targeted by the top-bar role switcher. Intentionally kept (not merged)." },
@@ -214,6 +218,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/drm/increment", component: "IncrementPage", title: "Increment", module: "DRM/DD", sidebarVisible: true, sidebarGroup: "Increment", permissionKey: "Increment", allowedRoles: ["admin", "super_admin", "super_hod", "hod", "manager"] },
   { path: "/drm/performance", component: "PerformancePage", title: "Performance", module: "DRM/DD", sidebarVisible: false, isInternal: true, allowedRoles: ADMIN_ONLY },
   { path: "/drm/late-coming", component: "LateComingPage", title: "Late Coming", module: "DRM/DD", sidebarVisible: false, isInternal: true, allowedRoles: ADMIN_ONLY },
+  { path: "/drm/branches", component: "BranchesPage", title: "Branches", module: "DRM/DD", sidebarVisible: true, sidebarGroup: "DRM Setting", permissionKey: "Branches", allowedRoles: ALL_STAFF, notes: "App.tsx + sidebar. API GET /api/drm/branches: any authenticated user; POST/PATCH/DELETE requireRole(admin,super_admin,super_hod,hod) per branches-routes.ts." },
 
   // ── Accounts ──────────────────────────────────────────────────────────
   { path: "/account/gm-entries", component: "AccountGmEntries", title: "Create GM", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF, notes: "Canonical GM entries route." },
@@ -225,6 +230,9 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/account/ledger", component: "AccountLedger", title: "Company Ledger", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
   { path: "/account/ab-report", component: "AbReport", title: "AB Report", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
   { path: "/account/dollar-system", component: "DollarSystem", title: "Dollar System", module: "Accounts", sidebarVisible: true, sidebarGroup: "Account", permissionKey: "Account", allowedRoles: ALL_STAFF },
+  { path: "/account/dollar-buying", component: "DollarBuying", title: "Dollar Buying", module: "Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "App.tsx only (not sidebar). API /api/account/buying — requireFinancialPermission (account-routes.ts)." },
+  { path: "/account/dollar-advance-payment", component: "DollarAdvancePayment", title: "Dollar Advance Payment", module: "Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "App.tsx only. API /api/account/advance-payments — requireFinancialPermission (account-routes.ts)." },
+  { path: "/account/history/:companyId", component: "AccountHistory", title: "Company Account History", module: "Accounts", sidebarVisible: false, isDynamic: true, isInternal: true, allowedRoles: ALL_STAFF, notes: "Dynamic route from ledger. API GET /api/account/history/:companyId — requireFinancialPermission (company-ledger-routes.ts)." },
 
   // ── Office Accounts ───────────────────────────────────────────────────
   { path: "/office/trial-balance-report", component: "OfficeTrialBalance", title: "Trial Balance Report", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
@@ -235,6 +243,8 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/office/vas", component: "OfficeVasPage", title: "Office Vas", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
   { path: "/office/expenses", component: "OfficeExpenses", title: "Office Expense", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
   { path: "/office/cheques", component: "ChequeSystem", title: "Cheque System", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF },
+  { path: "/office/general-ledger", component: "GeneralLedger", title: "General Ledger", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF, notes: "Added Phase 0B. API /api/office/ledger* — requireFinancialPermission (office-account-routes.ts)." },
+  { path: "/office/journal-voucher", component: "JournalVoucher", title: "Journal Voucher", module: "Office Accounts", sidebarVisible: true, sidebarGroup: "Office Account", permissionKey: "Office Account", allowedRoles: ALL_STAFF, notes: "Added Phase 0B. API /api/office/journal-vouchers* — requireFinancialPermission (office-account-routes.ts)." },
   { path: "/office/vas-documents", component: "VasDocumentsPage", title: "VAS Documents", module: "Office Accounts", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
 
   // ── Reports ───────────────────────────────────────────────────────────
@@ -286,6 +296,7 @@ export const routeRegistry: RouteEntry[] = [
   // ── Notice / Policies ─────────────────────────────────────────────────
   { path: "/notice-board", component: "NoticeBoard", title: "Notice Board", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "Notice Board", allowedRoles: ["admin", "super_hod", "reception_manager", "account_manager"] },
   { path: "/policies", component: "PoliciesSettings", title: "DRM Policies", module: "Notice", sidebarVisible: true, sidebarGroup: "Notice", permissionKey: "DRM Policies", allowedRoles: ["admin", "super_hod", "reception_manager", "account_manager"] },
+  { path: "/approvals", component: "Approvals", title: "Unified Approvals Inbox", module: "Misc", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF, notes: "Distinct from /pms/approvals (PMS pending projects). UI calls /api/approvals/*; backend approval-routes.ts is currently an empty STUB — API returns 404. Open backend/product gap." },
   { path: "/workspace", component: "Workspace", title: "Workspace", module: "Misc", sidebarVisible: false, isInternal: true, allowedRoles: ALL_STAFF },
 
   // ── Portfolio ─────────────────────────────────────────────────────────
@@ -295,6 +306,7 @@ export const routeRegistry: RouteEntry[] = [
   // ── Settings / Admin / Users ──────────────────────────────────────────
   { path: "/super-admin", component: "SuperAdminDashboard", title: "Super Admin", module: "Settings", sidebarVisible: true, sidebarGroup: "DRM Setting", permissionKey: "Admin", allowedRoles: ADMIN_ONLY },
   { path: "/admin", component: "AdminDashboard", title: "Admin", module: "Settings", sidebarVisible: true, sidebarGroup: "DRM Setting", permissionKey: "Admin", allowedRoles: ADMIN_ONLY },
+  { path: "/admin/audit-logs", component: "AuditLogsPage", title: "Audit Logs", module: "Settings", sidebarVisible: true, sidebarGroup: "DRM Setting", permissionKey: "Admin", allowedRoles: ["admin", "super_admin", "super_hod"], notes: "Phase 0B. Backend audit-log-routes requireRole(admin,super_admin,super_hod). Client /admin prefix guard is wider — documented in auth-mapping-backlog.json." },
   { path: "/drm/users/add", component: "AddUser", title: "Add User", module: "Users", sidebarVisible: true, sidebarGroup: "Users", permissionKey: "Users", allowedRoles: ADMIN_ONLY },
   { path: "/drm/users/list", component: "UserList", title: "User List", module: "Users", sidebarVisible: true, sidebarGroup: "Users", permissionKey: "Users", allowedRoles: ADMIN_ONLY },
   { path: "/drm/users/groups", component: "UserGroups", title: "User Groups", module: "Users", sidebarVisible: true, sidebarGroup: "Users", permissionKey: "Users", allowedRoles: ADMIN_ONLY },

@@ -92,10 +92,13 @@ const gmRejectReasonSchema = z.object({
 }).strict();
 
 const donationCreateSchema = z.object({
+  companyName: z.string().trim().max(500).optional().default(""),
+  title: z.string().trim().max(50).optional().default("Mr."),
   personName: z.string().trim().min(1, "personName is required").max(500),
   amount: z.coerce.number().positive("amount must be positive"),
-  comment: z.string().trim().max(2000).optional(),
-}).strict();
+  currency: z.enum(["PKR", "USD", "Dollar"]).optional().default("PKR"),
+  comment: z.string().trim().max(2000).optional().nullable(),
+});
 
 const tempGmCreateSchema = z.object({
   companyName: z.string().trim().min(1, "companyName is required").max(500),
@@ -2384,23 +2387,20 @@ export function registerAccountRoutes(app: Express) {
   // GET /api/account/donations - List all donations
   app.get("/api/account/donations", async (req, res) => {
     try {
-      // Actual DB columns: id, donor_name, amount, date, notes, created_at, updated_at, is_deleted
       const { rows } = await pool.query(
         `SELECT
            id,
-           donor_name AS "personName",
-           ''         AS "companyName",
-           'Mr.'      AS title,
+           company_name AS "companyName",
+           title,
+           person_name AS "personName",
            amount,
-           'PKR'      AS currency,
-           notes      AS comment,
-           'Pending'  AS status,
-           COALESCE(date, created_at) AS "createdAt"
+           currency,
+           comment,
+           status,
+           created_at AS "createdAt"
          FROM drm.donations
-         WHERE is_deleted IS NOT TRUE
-         ORDER BY COALESCE(date, created_at) DESC`
+         ORDER BY created_at DESC`
       );
-      console.log(`[donations GET] rows returned: ${rows.length}`, rows.length > 0 ? JSON.stringify(rows[0]) : 'empty');
       res.json(rows);
     } catch (error) {
       console.error("Error fetching donations:", error);
@@ -2441,31 +2441,18 @@ export function registerAccountRoutes(app: Express) {
   app.post("/api/account/donations", requireFinancialPermission(FINANCIAL_ACTIONS.donationCreate), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      // Actual columns: donor_name, amount, date, notes
-            const _don = donationCreateSchema.safeParse(req.body);
-      if (!_don.success) return res.status(400).json({ error: "Invalid payload", issues: _don.error.issues });
-      const { personName, amount, comment } = _don.data;
-      if (!personName || !amount) return res.status(400).json({ error: "personName and amount are required" });
+      const parsed = donationCreateSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid payload", issues: parsed.error.issues });
+      const { companyName, title, personName, amount, currency, comment } = parsed.data;
 
       const { rows } = await pool.query(
-        `INSERT INTO drm.donations (donor_name, amount, date, notes)
-         VALUES ($1, $2, now(), $3)
-         RETURNING id, donor_name AS "personName", amount,
-                   COALESCE(date, created_at) AS "createdAt", notes AS comment`,
-        [personName, amount, comment || null]
+        `INSERT INTO drm.donations (company_name, title, person_name, amount, currency, comment, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'Pending')
+         RETURNING id, company_name AS "companyName", title, person_name AS "personName",
+                   amount, currency, comment, status, created_at AS "createdAt"`,
+        [companyName || "", title || "Mr.", personName, amount, currency || "PKR", comment ?? null]
       );
-      const row = rows[0];
-      res.status(201).json({
-        id: row.id,
-        personName: row.personName || personName,
-        companyName: '',
-        title: 'Mr.',
-        amount: row.amount,
-        currency: 'PKR',
-        comment: row.comment || null,
-        status: 'Pending',
-        createdAt: row.createdAt,
-      });
+      res.status(201).json(rows[0]);
     } catch (error) {
       console.error("Error creating donation:", error);
       res.status(500).json({ error: "Failed to create donation" });
@@ -4156,15 +4143,18 @@ export function registerAccountRoutes(app: Express) {
       let gmWhere = "coalesce(g.is_deleted, false) = false AND g.status = 'Approved'";
       let buyWhere = "1=1";
 
-      if (dateFrom) {
-        params.push(new Date(String(dateFrom)));
-        gmWhere  += ` AND g.created_at >= $${params.length}`;
-        buyWhere += ` AND date >= $${params.length}`;
-      }
-      if (dateTo) {
-        params.push(new Date(String(dateTo)));
-        gmWhere  += ` AND g.created_at <= $${params.length}`;
-        buyWhere += ` AND date <= $${params.length}`;
+      if (dateFrom && dateTo) {
+        params.push(String(dateFrom), String(dateTo));
+        gmWhere += ` AND g.created_at >= $1::date AND g.created_at < ($2::date + INTERVAL '1 day')`;
+        buyWhere += ` AND date >= $1::date AND date < ($2::date + INTERVAL '1 day')`;
+      } else if (dateFrom) {
+        params.push(String(dateFrom));
+        gmWhere += ` AND g.created_at >= $1::date`;
+        buyWhere += ` AND date >= $1::date`;
+      } else if (dateTo) {
+        params.push(String(dateTo));
+        gmWhere += ` AND g.created_at < ($1::date + INTERVAL '1 day')`;
+        buyWhere += ` AND date < ($1::date + INTERVAL '1 day')`;
       }
 
       const reconcile = await pool.query(`
@@ -4299,13 +4289,12 @@ export function registerAccountRoutes(app: Express) {
       let chequeDateWhere = "";
 
       if (dateFrom && dateTo) {
-        params.push(new Date(String(dateFrom)));
-        params.push(new Date(String(dateTo)));
-        dateWhere = ` AND created_at >= $1 AND created_at <= $2`;
-        dateWhereG = ` AND g.created_at >= $1 AND g.created_at <= $2`;
-        buyingDateWhere = ` AND date >= $1 AND date <= $2`;
-        advanceDateWhere = ` AND pay_date >= $1 AND pay_date <= $2`;
-        chequeDateWhere = ` AND cheque_date >= $1 AND cheque_date <= $2`;
+        params.push(String(dateFrom), String(dateTo));
+        dateWhere = ` AND created_at >= $1::date AND created_at < ($2::date + INTERVAL '1 day')`;
+        dateWhereG = ` AND g.created_at >= $1::date AND g.created_at < ($2::date + INTERVAL '1 day')`;
+        buyingDateWhere = ` AND date >= $1::date AND date < ($2::date + INTERVAL '1 day')`;
+        advanceDateWhere = ` AND pay_date >= $1::date AND pay_date < ($2::date + INTERVAL '1 day')`;
+        chequeDateWhere = ` AND cheque_date >= $1::date AND cheque_date < ($2::date + INTERVAL '1 day')`;
       }
 
       const { rows } = await pool.query(`
@@ -4499,6 +4488,13 @@ export function registerAccountRoutes(app: Express) {
       const dollarPkrRate: number | null = null;
       const cash_in_hand = sum_pkr - Number(stats.refund_amount) + lastClosingCashInHand;
 
+      const balanceLastQuarterUsd = Number(stats.balance_last_quarter_amount || 0);
+      const balanceCurrentQuarterUsd = Number(stats.balance_current_quarter_amount || 0);
+      const balanceLastQuarterCount = Number(stats.balance_last_quarter_count || 0);
+      const balanceCurrentQuarterCount = Number(stats.balance_current_quarter_count || 0);
+      const balanceDisplayUsd = balanceLastQuarterUsd + balanceCurrentQuarterUsd;
+      const balanceDisplayCount = balanceLastQuarterCount + balanceCurrentQuarterCount;
+
       const dollarBalanceUsd = Number(stats.total_dollar_balance) + Number(stats.total_dollar_buy);
       const requiredUsd = Number(stats.pending_dollar_amount);
       // "Get Funds": USD shortfall still needed if pending dollar requirements exceed what's
@@ -4543,9 +4539,10 @@ export function registerAccountRoutes(app: Express) {
           },
           dollars: {
             balance: {
-              count: 0, amount: Number(stats.total_dollar_balance),
-              lastQuarter: { count: Number(stats.balance_last_quarter_count || 0), amount: Number(stats.balance_last_quarter_amount || 0) },
-              currentQuarter: { count: Number(stats.balance_current_quarter_count || 0), amount: Number(stats.balance_current_quarter_amount || 0) },
+              count: balanceDisplayCount,
+              amount: balanceDisplayUsd,
+              lastQuarter: { count: balanceLastQuarterCount, amount: balanceLastQuarterUsd },
+              currentQuarter: { count: balanceCurrentQuarterCount, amount: balanceCurrentQuarterUsd },
             },
             buy: {
               count: Number(stats.buy_count || 0), amount: Number(stats.total_dollar_buy),
@@ -4585,7 +4582,7 @@ export function registerAccountRoutes(app: Express) {
               remainingExtraDiscount: { count: 0, amount: Math.max(0, exReceivedUsd - exPaidUsd) }
             },
             dollars: {
-              balance: { count: Number(stats.client_count), amount: Number(stats.total_dollar_balance) },
+              balance: { count: balanceDisplayCount, amount: balanceDisplayUsd },
               buy: { count: Number(stats.buy_count), amount: Number(stats.total_dollar_buy) }
             },
             pendingRecovery: {
@@ -4784,10 +4781,10 @@ export function registerAccountRoutes(app: Express) {
       const params: any[] = [];
       let dateWhere = "";
       if (dateFrom && dateTo) {
-        params.push(new Date(String(dateFrom)));
-        params.push(new Date(String(dateTo)));
+        params.push(String(dateFrom), String(dateTo));
       }
-      const range = (col: string) => dateFrom && dateTo ? ` AND ${col} >= $1 AND ${col} <= $2` : "";
+      const range = (col: string) =>
+        dateFrom && dateTo ? ` AND ${col} >= $1::date AND ${col} < ($2::date + INTERVAL '1 day')` : "";
 
       const COLS = {
         gm: [

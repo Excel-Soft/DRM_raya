@@ -23,6 +23,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/dashboard/super-admin") ||
     pathname.startsWith("/dashboard/admin") ||
     pathname.startsWith("/dashboard/drm/users") ||
+    pathname.startsWith("/dashboard/account") ||
+    pathname.startsWith("/dashboard/sales") ||
     pathname.startsWith("/hr") ||
     pathname === "/dashboard";
 
@@ -40,7 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-0 flex-1">
         <aside
           className={cn(
-            "hidden shrink-0 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40 md:flex md:flex-col",
+            "sticky top-14 z-20 hidden max-h-[calc(100vh-3.5rem)] shrink-0 self-start overflow-y-auto border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/40 md:block",
             collapsed ? "w-14" : "w-64 lg:w-72",
           )}
         >
@@ -50,7 +52,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             authenticated={authenticated}
             collapsed={collapsed}
             onToggleCollapsed={toggleCollapsed}
-            className="pt-3"
+            className="py-3"
           />
         </aside>
         <main

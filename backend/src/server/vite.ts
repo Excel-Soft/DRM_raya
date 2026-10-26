@@ -44,6 +44,12 @@ export async function setupVite(app: Express, server: Server) {
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
 
+    // Never serve the SPA shell for API paths — unhandled /api/* should 404 as JSON.
+    if (url.startsWith("/api/")) {
+      res.status(404).json({ success: false, message: "Not found" });
+      return;
+    }
+
     try {
       const clientTemplate = path.resolve(
         import.meta.dirname,

@@ -90,6 +90,7 @@ import {
 import { Link, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "@/lib/feature-flags";
+import { canShowAuditLogsNav } from "@/lib/route-access";
 import { useState, useEffect } from "react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -670,6 +671,11 @@ export function AppSidebar() {
          ...(userRoleName ? [userRoleName.toLowerCase().replace(/\s+/g, "_")] : []),
          ...rolesToUse.map(r => r.toLowerCase().replace(/\s+/g, "_"))
       ];
+
+      // Audit Logs: align nav with backend audit viewer roles (not authorization).
+      if (subItem.url === "/admin/audit-logs" && !canShowAuditLogsNav(userRoleName, rolesToUse)) {
+         return false;
+      }
 
       // Hide Invoice Pool for reception_manager (sales-only feature)
       if (subItem.title === "Invoice Pool" && currentUserRoles.includes("reception_manager")) {

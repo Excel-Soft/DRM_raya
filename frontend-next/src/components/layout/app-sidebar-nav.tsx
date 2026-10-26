@@ -161,7 +161,7 @@ export function AppSidebarNav({
   );
 
   return (
-    <nav className={cn("flex h-full flex-col", className)} aria-label="Main">
+    <nav className={cn("flex flex-col", className)} aria-label="Main">
       <div className="flex items-center justify-between gap-2 px-3 pb-2">
         {!collapsed && (
           <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
@@ -181,7 +181,7 @@ export function AppSidebarNav({
           )}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+      <div className="px-2 pb-3">
         <div className="space-y-3">
           {authenticated && PLATFORM_NAV.length > 0 && (
             <div>
@@ -213,9 +213,8 @@ export function AppSidebarNav({
         </div>
       </div>
       {!collapsed && (
-        <p className="border-t border-zinc-200 px-3 py-3 text-[10px] leading-relaxed text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-          Legacy items open in Vite when <code className="text-[9px]">NEXT_PUBLIC_LEGACY_APP_ORIGIN</code> is set.
-          Menu visibility is not authorization.
+        <p className="mx-2 mt-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 text-[10px] leading-snug text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+          Legacy links need <code className="text-[9px]">NEXT_PUBLIC_LEGACY_APP_ORIGIN</code>. Menu ≠ access control.
         </p>
       )}
     </nav>

@@ -147,7 +147,7 @@ async function ensureCustomersSchema() {
 }
 
 const periodSchema = z.enum(["TD", "WC", "MC", "QC", "YC", "ALL"]);
-const tracingGrades = ["A+", "A-", "B+", "B-", "B", "C+", "C", "D"] as const;
+const tracingGrades = ["A+", "A", "A-", "B+", "B-", "B", "C+", "C", "D"] as const;
 
 interface SalesKpi {
   count: number;

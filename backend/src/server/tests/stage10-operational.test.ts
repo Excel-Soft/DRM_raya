@@ -27,8 +27,8 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "../db";
 import { registerRoutes } from "../routes";
-import { authService } from "./auth.service";
-import { ActivityLogService } from "./services/activity-service";
+import { authService } from "../services/auth.service";
+import { ActivityLogService } from "../services/activity-service";
 
 const SUFFIX = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
