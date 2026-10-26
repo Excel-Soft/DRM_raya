@@ -26,6 +26,11 @@ import { USERS_SIDEBAR_PATHS } from "./users-routes";
 import { LEAD_SIDEBAR_PATHS } from "./lead-routes";
 import { ATTENDANCE_SIDEBAR_PATHS } from "./attendance-routes";
 import { QUICK_LINK_MIGRATED_PATHS } from "./quick-link-routes";
+import { PMS_SIDEBAR_PATHS } from "./pms-routes";
+import { REPORTS_SIDEBAR_PATHS } from "./reports-routes";
+import { INCREMENT_SIDEBAR_PATHS } from "./increment-routes";
+import { PENALTY_SIDEBAR_PATHS } from "./penalty-routes";
+import { OFFICE_SIDEBAR_PATHS } from "./office-routes";
 
 export const NEXT_MIGRATED_PATHS = new Set<string>([
   ...NEXT_MIGRATED_DASHBOARD_PATHS,
@@ -46,10 +51,16 @@ export const NEXT_MIGRATED_PATHS = new Set<string>([
   ...LEAD_SIDEBAR_PATHS,
   ...ATTENDANCE_SIDEBAR_PATHS,
   ...QUICK_LINK_MIGRATED_PATHS,
+  ...PMS_SIDEBAR_PATHS,
+  ...REPORTS_SIDEBAR_PATHS,
+  ...INCREMENT_SIDEBAR_PATHS,
+  ...PENALTY_SIDEBAR_PATHS,
+  ...OFFICE_SIDEBAR_PATHS,
 ]);
 
 export function isNextMigratedPath(path: string): boolean {
-  return NEXT_MIGRATED_PATHS.has(path);
+  const bare = path.split("?")[0];
+  return NEXT_MIGRATED_PATHS.has(path) || NEXT_MIGRATED_PATHS.has(bare);
 }
 
 /** Optional origin for legacy Vite app (e.g. `http://localhost:5173`). */

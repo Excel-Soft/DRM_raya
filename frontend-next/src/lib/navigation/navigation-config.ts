@@ -62,6 +62,20 @@ import {
 import { PORTFOLIO_ADD, PORTFOLIO_VIEW } from "./portfolio-routes";
 import { SOCIAL_MEDIA_HOME } from "./social-media-routes";
 import { USERS_ADD, USERS_GROUPS, USERS_LIST } from "./users-routes";
+import { PMS_RUNNING_PROJECTS, PMS_PROJECT_REPORT, PMS_COMPLETE_CLOSED_PROJECTS, PMS_TEAM_WORKSPACE, PMS_TASK_HISTORY, PMS_APPROVALS, PMS_TASKS, PMS_STATUS } from "./pms-routes";
+import { REPORTS_FOLLOW_UP, REPORTS_DAY_TARGET, REPORTS_DIAGNOSE, REPORTS_BV_PENDING_ECNC, REPORTS_EVENT, REPORTS_RAW_ATTENDANCE, REPORTS_ATTENDANCE, ANALYTICS_GM, REPORTS_DEPARTMENT, REPORTS_RECEPTION, REPORTS_BV_PENDING_RC, REPORTS_EDIT_ATT, REPORTS_SALARY_CREATE, REPORTS_SALARY_BONUSES, REPORTS_SALARY } from "./reports-routes";
+import { INCREMENT_VIEW } from "./increment-routes";
+import { PENALTY_ADD } from "./penalty-routes";
+import {
+  OFFICE_TRIAL_BALANCE,
+  OFFICE_CHART_OF_ACCOUNTS,
+  OFFICE_GENERAL_LEDGER,
+  OFFICE_JOURNAL_VOUCHER,
+  OFFICE_BUSINESS_CUSTOMERS,
+  OFFICE_VAS,
+  OFFICE_EXPENSES,
+  OFFICE_CHEQUES,
+} from "./office-routes";
 
 /**
  * Sidebar inventory aligned with legacy `app-sidebar.tsx` menu groups.
@@ -162,14 +176,16 @@ export const APP_NAV_GROUPS: NavGroup[] = [
     icon: "pms",
     permKey: "PMS",
     children: [
-      { id: "pms-tasks", label: "Task System", href: "/pms/tasks", permKey: "PMS" },
-      { id: "pms-status", label: "Project Report", href: "/pms/status", permKey: "PMS" },
-      { id: "pms-running", label: "Running Projects", href: "/pms/running-projects", permKey: "PMS" },
-      { id: "pms-pending", label: "Pending Project", href: "/pms/approvals", permKey: "PMS" },
-      { id: "pms-history", label: "Task Complete", href: "/pms/task-history", permKey: "PMS" },
-      { id: "pms-closed", label: "Complete and Closed Project", href: "/pms/complete-closed-projects", permKey: "PMS" },
-      { id: "pms-team", label: "Team Workspace", href: "/pms/team-workspace", permKey: "PMS" },
-      { id: "pms-report", label: "Project Report (alt)", href: "/pms/project-report", permKey: "PMS" },
+      { id: "pms-tasks", label: "Task System", href: PMS_TASKS, permKey: "PMS" },
+      { id: "pms-status", label: "Project Report", href: PMS_STATUS, permKey: "PMS" },
+      { id: "pms-running", label: "Running Projects", href: PMS_RUNNING_PROJECTS, permKey: "PMS" },
+      { id: "pms-pending", label: "Pending Project", href: PMS_APPROVALS, permKey: "PMS" },
+      { id: "pms-history", label: "Task Complete", href: PMS_TASK_HISTORY, permKey: "PMS" },
+      { id: "pms-closed", label: "Complete and Closed Project", href: PMS_COMPLETE_CLOSED_PROJECTS, permKey: "PMS" },
+      { id: "pms-team", label: "Team Workspace", href: PMS_TEAM_WORKSPACE, permKey: "PMS" },
+      // "Project Report (alt)" hidden from the sidebar for now per explicit
+      // request — the page itself (PMS_PROJECT_REPORT) stays fully built,
+      // routed, and reachable directly; only the nav entry is removed.
     ],
   },
   {
@@ -259,9 +275,14 @@ export const APP_NAV_GROUPS: NavGroup[] = [
     icon: "office",
     permKey: "Office Account",
     children: [
-      { id: "office-tb", label: "Trial Balance Report", href: "/office/trial-balance-report", permKey: "Office Account" },
-      { id: "office-coa", label: "Chart of Account", href: "/office/chart-of-accounts", permKey: "Office Account" },
-      { id: "office-gl", label: "General Ledger", href: "/office/general-ledger", permKey: "Office Account" },
+      { id: "office-tb", label: "Trial Balance Report", href: OFFICE_TRIAL_BALANCE, permKey: "Office Account" },
+      { id: "office-coa", label: "Chart of Account", href: OFFICE_CHART_OF_ACCOUNTS, permKey: "Office Account" },
+      { id: "office-gl", label: "General Ledger", href: OFFICE_GENERAL_LEDGER, permKey: "Office Account" },
+      { id: "office-jv", label: "Journal Voucher", href: OFFICE_JOURNAL_VOUCHER, permKey: "Office Account" },
+      { id: "office-bc", label: "Business Customer", href: OFFICE_BUSINESS_CUSTOMERS, permKey: "Office Account" },
+      { id: "office-vas", label: "Office Vas", href: OFFICE_VAS, permKey: "Office Account" },
+      { id: "office-expense", label: "Office Expense", href: OFFICE_EXPENSES, permKey: "Office Account" },
+      { id: "office-cheque", label: "Cheque System", href: OFFICE_CHEQUES, permKey: "Office Account" },
     ],
   },
   {
@@ -270,11 +291,34 @@ export const APP_NAV_GROUPS: NavGroup[] = [
     icon: "chart",
     permKey: "Reports",
     children: [
-      { id: "rep-att", label: "Attendance Report", href: "/reports/attendance", permKey: "Reports" },
-      { id: "rep-salary", label: "Salary Report", href: "/reports/salary", permKey: "Reports" },
-      { id: "rep-projects", label: "Projects Report", href: "/reports/projects", permKey: "Reports" },
-      { id: "rep-increment", label: "Increment", href: "/drm/increment", permKey: "Increment" },
-      { id: "rep-add-penalty", label: "Add Penalty", href: "/drm/add-penalty", permKey: "Add Penalty" },
+      // Order mirrors the legacy "Reports" permKey group in app-sidebar.tsx
+      // exactly, so nothing that was visible there goes missing here.
+      { id: "rep-raw-att", label: "Raw Attendance", href: REPORTS_RAW_ATTENDANCE, permKey: "Reports" },
+      { id: "rep-bv-pending-rc", label: "Bv Pending RC Only", href: REPORTS_BV_PENDING_RC, permKey: "Reports" },
+      { id: "rep-loan", label: "Loan Report", href: `${USER_REPORT_LOAN}?scope=company`, permKey: "Reports" },
+      { id: "rep-salary-create", label: "Salary Create", href: REPORTS_SALARY_CREATE, permKey: "Reports" },
+      { id: "rep-salary-bonuses", label: "Employee Bonuses", href: REPORTS_SALARY_BONUSES, permKey: "Reports" },
+      { id: "rep-salary", label: "Salary Report", href: REPORTS_SALARY, permKey: "Reports" },
+      { id: "rep-att", label: "Attendance Report", href: REPORTS_ATTENDANCE, permKey: "Reports" },
+      { id: "rep-vas", label: "Vas Report", href: `${USER_REPORT_VAS}?scope=company`, permKey: "Reports" },
+      { id: "rep-gm", label: "Gm Report", href: ANALYTICS_GM, permKey: "Reports" },
+      { id: "rep-bv", label: "Bv Report", href: `${USER_REPORT_BV}?scope=company`, permKey: "Reports" },
+      { id: "rep-bv-pending-ecnc", label: "Bv Pending EC/NC Only", href: REPORTS_BV_PENDING_ECNC, permKey: "Reports" },
+      { id: "rep-diagnose", label: "Diagnose Report", href: REPORTS_DIAGNOSE, permKey: "Reports" },
+      { id: "rep-follow-up", label: "Follow Up Report", href: REPORTS_FOLLOW_UP, permKey: "Reports" },
+      // Reports → Projects re-exports the same real pms-project-report.tsx
+      // component as PMS's Project Report (frontend/src/pages/reports-projects.tsx
+      // is a literal one-line re-export) — point at the already-migrated page
+      // instead of porting a second, inconsistent copy.
+      { id: "rep-projects", label: "Projects Report", href: PMS_PROJECT_REPORT, permKey: "Reports" },
+      { id: "rep-day-target", label: "Day Target Report", href: REPORTS_DAY_TARGET, permKey: "Reports" },
+      { id: "rep-link-report", label: "Link Report", href: POSTING_DATA_LINK_REPORT, permKey: "Reports" },
+      { id: "rep-department", label: "Department Report", href: REPORTS_DEPARTMENT, permKey: "Reports" },
+      { id: "rep-event", label: "Event Report", href: REPORTS_EVENT, permKey: "Reports" },
+      { id: "rep-reception", label: "Reception Report", href: REPORTS_RECEPTION, permKey: "Reports" },
+      { id: "rep-edit-att", label: "Edit Att", href: REPORTS_EDIT_ATT, permKey: "Reports" },
+      { id: "rep-increment", label: "Increment", href: INCREMENT_VIEW, permKey: "Increment" },
+      { id: "rep-add-penalty", label: "Add Penalty", href: PENALTY_ADD, permKey: "Add Penalty" },
     ],
   },
   {

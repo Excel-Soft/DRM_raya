@@ -12,6 +12,11 @@ import { USER_REPORTS_LEGACY_TO_DASHBOARD } from "./user-reports-routes";
 import { USERS_LEGACY_TO_DASHBOARD } from "./users-routes";
 import { LEAD_LEGACY_TO_DASHBOARD } from "./lead-routes";
 import { QUICK_LINK_LEGACY_TO_DASHBOARD } from "./quick-link-routes";
+import { PMS_LEGACY_TO_DASHBOARD } from "./pms-routes";
+import { REPORTS_LEGACY_TO_DASHBOARD } from "./reports-routes";
+import { INCREMENT_LEGACY_TO_DASHBOARD } from "./increment-routes";
+import { PENALTY_LEGACY_TO_DASHBOARD } from "./penalty-routes";
+import { OFFICE_LEGACY_TO_DASHBOARD } from "./office-routes";
 
 /** Legacy Vite-style paths → canonical Next dashboard URLs (Phase 13 + 14 Customer). */
 export const LEGACY_TO_DASHBOARD_REDIRECTS = [
@@ -33,6 +38,11 @@ export const LEGACY_TO_DASHBOARD_REDIRECTS = [
   ...USER_REPORTS_LEGACY_TO_DASHBOARD,
   ...LEAD_LEGACY_TO_DASHBOARD,
   ...QUICK_LINK_LEGACY_TO_DASHBOARD,
+  ...PMS_LEGACY_TO_DASHBOARD,
+  ...REPORTS_LEGACY_TO_DASHBOARD,
+  ...INCREMENT_LEGACY_TO_DASHBOARD,
+  ...PENALTY_LEGACY_TO_DASHBOARD,
+  ...OFFICE_LEGACY_TO_DASHBOARD,
 ] as const;
 
 export function legacyAppRedirects(): Redirect[] {
