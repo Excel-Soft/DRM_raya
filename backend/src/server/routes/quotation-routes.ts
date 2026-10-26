@@ -2,6 +2,15 @@ import type { Express } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 import type { PoolClient } from "pg";
+import type { DownstreamKind } from "../../shared/gm-package-catalog";
+import {
+  classifyDownstreamFromLineLabels,
+  listEligibleSubservicesForCustomer,
+  revalidateStoredQuotationEligibility,
+  resolveDownstreamKindForQuotation,
+  validateQuotationItemsForCustomer,
+  type QuotationItemEligibility,
+} from "../services/sales-workflow.service";
 
 const discountEnum = z.enum(["PERCENT", "AMOUNT", "PERCENTAGE"]);
 
@@ -36,6 +45,7 @@ type QuotationRow = {
   hod_reviewed_by: string | null;
   hod_reviewed_at: string | null;
   hod_comment: string | null;
+  quotation_type: string | null;
 };
 
 type QuotationItemRow = {
@@ -51,6 +61,7 @@ type QuotationItemRow = {
   start_year: number | null;
   end_year: number | null;
   domain_url: string | null;
+  ab_discount: number | null;
 };
 
 const itemSchema = z
@@ -59,6 +70,7 @@ const itemSchema = z
     detail: z.string().trim().optional().default(""),
     minTime: z.coerce.number().min(0).optional(),
     maxTime: z.coerce.number().min(0).optional(),
+    abDiscount: z.coerce.number().min(0).optional().default(0),
     unitPrice: z.coerce.number().min(0, "unit_price must be >= 0"),
     quantity: z.coerce.number().int().min(0, "quantity must be >= 0"),
     startYear: z.coerce.number().int().optional(),
@@ -94,6 +106,7 @@ const quotationBaseSchema = z
     pkrDiscountType: discountEnum.optional().nullable(),
     pkrDiscountValue: z.coerce.number().min(0).optional().nullable(),
     dollarRate: z.coerce.number().min(0).default(280),
+    quotationType: z.string().trim().optional().nullable(),
     items: z.array(itemSchema).min(1, "At least one item is required"),
   });
 
@@ -190,6 +203,9 @@ async function ensureQuotationTables() {
       await client.query(
         `create index if not exists idx_quotation_items_quotation on quotation_items(quotation_id);`,
       );
+      await client.query(
+        `create index if not exists idx_quotation_items_product on quotation_items(product_id);`,
+      );
       // Records whether a given locked follow-up (see checkServiceLocks below)
       // was ever actually converted into a quotation by the same rep who
       // logged it — a reporting hook requested alongside the 60-day
@@ -238,6 +254,25 @@ async function ensureQuotationTables() {
       await client.query(
         `create index if not exists idx_quotations_hod_status on quotations(hod_status);`,
       );
+      await client.query(`
+        alter table quotations
+          add column if not exists downstream_kind text null,
+          add column if not exists primary_followup_id uuid null,
+          add column if not exists converted_gm_id varchar null;
+      `);
+      await client.query(`
+        alter table quotation_items
+          add column if not exists followup_id uuid null,
+          add column if not exists followup_detail_id uuid null;
+      `);
+      await client.query(`
+        alter table quotation_items
+          add column if not exists ab_discount numeric(12,2) not null default 0;
+      `);
+      await client.query(`
+        alter table quotations
+          add column if not exists quotation_type text null;
+      `);
       // Set by POST /api/account/invoices when a sales_executive uses the
       // "Create Invoice" action on their own HOD-approved quotation (see
       // requireManualInvoiceCreator). Also ensured from that route's own
@@ -256,48 +291,13 @@ async function ensureQuotationTables() {
   return ensureQuotationTablesPromise;
 }
 
-// 60-day exclusivity lock (see sales-routes.ts's matching check on follow-up
-// creation): once a rep logs a follow-up against a customer+sub-service, no
-// OTHER user may create a quotation for that same pair until 60 days pass.
-// The original rep is exempt — they're expected to convert their own
-// follow-up into a quotation, and doing so is recorded on the follow-up
-// detail row (converted_quotation_id/converted_at) for later reporting.
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
-async function findLockedQuotationItems(
-  client: PoolClient,
-  customerId: string | null | undefined,
-  productIds: string[],
-  userId: string,
-): Promise<Array<{ productId: string; name: string; reason: string }>> {
-  const validIds = Array.from(new Set(productIds.filter((id) => UUID_RE.test(id))));
-  if (!customerId || validIds.length === 0) return [];
-  const subRes = await client.query(
-    `select id, name from drm.service_subservices where id = any($1::uuid[])`,
-    [validIds],
-  );
-  const subIds = subRes.rows.map((r) => r.id);
-  if (subIds.length === 0) return [];
-
-  const lockRes = await client.query(
-    `select distinct on (d.subservice_id) d.subservice_id, f.created_by, u.name
-       from drm.followup_subservice_details d
-       join drm.follow_ups f on f.id = d.followup_id
-       left join drm.users u on u.id = f.created_by
-      where f.customer_id = $1 and d.subservice_id = any($2::uuid[])
-        and d.created_at >= now() - interval '60 days'
-      order by d.subservice_id, d.created_at desc`,
-    [customerId, subIds],
-  );
-  const nameById = new Map(subRes.rows.map((r) => [r.id, r.name]));
-  return lockRes.rows
-    .filter((r: any) => r.created_by !== userId)
-    .map((r: any) => ({
-      productId: r.subservice_id,
-      name: nameById.get(r.subservice_id) || r.subservice_id,
-      reason: `locked by ${r.name || "another user"} until 60 days after their follow-up`,
-    }));
-}
+type QuotationWorkflowMeta = {
+  downstreamKind: DownstreamKind;
+  primaryFollowupId: string | null;
+  itemEligibility: QuotationItemEligibility[];
+};
 
 // After a quotation is successfully created, mark any of the creator's OWN
 // recent (<=60 day) follow-up detail rows for these sub-services as
@@ -329,7 +329,8 @@ function computeTotals(parsed: ParsedQuotation) {
   const itemsWithTotal = parsed.items.map((item) => {
     const unit = Number(item.unitPrice);
     const qty = Number(item.quantity);
-    const itemTotal = unit * qty;
+    const ab = Number(item.abDiscount ?? 0);
+    const itemTotal = Math.max(unit - ab, 0) * qty;
     return { ...item, itemTotal };
   });
 
@@ -342,19 +343,26 @@ function computeTotals(parsed: ParsedQuotation) {
   const calculatedAmount = totalAmount * (paymentTermPercent / 100);
   const amount = parsed.amount !== undefined && parsed.amount !== null ? Number(parsed.amount) : calculatedAmount;
   
-  const grandTotal = amount;
-
-  const dollarRate = Number(parsed.dollarRate || 280);
-  const pkrTotalRaw = grandTotal * dollarRate;
+  let grandTotal = amount;
 
   const discountType = parsed.pkrDiscountType || parsed.discountType || "AMOUNT";
   const discountValue = Number(parsed.pkrDiscountValue ?? parsed.discountValue ?? 0);
+  if (discountType === "PERCENT" || discountType === "PERCENTAGE") {
+    grandTotal = amount - (amount * discountValue) / 100;
+  }
+
+  const dollarRate = Number(parsed.dollarRate || 280);
+  let pkrTotal = grandTotal * dollarRate;
+  if (discountType !== "PERCENT" && discountType !== "PERCENTAGE") {
+    pkrTotal = Math.max(pkrTotal - discountValue, 0);
+  } else {
+    pkrTotal = Math.max(pkrTotal, 0);
+  }
+
   const discount =
     discountType === "PERCENT" || discountType === "PERCENTAGE"
-      ? pkrTotalRaw * (discountValue / 100)
+      ? amount * (discountValue / 100)
       : discountValue;
-      
-  const pkrTotal = Math.max(pkrTotalRaw - discount, 0);
 
   return {
     itemsWithTotal,
@@ -401,6 +409,7 @@ function mapQuotationRow(row: QuotationRow) {
     hodReviewedBy: row.hod_reviewed_by,
     hodReviewedAt: row.hod_reviewed_at,
     hodComment: row.hod_comment,
+    quotationType: row.quotation_type,
   };
 }
 
@@ -412,6 +421,7 @@ function mapItemRow(row: QuotationItemRow) {
     detail: row.detail,
     minTime: row.min_time,
     maxTime: row.max_time,
+    abDiscount: Number(row.ab_discount ?? 0),
     unitPrice: Number(row.unit_price ?? 0),
     quantity: Number(row.quantity ?? 0),
     itemTotal: Number(row.item_total ?? 0),
@@ -421,17 +431,26 @@ function mapItemRow(row: QuotationItemRow) {
   };
 }
 
-async function insertQuotation(client: PoolClient, userId: string, payload: ParsedQuotation) {
+async function insertQuotation(
+  client: PoolClient,
+  userId: string,
+  payload: ParsedQuotation,
+  workflow?: QuotationWorkflowMeta,
+) {
   const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal, amount } = computeTotals(payload);
+  const linkByProduct = new Map(
+    (workflow?.itemEligibility ?? []).map((e) => [e.productId, e]),
+  );
 
   const quotationRes = await client.query<QuotationRow>(
     `
       insert into quotations (
         customer_id, lead_id, account_holder, company, email, contact, delivery_time,
         gst_percent, discount_type, discount_value, sub_amount, gst_amount, total_amount,
-        grand_total, pkr_total, payment_term_percent, save_status, note, amount, dollar_rate, created_by, updated_at
+        grand_total, pkr_total, payment_term_percent, save_status, note, amount, dollar_rate, created_by, updated_at,
+        downstream_kind, primary_followup_id, quotation_type
     )
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now())
+    values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, now(), $22, $23, $24)
     returning *
   `,
     [
@@ -456,18 +475,23 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
       amount,
       payload.dollarRate ?? 280,
       userId,
+      workflow?.downstreamKind ?? null,
+      workflow?.primaryFollowupId ?? null,
+      payload.quotationType ?? null,
     ],
   );
   const quotation = quotationRes.rows[0];
 
   for (const item of itemsWithTotal) {
+    const link = linkByProduct.get(item.productId);
     await client.query(
       `
         insert into quotation_items (
           quotation_id, product_id, detail, min_time, max_time, unit_price,
-          quantity, item_total, start_year, end_year, domain_url
+          quantity, item_total, start_year, end_year, domain_url,
+          followup_id, followup_detail_id, ab_discount
         )
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       `,
       [
         quotation.id,
@@ -481,6 +505,9 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
         item.startYear ?? null,
         item.endYear ?? null,
         item.domainUrl ?? null,
+        link?.followupId ?? null,
+        link?.followupDetailId ?? null,
+        item.abDiscount ?? 0,
       ],
     );
   }
@@ -488,7 +515,12 @@ async function insertQuotation(client: PoolClient, userId: string, payload: Pars
   return { quotation: mapQuotationRow(quotation), items: itemsWithTotal };
 }
 
-async function updateQuotation(client: PoolClient, id: string, payload: ParsedQuotation) {
+async function updateQuotation(
+  client: PoolClient,
+  id: string,
+  payload: ParsedQuotation,
+  workflow?: QuotationWorkflowMeta,
+) {
   const { itemsWithTotal, subAmount, gstAmount, totalAmount, grandTotal, pkrTotal, amount } = computeTotals(payload);
 
   const updateRes = await client.query<QuotationRow>(
@@ -514,8 +546,11 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
              note = $18,
              amount = $19,
              dollar_rate = $20,
+             downstream_kind = $21,
+             primary_followup_id = $22,
+             quotation_type = $23,
              updated_at = now()
-       where id = $21
+       where id = $24
      returning *
     `,
     [
@@ -539,6 +574,9 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
       payload.note ?? null,
       amount,
       payload.dollarRate ?? 280,
+      workflow?.downstreamKind ?? null,
+      workflow?.primaryFollowupId ?? null,
+      payload.quotationType ?? null,
       id,
     ],
   );
@@ -547,15 +585,21 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
     return null;
   }
 
+  const linkByProduct = new Map(
+    (workflow?.itemEligibility ?? []).map((e) => [e.productId, e]),
+  );
+
   await client.query(`delete from quotation_items where quotation_id = $1`, [id]);
   for (const item of itemsWithTotal) {
+    const link = linkByProduct.get(item.productId);
     await client.query(
       `
         insert into quotation_items (
           quotation_id, product_id, detail, min_time, max_time, unit_price,
-          quantity, item_total, start_year, end_year, domain_url
+          quantity, item_total, start_year, end_year, domain_url,
+          followup_id, followup_detail_id, ab_discount
         )
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
       `,
       [
         id,
@@ -569,6 +613,9 @@ async function updateQuotation(client: PoolClient, id: string, payload: ParsedQu
         item.startYear ?? null,
         item.endYear ?? null,
         item.domainUrl ?? null,
+        link?.followupId ?? null,
+        link?.followupDetailId ?? null,
+        item.abDiscount ?? 0,
       ],
     );
   }
@@ -668,6 +715,18 @@ export function registerQuotationRoutes(app: Express) {
       if (existing.rows[0].created_by !== req.user.userId) {
         return res.status(403).json({ error: "FORBIDDEN", message: "Only the quotation's creator can confirm it" });
       }
+      if (existing.rows[0].hod_status === "approved") {
+        return res.status(409).json({ error: "LOCKED", message: "Approved quotations cannot be resubmitted without rejection" });
+      }
+      const client = await pool.connect();
+      try {
+        const revalid = await revalidateStoredQuotationEligibility(client, req.params.id);
+        if (!revalid.ok) {
+          return res.status(409).json({ error: revalid.code, message: revalid.message });
+        }
+      } finally {
+        client.release();
+      }
       const updated = await pool.query<QuotationRow>(
         `update quotations set confirmed_at = now(), confirmed_by = $2, updated_at = now() where id = $1 returning *`,
         [req.params.id, req.user.userId],
@@ -692,10 +751,26 @@ export function registerQuotationRoutes(app: Express) {
       if (!existing.rows[0].confirmed_at) {
         return res.status(409).json({ error: "NOT_CONFIRMED", message: "This quotation has not been confirmed by its creator yet" });
       }
+      const client = await pool.connect();
+      let downstreamKind: DownstreamKind | null = null;
+      try {
+        const revalid = await revalidateStoredQuotationEligibility(client, req.params.id);
+        if (!revalid.ok) {
+          return res.status(409).json({ error: revalid.code, message: revalid.message });
+        }
+        downstreamKind = await resolveDownstreamKindForQuotation(client, req.params.id);
+      } finally {
+        client.release();
+      }
       const updated = await pool.query<QuotationRow>(
-        `update quotations set hod_status = 'approved', hod_reviewed_by = $2, hod_reviewed_at = now(), updated_at = now() where id = $1 returning *`,
-        [req.params.id, req.user.userId],
+        `update quotations set hod_status = 'approved', hod_reviewed_by = $2, hod_reviewed_at = now(), updated_at = now(),
+                downstream_kind = coalesce($3, downstream_kind)
+           where id = $1 and hod_status is distinct from 'approved' returning *`,
+        [req.params.id, req.user.userId, downstreamKind],
       );
+      if (!updated.rows[0]) {
+        return res.status(409).json({ error: "ALREADY_PROCESSED", message: "Quotation was already processed" });
+      }
       res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
     } catch (err: any) {
       console.error("Error approving quotation", err);
@@ -713,11 +788,17 @@ export function registerQuotationRoutes(app: Express) {
       if (!existing.rows[0].confirmed_at) {
         return res.status(409).json({ error: "NOT_CONFIRMED", message: "This quotation has not been confirmed by its creator yet" });
       }
-      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 500) : null;
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 500) : "";
+      if (!reason) {
+        return res.status(400).json({ error: "REASON_REQUIRED", message: "Rejection reason is required" });
+      }
       const updated = await pool.query<QuotationRow>(
-        `update quotations set hod_status = 'rejected', hod_reviewed_by = $2, hod_reviewed_at = now(), hod_comment = $3, updated_at = now() where id = $1 returning *`,
+        `update quotations set hod_status = 'rejected', hod_reviewed_by = $2, hod_reviewed_at = now(), hod_comment = $3, updated_at = now() where id = $1 and hod_status is distinct from 'approved' returning *`,
         [req.params.id, req.user.userId, reason],
       );
+      if (!updated.rows[0]) {
+        return res.status(409).json({ error: "ALREADY_PROCESSED", message: "Quotation was already approved or processed" });
+      }
       res.json({ success: true, data: mapQuotationRow(updated.rows[0]) });
     } catch (err: any) {
       console.error("Error rejecting quotation", err);
@@ -770,7 +851,7 @@ export function registerQuotationRoutes(app: Express) {
       await ensureQuotationTables();
       const result = await pool.query(
         `select q.id, q.company, q.customer_id, q.save_status, q.confirmed_at, q.hod_status, q.hod_comment,
-                q.converted_invoice_id, q.converted_at, q.created_at,
+                q.converted_invoice_id, q.converted_gm_id, q.downstream_kind, q.converted_at, q.created_at,
                 coalesce(string_agg(distinct qi.detail, ', ') filter (where qi.detail is not null and qi.detail != ''), '') as service_details
            from quotations q
            left join quotation_items qi on qi.quotation_id = q.id
@@ -780,10 +861,41 @@ export function registerQuotationRoutes(app: Express) {
           limit 200`,
         [req.user.userId],
       );
+      const quotationIds = result.rows.map((r: { id: string }) => r.id);
+      const labelsByQuotationId = new Map<string, string[]>();
+      if (quotationIds.length > 0) {
+        const linesRes = await pool.query(
+          `select qi.quotation_id, qi.detail, s.name as product_name
+             from quotation_items qi
+             left join drm.service_subservices s on s.id::text = qi.product_id
+            where qi.quotation_id = any($1::uuid[])`,
+          [quotationIds],
+        );
+        for (const line of linesRes.rows) {
+          const list = labelsByQuotationId.get(line.quotation_id) ?? [];
+          if (line.product_name) list.push(String(line.product_name));
+          if (line.detail) list.push(String(line.detail));
+          labelsByQuotationId.set(line.quotation_id, list);
+        }
+      }
+      const resolvedKindById = new Map<string, DownstreamKind>();
+      for (const r of result.rows) {
+        const labels =
+          labelsByQuotationId.get(r.id) ??
+          (r.service_details ? String(r.service_details).split(",").map((s: string) => s.trim()) : []);
+        const kind = classifyDownstreamFromLineLabels(labels);
+        if (kind) {
+          resolvedKindById.set(r.id, kind);
+          if (r.downstream_kind !== kind) {
+            void pool.query(`update quotations set downstream_kind = $2 where id = $1`, [r.id, kind]);
+          }
+        }
+      }
       const rows = result.rows.map((r: any, idx: number) => {
         let statusComment = r.save_status || "Pending";
         if (r.hod_status === "rejected") statusComment = r.hod_comment ? `Rejected: ${r.hod_comment}` : "Rejected";
         else if (r.converted_invoice_id) statusComment = "Converted to Invoice";
+        else if (r.converted_gm_id) statusComment = "Converted to GM";
         else if (r.hod_status === "approved") statusComment = "Approved";
         else if (r.confirmed_at) statusComment = "Awaiting HOD";
         return {
@@ -792,18 +904,21 @@ export function registerQuotationRoutes(app: Express) {
           company: r.company,
           customerId: r.customer_id,
           serviceDetails: r.service_details || "-",
-          date: r.converted_invoice_id ? r.converted_at : r.created_at,
+          date: r.converted_invoice_id || r.converted_gm_id ? r.converted_at : r.created_at,
           statusComment,
           isConfirmed: !!r.confirmed_at,
           isApproved: r.hod_status === "approved",
           isRejected: r.hod_status === "rejected",
           isConverted: !!r.converted_invoice_id,
+          isGmConverted: !!r.converted_gm_id,
+          downstreamKind: (resolvedKindById.get(r.id) ?? r.downstream_kind) as DownstreamKind | null,
           invoiceId: r.converted_invoice_id,
+          gmEntryId: r.converted_gm_id,
         };
       });
       const convertedInvoices = rows.filter((r) => r.isConverted);
-      const approved = rows.filter((r) => r.isApproved && !r.isConverted);
-      const pendingRejected = rows.filter((r) => !r.isApproved && !r.isConverted);
+      const approved = rows.filter((r) => r.isApproved && !r.isConverted && !r.isGmConverted);
+      const pendingRejected = rows.filter((r) => !r.isApproved && !r.isConverted && !r.isGmConverted);
       res.json({
         success: true,
         approved: { count: approved.length, items: approved },
@@ -851,6 +966,161 @@ export function registerQuotationRoutes(app: Express) {
     }
   });
 
+  app.get("/api/sales/quotations/approved-for-gm", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const customerId = typeof req.query.customerId === "string" ? req.query.customerId : null;
+      const params: unknown[] = [req.user.userId];
+      let customerFilter = "";
+      if (customerId && UUID_RE.test(customerId)) {
+        params.push(customerId);
+        customerFilter = ` and q.customer_id = $${params.length}`;
+      }
+      const result = await pool.query(
+        `select q.id, q.company, q.customer_id, q.downstream_kind, q.grand_total, q.pkr_total, q.dollar_rate,
+                q.created_at,
+                coalesce(string_agg(distinct s.name, ', '), '') as service_names
+           from quotations q
+           left join quotation_items qi on qi.quotation_id = q.id
+           left join drm.service_subservices s on s.id::text = qi.product_id
+          where q.created_by = $1
+            and q.hod_status = 'approved'
+            and q.converted_gm_id is null
+            and q.converted_invoice_id is null
+            and (q.downstream_kind is null or q.downstream_kind = 'gm')
+            ${customerFilter}
+          group by q.id
+          order by q.created_at desc
+          limit 100`,
+        params,
+      );
+      res.json({ success: true, data: result.rows });
+    } catch (err: any) {
+      console.error("Error listing approved GM quotations", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to list approved GM quotations" });
+    }
+  });
+
+  app.get("/api/sales/quotations/open-product-ids", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const customerId = typeof req.query.customerId === "string" ? req.query.customerId : "";
+      const excludeQuotationId =
+        typeof req.query.excludeQuotationId === "string" ? req.query.excludeQuotationId : null;
+      if (!UUID_RE.test(customerId)) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", message: "customerId is required" });
+      }
+      const params: unknown[] = [String(req.user.userId), customerId];
+      let excludeSql = "";
+      if (excludeQuotationId && UUID_RE.test(excludeQuotationId)) {
+        params.push(excludeQuotationId);
+        excludeSql = ` and q.id <> $${params.length}::uuid`;
+      }
+      const result = await pool.query(
+        `select distinct qi.product_id as product_id,
+                q.id as quotation_id,
+                q.hod_status,
+                q.company
+           from quotations q
+           join quotation_items qi on qi.quotation_id = q.id
+          where q.created_by = $1
+            and q.customer_id = $2
+            and coalesce(q.converted_gm_id, '') = ''
+            and coalesce(q.converted_invoice_id, '') = ''
+            ${excludeSql}`,
+        params,
+      );
+      const byProduct: Record<string, { quotationId: string; hodStatus: string | null; company: string }> = {};
+      for (const row of result.rows) {
+        if (row.product_id) {
+          byProduct[row.product_id] = {
+            quotationId: row.quotation_id,
+            hodStatus: row.hod_status,
+            company: row.company,
+          };
+        }
+      }
+      res.json({ success: true, data: byProduct });
+    } catch (err: any) {
+      console.error("Error listing open quotation products", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to load quotation products" });
+    }
+  });
+
+  app.get("/api/sales/quotations/check-product", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const customerId = typeof req.query.customerId === "string" ? req.query.customerId : "";
+      const productId = typeof req.query.productId === "string" ? req.query.productId : "";
+      const excludeQuotationId =
+        typeof req.query.excludeQuotationId === "string" ? req.query.excludeQuotationId : null;
+      if (!UUID_RE.test(customerId) || !productId.trim()) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", message: "customerId and productId are required" });
+      }
+      const params: unknown[] = [String(req.user.userId), customerId, productId];
+      let excludeSql = "";
+      if (excludeQuotationId && UUID_RE.test(excludeQuotationId)) {
+        params.push(excludeQuotationId);
+        excludeSql = ` and q.id <> $${params.length}::uuid`;
+      }
+      const result = await pool.query(
+        `select q.id, q.company, q.hod_status, q.created_at
+           from quotations q
+           join quotation_items qi on qi.quotation_id = q.id
+          where q.created_by = $1
+            and q.customer_id = $2
+            and qi.product_id = $3
+            and coalesce(q.converted_gm_id, '') = ''
+            and coalesce(q.converted_invoice_id, '') = ''
+            ${excludeSql}
+          order by q.created_at desc
+          limit 1`,
+        params,
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return res.json({ success: true, exists: false });
+      }
+      res.json({
+        success: true,
+        exists: true,
+        quotation: {
+          id: row.id,
+          company: row.company,
+          hodStatus: row.hod_status,
+          createdAt: row.created_at,
+        },
+      });
+    } catch (err: any) {
+      console.error("Error checking existing quotation for product", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to check quotation" });
+    }
+  });
+
+  app.get("/api/sales/quotations/eligible-products", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const customerId = typeof req.query.customerId === "string" ? req.query.customerId : "";
+      if (!UUID_RE.test(customerId)) {
+        return res.status(400).json({ error: "VALIDATION_ERROR", message: "customerId is required" });
+      }
+      const client = await pool.connect();
+      try {
+        const eligible = await listEligibleSubservicesForCustomer(client, customerId, String(req.user.userId));
+        res.json({ success: true, data: eligible });
+      } finally {
+        client.release();
+      }
+    } catch (err: any) {
+      console.error("Error listing eligible products", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to list eligible products" });
+    }
+  });
+
   app.post("/api/quotations", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
@@ -870,16 +1140,45 @@ export function registerQuotationRoutes(app: Express) {
       try {
         await client.query("begin");
         const productIds = parsed.data.items.map((i) => i.productId).filter(Boolean);
-        const locked = await findLockedQuotationItems(client, parsed.data.customerId, productIds, req.user.userId);
-        if (locked.length) {
+        if (parsed.data.customerId) {
+          for (const pid of productIds) {
+            const dup = await client.query(
+              `select q.id from quotations q
+                 join quotation_items qi on qi.quotation_id = q.id
+                where q.created_by = $1 and q.customer_id = $2 and qi.product_id = $3
+                  and coalesce(q.converted_gm_id, '') = ''
+                  and coalesce(q.converted_invoice_id, '') = ''
+                limit 1`,
+              [String(req.user.userId), parsed.data.customerId, pid],
+            );
+            if (dup.rowCount) {
+              await client.query("rollback");
+              return res.status(409).json({
+                error: "DUPLICATE_QUOTATION_PRODUCT",
+                message: "You already have an open quotation for this service on this customer.",
+              });
+            }
+          }
+        }
+        const eligibility = await validateQuotationItemsForCustomer(
+          client,
+          parsed.data.customerId,
+          productIds,
+          String(req.user.userId),
+        );
+        if (!eligibility.ok) {
           await client.query("rollback");
           return res.status(409).json({
-            error: "SERVICES_LOCKED",
-            message: `Cannot create quotation — already locked: ${locked.map((l) => `${l.name} (${l.reason})`).join(", ")}`,
-            locked,
+            error: eligibility.code,
+            message: eligibility.message,
           });
         }
-        const created = await insertQuotation(client, req.user.userId, parsed.data);
+        const workflow: QuotationWorkflowMeta = {
+          downstreamKind: eligibility.downstreamKind,
+          primaryFollowupId: eligibility.items[0]?.followupId ?? null,
+          itemEligibility: eligibility.items,
+        };
+        const created = await insertQuotation(client, req.user.userId, parsed.data, workflow);
         await markFollowupsConverted(client, parsed.data.customerId, productIds, req.user.userId, created.quotation.id);
         await client.query("commit");
         res.status(201).json({ success: true, data: created });
@@ -917,17 +1216,63 @@ export function registerQuotationRoutes(app: Express) {
       const client = await pool.connect();
       try {
         await client.query("begin");
-        const productIds = parsed.data.items.map((i) => i.productId).filter(Boolean);
-        const locked = await findLockedQuotationItems(client, parsed.data.customerId, productIds, req.user.userId);
-        if (locked.length) {
+        const existing = await client.query(`select hod_status, converted_invoice_id, converted_gm_id from quotations where id = $1`, [
+          req.params.id,
+        ]);
+        const row = existing.rows[0];
+        if (!row) {
           await client.query("rollback");
-          return res.status(409).json({
-            error: "SERVICES_LOCKED",
-            message: `Cannot save quotation — already locked: ${locked.map((l) => `${l.name} (${l.reason})`).join(", ")}`,
-            locked,
-          });
+          return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
         }
-        const updated = await updateQuotation(client, req.params.id, parsed.data);
+        if (row.hod_status === "approved" || row.converted_invoice_id || row.converted_gm_id) {
+          await client.query("rollback");
+          return res.status(409).json({ error: "LOCKED", message: "Approved or consumed quotations cannot be edited" });
+        }
+        const productIds = parsed.data.items.map((i) => i.productId).filter(Boolean);
+        if (parsed.data.customerId) {
+          for (const pid of productIds) {
+            const dup = await client.query(
+              `select q.id from quotations q
+                 join quotation_items qi on qi.quotation_id = q.id
+                where q.created_by = $1 and q.customer_id = $2 and qi.product_id = $3
+                  and coalesce(q.converted_gm_id, '') = ''
+                  and coalesce(q.converted_invoice_id, '') = ''
+                  and q.id <> $4::uuid
+                limit 1`,
+              [String(req.user.userId), parsed.data.customerId, pid, req.params.id],
+            );
+            if (dup.rowCount) {
+              await client.query("rollback");
+              return res.status(409).json({
+                error: "DUPLICATE_QUOTATION_PRODUCT",
+                message: "You already have an open quotation for this service on this customer.",
+              });
+            }
+          }
+        }
+        const eligibility = await validateQuotationItemsForCustomer(
+          client,
+          parsed.data.customerId,
+          productIds,
+          String(req.user.userId),
+          { forQuotationId: req.params.id },
+        );
+        if (!eligibility.ok) {
+          await client.query("rollback");
+          return res.status(409).json({ error: eligibility.code, message: eligibility.message });
+        }
+        if (row.hod_status === "rejected") {
+          await client.query(
+            `update quotations set hod_status = null, hod_comment = null, hod_reviewed_by = null, hod_reviewed_at = null where id = $1`,
+            [req.params.id],
+          );
+        }
+        const workflow: QuotationWorkflowMeta = {
+          downstreamKind: eligibility.downstreamKind,
+          primaryFollowupId: eligibility.items[0]?.followupId ?? null,
+          itemEligibility: eligibility.items,
+        };
+        const updated = await updateQuotation(client, req.params.id, parsed.data, workflow);
         if (!updated) {
           await client.query("rollback");
           return res.status(404).json({ error: "NotFound", message: "Quotation not found" });

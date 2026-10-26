@@ -64,6 +64,7 @@ export default function ServicePrivatePool({ legacyActions = false }: { legacyAc
         { label: `Alibaba Services ${tracingSummary?.["Alibaba_Services"] ?? 0}`, value: "VAS (Value Added Services)", followupTab: "ALIBABA SERVICES", color: "bg-[#f43f5e]" },
         { label: `Design Development ${tracingSummary?.["Design_Development"] ?? 0}`, value: "Website Development", followupTab: "DESIGN DEVELOPMENT", color: "bg-[#3b82f6]" },
         { label: `Domain Hosting ${tracingSummary?.["Domain_Hosting"] ?? 0}`, value: "Domain Hosting", followupTab: "DOMAIN HOSTING", color: "bg-[#334155]" },
+        { label: `AI Services ${tracingSummary?.["AI_Services"] ?? 0}`, value: "AI Services", followupTab: "AI SERVICES", color: "bg-[#8b5cf6]" },
     ];
 
     const grades = [
@@ -531,6 +532,7 @@ function FollowupListView({
                 <div onClick={() => handleTabClick("ALIBABA SERVICES")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "ALIBABA SERVICES" ? "bg-[#059669]" : "bg-[#f43f5e]"}`}>Alibaba Services ({getCount("ALIBABA SERVICES")})</div>
                 <div onClick={() => handleTabClick("DESIGN DEVELOPMENT")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DESIGN DEVELOPMENT" ? "bg-[#2563eb]" : "bg-[#60a5fa]"}`}>Design Development ({getCount("DESIGN DEVELOPMENT")})</div>
                 <div onClick={() => handleTabClick("DOMAIN HOSTING")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "DOMAIN HOSTING" ? "bg-[#059669]" : "bg-[#334155]"}`}>Domain Hosting ({getCount("DOMAIN HOSTING")})</div>
+                <div onClick={() => handleTabClick("AI SERVICES")} className={`flex-1 py-3 text-center text-white text-[13px] font-bold cursor-pointer transition-colors ${activeTracingTab === "AI SERVICES" ? "bg-[#059669]" : "bg-[#8b5cf6]"}`}>AI Services ({getCount("AI SERVICES")})</div>
             </div>
 
             {/* Summaries */}

@@ -12,7 +12,7 @@ import { CommunicationService } from "./services/communication.service";
 import { customersRepository } from "../repositories/customers.repository";
 import { leadActivitiesRepository } from "../repositories/lead-activities.repository";
 import { leadServicesRepository } from "../repositories/lead-services.repository";
-import { servicesRepository } from "../repositories/services.repository";
+import { ensureServicesSchema, servicesRepository } from "../repositories/services.repository";
 import { callSessionsRepository } from "../repositories/call-sessions.repository";
 import { servicePoolRepository } from "../repositories/service-pool.repository";
 import { pool, db } from "../db";
@@ -3230,6 +3230,7 @@ export function registerSalesRoutes(app: Express) {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
+      await ensureServicesSchema();
       const list = await servicesRepository.listActiveWithSubservices();
       return res.json({ success: true, items: list });
     } catch (error) {

@@ -289,17 +289,26 @@ export function requireManualInvoiceCreator(options: ManualInvoiceCreatorOptions
       const quotationId = typeof req.body?.quotationId === "string" ? req.body.quotationId : null;
       if (quotationId) {
         const userId = (req.user as any).userId || (req.user as any).id;
-        const result = await pool.query(
-          `select created_by, hod_status from quotations where id = $1`,
-          [quotationId],
-        );
-        const quotation = result.rows[0];
-        if (quotation && quotation.created_by === userId && quotation.hod_status === "approved") {
-          return next();
+        const customerId =
+          typeof req.body?.customerId === "string" ? req.body.customerId : null;
+        const client = await pool.connect();
+        try {
+          const { assertQuotationForInvoiceCreate } = await import(
+            "../services/sales-workflow.service"
+          );
+          const check = await assertQuotationForInvoiceCreate(
+            client,
+            quotationId,
+            customerId,
+            userId,
+          );
+          if (check.ok) return next();
+        } finally {
+          client.release();
         }
       }
       return auditedDeny(
-        "Sales Executive may only create an invoice from their own HOD-approved quotation (missing/invalid quotationId)",
+        "Sales Executive may only create an invoice from their own HOD-approved service quotation (missing/invalid quotationId)",
       );
     }
 

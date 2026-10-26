@@ -1,47 +1,20 @@
 import { type Express } from "express";
 import { pool } from "../db";
+import {
+  LEGACY_MAIN_SERVICE_ID_TO_NAME,
+  legacySubServicesByMainId,
+} from "../../shared/followup-services-catalog";
 
 export function registerPublicPoolFollowupRoutes(app: Express) {
-  // Hardcoded sub-services exactly as they were in the legacy system
   const subServicesMap: Record<string, string[]> = {
-    "1": [
-      "GGS Digital", "Basic Package", "Basic Plus Package", "GGS Pro", "Standard",
-      "Verified Supplier Rc-Up", "Verified Supplier Package", "KAP", "Kwa Psa",
-      "KWA-KAP", "Cat", "Ai", "S-Brand", "China Trip", "RFQs", "2 Year VM Package",
-      "DigiSME Verified Package", "DigiSME Plus Package", "DigiSME Basic Package",
-    ],
-    "2": [
-      "Alibaba Minisite", "Alibaba Product Posting", "Alibaba online training",
-      "Alibaba VA", "VATS", "BD/ RFQ", "AMS", "KWA-CM", "Sole Proprietor Company",
-    ],
-    "3": [
-      "Dynamic Website", "Xlserp - Free Website", "Xlserp - Basic", "Basic Dynamic Website",
-      "Professional Dynamic Website", "Enterprise Dynamic Website", "E-Commerce Store",
-      "SEO", "Logo Design", "Catalog Design", "Brochure Design", "Software Development",
-      "Video Documentary", "Sole Proprietor Company", "Partnership Company",
-      "Etsy Store Creation or Posting", "Social Media Account Handling", "EBay Store Design",
-      "Amazon Store Design", "Shopify Store", "Ebay per Product Posting", "Product photoshoot",
-      "Listing Page", "Android App", "IOS App", "Welc Training", "VM Video",
-    ],
-    "4": [
-      "Domain Registration", "1 Year", "country Base Domain", "On Request (Custom Price)",
-      "Pk Domain (2 Years)", "Hosting Plan", "Aluminum Hosting Plan", "Copper Hosting Plan",
-      "Silver Hosting Plan", "Gold Hosting Plan", "Diamond Hosting Plan", "Platinum Hosting Plan",
-      "SSL Certificate", "Cloud Vps Professional", "Cloud Vps Business",
-    ],
-    "5": [
-      "AI RAG ChatBot", "AI Leader Pro", "AI Websites Build", "AI Desingerly", "AI Cloud CRM",
-      "My Leads Agent", "Ai Social Hubs", "AI Power Email", "AI SEO Agent", "eChamber.pk",
-    ],
+    "1": legacySubServicesByMainId("1"),
+    "2": legacySubServicesByMainId("2"),
+    "3": legacySubServicesByMainId("3"),
+    "4": legacySubServicesByMainId("4"),
+    "5": legacySubServicesByMainId("5"),
   };
 
-  const mainServiceNames: Record<string, string> = {
-    "1": "Alibaba Membership",
-    "2": "Alibaba Services",
-    "3": "Design Development",
-    "4": "Domain Hosting",
-    "5": "AI Services",
-  };
+  const mainServiceNames: Record<string, string> = { ...LEGACY_MAIN_SERVICE_ID_TO_NAME };
 
   const getExcludedBaseQuery = `
     SELECT customer_id::text FROM drm.quotations WHERE created_at >= NOW() - INTERVAL '60 days'

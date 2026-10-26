@@ -27,6 +27,7 @@ import {
   recheckGmThresholdAtApproval,
 } from "./services/gm-create-policy.service.js";
 import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../../shared/gm-sales-constants";
+import { assertQuotationForGmCreate } from "../services/sales-workflow.service";
 import { transitionWorkflowStatus } from "./services/workflow-status.service.js";
 import { ApiError } from "../utils/api-error";
 import {
@@ -289,7 +290,8 @@ async function ensureGmEntriesColumns() {
         ADD COLUMN IF NOT EXISTS super_hod_approved_at timestamptz,
         ADD COLUMN IF NOT EXISTS super_hod_approved_by uuid,
         ADD COLUMN IF NOT EXISTS super_hod_comment text,
-        ADD COLUMN IF NOT EXISTS sales_person_name text
+        ADD COLUMN IF NOT EXISTS sales_person_name text,
+        ADD COLUMN IF NOT EXISTS quotation_id uuid null
     `);
   } catch (err) {
     console.error("[gm-pool] failed to ensure gm_entries columns", err);
@@ -476,6 +478,7 @@ export function registerGmPoolRoutes(app: Express) {
     loanMode: z.enum(["loan", "installment", "none"]).default("none"),
     paymentProofUrl: z.string().trim().optional().nullable(),
     installments: z.array(z.any()).optional().default([]),
+    quotationId: z.string().uuid().optional().nullable(),
   }).strict();
 
   const commentSchema = z.object({ comment: z.string().trim().max(2000).optional() }).strict();
@@ -807,6 +810,31 @@ export function registerGmPoolRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid package selected" });
       }
 
+      const quotationId = parsed.quotationId ?? null;
+      if (!quotationId) {
+        return res.status(400).json({
+          error: "Quotation required",
+          code: "QUOTATION_REQUIRED",
+          message:
+            "GM creation requires an HOD-approved package quotation (follow-up → quotation → HOD approve → Create GM).",
+        });
+      }
+      const quoClient = await pool.connect();
+      try {
+        const quoCheck = await assertQuotationForGmCreate(
+          quoClient,
+          quotationId,
+          parsed.companyId ?? null,
+          parsed.packageName,
+          req.user.userId,
+        );
+        if (!quoCheck.ok) {
+          return res.status(409).json({ error: quoCheck.message, code: quoCheck.code });
+        }
+      } finally {
+        quoClient.release();
+      }
+
       const orderDollar = pkg.orderDollar ?? pkg.priceUsd ?? 0;
       if (parsed.alibabaDiscount > orderDollar) {
         return res.status(400).json({ error: "Alibaba discount cannot exceed order dollar amount" });
@@ -815,7 +843,8 @@ export function registerGmPoolRoutes(app: Express) {
       const packagePrice = pkg.priceUsd ?? orderDollar;
       const finalOrderDollar = Number(Math.max(0, orderDollar - parsed.alibabaDiscount).toFixed(2));
       const customerDollar = Number((parsed.pkrAmount / parsed.dollarRate).toFixed(2));
-      const extraDollarDiscount = Number((finalOrderDollar - customerDollar).toFixed(2));
+      // Legacy Add GM: extra $ = order/catalog $ − customer $ (AB stored separately).
+      const extraDollarDiscount = Number(Math.max(0, orderDollar - customerDollar).toFixed(2));
       const extraDiscountPkr = Math.round(extraDollarDiscount * parsed.dollarRate);
       // Patch 5 Stage 2 — resolve canonical GM type (FULL/PARTIAL/LOAN) and enforce
       // the config-driven loan gate + minimum-payment threshold. Behaviour-preserving
@@ -1099,12 +1128,13 @@ export function registerGmPoolRoutes(app: Express) {
           is_deleted,
           approval_status,
           created_by_role,
-          canonical_gm_type
+          canonical_gm_type,
+          quotation_id
         )
         VALUES (
           gen_random_uuid(),
           'GM',
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29, now(), now(), false, 'pending_hod', $30, $31
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29, now(), now(), false, 'pending_hod', $30, $31, $32
         )
         returning *
       `;
@@ -1156,10 +1186,28 @@ export function registerGmPoolRoutes(app: Express) {
         resolvedSalesPersonId,
         createdByRole,
         canonicalGmType,
+        quotationId,
       ];
 
       const result = await pool.query(insertSql, values);
       const row = result.rows[0];
+
+      if (quotationId) {
+        const mark = await pool.query(
+          `update quotations
+              set converted_gm_id = $1, converted_at = coalesce(converted_at, now())
+            where id = $2 and converted_gm_id is null and converted_invoice_id is null
+            returning id`,
+          [String(row.id), quotationId],
+        );
+        if ((mark.rowCount ?? 0) === 0) {
+          await pool.query(`delete from drm.gm_entries where id = $1`, [row.id]);
+          return res.status(409).json({
+            error: "Quotation is no longer available for GM creation",
+            code: "QUOTATION_CONSUMED",
+          });
+        }
+      }
 
       const isOverrideCreate = (() => {
         const r = normalizeRole(createdByRole ?? "");
