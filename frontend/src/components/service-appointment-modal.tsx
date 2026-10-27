@@ -5,20 +5,69 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
-import {
-    FollowCustomerServicesPanel,
-    SubserviceDetail,
-    FollowupServiceOption,
-} from "@/components/FollowCustomerServicesPanel";
+import type { FollowupServiceOption } from "@/components/FollowCustomerServicesPanel";
 
 const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
 
+// Purpose/Grade verbatim-match the option sets FollowCustomerServicesPanel
+// uses for the Sales flow (kept as separate local copies here since this
+// form no longer renders that shared panel — see the restructure note below).
+const PURPOSE_OPTIONS = [
+    { code: "NEW_SELL", label: "New Sell" },
+    { code: "INFORM", label: "Inform" },
+    { code: "PAYMENT_RECOVERY", label: "Payment Recovery" },
+    { code: "AB_PAYMENT", label: "Ab Payment" },
+    { code: "PROJECT_DATA", label: "Project Data" },
+    { code: "RENEW_SELL", label: "Renew Sell" },
+    { code: "SEMINAR", label: "Seminar" },
+    { code: "WEBINAR", label: "Webinar" },
+    { code: "TRAINING", label: "Training" },
+    { code: "ANYDESK", label: "Anydesk" },
+];
+const GRADE_OPTIONS = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "D"];
+// Full legacy "method" attribute list (webxl_attribute, reflid 8) the user
+// asked to bring over verbatim. Excludes 2 rows from that same table ("B+",
+// "A-") that are clearly misfiled Grade values sharing the bucket, not real
+// methods — Grade already has its own field above. Codes are normalized
+// (uppercase/underscore) so the subset that already existed as tracked
+// dashboard method buckets (Mobile, Whatsapp, E-mail, Seminar, In-meeting,
+// WH-Call, Out-meeting, Appointment, OL-Meeting) keep matching
+// `upper(fsd.method)='...'` in dashboard.controller.ts; the rest are new and
+// simply count toward totals without a dedicated named bucket.
+const METHOD_OPTIONS = [
+    { label: "Mobile", code: "MOBILE" },
+    { label: "OnSite Visit", code: "ONSITE_VISIT" },
+    { label: "Whatsapp", code: "WHATSAPP" },
+    { label: "Group Whatsapp (Broadcast)", code: "GROUP_WHATSAPP_BROADCAST" },
+    { label: "VAS Call", code: "VAS_CALL" },
+    { label: "Facebook Post", code: "FACEBOOK_POST" },
+    { label: "Facebook Message", code: "FACEBOOK_MESSAGE" },
+    { label: "E-mail", code: "E_MAIL" },
+    { label: "Talk Time", code: "TALK_TIME" },
+    { label: "Webinar", code: "WEBINAR" },
+    { label: "Seminar", code: "SEMINAR" },
+    { label: "Copy Product", code: "COPY_PRODUCT" },
+    { label: "New Product", code: "NEW_PRODUCT" },
+    { label: "VM-Call", code: "VM_CALL" },
+    { label: "VM-Met", code: "VM_MET" },
+    { label: "ShowCase", code: "SHOWCASE" },
+    { label: "Diagnose", code: "DIAGNOSE" },
+    { label: "Reel Shoot + Edit", code: "REEL_SHOOT_EDIT" },
+    { label: "TikTok", code: "TIKTOK" },
+    { label: "Service Animation", code: "SERVICE_ANIMATION" },
+    { label: "Ebay Course", code: "EBAY_COURSE" },
+    { label: "Amazon Fba", code: "AMAZON_FBA" },
+    { label: "LLC Reg Followup", code: "LLC_REG_FOLLOWUP" },
+    { label: "W-Call", code: "W_CALL" },
+    { label: "In-meeting", code: "IN_MEETING" },
+    { label: "WH-Call", code: "WH_CALL" },
+    { label: "Out-meeting", code: "OUT_MEETING" },
+    { label: "Appointment", code: "APPOINTMENT" },
+    { label: "OL-Meeting", code: "OL_MEETING" },
+];
+
 // Reservation option set verbatim-matches the "Follow The Customer" form in
-// service-assistant-manager-dashboard.tsx. Purpose/Grade/Method/Comment are no
-// longer defined here — they're per-service-selection fields rendered by the
-// shared FollowCustomerServicesPanel (see below), the same component the
-// Sales "Follow The Customer" flow uses (service-private-pool.tsx), so both
-// flows stay on one real implementation instead of two hand-rolled ones.
+// service-assistant-manager-dashboard.tsx.
 // New required multi-select ("Review") field, positioned between Purpose and
 // Grade per the confirmed screenshot layout. Options verbatim per user
 // screenshot spelling (including "Happay").
@@ -102,12 +151,17 @@ export function ServiceAppointmentModal({
             setFollowCustomerId(initialCustomerId);
         }
     }, [open, initialCustomerId]);
-    // Multi-service selection state — same shape FollowupModal (the Sales
-    // "Follow The Customer" implementation in service-private-pool.tsx) feeds
-    // into the shared FollowCustomerServicesPanel.
-    const [selectedServiceCodes, setSelectedServiceCodes] = useState<Set<string>>(new Set());
-    const [selectedSubservices, setSelectedSubservices] = useState<Record<string, Set<string>>>({});
-    const [subserviceDetails, setSubserviceDetails] = useState<Record<string, SubserviceDetail>>({});
+    // Restructured per explicit request to match the legacy layout: Service
+    // is a single flat pick (one of the 2 allowed services), with its real
+    // sub-services shown as plain checkboxes underneath (still required by
+    // the backend — at least one real sub-service id per submission — but no
+    // longer carrying their own individual Purpose/Grade/Method/Comment; those
+    // are now asked once, shared across whichever sub-services get checked.
+    const [selectedServiceId, setSelectedServiceId] = useState("");
+    const [selectedSubserviceIds, setSelectedSubserviceIds] = useState<Set<string>>(new Set());
+    const [purpose, setPurpose] = useState("");
+    const [grade, setGrade] = useState("");
+    const [method, setMethod] = useState("");
     const [followReview, setFollowReview] = useState<string[]>([]);
     // Only one Review popup is ever shown at a time — checking a new option
     // makes it the active one and closes whichever popup was open before
@@ -152,14 +206,15 @@ export function ServiceAppointmentModal({
         name: row.customerDetails?.companyName || row.customerDetails?.email || row.serviceCustomer?.customerId,
     })).filter((c: any) => c.id);
 
-    // Service catalog for the Follow The Customer "Select Services" panel —
-    // the full real catalog (all 5 top-level services: Alibaba Membership,
-    // Alibaba Services, Design Development, Domain Hosting, AI Services),
-    // same generic endpoint and same FollowCustomerServicesPanel component the
-    // Sales "Follow The Customer" flow uses via service-private-pool.tsx. No
-    // name-based restriction here — the previous 2-service hardcoded filter
-    // was why only a subset ever showed up regardless of what the real
-    // catalog contained.
+    // Service catalog for the flat "Service" dropdown below — same generic
+    // endpoint the Sales "Follow The Customer" flow uses via
+    // service-private-pool.tsx, but restricted here to just Alibaba
+    // Membership + Alibaba Services — the Service Executive's Service Pool /
+    // dashboard follow-up form should only ever offer those 2, not the other
+    // 3 (Design Development, Domain Hosting, AI Services), per explicit
+    // confirmation. Filtered by code (not name) to avoid the catalog-name-drift
+    // bug that affected an earlier version of this restriction.
+    const SERVICE_EXECUTIVE_ALLOWED_CODES = new Set(["ALIBABA_MEMBERSHIP", "ALIBABA_SERVICES"]);
     const { data: servicesCatalogResponse } = useQuery<{ success: boolean; items: FollowupServiceOption[] }>({
         queryKey: ["/api/sales/services"],
         queryFn: async () => {
@@ -169,13 +224,17 @@ export function ServiceAppointmentModal({
         },
         enabled: open,
     });
-    const followupServices = servicesCatalogResponse?.items || [];
+    const followupServices = (servicesCatalogResponse?.items || []).filter((s) =>
+        SERVICE_EXECUTIVE_ALLOWED_CODES.has(normalizeCode(s.code)),
+    );
 
     const resetFollowupForm = () => {
         setFollowCustomerId(initialCustomerId ?? "");
-        setSelectedServiceCodes(new Set());
-        setSelectedSubservices({});
-        setSubserviceDetails({});
+        setSelectedServiceId("");
+        setSelectedSubserviceIds(new Set());
+        setPurpose("");
+        setGrade("");
+        setMethod("");
         setFollowReview([]);
         setReviewDetails({});
         setActiveReviewPopup(null);
@@ -184,64 +243,23 @@ export function ServiceAppointmentModal({
         setFollowNote("");
     };
 
-    const handleToggleService = (serviceId: string, checked: boolean) => {
-        const svc = followupServices.find((s) => s.id === serviceId);
-        const serviceCode = svc ? normalizeCode(svc.code) : null;
-        if (!serviceCode) return;
-        setSelectedServiceCodes((prev) => {
+    const selectedService = followupServices.find((s) => s.id === selectedServiceId);
+
+    const handleSelectService = (serviceId: string) => {
+        setSelectedServiceId(serviceId);
+        // Switching service invalidates whatever sub-services were ticked
+        // under the previous one.
+        setSelectedSubserviceIds(new Set());
+    };
+
+    const handleToggleSubservice = (subserviceId: string, checked: boolean) => {
+        setSelectedSubserviceIds((prev) => {
             const next = new Set(prev);
-            if (checked) next.add(serviceCode);
-            else next.delete(serviceCode);
+            if (checked) next.add(subserviceId);
+            else next.delete(subserviceId);
             return next;
         });
-        if (!checked) {
-            setSelectedSubservices((prev) => {
-                const next = { ...prev };
-                delete next[serviceCode];
-                return next;
-            });
-            setSubserviceDetails((prev) => {
-                const next = { ...prev };
-                (svc?.subServices || []).forEach((sub) => { delete next[sub.id]; });
-                return next;
-            });
-        }
     };
-
-    const handleToggleSubservice = (serviceId: string, subserviceId: string, checked: boolean) => {
-        const svc = followupServices.find((s) => s.id === serviceId);
-        const serviceCode = svc ? normalizeCode(svc.code) : null;
-        if (!serviceCode) return;
-        if (checked) {
-            setSelectedServiceCodes((prev) => {
-                const next = new Set(prev);
-                next.add(serviceCode);
-                return next;
-            });
-        }
-        setSelectedSubservices((prev) => {
-            const next = { ...prev };
-            const current = new Set(next[serviceCode] ?? []);
-            if (checked) current.add(subserviceId);
-            else current.delete(subserviceId);
-            if (current.size > 0) next[serviceCode] = current;
-            else delete next[serviceCode];
-            return next;
-        });
-        if (!checked) {
-            setSubserviceDetails((prev) => {
-                const next = { ...prev };
-                delete next[subserviceId];
-                return next;
-            });
-        }
-    };
-
-    const handleUpdateDetail = (subId: string, patch: Partial<SubserviceDetail>) => {
-        setSubserviceDetails((prev) => ({ ...prev, [subId]: { ...(prev[subId] || {}), ...patch } }));
-    };
-
-    const selectedSubserviceIds = Object.values(selectedSubservices).flatMap((set) => Array.from(set));
 
     const followupMutation = useMutation({
         mutationFn: async (payload: any) => {
@@ -274,54 +292,30 @@ export function ServiceAppointmentModal({
 
     const submitFollowup = () => {
         if (!followCustomerId) return toast({ title: "Please select a customer", variant: "destructive" });
-        if (selectedSubserviceIds.length === 0) return toast({ title: "Please select at least one service", variant: "destructive" });
+        if (!selectedServiceId) return toast({ title: "Please select a service", variant: "destructive" });
+        if (selectedSubserviceIds.size === 0) return toast({ title: "Please select at least one sub-service", variant: "destructive" });
+        if (!purpose) return toast({ title: "Please select a purpose", variant: "destructive" });
+        if (!grade) return toast({ title: "Please select a grade", variant: "destructive" });
+        if (!method) return toast({ title: "Please select a method", variant: "destructive" });
         if (!followReview.length) return toast({ title: "Please select at least one review option", variant: "destructive" });
         if (!followReservation) return toast({ title: "Please select a reservation option", variant: "destructive" });
         if (!followNextDate) return toast({ title: "Please select a next date", variant: "destructive" });
         if (!followNote.trim()) return toast({ title: "Please add a note", variant: "destructive" });
 
-        const subIdToMeta = new Map<string, { serviceId: string; subCode: string; serviceCode: string }>();
-        followupServices.forEach((svc) => {
-            const svcCode = normalizeCode(svc.code);
-            svc.subServices?.forEach((sub) => {
-                subIdToMeta.set(sub.id, { serviceId: svc.id, subCode: normalizeCode(sub.code), serviceCode: svcCode });
-            });
-        });
-
-        const detailPayloads: any[] = [];
-        const incomplete: string[] = [];
-        for (const subId of selectedSubserviceIds) {
-            const meta = subIdToMeta.get(subId);
-            if (!meta) continue;
-            const detail = subserviceDetails[subId] || {};
-            const purpose = detail.purpose ?? "";
-            const grade = detail.grade ?? "";
-            const method = detail.method ?? "";
-            const comment = detail.comment ?? "";
-            if (!purpose || !grade || !method || !comment) {
-                const svc = followupServices.find((s) => s.id === meta.serviceId);
-                const sub = svc?.subServices?.find((s) => s.id === subId);
-                incomplete.push(sub?.name || subId);
-                continue;
-            }
-            detailPayloads.push({
-                subServiceId: subId,
-                purpose,
-                grade,
-                method,
-                comment,
-                note: detail.note || comment,
-                dateTime: detail.date ? new Date(detail.date).toISOString() : undefined,
-                talkTimeMinutes: method ? detail.talkTimeMinutes ?? null : null,
-            });
-        }
-        if (incomplete.length) {
-            return toast({
-                title: "Please complete every selected service",
-                description: `Missing Purpose/Grade/Method/Comment for: ${incomplete.join(", ")}`,
-                variant: "destructive",
-            });
-        }
+        // Purpose/Grade/Method are now asked once for the whole submission
+        // (see restructure note above) rather than per sub-service — the same
+        // 3 values, plus the Note as the backend's required per-detail
+        // "comment" (this flattened form has no separate Comment field),
+        // are copied onto every ticked sub-service's detail row.
+        const noteTrimmed = followNote.trim();
+        const detailPayloads = Array.from(selectedSubserviceIds).map((subServiceId) => ({
+            subServiceId,
+            purpose,
+            grade,
+            method,
+            comment: noteTrimmed,
+            note: noteTrimmed,
+        }));
 
         followupMutation.mutate({
             customerId: followCustomerId,
@@ -330,6 +324,7 @@ export function ServiceAppointmentModal({
             reservationType: followReservation,
             note: followNote,
             nextDate: followNextDate,
+            method,
         });
     };
 
@@ -466,15 +461,24 @@ export function ServiceAppointmentModal({
                             </div>
                         </div>
 
-                        <FollowCustomerServicesPanel
-                            services={followupServices}
-                            selectedServiceCodes={selectedServiceCodes}
-                            selectedSubservices={selectedSubservices}
-                            subserviceDetails={subserviceDetails}
-                            onToggleService={handleToggleService}
-                            onToggleSubservice={handleToggleSubservice}
-                            onUpdateDetail={handleUpdateDetail}
-                        />
+                        {/* Purpose */}
+                        <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
+                            <span className="text-[#059669] font-bold w-28 shrink-0 dark:text-zinc-400">Purpose *</span>
+                            <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300">
+                                {PURPOSE_OPTIONS.map((p) => (
+                                    <label key={p.code} className="flex items-center gap-1.5 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="purpose"
+                                            className="accent-[#059669]"
+                                            checked={purpose === p.code}
+                                            onChange={() => setPurpose(p.code)}
+                                        />
+                                        {p.label}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
 
                         {/* Review */}
                         <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
@@ -501,17 +505,76 @@ export function ServiceAppointmentModal({
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Next Date *</label>
-                                <input
-                                    type="datetime-local"
-                                    value={followNextDate}
-                                    onChange={(e) => setFollowNextDate(e.target.value)}
-                                    className="w-full h-9 rounded-md border border-slate-200 shadow-sm px-3 text-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
-                                />
+                        {/* Grade */}
+                        <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
+                            <span className="text-[#059669] font-bold w-28 shrink-0 dark:text-zinc-400">Grade *</span>
+                            <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300">
+                                {GRADE_OPTIONS.map((g) => (
+                                    <label key={g} className="flex items-center gap-1.5 cursor-pointer">
+                                        <input
+                                            type="radio"
+                                            name="grade"
+                                            className="accent-[#059669]"
+                                            checked={grade === g}
+                                            onChange={() => setGrade(g)}
+                                        />
+                                        {g}
+                                    </label>
+                                ))}
                             </div>
                         </div>
+
+                        {/* Service + Method */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Service *</label>
+                                <Select value={selectedServiceId} onValueChange={handleSelectService}>
+                                    <SelectTrigger className="w-full border-slate-200 shadow-sm text-slate-500 dark:text-zinc-400 dark:border-zinc-800">
+                                        <SelectValue placeholder="Choose..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {followupServices.map((s) => (
+                                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Method *</label>
+                                <Select value={method} onValueChange={setMethod}>
+                                    <SelectTrigger className="w-full border-slate-200 shadow-sm text-slate-500 dark:text-zinc-400 dark:border-zinc-800">
+                                        <SelectValue placeholder="Choose..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {METHOD_OPTIONS.map((m) => (
+                                            <SelectItem key={m.code} value={m.code}>{m.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+
+                        {/* Sub-services of the chosen Service */}
+                        {selectedService && (selectedService.subServices?.length ?? 0) > 0 && (
+                            <div className="rounded-md border p-3 bg-card shadow-sm dark:border-zinc-800">
+                                <p className="text-[13px] font-bold text-slate-600 dark:text-zinc-300 mb-2">
+                                    {selectedService.name} - Sub Services *
+                                </p>
+                                <div className="flex flex-wrap gap-4 text-slate-600 dark:text-zinc-300 text-[13px]">
+                                    {selectedService.subServices!.map((sub) => (
+                                        <label key={sub.id} className="flex items-center gap-1.5 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="accent-[#059669]"
+                                                checked={selectedSubserviceIds.has(sub.id)}
+                                                onChange={(e) => handleToggleSubservice(sub.id, e.target.checked)}
+                                            />
+                                            {sub.name}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Reservation */}
                         <div className="flex flex-col md:flex-row md:items-start gap-2 text-[13px]">
@@ -532,13 +595,24 @@ export function ServiceAppointmentModal({
                             </div>
                         </div>
 
-                        <div className="flex flex-col gap-1.5">
-                            <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Note *</label>
-                            <textarea
-                                value={followNote}
-                                onChange={(e) => setFollowNote(e.target.value)}
-                                className="w-full border border-slate-200 rounded-[6px] min-h-[70px] p-2.5 text-[13px] text-slate-600 resize-y shadow-sm bg-white dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
-                            />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Next Date *</label>
+                                <input
+                                    type="datetime-local"
+                                    value={followNextDate}
+                                    onChange={(e) => setFollowNextDate(e.target.value)}
+                                    className="w-full h-9 rounded-md border border-slate-200 shadow-sm px-3 text-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+                                />
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[13px] font-bold text-slate-600 dark:text-zinc-300">Note *</label>
+                                <textarea
+                                    value={followNote}
+                                    onChange={(e) => setFollowNote(e.target.value)}
+                                    className="w-full border border-slate-200 rounded-[6px] min-h-[36px] p-2.5 text-[13px] text-slate-600 resize-y shadow-sm bg-white dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-300"
+                                />
+                            </div>
                         </div>
 
                         <div>

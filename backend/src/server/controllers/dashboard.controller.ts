@@ -257,6 +257,17 @@ export async function getDepartmentFilterUserIds(req: Express.Request | any): Pr
 
 
 import { type Request, type Response } from "express";
+
+/** Shared by getActivities and getTeamWorkPerformance's `scope=sales_service` filter. */
+const SALES_SERVICE_ROLES = [
+  ROLES.SALES_MANAGER,
+  ROLES.SALES_ASSISTANT_MANAGER,
+  ROLES.SALES_EXECUTIVE,
+  ROLES.SERVICE_MANAGER,
+  ROLES.SERVICE_ASSISTANT_MANAGER,
+  ROLES.SERVICE_EXECUTIVE,
+];
+
 export class DashboardController {
 
         
@@ -531,371 +542,8 @@ export class DashboardController {
   static async getActivities(req: Request, res: Response) {
     try {
       if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
-      const period = String(req.query.period ?? "TD").toUpperCase();
-      let from: Date, to: Date;
-      if (req.query.from && req.query.to) {
-          from = new Date(req.query.from as string);
-          to = new Date(req.query.to as string);
-          to.setHours(23, 59, 59, 999);
-      } else {
-          const range = getPeriodRange(period);
-          from = range.from;
-          to = range.to;
-      }
-      const isManager = isManagerRole(((req.user as any).activeRoleId || req.user.roleId));
-      const userId = req.user.userId;
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
-
-      const activityParams: any[] = [from, to];
-      let activityFilter = "";
-      if (!isManager) {
-        activityFilter = ` and f.assigned_to = $${activityParams.length + 1}::uuid`;
-        activityParams.push(userId);
-      } else if (allowedUserIds) {
-        activityFilter = ` and f.assigned_to = ANY($${activityParams.length + 1}::uuid[])`;
-        activityParams.push(allowedUserIds);
-      }
-      const activityRows = await pool.query(
-        `
-          select f.assigned_to as user_id,
-                 coalesce(u.full_name, u.name, u.username) as name,
-                 count(*) filter (where upper(fsd.method)='MOBILE')::int as mobile,
-                 count(*) filter (where upper(fsd.method)='WHATSAPP')::int as whatsapp,
-                 count(*) filter (where upper(fsd.method)='WH_CALL')::int as wh_call,
-                 count(*) filter (where upper(fsd.method)='IN_MEETING')::int as in_meeting,
-                 count(*) filter (where upper(fsd.method)='OUT_MEETING')::int as onsite,
-                 count(*) filter (where upper(fsd.method)='E_MAIL')::int as email,
-                 count(*) filter (where upper(fsd.method)='SEMINAR')::int as seminar,
-                 count(*) filter (where upper(fsd.method)='OL_MEETING')::int as webinar,
-                 count(*) filter (where upper(fsd.method)='APPOINTMENT')::int as appointment_method,
-                 coalesce(sum(fsd.talk_time_minutes),0)::float as talk_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='MOBILE'),0)::float as mobile_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WHATSAPP'),0)::float as whatsapp_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WH_CALL'),0)::float as wh_call_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='IN_MEETING'),0)::float as in_meeting_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OUT_MEETING'),0)::float as onsite_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='E_MAIL'),0)::float as email_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='SEMINAR'),0)::float as seminar_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OL_MEETING'),0)::float as webinar_minutes,
-                 coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='APPOINTMENT'),0)::float as appointment_minutes,
-                 count(*)::int as total
-            from drm.followup_subservice_details fsd
-            join drm.follow_ups f on f.id = fsd.followup_id
-            left join drm.users u on u.id = f.assigned_to
-           where coalesce(fsd.created_at, f.created_at) between $1 and $2
-             ${activityFilter}
-           group by f.assigned_to, u.full_name, u.name, u.username
-           order by name nulls last
-        `,
-        activityParams,
-      );
-
-      const apptParams: any[] = [from, to];
-      let apptFilter = "";
-      if (!isManager) {
-        apptFilter = ` and ap.assigned_to = $${apptParams.length + 1}::uuid`;
-        apptParams.push(userId);
-      } else if (allowedUserIds) {
-        apptFilter = ` and ap.assigned_to = ANY($${apptParams.length + 1}::uuid[])`;
-        apptParams.push(allowedUserIds);
-      }
-      const apptRows = await pool.query(
-        `
-          select ap.assigned_to::text as user_id,
-                 count(*)::int as appointments,
-                 coalesce(sum(extract(epoch from (ap.ends_at - ap.starts_at)) / 60),0)::float as total_minutes
-            from drm.appointments ap
-           where coalesce(ap.is_deleted,false)=false
-             and ap.starts_at between $1 and $2
-             ${apptFilter}
-           group by ap.assigned_to
-        `,
-        apptParams,
-      );
-
-      const customerParams: any[] = [from, to];
-      let customerFilter = "";
-      if (!isManager) {
-        customerFilter = ` and coalesce(c.owner_user_id::text, c.created_by::text) = $${customerParams.length + 1}::text`;
-        customerParams.push(userId);
-      }
-      const gradeRows = await pool.query(
-        `
-          select coalesce(c.owner_user_id, c.created_by)::text as user_id, c.grade, count(*)::int as count
-            from drm.customers c
-           where c.created_at between $1 and $2
-             ${customerFilter}
-           group by coalesce(c.owner_user_id, c.created_by), c.grade
-        `,
-        customerParams,
-      );
-
-      const apptMap = apptRows.rows.reduce<Record<string, { appointments: number; totalMinutes: number }>>((acc, row) => {
-        const key = row.user_id ?? "unknown";
-        acc[key] = {
-          appointments: Number(row.appointments ?? 0),
-          totalMinutes: Number(row.total_minutes ?? 0),
-        };
-        return acc;
-      }, {});
-
-      const gradeMap = gradeRows.rows.reduce<Record<string, { aMinus: number; bPlus: number }>>((acc, row) => {
-        const key = row.user_id ?? "unknown";
-        if (!acc[key]) acc[key] = { aMinus: 0, bPlus: 0 };
-        if (row.grade === "A-") acc[key].aMinus += Number(row.count ?? 0);
-        if (row.grade === "B+") acc[key].bPlus += Number(row.count ?? 0);
-        return acc;
-      }, {});
-
-      const defaultTargets = {
-        mobile: 50,
-        whatsapp: 20,
-        whCall: 5,
-        inMeeting: 2,
-        onsite: 1,
-        email: 50,
-        seminar: 1,
-        webinar: 1,
-        appointment: 3,
-        meeting: 2,
-        aMinus: 6,
-        bPlus: 13,
-        copy: 90,
-        new: 10,
-      };
-
-      // Scale targets by the number of days in the selected period (minimum 1)
-      const dayDiff = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (1000 * 3600 * 24)));
-      if (dayDiff > 1) {
-        for (const key of Object.keys(defaultTargets)) {
-          (defaultTargets as any)[key] = (defaultTargets as any)[key] * dayDiff;
-        }
-      }
-
-      // Fetch dynamic targets from DB to override default targets based on role
-      let allDailyTargets: any[] = [];
-      try {
-        const targetRes = await pool.query(`SELECT * FROM drm.target_system_daily_targets`);
-        allDailyTargets = targetRes.rows;
-      } catch (err) {
-        console.error("Failed to fetch daily targets for dashboard", err);
-      }
-
-      // This matrix is scoped to Sales and Service only — every other
-      // department (product posting, reception, complaint, QA, DD, etc.) is
-      // filtered out at the source query, not hidden in the UI.
-      const SALES_SERVICE_ROLES = [
-        ROLES.SALES_MANAGER,
-        ROLES.SALES_ASSISTANT_MANAGER,
-        ROLES.SALES_EXECUTIVE,
-        ROLES.SERVICE_MANAGER,
-        ROLES.SERVICE_ASSISTANT_MANAGER,
-        ROLES.SERVICE_EXECUTIVE,
-      ];
-
-      // We need a way to look up roles for each user
-      let displayUsers: any[] = [];
-      if (isManager && allowedUserIds) {
-          // The manager's own id is always folded into allowedUserIds (for scoping the
-          // activity/appointment/grade queries above), but the manager doesn't log their
-          // own follow-ups here — this team matrix should only list direct reports, not
-          // the manager's own (always-empty) row.
-          const teamOnlyIds = allowedUserIds.filter((id) => id !== userId);
-          const uRes = await pool.query(
-            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = ANY($1::uuid[]) AND role = ANY($2::text[])`,
-            [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"], SALES_SERVICE_ROLES],
-          );
-          displayUsers = uRes.rows;
-      } else if (isManager && !allowedUserIds) {
-          // Global scope (admin/super_admin/super_hod/hod/account_manager —
-          // getDepartmentFilterUserIds returned null, i.e. "don't filter").
-          // Every other query above (activity/appointments/grades/task time/
-          // PP evidence) already treats null as "show everyone"; this list
-          // must match or their rows get computed and then thrown away.
-          // That's every manager's whole team, so list all real users —
-          // narrowed to Sales/Service roles only (see SALES_SERVICE_ROLES above).
-          const uRes = await pool.query(
-            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id != $1::uuid AND role = ANY($2::text[])`,
-            [userId, SALES_SERVICE_ROLES],
-          );
-          displayUsers = uRes.rows;
-      } else {
-          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid AND role = ANY($2::text[])`, [userId, SALES_SERVICE_ROLES]);
-          displayUsers = uRes.rows;
-      }
-
-      // under_works holds either the manager's user id or a non-uuid sentinel
-      // ("main", "", etc. — seen in the real data) — only treat it as a real
-      // manager link when it actually resolves to another user in this list.
-      const knownUserIds = new Set(displayUsers.map((u) => u.user_id));
-
-      const activityMap = activityRows.rows.reduce<Record<string, any>>((acc, row) => {
-          if (row.user_id) acc[row.user_id] = row;
-          return acc;
-      }, {});
-
-      // Fetch task time logs
-      let taskTimeMap: Record<string, number> = {};
-      try {
-        const taskTimeParams: any[] = [from, to];
-        let taskTimeFilter = "";
-        if (!isManager) {
-          taskTimeFilter = ` and ttl.user_id = $3::uuid`;
-          taskTimeParams.push(userId);
-        } else if (allowedUserIds) {
-          taskTimeFilter = ` and ttl.user_id = ANY($3::uuid[])`;
-          taskTimeParams.push(allowedUserIds);
-        }
-
-        const taskTimeQuery = `
-          SELECT 
-            ttl.user_id::text as user_id,
-            COALESCE(SUM(ttl.time_spent_minutes), 0)::float as total_minutes
-          FROM drm.task_time_logs ttl
-          WHERE ttl.log_date BETWEEN $1 AND $2
-            ${taskTimeFilter}
-          GROUP BY ttl.user_id
-        `;
-        const taskTimeRes = await pool.query(taskTimeQuery, taskTimeParams);
-        taskTimeMap = taskTimeRes.rows.reduce<Record<string, number>>((acc, row) => {
-          acc[row.user_id] = Number(row.total_minutes || 0);
-          return acc;
-        }, {});
-      } catch (err) {
-        console.error("Failed to fetch task time logs for dashboard activities", err);
-      }
-
-      // Fetch product posting evidence links counts
-      let ppEvidenceMap: Record<string, { copy: number; new: number }> = {};
-      try {
-        const ppEvidenceParams: any[] = [from, to];
-        let ppEvidenceFilter = "";
-        if (!isManager) {
-          ppEvidenceFilter = ` and el.created_by_user_id = $3::uuid`;
-          ppEvidenceParams.push(userId);
-        } else if (allowedUserIds) {
-          ppEvidenceFilter = ` and el.created_by_user_id = ANY($3::uuid[])`;
-          ppEvidenceParams.push(allowedUserIds);
-        }
-
-        const ppEvidenceQuery = `
-          SELECT 
-            el.created_by_user_id::text as user_id,
-            COUNT(*) filter (where lower(t.title) LIKE '%copy%' or lower(p.name) LIKE '%copy%')::int as copy_count,
-            COUNT(*) filter (where not (lower(t.title) LIKE '%copy%' or lower(p.name) LIKE '%copy%') or t.title is null)::int as new_count
-          FROM drm.product_posting_evidence_links el
-          LEFT JOIN drm.tasks t ON el.task_id = t.id
-          LEFT JOIN drm.projects p ON el.project_id = p.id
-          WHERE el.created_at BETWEEN $1 AND $2
-            ${ppEvidenceFilter}
-          GROUP BY el.created_by_user_id
-        `;
-        const ppEvidenceRes = await pool.query(ppEvidenceQuery, ppEvidenceParams);
-        ppEvidenceMap = ppEvidenceRes.rows.reduce<Record<string, { copy: number; new: number }>>((acc, row) => {
-          acc[row.user_id] = {
-            copy: Number(row.copy_count || 0),
-            new: Number(row.new_count || 0),
-          };
-          return acc;
-        }, {});
-      } catch (err) {
-        console.error("Failed to fetch product posting evidence links for dashboard activities", err);
-      }
-
-      const rows = displayUsers.map((uRow) => {
-        const key = uRow.user_id;
-        const row = activityMap[key] || {};
-        const appt = apptMap[key] ?? { appointments: 0, totalMinutes: 0 };
-        const grades = gradeMap[key] ?? { aMinus: 0, bPlus: 0 };
-        const taskTimeMinutes = taskTimeMap[key] || 0;
-        const ppEvidence = ppEvidenceMap[key] ?? { copy: 0, new: 0 };
-        
-        // Clone default targets for this user
-        const userTargets = { ...defaultTargets };
-        
-        // Override with role-specific dynamic targets if available
-        const userRole = (uRow.role || "").toLowerCase().replace(/_/g, ' ');
-        if (userRole && allDailyTargets.length > 0) {
-            const roleTargets = allDailyTargets.filter(t => (t.role || "").toLowerCase() === userRole);
-            roleTargets.forEach(t => {
-                const normMethod = (t.method || "").toLowerCase().replace(/[^a-z0-9]/g, '_');
-                const targetVal = Number(t.target) || 0;
-                if (normMethod.includes('mobile')) userTargets.mobile = targetVal;
-                if (normMethod.includes('whatsapp')) userTargets.whatsapp = targetVal;
-                if (normMethod.includes('wh_call')) userTargets.whCall = targetVal;
-                if (normMethod.includes('in_meeting')) userTargets.inMeeting = targetVal;
-                if (normMethod.includes('email')) userTargets.email = targetVal;
-                if (normMethod.includes('seminar')) userTargets.seminar = targetVal;
-                if (normMethod.includes('webinar')) userTargets.webinar = targetVal;
-                if (normMethod.includes('appointment')) userTargets.appointment = targetVal;
-                if (normMethod.includes('meeting')) {
-                    userTargets.meeting = targetVal;
-                    if (normMethod.includes('out') || normMethod.includes('site')) userTargets.onsite = targetVal;
-                }
-                if (normMethod.includes('copy')) (userTargets as any).copy = targetVal;
-                if (normMethod.includes('new')) (userTargets as any).new = targetVal;
-            });
-        }
-
-        const isProductPosting = userRole.includes("posting") || userRole.includes("product posting");
-        const talkMinutes = Number(row.talk_minutes ?? 0);
-        const userTimeMinutes = isProductPosting ? taskTimeMinutes : (appt.totalMinutes + talkMinutes);
-
-        const methods: any = {
-          mobile: { done: Number(row.mobile ?? 0), target: userTargets.mobile, minutes: Number(row.mobile_minutes ?? 0) },
-          whatsapp: { done: Number(row.whatsapp ?? 0), target: userTargets.whatsapp, minutes: Number(row.whatsapp_minutes ?? 0) },
-          whCall: { done: Number(row.wh_call ?? 0), target: userTargets.whCall, minutes: Number(row.wh_call_minutes ?? 0) },
-          inMeeting: { done: Number(row.in_meeting ?? 0), target: userTargets.inMeeting, minutes: Number(row.in_meeting_minutes ?? 0) },
-          onsite: { done: Number(row.onsite ?? 0), target: userTargets.onsite, minutes: Number(row.onsite_minutes ?? 0) },
-          email: { done: Number(row.email ?? 0), target: userTargets.email, minutes: Number(row.email_minutes ?? 0) },
-          seminar: { done: Number(row.seminar ?? 0), target: userTargets.seminar, minutes: Number(row.seminar_minutes ?? 0) },
-          webinar: { done: Number(row.webinar ?? 0), target: userTargets.webinar, minutes: Number(row.webinar_minutes ?? 0) },
-          appointment: { done: appt.appointments + Number(row.appointment_method ?? 0), target: userTargets.appointment, minutes: Number(row.appointment_minutes ?? 0) },
-          meeting: { done: appt.appointments, target: userTargets.meeting },
-          aMinus: { done: grades.aMinus, target: userTargets.aMinus },
-          bPlus: { done: grades.bPlus, target: userTargets.bPlus },
-        };
-
-        if (isProductPosting) {
-          methods.copy = { done: ppEvidence.copy, target: userTargets.copy };
-          methods.new = { done: ppEvidence.new, target: userTargets.new };
-        }
-
-        const managerId = uRow.under_works && knownUserIds.has(uRow.under_works) ? uRow.under_works : null;
-
-        return {
-          userId: key,
-          name: uRow.name ?? "Unknown",
-          role: uRow.role ?? null,
-          isManager: isManagerialRole(uRow.role),
-          managerId,
-          methods,
-          totals: {
-            activities: isProductPosting ? (ppEvidence.copy + ppEvidence.new) : Number(row.total ?? 0),
-            timeMinutes: Math.round(userTimeMinutes ?? 0),
-          },
-        };
-      });
-
-      const totals = rows.reduce(
-        (acc, r) => {
-          acc.activities += r.totals.activities;
-          acc.timeMinutes += r.totals.timeMinutes;
-          return acc;
-        },
-        { activities: 0, timeMinutes: 0 },
-      );
-
-      res.json({
-        success: true,
-        data: {
-          period,
-          from: from.toISOString(),
-          to: to.toISOString(),
-          rows: rows,
-          totals,
-        },
-      });
+      const data = await computeActivityRows(req, SALES_SERVICE_ROLES);
+      res.json({ success: true, data });
     } catch (err) {
       console.error("Error fetching dashboard activities", err);
       if (isDbUnavailableError(err)) return respondDbUnavailable(res, []);
@@ -1319,6 +967,16 @@ export class DashboardController {
       } else if (allowedUserIds) {
         filter = ` and coalesce(c.owner_user_id::text, c.created_by::text) = ANY($${params.length + 1}::text[])`;
         params.push(allowedUserIds);
+      }
+      // Optional narrowing for the Sale & Service Report page's "Team Work
+      // Performance" section — on top of whatever the caller's own
+      // department scope already allows, restrict the person list further to
+      // Sales + Service roles only. Other callers (dashboard.tsx,
+      // sales-manager-dashboard.tsx, etc.) don't pass this and are
+      // unaffected.
+      if (String(req.query.scope ?? "") === "sales_service") {
+        filter += ` and u.role = ANY($${params.length + 1}::text[])`;
+        params.push(SALES_SERVICE_ROLES);
       }
 
       const client = await pool.connect();
@@ -1805,4 +1463,367 @@ export class DashboardController {
       res.status(500).json({ error: "InternalError", message: "Failed to fetch chart data" });
     }
   }
+}
+
+/**
+ * Core of DashboardController.getActivities, extracted so other reports
+ * (e.g. the HOD Meeting Report's Sales-only Activities section) can reuse
+ * the same per-user method/appointment/grade aggregation against a
+ * different role list, without duplicating this ~300-line query.
+ */
+export async function computeActivityRows(req: Request, roleList: string[]) {
+  if (!req.user) throw new Error("Not authenticated");
+  const period = String(req.query.period ?? "TD").toUpperCase();
+  let from: Date, to: Date;
+  if (req.query.from && req.query.to) {
+      from = new Date(req.query.from as string);
+      to = new Date(req.query.to as string);
+      to.setHours(23, 59, 59, 999);
+  } else {
+      const range = getPeriodRange(period);
+      from = range.from;
+      to = range.to;
+  }
+  const isManager = isManagerRole(((req.user as any).activeRoleId || req.user.roleId));
+  const userId = req.user.userId;
+  const allowedUserIds = await getDepartmentFilterUserIds(req);
+
+  const activityParams: any[] = [from, to];
+  let activityFilter = "";
+  if (!isManager) {
+    activityFilter = ` and f.assigned_to = $${activityParams.length + 1}::uuid`;
+    activityParams.push(userId);
+  } else if (allowedUserIds) {
+    activityFilter = ` and f.assigned_to = ANY($${activityParams.length + 1}::uuid[])`;
+    activityParams.push(allowedUserIds);
+  }
+  const activityRows = await pool.query(
+    `
+      select f.assigned_to as user_id,
+             coalesce(u.full_name, u.name, u.username) as name,
+             count(*) filter (where upper(fsd.method)='MOBILE')::int as mobile,
+             count(*) filter (where upper(fsd.method)='WHATSAPP')::int as whatsapp,
+             count(*) filter (where upper(fsd.method)='WH_CALL')::int as wh_call,
+             count(*) filter (where upper(fsd.method)='IN_MEETING')::int as in_meeting,
+             count(*) filter (where upper(fsd.method)='OUT_MEETING')::int as onsite,
+             count(*) filter (where upper(fsd.method)='E_MAIL')::int as email,
+             count(*) filter (where upper(fsd.method)='SEMINAR')::int as seminar,
+             count(*) filter (where upper(fsd.method)='OL_MEETING')::int as webinar,
+             count(*) filter (where upper(fsd.method)='APPOINTMENT')::int as appointment_method,
+             coalesce(sum(fsd.talk_time_minutes),0)::float as talk_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='MOBILE'),0)::float as mobile_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WHATSAPP'),0)::float as whatsapp_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='WH_CALL'),0)::float as wh_call_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='IN_MEETING'),0)::float as in_meeting_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OUT_MEETING'),0)::float as onsite_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='E_MAIL'),0)::float as email_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='SEMINAR'),0)::float as seminar_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='OL_MEETING'),0)::float as webinar_minutes,
+             coalesce(sum(fsd.talk_time_minutes) filter (where upper(fsd.method)='APPOINTMENT'),0)::float as appointment_minutes,
+             count(*)::int as total
+        from drm.followup_subservice_details fsd
+        join drm.follow_ups f on f.id = fsd.followup_id
+        left join drm.users u on u.id = f.assigned_to
+       where coalesce(fsd.created_at, f.created_at) between $1 and $2
+         ${activityFilter}
+       group by f.assigned_to, u.full_name, u.name, u.username
+       order by name nulls last
+    `,
+    activityParams,
+  );
+
+  const apptParams: any[] = [from, to];
+  let apptFilter = "";
+  if (!isManager) {
+    apptFilter = ` and ap.assigned_to = $${apptParams.length + 1}::uuid`;
+    apptParams.push(userId);
+  } else if (allowedUserIds) {
+    apptFilter = ` and ap.assigned_to = ANY($${apptParams.length + 1}::uuid[])`;
+    apptParams.push(allowedUserIds);
+  }
+  const apptRows = await pool.query(
+    `
+      select ap.assigned_to::text as user_id,
+             count(*)::int as appointments,
+             coalesce(sum(extract(epoch from (ap.ends_at - ap.starts_at)) / 60),0)::float as total_minutes
+        from drm.appointments ap
+       where coalesce(ap.is_deleted,false)=false
+         and ap.starts_at between $1 and $2
+         ${apptFilter}
+       group by ap.assigned_to
+    `,
+    apptParams,
+  );
+
+  const customerParams: any[] = [from, to];
+  let customerFilter = "";
+  if (!isManager) {
+    customerFilter = ` and coalesce(c.owner_user_id::text, c.created_by::text) = $${customerParams.length + 1}::text`;
+    customerParams.push(userId);
+  }
+  const gradeRows = await pool.query(
+    `
+      select coalesce(c.owner_user_id, c.created_by)::text as user_id, c.grade, count(*)::int as count
+        from drm.customers c
+       where c.created_at between $1 and $2
+         ${customerFilter}
+       group by coalesce(c.owner_user_id, c.created_by), c.grade
+    `,
+    customerParams,
+  );
+
+  const apptMap = apptRows.rows.reduce<Record<string, { appointments: number; totalMinutes: number }>>((acc, row) => {
+    const key = row.user_id ?? "unknown";
+    acc[key] = {
+      appointments: Number(row.appointments ?? 0),
+      totalMinutes: Number(row.total_minutes ?? 0),
+    };
+    return acc;
+  }, {});
+
+  const gradeMap = gradeRows.rows.reduce<Record<string, { aMinus: number; bPlus: number }>>((acc, row) => {
+    const key = row.user_id ?? "unknown";
+    if (!acc[key]) acc[key] = { aMinus: 0, bPlus: 0 };
+    if (row.grade === "A-") acc[key].aMinus += Number(row.count ?? 0);
+    if (row.grade === "B+") acc[key].bPlus += Number(row.count ?? 0);
+    return acc;
+  }, {});
+
+  const defaultTargets = {
+    mobile: 50,
+    whatsapp: 20,
+    whCall: 5,
+    inMeeting: 2,
+    onsite: 1,
+    email: 50,
+    seminar: 1,
+    webinar: 1,
+    appointment: 3,
+    meeting: 2,
+    aMinus: 6,
+    bPlus: 13,
+    copy: 90,
+    new: 10,
+  };
+
+  // Scale targets by the number of days in the selected period (minimum 1)
+  const dayDiff = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (1000 * 3600 * 24)));
+  if (dayDiff > 1) {
+    for (const key of Object.keys(defaultTargets)) {
+      (defaultTargets as any)[key] = (defaultTargets as any)[key] * dayDiff;
+    }
+  }
+
+  // Fetch dynamic targets from DB to override default targets based on role
+  let allDailyTargets: any[] = [];
+  try {
+    const targetRes = await pool.query(`SELECT * FROM drm.target_system_daily_targets`);
+    allDailyTargets = targetRes.rows;
+  } catch (err) {
+    console.error("Failed to fetch daily targets for dashboard", err);
+  }
+
+  // This matrix is scoped to whatever roleList the caller passed in —
+  // every other role is filtered out at the source query, not hidden in the UI.
+
+  // We need a way to look up roles for each user
+  let displayUsers: any[] = [];
+  if (isManager && allowedUserIds) {
+      // The manager's own id is always folded into allowedUserIds (for scoping the
+      // activity/appointment/grade queries above), but the manager doesn't log their
+      // own follow-ups here — this team matrix should only list direct reports, not
+      // the manager's own (always-empty) row.
+      const teamOnlyIds = allowedUserIds.filter((id) => id !== userId);
+      const uRes = await pool.query(
+        `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = ANY($1::uuid[]) AND role = ANY($2::text[])`,
+        [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"], roleList],
+      );
+      displayUsers = uRes.rows;
+  } else if (isManager && !allowedUserIds) {
+      // Global scope (admin/super_admin/super_hod/hod/account_manager —
+      // getDepartmentFilterUserIds returned null, i.e. "don't filter").
+      // Every other query above (activity/appointments/grades/task time/
+      // PP evidence) already treats null as "show everyone"; this list
+      // must match or their rows get computed and then thrown away.
+      // That's every manager's whole team, so list all real users —
+      // narrowed to roleList.
+      const uRes = await pool.query(
+        `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id != $1::uuid AND role = ANY($2::text[])`,
+        [userId, roleList],
+      );
+      displayUsers = uRes.rows;
+  } else {
+      const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid AND role = ANY($2::text[])`, [userId, roleList]);
+      displayUsers = uRes.rows;
+  }
+
+  // under_works holds either the manager's user id or a non-uuid sentinel
+  // ("main", "", etc. — seen in the real data) — only treat it as a real
+  // manager link when it actually resolves to another user in this list.
+  const knownUserIds = new Set(displayUsers.map((u) => u.user_id));
+
+  const activityMap = activityRows.rows.reduce<Record<string, any>>((acc, row) => {
+      if (row.user_id) acc[row.user_id] = row;
+      return acc;
+  }, {});
+
+  // Fetch task time logs
+  let taskTimeMap: Record<string, number> = {};
+  try {
+    const taskTimeParams: any[] = [from, to];
+    let taskTimeFilter = "";
+    if (!isManager) {
+      taskTimeFilter = ` and ttl.user_id = $3::uuid`;
+      taskTimeParams.push(userId);
+    } else if (allowedUserIds) {
+      taskTimeFilter = ` and ttl.user_id = ANY($3::uuid[])`;
+      taskTimeParams.push(allowedUserIds);
+    }
+
+    const taskTimeQuery = `
+      SELECT
+        ttl.user_id::text as user_id,
+        COALESCE(SUM(ttl.time_spent_minutes), 0)::float as total_minutes
+      FROM drm.task_time_logs ttl
+      WHERE ttl.log_date BETWEEN $1 AND $2
+        ${taskTimeFilter}
+      GROUP BY ttl.user_id
+    `;
+    const taskTimeRes = await pool.query(taskTimeQuery, taskTimeParams);
+    taskTimeMap = taskTimeRes.rows.reduce<Record<string, number>>((acc, row) => {
+      acc[row.user_id] = Number(row.total_minutes || 0);
+      return acc;
+    }, {});
+  } catch (err) {
+    console.error("Failed to fetch task time logs for dashboard activities", err);
+  }
+
+  // Fetch product posting evidence links counts
+  let ppEvidenceMap: Record<string, { copy: number; new: number }> = {};
+  try {
+    const ppEvidenceParams: any[] = [from, to];
+    let ppEvidenceFilter = "";
+    if (!isManager) {
+      ppEvidenceFilter = ` and el.created_by_user_id = $3::uuid`;
+      ppEvidenceParams.push(userId);
+    } else if (allowedUserIds) {
+      ppEvidenceFilter = ` and el.created_by_user_id = ANY($3::uuid[])`;
+      ppEvidenceParams.push(allowedUserIds);
+    }
+
+    const ppEvidenceQuery = `
+      SELECT
+        el.created_by_user_id::text as user_id,
+        COUNT(*) filter (where lower(t.title) LIKE '%copy%' or lower(p.name) LIKE '%copy%')::int as copy_count,
+        COUNT(*) filter (where not (lower(t.title) LIKE '%copy%' or lower(p.name) LIKE '%copy%') or t.title is null)::int as new_count
+      FROM drm.product_posting_evidence_links el
+      LEFT JOIN drm.tasks t ON el.task_id = t.id
+      LEFT JOIN drm.projects p ON el.project_id = p.id
+      WHERE el.created_at BETWEEN $1 AND $2
+        ${ppEvidenceFilter}
+      GROUP BY el.created_by_user_id
+    `;
+    const ppEvidenceRes = await pool.query(ppEvidenceQuery, ppEvidenceParams);
+    ppEvidenceMap = ppEvidenceRes.rows.reduce<Record<string, { copy: number; new: number }>>((acc, row) => {
+      acc[row.user_id] = {
+        copy: Number(row.copy_count || 0),
+        new: Number(row.new_count || 0),
+      };
+      return acc;
+    }, {});
+  } catch (err) {
+    console.error("Failed to fetch product posting evidence links for dashboard activities", err);
+  }
+
+  const rows = displayUsers.map((uRow) => {
+    const key = uRow.user_id;
+    const row = activityMap[key] || {};
+    const appt = apptMap[key] ?? { appointments: 0, totalMinutes: 0 };
+    const grades = gradeMap[key] ?? { aMinus: 0, bPlus: 0 };
+    const taskTimeMinutes = taskTimeMap[key] || 0;
+    const ppEvidence = ppEvidenceMap[key] ?? { copy: 0, new: 0 };
+
+    // Clone default targets for this user
+    const userTargets = { ...defaultTargets };
+
+    // Override with role-specific dynamic targets if available
+    const userRole = (uRow.role || "").toLowerCase().replace(/_/g, ' ');
+    if (userRole && allDailyTargets.length > 0) {
+        const roleTargets = allDailyTargets.filter(t => (t.role || "").toLowerCase() === userRole);
+        roleTargets.forEach(t => {
+            const normMethod = (t.method || "").toLowerCase().replace(/[^a-z0-9]/g, '_');
+            const targetVal = Number(t.target) || 0;
+            if (normMethod.includes('mobile')) userTargets.mobile = targetVal;
+            if (normMethod.includes('whatsapp')) userTargets.whatsapp = targetVal;
+            if (normMethod.includes('wh_call')) userTargets.whCall = targetVal;
+            if (normMethod.includes('in_meeting')) userTargets.inMeeting = targetVal;
+            if (normMethod.includes('email')) userTargets.email = targetVal;
+            if (normMethod.includes('seminar')) userTargets.seminar = targetVal;
+            if (normMethod.includes('webinar')) userTargets.webinar = targetVal;
+            if (normMethod.includes('appointment')) userTargets.appointment = targetVal;
+            if (normMethod.includes('meeting')) {
+                userTargets.meeting = targetVal;
+                if (normMethod.includes('out') || normMethod.includes('site')) userTargets.onsite = targetVal;
+            }
+            if (normMethod.includes('copy')) (userTargets as any).copy = targetVal;
+            if (normMethod.includes('new')) (userTargets as any).new = targetVal;
+        });
+    }
+
+    const isProductPosting = userRole.includes("posting") || userRole.includes("product posting");
+    const talkMinutes = Number(row.talk_minutes ?? 0);
+    const userTimeMinutes = isProductPosting ? taskTimeMinutes : (appt.totalMinutes + talkMinutes);
+
+    const methods: any = {
+      mobile: { done: Number(row.mobile ?? 0), target: userTargets.mobile, minutes: Number(row.mobile_minutes ?? 0) },
+      whatsapp: { done: Number(row.whatsapp ?? 0), target: userTargets.whatsapp, minutes: Number(row.whatsapp_minutes ?? 0) },
+      whCall: { done: Number(row.wh_call ?? 0), target: userTargets.whCall, minutes: Number(row.wh_call_minutes ?? 0) },
+      inMeeting: { done: Number(row.in_meeting ?? 0), target: userTargets.inMeeting, minutes: Number(row.in_meeting_minutes ?? 0) },
+      onsite: { done: Number(row.onsite ?? 0), target: userTargets.onsite, minutes: Number(row.onsite_minutes ?? 0) },
+      email: { done: Number(row.email ?? 0), target: userTargets.email, minutes: Number(row.email_minutes ?? 0) },
+      seminar: { done: Number(row.seminar ?? 0), target: userTargets.seminar, minutes: Number(row.seminar_minutes ?? 0) },
+      webinar: { done: Number(row.webinar ?? 0), target: userTargets.webinar, minutes: Number(row.webinar_minutes ?? 0) },
+      appointment: { done: appt.appointments + Number(row.appointment_method ?? 0), target: userTargets.appointment, minutes: Number(row.appointment_minutes ?? 0) },
+      meeting: { done: appt.appointments, target: userTargets.meeting },
+      aMinus: { done: grades.aMinus, target: userTargets.aMinus },
+      bPlus: { done: grades.bPlus, target: userTargets.bPlus },
+    };
+
+    if (isProductPosting) {
+      methods.copy = { done: ppEvidence.copy, target: userTargets.copy };
+      methods.new = { done: ppEvidence.new, target: userTargets.new };
+    }
+
+    const managerId = uRow.under_works && knownUserIds.has(uRow.under_works) ? uRow.under_works : null;
+
+    return {
+      userId: key,
+      name: uRow.name ?? "Unknown",
+      role: uRow.role ?? null,
+      isManager: isManagerialRole(uRow.role),
+      managerId,
+      methods,
+      totals: {
+        activities: isProductPosting ? (ppEvidence.copy + ppEvidence.new) : Number(row.total ?? 0),
+        timeMinutes: Math.round(userTimeMinutes ?? 0),
+      },
+    };
+  });
+
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.activities += r.totals.activities;
+      acc.timeMinutes += r.totals.timeMinutes;
+      return acc;
+    },
+    { activities: 0, timeMinutes: 0 },
+  );
+
+  return {
+    period,
+    from: from.toISOString(),
+    to: to.toISOString(),
+    rows,
+    totals,
+  };
 }

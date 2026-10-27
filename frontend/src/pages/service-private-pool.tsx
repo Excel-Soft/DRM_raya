@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { exportToCSV, exportToPDF } from "@/lib/export-utils";
 import { FollowCustomerServicesPanel, SubserviceDetail, FollowupServiceOption } from "@/components/FollowCustomerServicesPanel";
 import { InvoiceReceipt } from "@/components/invoice/InvoiceReceipt";
+import { normalizeRole } from "@/lib/role-utils";
 
 const normalizeCode = (value: string) => value?.toString().trim().toUpperCase().replace(/[\s-]+/g, "_");
 
@@ -718,7 +719,11 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [, setLocation] = useLocation();
-    const { canCreateManualInvoice } = useServiceExecutiveCreateGates();
+    // Followup is hidden outright for Service Manager / Service Executive on
+    // this card (explicit request) — everyone else still sees it as before.
+    // Invoice is unconditionally disabled from this card for every role.
+    const activeRole = normalizeRole(sessionStorage.getItem("userRole"));
+    const hideFollowup = activeRole === "service_manager" || activeRole === "service_executive";
     const [activeHistoryTab, setActiveHistoryTab] = useState("Contact History");
     const [isQuotationTemplateModalOpen, setQuotationTemplateModalOpen] = useState(false);
     const [activeCardModal, setActiveCardModal] = useState<string | null>(null);
@@ -900,15 +905,14 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                         </div>
 
                     <div className="flex flex-wrap justify-center gap-[4px] w-full px-2">
-                        <span onClick={() => setActiveCardModal('followup')} className="bg-[#059669] hover:bg-[#047857] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Followup</span>
+                        {!hideFollowup && (
+                            <span onClick={() => setActiveCardModal('followup')} className="bg-[#059669] hover:bg-[#047857] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Followup</span>
+                        )}
                         <span onClick={() => setLocation(`/sales/quotation?leadId=${customerId}`)} className="bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Quotation</span>
-                        <span onClick={() => {
-                            if (canCreateManualInvoice) {
-                                setLocation(`/sales/create-invoice/${customerId}`);
-                            } else {
-                                setActiveCardModal('invoice');
-                            }
-                        }} className="bg-[#6366f1] hover:bg-[#4f46e5] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Invoice</span>
+                        <span
+                            title="Invoice creation is disabled from this view"
+                            className="bg-slate-300 dark:bg-zinc-800 text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium shadow-sm cursor-not-allowed opacity-60"
+                        >Invoice</span>
                         <span onClick={() => setActiveCardModal('gmdoc')} className="bg-[#ef4444] hover:bg-[#dc2626] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm dark:bg-zinc-900 dark:hover:bg-zinc-800">Gm Doc</span>
                         <span
                             onClick={() => gmDocGateSubmitted && setActiveCardModal('gmbv')}

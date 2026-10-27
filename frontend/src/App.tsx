@@ -167,6 +167,11 @@ const ReportsBvPendingEcnc = lazy(() => import("@/pages/reports-bv-pending-ecnc"
 const ReportsInService = lazy(() => import("@/pages/reports-in-service"));
 const ReportsDiagnose = lazy(() => import("@/pages/reports-diagnose"));
 const ReportsFollowUp = lazy(() => import("@/pages/reports-follow-up"));
+const SaleServiceReport = lazy(() => import("@/pages/sale-service-report"));
+const UpdateSaleServiceReport = lazy(() => import("@/pages/update-sale-service-report"));
+const HodFollowUpReport = lazy(() => import("@/pages/hod-follow-up-report"));
+const HodMeetingReport = lazy(() => import("@/pages/hod-meeting-report"));
+const QuotationReport = lazy(() => import("@/pages/quotation-report"));
 const ReportsProjects = lazy(() => import("@/pages/reports-projects"));
 const ReportsDayTarget = lazy(() => import("@/pages/reports-day-target"));
 const PostingDataLinkReport = lazy(() => import("@/pages/posting-data-link-report"));
@@ -394,6 +399,11 @@ function Router() {
       <Route path="/reports/bv-pending-ecnc" component={ReportsBvPendingEcnc} />
       <Route path="/reports/in-service" component={ReportsInService} />
       <Route path="/reports/follow-up" component={ReportsFollowUp} />
+      <Route path="/reports/sale-service" component={SaleServiceReport} />
+      <Route path="/reports/sale-service/update" component={UpdateSaleServiceReport} />
+      <Route path="/reports/hod-follow-up" component={HodFollowUpReport} />
+      <Route path="/reports/hod-meeting" component={HodMeetingReport} />
+      <Route path="/reports/quotation-report" component={QuotationReport} />
       <Route path="/reports/projects" component={ReportsProjects} />
       <Route path="/reports/day-target" component={ReportsDayTarget} />
 
