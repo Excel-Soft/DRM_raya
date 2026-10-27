@@ -222,6 +222,14 @@ export function MyQuotationsWidget() {
                     ) : activeTab === "approved" ? (
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-emerald-600 dark:text-emerald-400">{item.statusComment}</span>
+                        <button
+                          onClick={() =>
+                            setLocation(`/sales/quotation?id=${encodeURIComponent(item.id)}&view=1`)
+                          }
+                          className="bg-slate-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-slate-700 transition-all shrink-0"
+                        >
+                          View Quotation
+                        </button>
                         {item.downstreamKind === "gm" && item.customerId && !item.isGmConverted && (
                           <button
                             onClick={() =>

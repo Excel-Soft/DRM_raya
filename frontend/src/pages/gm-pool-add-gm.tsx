@@ -674,9 +674,19 @@ export default function GmPoolAddGm() {
       pkrAmountNum > 0 && dollarRateNum > 0
         ? Number((pkrAmountNum / dollarRateNum).toFixed(2))
         : 0;
-    // Legacy Add GM: Extra $ = catalog order $ − customer $ (AB Discount is a separate column).
-    const extraDollarDiscount = Math.max(0, Number((orderDollar - customerDollar).toFixed(2)));
-    const extraDiscountPkr = Number((extraDollarDiscount * dollarRateNum).toFixed(2));
+    // Extra Discount is ONLY the quotation PKR/extra cut — AB Discount is already
+    // its own column. Using catalog order$ here used to fold AB into Extra
+    // (e.g. $100 AB + ₨50,000 extra → Extra $278.57 / ₨78,000). Correct base is
+    // net order $ after AB: Extra $ = finalOrder$ − customer $, Extra PKR =
+    // (finalOrder$ × rate) − PKR Amount.
+    const extraDiscountPkr =
+      dollarRateNum > 0
+        ? Math.max(0, Number((finalOrderDollar * dollarRateNum - pkrAmountNum).toFixed(2)))
+        : 0;
+    const extraDollarDiscount =
+      dollarRateNum > 0
+        ? Number((extraDiscountPkr / dollarRateNum).toFixed(2))
+        : Math.max(0, Number((finalOrderDollar - customerDollar).toFixed(2)));
     const abDiscountPercentage =
       packagePrice > 0 ? Number(((alibabaDiscountNum / packagePrice) * 100).toFixed(2)) : 0;
     return {
@@ -695,11 +705,10 @@ export default function GmPoolAddGm() {
     };
   }, [form.alibabaDiscount, form.dollarRate, form.pkrAmount, selectedPackage]);
 
-  /** Partial GM: row 0 = Extra $ + row 1 = Customer $ → sum to catalog order $. Loan/Full use net after AB. */
+  /** Partial/Loan/Full: Extra $ + Customer $ (and loan rows) sum to net order $ after AB. */
   const installmentTargetDollar = useMemo(() => {
-    if (form.loanMode === "installment") return numericValues.orderDollar;
     return numericValues.finalOrderDollar;
-  }, [form.loanMode, numericValues.orderDollar, numericValues.finalOrderDollar]);
+  }, [numericValues.finalOrderDollar]);
 
   const prevLoanModeRef = useRef(form.loanMode);
 
@@ -1577,10 +1586,10 @@ export default function GmPoolAddGm() {
                       <span className="text-sm font-medium text-gray-700 dark:text-zinc-400">
                         {form.loanMode === "installment" ? (
                           <>
-                            Total Package $:{" "}
+                            Total Order $ (after AB):{" "}
                             <span className="text-blue-600">${installmentTargetDollar.toFixed(2)}</span>
                             <span className="text-muted-foreground text-xs ml-1">
-                              (Extra + Customer rows; net after AB ${numericValues.finalOrderDollar.toFixed(2)})
+                              (Extra + Customer rows)
                             </span>
                           </>
                         ) : (

@@ -417,6 +417,7 @@ router.get("/verification/gms", async (req, res) => {
           ge.package_type as "package",
           ge.entry_type as "type",
           ge.amount_usd as "orderDollar",
+          ge.package_price_usd as "packagePrice",
           ge.customer_dollar as "customerDollar",
           ge.dollar_rate as "dollarRate",
           ge.amount_pkr as "pkr",
@@ -510,7 +511,11 @@ router.post("/verification/gms/:id/status", async (req, res) => {
       // direct API call that skips or spoofs the client-side check.
       if (status === "Approved") {
         const currentRes = await client.query(
-          `SELECT COALESCE(extra_discount_usd, 0)::numeric AS extra_discount_usd FROM drm.gm_entries WHERE id = $1`,
+          `SELECT COALESCE(extra_discount_usd, 0)::numeric AS extra_discount_usd,
+                  COALESCE(final_order_usd, amount_usd, 0)::numeric AS final_order_usd,
+                  COALESCE(dollar_rate, 0)::numeric AS dollar_rate,
+                  COALESCE(amount_pkr, 0)::numeric AS amount_pkr
+             FROM drm.gm_entries WHERE id = $1`,
           [id],
         );
         if (currentRes.rows.length === 0) {
@@ -518,7 +523,13 @@ router.post("/verification/gms/:id/status", async (req, res) => {
           logApi(req, 404, response);
           return res.status(404).json(response);
         }
-        const requestedDiscount = Number(currentRes.rows[0].extra_discount_usd ?? 0);
+        const row = currentRes.rows[0];
+        const rate = Number(row.dollar_rate ?? 0);
+        const finalOrder = Number(row.final_order_usd ?? 0);
+        const pkr = Number(row.amount_pkr ?? 0);
+        const expectedExtraPkr = rate > 0 ? Math.max(0, Math.round(finalOrder * rate - pkr)) : 0;
+        const requestedDiscount =
+          rate > 0 ? Number((expectedExtraPkr / rate).toFixed(2)) : Number(row.extra_discount_usd ?? 0);
         if (extraDiscountHod === undefined) {
           const response = {
             success: false,

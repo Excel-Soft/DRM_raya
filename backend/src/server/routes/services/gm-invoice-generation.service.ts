@@ -8,8 +8,10 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
     return;
   }
 
+  // Auto-create only Listing Page + Minisite on GM approval.
+  // "Alibaba Product Posting" is intentionally excluded — product-posting
+  // invoices are created manually when needed, not as a default trio.
   const defaultServices = [
-    { projectName: "Alibaba Product Posting", invoiceType: "PRODUCT_POSTING" },
     { projectName: "Alibaba Minisite", invoiceType: "MINIWEBSITE" },
     { projectName: "Listing Page", invoiceType: "LISTING_PAGE" },
   ];
