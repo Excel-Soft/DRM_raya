@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { isManagerialRole, normalizeRole } from "../utils/role-utils";
+import { ROLES } from "../../shared/roles";
 import { pool, isDbAvailable, isNetworkOrDnsError, markDbUnavailable } from "../db";
 import { authMiddleware } from "../middleware/auth.middleware";
 import type { PoolClient } from "pg";
@@ -680,6 +681,18 @@ export class DashboardController {
         console.error("Failed to fetch daily targets for dashboard", err);
       }
 
+      // This matrix is scoped to Sales and Service only — every other
+      // department (product posting, reception, complaint, QA, DD, etc.) is
+      // filtered out at the source query, not hidden in the UI.
+      const SALES_SERVICE_ROLES = [
+        ROLES.SALES_MANAGER,
+        ROLES.SALES_ASSISTANT_MANAGER,
+        ROLES.SALES_EXECUTIVE,
+        ROLES.SERVICE_MANAGER,
+        ROLES.SERVICE_ASSISTANT_MANAGER,
+        ROLES.SERVICE_EXECUTIVE,
+      ];
+
       // We need a way to look up roles for each user
       let displayUsers: any[] = [];
       if (isManager && allowedUserIds) {
@@ -689,8 +702,8 @@ export class DashboardController {
           // the manager's own (always-empty) row.
           const teamOnlyIds = allowedUserIds.filter((id) => id !== userId);
           const uRes = await pool.query(
-            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = ANY($1::uuid[])`,
-            [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"]],
+            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = ANY($1::uuid[]) AND role = ANY($2::text[])`,
+            [teamOnlyIds.length ? teamOnlyIds : ["00000000-0000-0000-0000-000000000000"], SALES_SERVICE_ROLES],
           );
           displayUsers = uRes.rows;
       } else if (isManager && !allowedUserIds) {
@@ -699,14 +712,15 @@ export class DashboardController {
           // Every other query above (activity/appointments/grades/task time/
           // PP evidence) already treats null as "show everyone"; this list
           // must match or their rows get computed and then thrown away.
-          // That's every manager's whole team, so list all real users.
+          // That's every manager's whole team, so list all real users —
+          // narrowed to Sales/Service roles only (see SALES_SERVICE_ROLES above).
           const uRes = await pool.query(
-            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id != $1::uuid`,
-            [userId],
+            `SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id != $1::uuid AND role = ANY($2::text[])`,
+            [userId, SALES_SERVICE_ROLES],
           );
           displayUsers = uRes.rows;
       } else {
-          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid`, [userId]);
+          const uRes = await pool.query(`SELECT id::text as user_id, coalesce(full_name, name, username) as name, role, under_works FROM drm.users WHERE id = $1::uuid AND role = ANY($2::text[])`, [userId, SALES_SERVICE_ROLES]);
           displayUsers = uRes.rows;
       }
 

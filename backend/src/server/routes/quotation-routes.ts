@@ -1292,4 +1292,39 @@ export function registerQuotationRoutes(app: Express) {
       res.status(500).json({ error: "InternalError", message: "Failed to update quotation" });
     }
   });
+
+  // Creator can remove their own quotation only while it's still truly
+  // pending (never confirmed) — once confirmed it's in the HOD's queue and
+  // shouldn't disappear out from under them. Matches the exact state the
+  // dashboard widget's Delete button is shown for.
+  app.delete("/api/quotations/:id", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      await ensureQuotationTables();
+      const existing = await pool.query<QuotationRow>(`select * from quotations where id = $1`, [req.params.id]);
+      if (!existing.rows[0]) return res.status(404).json({ error: "NotFound", message: "Quotation not found" });
+      if (existing.rows[0].created_by !== req.user.userId) {
+        return res.status(403).json({ error: "FORBIDDEN", message: "Only the quotation's creator can delete it" });
+      }
+      if (existing.rows[0].confirmed_at) {
+        return res.status(409).json({ error: "ALREADY_CONFIRMED", message: "A confirmed quotation can no longer be deleted" });
+      }
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`delete from quotation_items where quotation_id = $1`, [req.params.id]);
+        await client.query(`delete from quotations where id = $1`, [req.params.id]);
+        await client.query("commit");
+      } catch (err) {
+        await client.query("rollback");
+        throw err;
+      } finally {
+        client.release();
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error deleting quotation", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to delete quotation" });
+    }
+  });
 }
