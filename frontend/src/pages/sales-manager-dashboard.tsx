@@ -6,7 +6,6 @@ import {
 } from "@/components/ui/popover";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { GmApprovalCard } from "@/components/gm-approval-card";
 import { PipelineSummary } from "@/components/pipeline-summary";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -994,9 +993,6 @@ export default function SalesManagerDashboard() {
                                 </div>
                             </CardContent>
                         </Card>
-
-                        {/* GM Approvals - View Only for Sales Manager */}
-                        <GmApprovalCard role="sales-manager" viewOnly={true} />
 
                         <Card className="shadow-sm border-slate-100 dark:border-zinc-800">
                             <CardHeader className={denseHeaderPlain}>

@@ -782,26 +782,54 @@ export default function HodDashboard() {
     !gmFieldErrors.extraDiscountHod &&
     Math.abs((Number(formData.extraDiscountHod) || 0) - (Number(formData.extraDiscount) || 0)) > 0.01;
 
-  // Same ratio as gm-pool-add-gm.tsx's numericValues.extraDiscountPercentage:
-  // extra $ discount over (order dollar minus Alibaba discount).
-  const finalOrderDollarForPercent = (Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0);
+  // amount_usd / orderDollar is already net after AB. Extra % is vs that net order.
+  const finalOrderDollarForPercent = Number(formData.orderDollar) || 0;
   const extraDiscountPercent = finalOrderDollarForPercent > 0
     ? ((Number(formData.extraDiscount) || 0) / finalOrderDollarForPercent) * 100
     : 0;
 
+  /** Recompute Extra $ / Extra PKR from Order$ (after AB), PKR Amount, and rate — AB stays separate. */
+  const recomputeExtraFromOrder = (data: any) => {
+    const rate = Number(data.dollarRate) || 0;
+    const pkr = Number(data.pkr) || 0;
+    const finalOrder = Number(data.orderDollar) || 0;
+    if (rate > 0) {
+      data.customerDollar = (pkr / rate).toFixed(2);
+      const extraPkr = Math.max(0, Number((finalOrder * rate - pkr).toFixed(2)));
+      data.extraDiscountPkr = String(Math.round(extraPkr));
+      data.extraDiscount = (extraPkr / rate).toFixed(2);
+    }
+    return data;
+  };
+
   const updateGmForm = (field: string, value: string) => {
     const newData = { ...formData, [field]: value };
 
-    if (field === "dollarRate") {
-      const rate = parseFloat(value) || 0;
-      const pkr = parseFloat(newData.pkr) || 0;
+    if (field === "dollarRate" || field === "alibabaDiscount" || field === "pkr" || field === "orderDollar") {
+      recomputeExtraFromOrder(newData);
+    }
+
+    // Keep every installment PKR in sync with the upper Dollar Rate
+    // (Installment $ × Dollar Rate), same rule as Add GM.
+    if (field === "dollarRate" && Array.isArray(newData.installments)) {
+      const rate = Number(value) || 0;
       if (rate > 0) {
-        const newCustDollar = pkr / rate;
-        newData.customerDollar = newCustDollar.toFixed(2);
+        newData.installments = newData.installments.map((inst: any) => ({
+          ...inst,
+          pkr: inst.dollar ? (Number(inst.dollar) * rate).toFixed(0) : inst.pkr,
+        }));
       }
     }
 
     setFormData(newData);
+  };
+
+  /** Installment PKR = Installment $ × upper Dollar Rate (rounded to whole PKR). */
+  const calcInstallmentPkr = (dollar: string | number, rateOverride?: number) => {
+    const rate = rateOverride ?? (Number(formData.dollarRate) || 0);
+    const d = Number(dollar);
+    if (!(rate > 0) || !Number.isFinite(d) || d <= 0) return "";
+    return (d * rate).toFixed(0);
   };
 
   // Extra Discount Hod is a pure confirmation field: it must exactly match
@@ -941,13 +969,32 @@ export default function HodDashboard() {
       && entry.extraDiscountHod !== ""
       ? String(entry.extraDiscountHod)
       : "0";
-    const activeInsts = parsedInstallments.length > 0 ? parsedInstallments : [];
+    const rateOnOpen = Number(entry.dollarRate) || 0;
+    // Normalize installment PKR to Installment $ × Dollar Rate on open so
+    // stale/manual PKR values (e.g. typed junk) don't stay wrong in the UI.
+    const activeInsts = (parsedInstallments.length > 0 ? parsedInstallments : []).map((inst: any) => {
+      const dollar = inst?.dollar ?? "";
+      const pkr =
+        rateOnOpen > 0 && Number(dollar) > 0
+          ? (Number(dollar) * rateOnOpen).toFixed(0)
+          : (inst?.pkr ?? inst?.pkrAmount ?? "");
+      return {
+        dollar: dollar !== undefined && dollar !== null ? String(dollar) : "",
+        pkr: pkr !== undefined && pkr !== null ? String(pkr) : "",
+        chequeNo: inst?.chequeNo ?? "",
+        payDate: inst?.payDate ?? "",
+      };
+    });
 
-    setFormData({
+    // Recalculate Extra $ / Extra PKR on open so older GMs created with the
+    // buggy "catalog$ − customer$" formula (AB folded into Extra) show the
+    // correct quotation extra (e.g. ₨50,000 → ~$178.57, not ₨78,000 / $278.57).
+    const seeded = recomputeExtraFromOrder({
       ...entry,
       extraDiscountHod: initialHodDiscount,
       installments: activeInsts,
     });
+    setFormData(seeded);
     setGmApprovalStatus(entry.status || "Pending");
     setGmComment(entry.hodComment || entry.reason || entry.comment || "");
     setGmSubmitAttempted(false);
@@ -2708,17 +2755,24 @@ export default function HodDashboard() {
                 </div>
               </div>
 
-              {/* Row 5: Package Price, Order Dollar, $ Extra Discount */}
+              {/* Row 5: Package Price, Order Dollar (after AB), $ Extra Discount */}
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="text-sm font-medium mb-1 block">Package Price</label>
-                  <Input value={formData.orderDollar || ""} readOnly className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`} />
-                  {gmFieldErrors.orderDollar && <p className="text-xs text-red-500 mt-1">Please fill this</p>}
+                  <Input
+                    value={
+                      formData.packagePrice != null && formData.packagePrice !== ""
+                        ? formData.packagePrice
+                        : (Number(formData.orderDollar) || 0) + (Number(formData.alibabaDiscount) || 0) || ""
+                    }
+                    readOnly
+                    className="bg-muted"
+                  />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Order Dollar</label>
                   <Input
-                    value={(Number(formData.orderDollar) || 0) - (Number(formData.alibabaDiscount) || 0)}
+                    value={formData.orderDollar || ""}
                     readOnly
                     className={`bg-muted ${gmFieldErrors.orderDollar ? "border-red-500" : ""}`}
                   />
@@ -2821,16 +2875,57 @@ export default function HodDashboard() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const current = formData.installments || [];
+                      const current = [...(formData.installments || [])];
+                      const order = Number(formData.orderDollar) || 0;
+                      const used = current.reduce((s: number, r: any) => s + (Number(r.dollar) || 0), 0);
+                      const remaining = Math.max(0, Math.round((order - used) * 100) / 100);
+                      const dollar = remaining > 0 ? String(remaining) : "";
                       setFormData({
                         ...formData,
-                        installments: [...current, { dollar: "", pkr: "", chequeNo: "", payDate: "" }]
+                        installments: [
+                          ...current,
+                          {
+                            dollar,
+                            pkr: calcInstallmentPkr(dollar),
+                            chequeNo: "",
+                            payDate: "",
+                          },
+                        ],
                       });
                     }}
                   >
                     + Add Installment
                   </Button>
                 </div>
+
+                {(() => {
+                  const order = Number(formData.orderDollar) || 0;
+                  const total = (formData.installments || []).reduce(
+                    (s: number, r: any) => s + (Number(r.dollar) || 0),
+                    0,
+                  );
+                  const remaining = Math.round((order - total) * 100) / 100;
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs">
+                      <span className="text-muted-foreground">
+                        Order Dollar: <span className="font-semibold text-blue-600">${order.toFixed(2)}</span>
+                        <span className="mx-1.5">·</span>
+                        Installments: <span className="font-semibold">${total.toFixed(2)}</span>
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          Math.abs(remaining) < 0.02
+                            ? "text-green-600"
+                            : remaining < 0
+                              ? "text-red-600"
+                              : "text-orange-600"
+                        }`}
+                      >
+                        Remaining: ${remaining.toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                })()}
 
                 <div className="space-y-3">
                   {(formData.installments || []).map((inst: any, idx: number) => (
@@ -2841,8 +2936,13 @@ export default function HodDashboard() {
                           className="h-8 text-sm"
                           value={inst.dollar}
                           onChange={(e) => {
+                            const dollar = e.target.value;
                             const newInst = [...(formData.installments || [])];
-                            newInst[idx].dollar = e.target.value;
+                            newInst[idx] = {
+                              ...newInst[idx],
+                              dollar,
+                              pkr: calcInstallmentPkr(dollar),
+                            };
                             setFormData({ ...formData, installments: newInst });
                           }}
                         />
@@ -2850,13 +2950,10 @@ export default function HodDashboard() {
                       <div>
                         <label className="text-xs font-medium block mb-1">Installment Pkr</label>
                         <Input
-                          className="h-8 text-sm"
+                          className="h-8 text-sm bg-muted"
                           value={inst.pkr}
-                          onChange={(e) => {
-                            const newInst = [...(formData.installments || [])];
-                            newInst[idx].pkr = e.target.value;
-                            setFormData({ ...formData, installments: newInst });
-                          }}
+                          readOnly
+                          title="Auto: Installment $ × Dollar Rate"
                         />
                       </div>
                       <div>
@@ -2866,7 +2963,7 @@ export default function HodDashboard() {
                           value={inst.chequeNo}
                           onChange={(e) => {
                             const newInst = [...(formData.installments || [])];
-                            newInst[idx].chequeNo = e.target.value;
+                            newInst[idx] = { ...newInst[idx], chequeNo: e.target.value };
                             setFormData({ ...formData, installments: newInst });
                           }}
                         />
@@ -2879,7 +2976,7 @@ export default function HodDashboard() {
                           value={inst.payDate}
                           onChange={(e) => {
                             const newInst = [...(formData.installments || [])];
-                            newInst[idx].payDate = e.target.value;
+                            newInst[idx] = { ...newInst[idx], payDate: e.target.value };
                             setFormData({ ...formData, installments: newInst });
                           }}
                         />
@@ -2961,6 +3058,23 @@ export default function HodDashboard() {
                     });
                     return;
                   }
+
+                  // Partial / Loan: installment $ rows must sum exactly to Order Dollar
+                  if (formData.isPartial || formData.isLoan) {
+                    const order = Number(formData.orderDollar) || 0;
+                    const instSum = (formData.installments || []).reduce(
+                      (s: number, r: any) => s + (Number(r.dollar) || 0),
+                      0,
+                    );
+                    if (Math.abs(instSum - order) > 0.02) {
+                      toast({
+                        title: "Installment Total Mismatch",
+                        description: `Installments sum ($${instSum.toFixed(2)}) must equal Order Dollar ($${order.toFixed(2)}).`,
+                        variant: "destructive",
+                      });
+                      return;
+                    }
+                  }
                 }
 
                 if (gmApprovalStatus === "Rejected") {
@@ -2992,6 +3106,17 @@ export default function HodDashboard() {
                 } : gmApprovalStatus === "Approved" ? {
                   comment: gmComment,
                   extraDiscountHod: Number(formData.extraDiscountHod) || 0,
+                  // Persist edited installment schedule (dollar × rate PKR) with approve
+                  ...((formData.isPartial || formData.isLoan) && Array.isArray(formData.installments)
+                    ? {
+                        installments: formData.installments.map((r: any) => ({
+                          dollar: Number(r.dollar) || 0,
+                          pkr: Number(r.pkr) || 0,
+                          chequeNo: r.chequeNo || "",
+                          payDate: r.payDate || "",
+                        })),
+                      }
+                    : {}),
                 } : {
                   comment: gmComment
                 };

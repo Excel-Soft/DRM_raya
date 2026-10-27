@@ -482,9 +482,20 @@ export function registerGmPoolRoutes(app: Express) {
   }).strict();
 
   const commentSchema = z.object({ comment: z.string().trim().max(2000).optional() }).strict();
+  const hodApproveInstallmentSchema = z
+    .object({
+      dollar: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+      pkr: z.coerce.number().finite().nonnegative().max(1_000_000_000_000).optional(),
+      chequeNo: z.string().trim().max(100).optional().nullable(),
+      payDate: z.string().trim().max(40).optional().nullable(),
+    })
+    .passthrough();
   const hodApproveSchema = z.object({
     comment: z.string().trim().max(2000).optional(),
     extraDiscountHod: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+    // Optional: HOD may adjust the Partial/Loan installment schedule before approve.
+    // When present, rows replace the stored installments jsonb (same shape Sales uses).
+    installments: z.array(hodApproveInstallmentSchema).max(60).optional(),
   }).strict();
   const reasonSchema = z.object({ reason: z.string().trim().min(1, "Reason required").max(2000) }).strict();
   const fixStatusSchema = z.object({ approval_status: z.string().trim().min(1, "Approval status required") }).strict();
@@ -843,9 +854,16 @@ export function registerGmPoolRoutes(app: Express) {
       const packagePrice = pkg.priceUsd ?? orderDollar;
       const finalOrderDollar = Number(Math.max(0, orderDollar - parsed.alibabaDiscount).toFixed(2));
       const customerDollar = Number((parsed.pkrAmount / parsed.dollarRate).toFixed(2));
-      // Legacy Add GM: extra $ = order/catalog $ − customer $ (AB stored separately).
-      const extraDollarDiscount = Number(Math.max(0, orderDollar - customerDollar).toFixed(2));
-      const extraDiscountPkr = Math.round(extraDollarDiscount * parsed.dollarRate);
+      // Extra Discount is ONLY the quotation PKR/extra cut — AB is its own column.
+      // Using catalog order$ here folded AB into Extra (e.g. $100 AB + ₨50,000
+      // → Extra $278.57 / ₨78,000). Correct: Extra PKR = (finalOrder$ × rate) − PKR.
+      const extraDiscountPkr = Math.max(
+        0,
+        Math.round(finalOrderDollar * parsed.dollarRate - parsed.pkrAmount),
+      );
+      const extraDollarDiscount = Number(
+        (parsed.dollarRate > 0 ? extraDiscountPkr / parsed.dollarRate : Math.max(0, finalOrderDollar - customerDollar)).toFixed(2),
+      );
       // Patch 5 Stage 2 — resolve canonical GM type (FULL/PARTIAL/LOAN) and enforce
       // the config-driven loan gate + minimum-payment threshold. Behaviour-preserving
       // with safe defaults (loan enabled, no thresholds). The derived flags below stay
@@ -1508,7 +1526,7 @@ export function registerGmPoolRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { id } = req.params;
-      const { comment, extraDiscountHod } = hodApproveSchema.parse(req.body ?? {});
+      const { comment, extraDiscountHod, installments } = hodApproveSchema.parse(req.body ?? {});
       const thr = await enforceApprovalThreshold(id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
       const checkEntryRes = await pool.query(`SELECT * FROM drm.gm_entries WHERE id = $1`, [id]);
@@ -1526,22 +1544,59 @@ export function registerGmPoolRoutes(app: Express) {
           return res.status(400).json({ error: `All fields are required to fill then approved. Missing: ${missing.join(", ")}` });
         }
 
-        // Extra Discount HOD is a confirmation field: HOD must re-enter the
-        // exact Sales-requested Extra Discount before this entry can move
-        // forward, so it can't be silently rubber-stamped at 0.
-        const requestedDiscount = Number(e.extra_discount_usd ?? 0);
+        // Extra Discount HOD confirms the correct Extra $ (net order after AB −
+        // customer $). Recompute from stored amounts so older rows that folded
+        // AB into Extra ($278.57 / ₨78k instead of ~$178.57 / ₨50k) still approve
+        // against the right figure, and we persist the corrected Extra columns.
+        const finalOrder = Number(e.final_order_usd ?? e.amount_usd ?? 0);
+        const rate = Number(e.dollar_rate ?? 0);
+        const pkr = Number(e.amount_pkr ?? e.customer_pkr ?? e.pkr ?? 0);
+        const expectedExtraPkr =
+          rate > 0 ? Math.max(0, Math.round(finalOrder * rate - pkr)) : Number(e.extra_discount_pkr ?? 0);
+        const requestedDiscount =
+          rate > 0
+            ? Number((expectedExtraPkr / rate).toFixed(2))
+            : Number(e.extra_discount_usd ?? 0);
         if (extraDiscountHod === undefined) {
           return res.status(400).json({ error: "Extra Discount HOD is required before this GM entry can be approved." });
         }
         if (Math.abs(extraDiscountHod - requestedDiscount) > 0.01) {
           return res.status(400).json({ error: `Extra Discount HOD (${extraDiscountHod}) must exactly match the requested Extra Discount (${requestedDiscount}) before this GM entry can be approved.` });
         }
+
+        // Partial / Loan: if HOD sends an installment schedule, require its $
+        // sum to match Order Dollar (same rule as the HOD UI).
+        const isPartialOrLoan = !!(e.is_partial_payment || e.is_loan);
+        if (isPartialOrLoan && installments !== undefined) {
+          const instSum = installments.reduce((s, r) => s + (Number(r.dollar) || 0), 0);
+          if (Math.abs(instSum - finalOrder) > 0.02) {
+            return res.status(400).json({
+              error: `Installments sum ($${instSum.toFixed(2)}) must equal Order Dollar ($${finalOrder.toFixed(2)}).`,
+            });
+          }
+        }
+
+        // Heal stored Extra if an older create folded AB into it.
+        (e as any).__correctedExtraUsd = requestedDiscount;
+        (e as any).__correctedExtraPkr = expectedExtraPkr;
       }
 
-      const hodApproveParams: any[] = [id, req.user.userId, comment || null, extraDiscountHod ?? 0];
+      const correctedExtraUsd = checkEntryRes.rows[0]
+        ? Number((checkEntryRes.rows[0] as any).__correctedExtraUsd ?? checkEntryRes.rows[0].extra_discount_usd ?? 0)
+        : 0;
+      const correctedExtraPkr = checkEntryRes.rows[0]
+        ? Number((checkEntryRes.rows[0] as any).__correctedExtraPkr ?? checkEntryRes.rows[0].extra_discount_pkr ?? 0)
+        : 0;
+
+      const hodApproveParams: any[] = [id, req.user.userId, comment || null, extraDiscountHod ?? 0, correctedExtraUsd, correctedExtraPkr];
+      let installmentsSetSql = "";
+      if (installments !== undefined) {
+        hodApproveParams.push(JSON.stringify(installments));
+        installmentsSetSql = `, installments = $${hodApproveParams.length}`;
+      }
       const hodApproveScope = await gmApprovalScopeClause(req, hodApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_status = 'Approved', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, extra_discount_hod = $4, account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'pending_managers', hod_status = 'Approved', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, extra_discount_hod = $4, extra_discount_usd = $5, extra_discount_pkr = $6${installmentsSetSql}, account_manager_status = 'pending', sales_manager_status = 'pending', updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodApproveScope} RETURNING *`,
         hodApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
