@@ -965,7 +965,7 @@ export default function QuotationPage() {
             <Input readOnly className="bg-slate-50" value={computed.calculatedAmount.toFixed(2)} />
           </div>
           <div className="space-y-1">
-            <label className="text-sm font-medium text-slate-600">Pkr Discount <span className="text-red-500">*</span></label>
+            <label className="text-sm font-medium text-slate-600">PKR Discount/Extra Discount <span className="text-red-500">*</span></label>
             <div className="flex items-center gap-4 mt-2">
               <label className="flex items-center gap-2 text-sm text-slate-600">
                 <Checkbox 

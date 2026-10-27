@@ -125,8 +125,19 @@ export function FollowCustomerServicesPanel({
 
   const getVisibleSubservices = (svc: FollowupServiceOption) => {
     const key = normalizeCode(svc.code);
-    const max = visibleCount[key] ?? 5;
-    return (svc.subServices ?? []).slice(0, max);
+    const all = svc.subServices ?? [];
+    let max = visibleCount[key] ?? 5;
+    // When prefilling (or selecting) subs beyond the default window, expand
+    // the visible slice so checked items are not hidden behind "Load More".
+    const selected = selectedSubservices[key];
+    if (selected?.size) {
+      let lastSelectedIdx = -1;
+      all.forEach((sub, i) => {
+        if (selected.has(sub.id)) lastSelectedIdx = i;
+      });
+      if (lastSelectedIdx >= max) max = lastSelectedIdx + 1;
+    }
+    return all.slice(0, max);
   };
 
   return (

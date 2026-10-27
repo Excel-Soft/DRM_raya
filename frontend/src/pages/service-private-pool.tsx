@@ -1755,6 +1755,7 @@ export function FollowupModal({ open, onClose, customerId, companyName, onBefore
     const [reservationType, setReservationType] = useState("");
     const [note, setNote] = useState("");
     const [nextDate, setNextDate] = useState("");
+    const [prefillLoading, setPrefillLoading] = useState(false);
 
     const resetForm = () => {
         setSelectedServiceCodes(new Set());
@@ -1764,6 +1765,165 @@ export function FollowupModal({ open, onClose, customerId, companyName, onBefore
         setNote("");
         setNextDate("");
     };
+
+    // Prefill from the current user's latest follow-up for this company so they
+    // can update and re-submit as a NEW entry. 60-day exclusivity stays intact
+    // (other users' locks still disable those sub-services in the panel).
+    const prefillFollowupFromData = (payload: any, svcList: FollowupServiceOption[]) => {
+        const codeToSvc = new Map<string, FollowupServiceOption>();
+        svcList.forEach((svc) => codeToSvc.set(normalizeCode(svc.code), svc));
+
+        const serviceCodes: string[] = (payload?.serviceCodes || payload?.services || [])
+            .map((c: string) => normalizeCode(typeof c === "string" ? c : (c as any)?.code || ""))
+            .filter(Boolean);
+        const serviceIds: string[] = payload?.serviceIds || [];
+        const subServices: Array<any> = payload?.subServices || payload?.sub_services || [];
+        const subServiceDetails: Array<any> = payload?.subServiceDetails || payload?.sub_service_details || [];
+
+        const finalCodes = serviceCodes.length
+            ? serviceCodes
+            : (serviceIds || [])
+                .map((id: string) => svcList.find((s) => s.id === id))
+                .map((svc) => (svc ? normalizeCode(svc.code) : ""))
+                .filter(Boolean);
+
+        if (finalCodes.length) {
+            setSelectedServiceCodes(new Set(finalCodes));
+        }
+
+        const subSelections: Record<string, Set<string>> = {};
+        const subServicesByService = payload?.subServicesByService || payload?.sub_services_by_service;
+        if (subServicesByService && typeof subServicesByService === "object") {
+            Object.entries(subServicesByService as Record<string, string[]>).forEach(([svcCodeRaw, subs]) => {
+                const svcCode = normalizeCode(svcCodeRaw);
+                const svc = codeToSvc.get(svcCode);
+                if (!svc || !svc.subServices?.length) return;
+                const codeSet = new Set((subs || []).map((c) => normalizeCode(c)));
+                const matchedIds = svc.subServices
+                    .filter((sub) => codeSet.has(normalizeCode(sub.code)))
+                    .map((sub) => sub.id);
+                if (matchedIds.length) subSelections[svcCode] = new Set(matchedIds);
+            });
+        } else {
+            subServices.forEach((sub: any) => {
+                const svcCode = normalizeCode(sub.serviceCode || sub.service_code || "");
+                const subId = sub.id || sub.subServiceId || sub.subservice_id;
+                if (!svcCode || !subId) return;
+                // Prefer catalog id when API only returned a code
+                const svc = codeToSvc.get(svcCode);
+                const catalogId =
+                    svc?.subServices?.find(
+                        (s) => s.id === subId || normalizeCode(s.code) === normalizeCode(sub.code || sub.subServiceCode || ""),
+                    )?.id || subId;
+                if (!subSelections[svcCode]) subSelections[svcCode] = new Set();
+                subSelections[svcCode].add(catalogId);
+            });
+        }
+        if (Object.keys(subSelections).length) {
+            setSelectedSubservices(subSelections);
+        }
+
+        const subDetailsMap: Record<string, SubserviceDetail> = {};
+        subServiceDetails.forEach((detail: any) => {
+            let subId = detail.subservice_id || detail.subServiceId;
+            // Map code → catalog id when needed
+            if (!subId && (detail.subServiceCode || detail.sub_service_code)) {
+                const svcCode = normalizeCode(detail.serviceCode || detail.service_code || "");
+                const svc = codeToSvc.get(svcCode);
+                subId = svc?.subServices?.find(
+                    (s) => normalizeCode(s.code) === normalizeCode(detail.subServiceCode || detail.sub_service_code),
+                )?.id;
+            }
+            if (!subId) return;
+
+            const ttValue = detail.talk_time_minutes ?? detail.talkTimeMinutes;
+            const actValue = detail.activity_at || detail.activityAt;
+            const attachments = detail.attachments ?? [];
+            const fileName = attachments.length > 0 ? (attachments[0].fileName || attachments[0].file_name) : undefined;
+
+            subDetailsMap[subId] = {
+                purpose: detail.purpose ?? "",
+                grade: detail.grade ?? "",
+                method: detail.method ?? "",
+                comment: detail.comment ?? "",
+                talkTimeMinutes: detail.method && ttValue != null ? Number(ttValue) : null,
+                note: detail.note ?? detail.comment ?? "",
+                date: actValue ? new Date(actValue).toISOString().slice(0, 16) : (detail.dateTime ?? ""),
+                attachments,
+                fileName,
+            };
+        });
+        if (Object.keys(subDetailsMap).length) {
+            setSubserviceDetails(subDetailsMap);
+        }
+
+        const followupMeta = payload?.followup || payload;
+        if (followupMeta) {
+            setNote(followupMeta.notes ?? followupMeta.note ?? "");
+            const next = followupMeta.dateTime || followupMeta.dueAt || followupMeta.nextDate;
+            if (next) {
+                try {
+                    setNextDate(new Date(next).toISOString().slice(0, 16));
+                } catch {
+                    /* ignore bad date */
+                }
+            }
+            const reservation = followupMeta.reservationType || followupMeta.reservation_type || null;
+            if (reservation) setReservationType(reservation);
+        }
+    };
+
+    useEffect(() => {
+        if (!open) {
+            resetForm();
+            setPrefillLoading(false);
+            return;
+        }
+        if (!customerId || !followupServices.length) return;
+
+        let cancelled = false;
+        (async () => {
+            setPrefillLoading(true);
+            resetForm();
+            try {
+                const listRes = await apiRequest("GET", `/api/sales/customers/${customerId}/followups`);
+                const listJson = await listRes.json().catch(() => ([]));
+                const rows: any[] = Array.isArray(listJson)
+                    ? listJson
+                    : Array.isArray(listJson?.data)
+                      ? listJson.data
+                      : [];
+                const candidates = rows.filter((r) => r?.id && r.type !== "gm_entry");
+
+                // Walk newest→oldest until we find a follow-up the current user
+                // can read (detail endpoint returns 403 for other owners).
+                for (const item of candidates) {
+                    if (cancelled) return;
+                    const detailRes = await apiRequest(
+                        "GET",
+                        `/api/sales/customers/${customerId}/followups/${item.id}`,
+                    );
+                    if (!detailRes.ok) continue;
+                    const detailJson = await detailRes.json().catch(() => ({}));
+                    const payload = detailJson?.data;
+                    if (!payload) continue;
+                    if (!cancelled) prefillFollowupFromData(payload, followupServices);
+                    break;
+                }
+            } catch {
+                // Prefill is best-effort — empty form is still usable.
+            } finally {
+                if (!cancelled) setPrefillLoading(false);
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+        // followupServices identity changes every render when derived via `|| []`;
+        // depend on the query payload instead.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, customerId, servicesRes?.items]);
 
     const handleToggleService = (serviceId: string, checked: boolean) => {
         const svc = followupServices.find((s) => s.id === serviceId);
@@ -1922,6 +2082,11 @@ export function FollowupModal({ open, onClose, customerId, companyName, onBefore
 
                 <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
                     <div className="mx-auto flex flex-col gap-6">
+                        {prefillLoading && (
+                            <p className="text-[12px] text-slate-400 font-medium">
+                                Loading your previous follow-up for this company…
+                            </p>
+                        )}
 
                         <FollowCustomerServicesPanel
                             services={followupServices}
