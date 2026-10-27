@@ -23,6 +23,19 @@ type ServicePoolSummary = {
     dropoutMoreThan1Year: number;
     currentQ: number;
     duplicateData: number;
+    gmNotInPoolCount?: number;
+};
+
+type GmNotInPoolEntry = {
+    customerId: string;
+    drmId: string | null;
+    companyName: string;
+    accountHolder: string | null;
+    contactNo: string | null;
+    salesPersonName: string | null;
+    startDate: string | null;
+    bvDate: string | null;
+    createDate: string | null;
 };
 
 type ServicePoolEntry = {
@@ -157,11 +170,129 @@ function ManagePoolDialog({
     );
 }
 
+function AssignGmToPoolDialog({
+    isOpen,
+    onClose,
+    entry,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    entry: GmNotInPoolEntry | null;
+}) {
+    const { toast } = useToast();
+    const queryClient = useQueryClient();
+    const [assignTo, setAssignTo] = useState("");
+    const [note, setNote] = useState("");
+
+    useEffect(() => {
+        if (isOpen) {
+            setAssignTo("");
+            setNote("");
+        }
+    }, [isOpen, entry]);
+
+    const { data: usersResponse } = useQuery<{ users: UserOption[] }>({
+        queryKey: ["/api/users", { role: "all" }],
+        queryFn: () => apiRequestJson<{ users: UserOption[] }>("GET", "/api/users?role=all"),
+        enabled: isOpen,
+    });
+
+    const userOptions = (Array.isArray(usersResponse?.users) ? usersResponse.users : []).filter(u => {
+        const anyU = u as any;
+        return anyU.role === "service_executive" || (Array.isArray(anyU.roles) && anyU.roles.includes("service_executive"));
+    });
+
+    const assignMutation = useMutation({
+        mutationFn: () =>
+            apiRequestJson("POST", "/api/sales/service-pool/gm-not-in-pool/assign", {
+                customerId: entry!.customerId,
+                servicePersonId: assignTo,
+                note: note.trim() || undefined,
+            }),
+        onSuccess: () => {
+            toast({ title: "Assigned", description: "Company assigned to service pool successfully." });
+            queryClient.invalidateQueries({ queryKey: ["/api/sales/service-pool/gm-not-in-pool"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/sales/service-pool/summary"] });
+            onClose();
+        },
+        onError: (err: any) => {
+            toast({ title: "Assign failed", description: err?.message || "Could not assign.", variant: "destructive" });
+        },
+    });
+
+    return (
+        <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>
+            <DialogContent className="max-w-[450px] p-0 bg-white dark:bg-zinc-900 rounded-md shadow-xl border-none">
+                <DialogHeader className="p-4 border-b border-slate-100 dark:border-zinc-800 flex flex-row items-center justify-between">
+                    <DialogTitle className="text-base font-semibold text-slate-700 dark:text-zinc-200">
+                        Assign Company To Service Pool
+                    </DialogTitle>
+                </DialogHeader>
+
+                <div className="p-4 space-y-4">
+                    <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-600 dark:text-zinc-400">Company</label>
+                        <Input
+                            readOnly
+                            value={entry?.companyName || ""}
+                            className="w-full text-sm border-slate-300 dark:border-zinc-700 bg-slate-50 dark:bg-zinc-800/50 cursor-not-allowed focus-visible:ring-0"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-600 dark:text-zinc-400">Select User</label>
+                        <Select value={assignTo} onValueChange={setAssignTo}>
+                            <SelectTrigger className="w-full text-sm border-slate-300 dark:border-zinc-700">
+                                <SelectValue placeholder="Choose..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {userOptions.map((u) => (
+                                    <SelectItem key={u.id} value={u.id}>{userLabel(u)}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-600 dark:text-zinc-400">Note</label>
+                        <Textarea
+                            rows={2}
+                            placeholder="Type note..."
+                            value={note}
+                            onChange={(e) => setNote(e.target.value)}
+                            className="w-full text-sm border-slate-300 dark:border-zinc-700"
+                        />
+                    </div>
+                </div>
+
+                <div className="p-4 border-t border-slate-100 dark:border-zinc-800 flex justify-end gap-2 bg-slate-50 dark:bg-zinc-900/50 rounded-b-md">
+                    <Button
+                        variant="outline"
+                        onClick={onClose}
+                        className="text-sm h-9 px-4 border-slate-300 dark:border-zinc-700 bg-white dark:bg-zinc-900"
+                    >
+                        Close
+                    </Button>
+                    <Button
+                        className="text-sm h-9 px-4 bg-[#10b981] hover:bg-[#059669] text-white font-medium"
+                        disabled={!assignTo || assignMutation.isPending}
+                        onClick={() => assignMutation.mutate()}
+                    >
+                        {assignMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                        Assign
+                    </Button>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
 export default function ServicePool() {
     const [, setLocation] = useLocation();
     const { toast } = useToast();
     const [selectedEntry, setSelectedEntry] = useState<ServicePoolEntry | null>(null);
     const [followupEntry, setFollowupEntry] = useState<ServicePoolEntry | null>(null);
+    const [assignGmEntry, setAssignGmEntry] = useState<GmNotInPoolEntry | null>(null);
     const [page, setPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState("");
     const [activeFilter, setActiveFilter] = useState<string>("allInService");
@@ -183,6 +314,7 @@ export default function ServicePool() {
 
     const { data: listData, isLoading: isLoadingList } = useQuery<{ items: ServicePoolEntry[]; total: number }>({
         queryKey: ["/api/sales/service-pool/list", page, searchTerm, activeFilter],
+        enabled: activeFilter !== "gmNotInPool",
         queryFn: async () => {
             const params = new URLSearchParams();
             params.set("page", String(page));
@@ -208,11 +340,18 @@ export default function ServicePool() {
         },
     });
 
+    const { data: gmNotInPoolData, isLoading: isLoadingGmNotInPool } = useQuery<{ items: GmNotInPoolEntry[] }>({
+        queryKey: ["/api/sales/service-pool/gm-not-in-pool"],
+        queryFn: () => apiRequestJson<{ items: GmNotInPoolEntry[] }>("GET", "/api/sales/service-pool/gm-not-in-pool"),
+        enabled: activeFilter === "gmNotInPool" && canAssign,
+    });
+
     const filters = [
         { key: "dropoutIn1Year", label: "Dropout In 1-Year", count: summary?.dropoutIn1Year || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#ef4444]" },
         { key: "dropoutMoreThan1Year", label: "Dropout More Than 1-Year", count: summary?.dropoutMoreThan1Year || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#f87171]" },
         { key: "currentQ", label: "Current Q", count: summary?.currentQ || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#ef4444]" },
         { key: "allInService", label: "All In Service", count: summary?.allInService || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#ef4444]" },
+        ...(canAssign ? [{ key: "gmNotInPool", label: "GM Account Not In Service Pool", count: summary?.gmNotInPoolCount || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#ef4444]" }] : []),
         { key: "duplicateData", label: "Service Pool Duplicate Data", count: summary?.duplicateData || 0, color: "bg-[#e2e8f0] text-slate-700", badgeColor: "bg-[#ef4444]" },
     ];
 
@@ -387,172 +526,252 @@ export default function ServicePool() {
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between mb-4">
-                    <div className="flex bg-[#64748b] dark:bg-zinc-800 rounded-sm overflow-hidden">
-                        <button onClick={handleCopy} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Copy</button>
-                        <button onClick={handleExcel} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Excel</button>
-                        <button onClick={handleCSV} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">CSV</button>
-                        <button onClick={handlePDF} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors">PDF</button>
-                    </div>
-                    
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-700 dark:text-zinc-300">Search:</span>
-                        <Input
-                            className="w-[200px] h-8 text-sm border-slate-300 dark:border-zinc-700 rounded-sm focus-visible:ring-1 focus-visible:ring-emerald-500"
-                            value={searchTerm}
-                            onChange={(e) => {
-                                setSearchTerm(e.target.value);
-                                setPage(1);
-                            }}
-                        />
-                    </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                    <Table className="w-full text-sm">
-                        <TableHeader>
-                            <TableRow className="bg-[#f8fafc] dark:bg-zinc-800/80 hover:bg-[#f8fafc] dark:hover:bg-zinc-800/80 border-y border-slate-200 dark:border-zinc-700">
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">#</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">DRM ID</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 min-w-[200px]">Company</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Service</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Sale Person</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Service Person</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">TA Person</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Acc Holder</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Contact No</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">BV-Date</TableHead>
-                                <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 text-center">Action</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {isLoadingList ? (
-                                Array.from({ length: 5 }).map((_, rowIndex) => (
-                                    <TableRow key={rowIndex}>
-                                        {Array.from({ length: 11 }).map((_, colIndex) => (
-                                            <TableCell key={colIndex} className="py-2.5">
-                                                <Skeleton className="h-4 w-full" />
-                                            </TableCell>
-                                        ))}
-                                    </TableRow>
-                                ))
-                            ) : (listData?.items ?? []).length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={11} className="h-32 text-center text-slate-500">
-                                        No records found.
-                                    </TableCell>
+                {activeFilter === "gmNotInPool" ? (
+                    <div className="overflow-x-auto">
+                        <Table className="w-full text-sm">
+                            <TableHeader>
+                                <TableRow className="bg-[#f8fafc] dark:bg-zinc-800/80 hover:bg-[#f8fafc] dark:hover:bg-zinc-800/80 border-y border-slate-200 dark:border-zinc-700">
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">#</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">DRM ID</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 min-w-[200px]">Company</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Sale Person</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Acc Holder</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Contact No</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Start Date</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">BV Date</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Create Date</TableHead>
+                                    <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 text-center">Action</TableHead>
                                 </TableRow>
-                            ) : (
-                                listData?.items.map((row, index) => (
-                                    <TableRow key={row.id} className="hover:bg-slate-50 dark:hover:bg-zinc-800/50 border-b border-slate-100 dark:border-zinc-800">
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">
-                                            {(page - 1) * pageSize + index + 1}
+                            </TableHeader>
+                            <TableBody>
+                                {isLoadingGmNotInPool ? (
+                                    Array.from({ length: 5 }).map((_, rowIndex) => (
+                                        <TableRow key={rowIndex}>
+                                            {Array.from({ length: 10 }).map((_, colIndex) => (
+                                                <TableCell key={colIndex} className="py-2.5">
+                                                    <Skeleton className="h-4 w-full" />
+                                                </TableCell>
+                                            ))}
+                                        </TableRow>
+                                    ))
+                                ) : (gmNotInPoolData?.items ?? []).length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={10} className="h-32 text-center text-slate-500">
+                                            No records found.
                                         </TableCell>
-                                        <TableCell className="py-2.5">
-                                            <button
-                                                type="button"
-                                                title="Follow The Customer"
-                                                className="cursor-pointer text-emerald-600 dark:text-emerald-400 hover:underline font-medium"
-                                                onClick={() => setFollowupEntry(row)}
-                                            >
-                                                {row.drmId || "-"}
-                                            </button>
-                                        </TableCell>
-                                        <TableCell className="py-2.5 font-semibold text-slate-800 dark:text-slate-200">{row.companyName}</TableCell>
-                                        <TableCell className="py-2.5">
-                                            {row.serviceCode ? (
-                                                <div className="flex flex-col">
-                                                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                                                        {row.serviceCode.replace(/_/g, " ")}
-                                                    </span>
-                                                    {row.subserviceCode && (
-                                                        <span className="text-[11px] text-slate-500 dark:text-zinc-400">
-                                                            {row.subserviceCode.replace(/_/g, " ")}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                <span className="text-slate-400">-</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.salesPersonName || "-"}</TableCell>
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.servicePersonName || "-"}</TableCell>
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.taPersonName || "-"}</TableCell>
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.accountHolder || "-"}</TableCell>
-                                        <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.contactNo || "-"}</TableCell>
-                                        <TableCell className="py-2.5">
-                                            {row.bvDate ? (
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-                                                    Complete
-                                                </span>
-                                            ) : (
-                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-300">
-                                                    Pending
-                                                </span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="py-2.5">
-                                            <div className="flex items-center justify-center gap-2">
-                                                <button
-                                                    title="View Attribute"
-                                                    className="w-7 h-7 rounded-full bg-[#10b981] hover:bg-[#059669] flex items-center justify-center text-white transition-colors"
-                                                    onClick={() => setLocation(`/customers/attribute/${row.customerId}`)}
-                                                >
-                                                    <Eye className="w-3.5 h-3.5" />
-                                                </button>
-                                                {canAssign && (
+                                    </TableRow>
+                                ) : (
+                                    gmNotInPoolData?.items.map((row, index) => (
+                                        <TableRow key={row.customerId} className="hover:bg-slate-50 dark:hover:bg-zinc-800/50 border-b border-slate-100 dark:border-zinc-800">
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{index + 1}</TableCell>
+                                            <TableCell className="py-2.5 font-medium text-slate-700 dark:text-slate-300">{row.drmId || "-"}</TableCell>
+                                            <TableCell className="py-2.5 font-semibold text-slate-800 dark:text-slate-200">{row.companyName}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.salesPersonName || "-"}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.accountHolder || "-"}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.contactNo || "-"}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.startDate ? new Date(row.startDate).toLocaleDateString() : "-"}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.bvDate ? new Date(row.bvDate).toLocaleDateString() : "-"}</TableCell>
+                                            <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.createDate ? new Date(row.createDate).toLocaleDateString() : "-"}</TableCell>
+                                            <TableCell className="py-2.5">
+                                                <div className="flex items-center justify-center gap-2">
                                                     <button
-                                                        title="Manage"
+                                                        title="View Attribute"
+                                                        className="w-7 h-7 rounded-full bg-[#10b981] hover:bg-[#059669] flex items-center justify-center text-white transition-colors"
+                                                        onClick={() => setLocation(`/customers/attribute/${row.customerId}`)}
+                                                    >
+                                                        <Eye className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        title="Assign To Service Pool"
                                                         className="w-7 h-7 rounded-full bg-[#3b82f6] hover:bg-[#2563eb] flex items-center justify-center text-white transition-colors"
-                                                        onClick={() => setSelectedEntry(row)}
+                                                        onClick={() => setAssignGmEntry(row)}
                                                     >
                                                         <UserPlus className="w-3.5 h-3.5" />
                                                     </button>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
-                </div>
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                ) : (
+                    <>
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex bg-[#64748b] dark:bg-zinc-800 rounded-sm overflow-hidden">
+                                <button onClick={handleCopy} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Copy</button>
+                                <button onClick={handleExcel} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">Excel</button>
+                                <button onClick={handleCSV} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors border-r border-slate-400/30">CSV</button>
+                                <button onClick={handlePDF} className="px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 transition-colors">PDF</button>
+                            </div>
 
-                {/* Pagination */}
-                <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-200 dark:border-zinc-800">
-                    <div className="text-sm text-slate-600 dark:text-zinc-400">
-                        Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, listData?.total || 0)} of {listData?.total || 0} entries
-                    </div>
-                    <div className="flex items-center gap-1">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-3 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700"
-                            onClick={() => setPage((p) => Math.max(1, p - 1))}
-                            disabled={page === 1}
-                        >
-                            Previous
-                        </Button>
-                        <div className="flex items-center justify-center h-8 px-3 text-xs font-medium text-white bg-[#0ea5e9] rounded-sm">
-                            {page}
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-700 dark:text-zinc-300">Search:</span>
+                                <Input
+                                    className="w-[200px] h-8 text-sm border-slate-300 dark:border-zinc-700 rounded-sm focus-visible:ring-1 focus-visible:ring-emerald-500"
+                                    value={searchTerm}
+                                    onChange={(e) => {
+                                        setSearchTerm(e.target.value);
+                                        setPage(1);
+                                    }}
+                                />
+                            </div>
                         </div>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-3 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700"
-                            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                            disabled={page >= totalPages || totalPages === 0}
-                        >
-                            Next
-                        </Button>
-                    </div>
-                </div>
+
+                        <div className="overflow-x-auto">
+                            <Table className="w-full text-sm">
+                                <TableHeader>
+                                    <TableRow className="bg-[#f8fafc] dark:bg-zinc-800/80 hover:bg-[#f8fafc] dark:hover:bg-zinc-800/80 border-y border-slate-200 dark:border-zinc-700">
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">#</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">DRM ID</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 min-w-[200px]">Company</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Service</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Sale Person</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Service Person</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">TA Person</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Acc Holder</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">Contact No</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2">BV-Date</TableHead>
+                                        <TableHead className="font-bold text-slate-700 dark:text-zinc-300 h-10 py-2 text-center">Action</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {isLoadingList ? (
+                                        Array.from({ length: 5 }).map((_, rowIndex) => (
+                                            <TableRow key={rowIndex}>
+                                                {Array.from({ length: 11 }).map((_, colIndex) => (
+                                                    <TableCell key={colIndex} className="py-2.5">
+                                                        <Skeleton className="h-4 w-full" />
+                                                    </TableCell>
+                                                ))}
+                                            </TableRow>
+                                        ))
+                                    ) : (listData?.items ?? []).length === 0 ? (
+                                        <TableRow>
+                                            <TableCell colSpan={11} className="h-32 text-center text-slate-500">
+                                                No records found.
+                                            </TableCell>
+                                        </TableRow>
+                                    ) : (
+                                        listData?.items.map((row, index) => (
+                                            <TableRow key={row.id} className="hover:bg-slate-50 dark:hover:bg-zinc-800/50 border-b border-slate-100 dark:border-zinc-800">
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">
+                                                    {(page - 1) * pageSize + index + 1}
+                                                </TableCell>
+                                                <TableCell className="py-2.5">
+                                                    <button
+                                                        type="button"
+                                                        title="Follow The Customer"
+                                                        className="cursor-pointer text-emerald-600 dark:text-emerald-400 hover:underline font-medium"
+                                                        onClick={() => setFollowupEntry(row)}
+                                                    >
+                                                        {row.drmId || "-"}
+                                                    </button>
+                                                </TableCell>
+                                                <TableCell className="py-2.5 font-semibold text-slate-800 dark:text-slate-200">{row.companyName}</TableCell>
+                                                <TableCell className="py-2.5">
+                                                    {row.serviceCode ? (
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                                                {row.serviceCode.replace(/_/g, " ")}
+                                                            </span>
+                                                            {row.subserviceCode && (
+                                                                <span className="text-[11px] text-slate-500 dark:text-zinc-400">
+                                                                    {row.subserviceCode.replace(/_/g, " ")}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-slate-400">-</span>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.salesPersonName || "-"}</TableCell>
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.servicePersonName || "-"}</TableCell>
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.taPersonName || "-"}</TableCell>
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.accountHolder || "-"}</TableCell>
+                                                <TableCell className="py-2.5 text-slate-600 dark:text-zinc-400">{row.contactNo || "-"}</TableCell>
+                                                <TableCell className="py-2.5">
+                                                    {row.bvDate ? (
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                                                            Complete
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-300">
+                                                            Pending
+                                                        </span>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="py-2.5">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button
+                                                            title="View Attribute"
+                                                            className="w-7 h-7 rounded-full bg-[#10b981] hover:bg-[#059669] flex items-center justify-center text-white transition-colors"
+                                                            onClick={() => setLocation(`/customers/attribute/${row.customerId}`)}
+                                                        >
+                                                            <Eye className="w-3.5 h-3.5" />
+                                                        </button>
+                                                        {canAssign && (
+                                                            <button
+                                                                title="Manage"
+                                                                className="w-7 h-7 rounded-full bg-[#3b82f6] hover:bg-[#2563eb] flex items-center justify-center text-white transition-colors"
+                                                                onClick={() => setSelectedEntry(row)}
+                                                            >
+                                                                <UserPlus className="w-3.5 h-3.5" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+
+                        {/* Pagination */}
+                        <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-200 dark:border-zinc-800">
+                            <div className="text-sm text-slate-600 dark:text-zinc-400">
+                                Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, listData?.total || 0)} of {listData?.total || 0} entries
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 px-3 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700"
+                                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                    disabled={page === 1}
+                                >
+                                    Previous
+                                </Button>
+                                <div className="flex items-center justify-center h-8 px-3 text-xs font-medium text-white bg-[#0ea5e9] rounded-sm">
+                                    {page}
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 px-3 text-xs bg-white dark:bg-zinc-900 border-slate-300 dark:border-zinc-700"
+                                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                                    disabled={page >= totalPages || totalPages === 0}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
 
             <ManagePoolDialog
                 isOpen={!!selectedEntry}
                 onClose={() => setSelectedEntry(null)}
                 entry={selectedEntry}
+            />
+
+            <AssignGmToPoolDialog
+                isOpen={!!assignGmEntry}
+                onClose={() => setAssignGmEntry(null)}
+                entry={assignGmEntry}
             />
 
             <ServiceAppointmentModal

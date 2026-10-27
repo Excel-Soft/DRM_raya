@@ -59,11 +59,46 @@ export function registerServicePoolRoutes(app: Express) {
                 : isManager
                     ? await getDepartmentFilterUserIds(req)
                     : [req.user.userId];
-            const summary = await servicePoolRepository.getSummary(allowedUserIds);
+            const summary = await servicePoolRepository.getSummary(allowedUserIds, isManager);
             res.json(summary);
         } catch (err) {
             console.error("Error fetching service pool summary:", err);
             res.status(500).json({ error: "Failed to fetch service pool summary" });
+        }
+    });
+
+    // GM accounts (approved GM sales) whose company was never pulled into the
+    // service pool — the legacy "GM Account Not In Service Pool" report tab.
+    // Managerial roles only, same gate as assigning/transferring pool entries.
+    router.get("/service-pool/gm-not-in-pool", async (req, res) => {
+        try {
+            if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+            const roleForScoping = (req.user as any).activeRoleId || req.user.roleId;
+            if (!isManagerialRole(roleForScoping)) return res.status(403).json({ error: "Forbidden" });
+            const items = await servicePoolRepository.listGmAccountsNotInServicePool();
+            res.json({ items });
+        } catch (err) {
+            console.error("Error fetching GM accounts not in service pool:", err);
+            res.status(500).json({ error: "Failed to fetch GM accounts not in service pool" });
+        }
+    });
+
+    // Assign a GM-sourced company (surfaced above) to a Service Person,
+    // pulling it into the pool for the first time.
+    router.post("/service-pool/gm-not-in-pool/assign", async (req, res) => {
+        try {
+            if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+            const roleForScoping = (req.user as any).activeRoleId || req.user.roleId;
+            if (!isManagerialRole(roleForScoping)) return res.status(403).json({ error: "Forbidden" });
+            const { customerId, servicePersonId, note } = req.body || {};
+            if (!customerId || !servicePersonId) {
+                return res.status(400).json({ error: "customerId and servicePersonId are required." });
+            }
+            const result = await servicePoolRepository.assignGmAccountToPool(customerId, servicePersonId, note, req.user.userId);
+            res.json({ success: true, id: result.id });
+        } catch (err) {
+            console.error("Error assigning GM account to service pool:", err);
+            res.status(500).json({ error: "Failed to assign GM account to service pool" });
         }
     });
 

@@ -158,7 +158,7 @@ export class ServicePoolRepository {
     };
   }
 
-  async getSummary(userIds?: string[] | null) {
+  async getSummary(userIds?: string[] | null, includeGmNotInPool?: boolean) {
     let whereClause = "";
     const params: any[] = [];
     if (userIds && userIds.length > 0) {
@@ -166,7 +166,7 @@ export class ServicePoolRepository {
       params.push(userIds);
     }
     const query = `
-      SELECT 
+      SELECT
         COUNT(*) FILTER (WHERE spe.status = 'active') AS "allInService",
         COUNT(*) FILTER (WHERE spe.dropout_category = 'dropout_in_1_year') AS "dropoutIn1Year",
         COUNT(*) FILTER (WHERE spe.dropout_category = 'dropout_more_than_1_year') AS "dropoutMoreThan1Year",
@@ -186,13 +186,101 @@ export class ServicePoolRepository {
     `;
     const res = await pool.query(query, params);
     const row = res.rows[0] || {};
-    return {
+    const summary = {
       allInService: Number(row.allInService || 0),
       dropoutIn1Year: Number(row.dropoutIn1Year || 0),
       dropoutMoreThan1Year: Number(row.dropoutMoreThan1Year || 0),
       currentQ: Number(row.currentQ || 0),
-      duplicateData: Number(row.duplicateData || 0)
+      duplicateData: Number(row.duplicateData || 0),
     };
+    if (!includeGmNotInPool) return summary;
+    return { ...summary, gmNotInPoolCount: await this.getGmNotInPoolCount() };
+  }
+
+  // Approved/Completed GM sales whose company was never pulled into the
+  // service pool — mirrors the legacy "GM Account Not In Service Pool" tab
+  // (func.php's allGMAccountNotInServicePool()), which exists to surface
+  // onboarding gaps so a manager can hand the new account to a Service
+  // Executive. gm_entries has no FK to customers; the link is the shared
+  // drm_id both rows are synced to at GM-creation time (see
+  // resolveOrCreateCanonicalDrmId in gm-pool-routes.ts).
+  private gmNotInPoolWhereSql = `
+    FROM drm.gm_entries g
+    JOIN drm.customers c ON c.drm_id = g.drm_id
+    WHERE coalesce(g.is_deleted, false) = false
+      AND g.status IN ('Approved', 'Completed')
+      AND NOT EXISTS (
+        SELECT 1 FROM drm.service_pool_entries spe WHERE spe.customer_id = c.id
+      )
+  `;
+
+  async getGmNotInPoolCount() {
+    const res = await pool.query(`SELECT COUNT(*)::int AS count ${this.gmNotInPoolWhereSql}`);
+    return Number(res.rows[0]?.count || 0);
+  }
+
+  async listGmAccountsNotInServicePool() {
+    const query = `
+      SELECT
+        c.id AS "customerId",
+        c.drm_id AS "drmId",
+        c.company_name AS "companyName",
+        c.account_name AS "accountHolder",
+        c.phone AS "contactNo",
+        u.name AS "salesPersonName",
+        g.approved_at AS "startDate",
+        g.gm_bv_submitted_at AS "bvDate",
+        g.created_at AS "createDate"
+      ${this.gmNotInPoolWhereSql}
+      LEFT JOIN drm.users u ON u.id = g.sales_person_id
+      ORDER BY g.created_at DESC
+      LIMIT 1000
+    `;
+    const res = await pool.query(query);
+    return res.rows;
+  }
+
+  // Pulls a GM-sourced company into the pool (or re-targets it if a row
+  // already slipped in through another path), carrying over the GM's
+  // sales_person_id so it renders correctly in the main pool list.
+  async assignGmAccountToPool(customerId: string, servicePersonId: string, note: string | undefined, byUserId: string) {
+    const gm = await pool.query(
+      `SELECT g.sales_person_id AS "salesPersonId"
+         FROM drm.gm_entries g
+         JOIN drm.customers c ON c.drm_id = g.drm_id
+        WHERE c.id = $1 AND coalesce(g.is_deleted, false) = false
+        ORDER BY g.created_at DESC
+        LIMIT 1`,
+      [customerId],
+    );
+    const salesPersonId = gm.rows[0]?.salesPersonId || null;
+
+    const existing = await pool.query(
+      `SELECT id FROM drm.service_pool_entries WHERE customer_id = $1 AND status = 'active' LIMIT 1`,
+      [customerId],
+    );
+
+    let id: string;
+    if ((existing.rowCount ?? 0) > 0) {
+      id = existing.rows[0].id;
+      await pool.query(
+        `UPDATE drm.service_pool_entries
+           SET service_person_id = $2, sales_person_id = COALESCE(sales_person_id, $3), updated_at = now()
+         WHERE id = $1`,
+        [id, servicePersonId, salesPersonId],
+      );
+    } else {
+      const inserted = await pool.query(
+        `INSERT INTO drm.service_pool_entries (customer_id, service_person_id, sales_person_id, status, started_at, updated_at)
+         VALUES ($1, $2, $3, 'active', now(), now())
+         RETURNING id`,
+        [customerId, servicePersonId, salesPersonId],
+      );
+      id = inserted.rows[0].id;
+    }
+
+    await this.appendAudit(id, { type: "assign_from_gm_not_in_pool", servicePersonId, note: note || null, by: byUserId });
+    return { id };
   }
 
   async upsertFromFollowup(data: {
