@@ -22,8 +22,54 @@ import { startOfMonth, endOfMonth, eachDayOfInterval, format } from "date-fns";
 import { computeExpiryState } from "../utils/service-expiry";
 import { ensureBridgeLinksTable } from "./services/service-bridge.service";
 import { bucketServiceKpis } from "../utils/service-kpi";
-import { getDepartmentFilterUserIds, getPeriodRange } from "./dashboard-routes";
+import { getPeriodRange } from "./dashboard-routes";
 import { ensureServiceFeedbackTables } from "./service-core-routes";
+import { normalizeRole, ROLES } from "../utils/role-utils";
+
+/**
+ * Scopes this module's per-user widgets (queue performance, team work
+ * performance, VAS target, GM/BV customer lists, the team-executive picker)
+ * to the caller's own reporting line instead of every service_* user in the
+ * org. dashboard-routes.ts's shared getDepartmentFilterUserIds() is a
+ * permanent stub that always returns null ("no restriction") because no
+ * department hierarchy was available when it was written — using it here
+ * meant a Service Manager's dashboard showed every service_* account
+ * company-wide (confirmed live: a service_manager with a real team recorded
+ * via under_works still saw unrelated managers'/executives' rows). But
+ * drm.users.under_works IS a real, populated reporting-line column for this
+ * module (set via the Users admin screen) and is already used this way for
+ * GM approval scope (see resolveGmListScopeUserIds in gm-pool-routes.ts).
+ * Reusing that same recursive-walk + self-only-fallback policy (rather than
+ * an organization-wide fallback) avoids a data-exposure regression on this
+ * read-only dashboard: a manager whose under_works chain resolves to nobody
+ * should see their own numbers, not everyone else's. admin keeps the
+ * unrestricted (`null`) view since this module's gate explicitly allows admin
+ * to use these same endpoints.
+ */
+async function resolveServiceManagerTeamUserIds(req: Request): Promise<string[] | null> {
+  const activeRoleId = normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
+  if (activeRoleId === ROLES.ADMIN) return null;
+
+  const callerId = String((req.user as any)?.userId ?? "");
+  try {
+    const { rows } = await pool.query(
+      `WITH RECURSIVE scope_ids AS (
+         SELECT $1::text AS id
+         UNION
+         SELECT u.id::text FROM drm.users u
+         INNER JOIN scope_ids s ON u.under_works::text = s.id
+       )
+       SELECT id FROM scope_ids`,
+      [callerId],
+    );
+    const ids = rows.map((r: any) => String(r.id));
+    if (!ids.includes(callerId)) ids.push(callerId);
+    return ids;
+  } catch (err) {
+    console.error("[service-manager] reporting-line lookup failed, failing closed to self-only", err);
+    return [callerId];
+  }
+}
 
 export function registerServiceManagerRoutes(app: Express) {
   // Phase 16 (SRV-002) — these 5 endpoints previously had no role restriction
@@ -161,9 +207,9 @@ export function registerServiceManagerRoutes(app: Express) {
       let serviceUsers = await db.select().from(users).where(sql`${users.roleId} ILIKE 'service_%'`);
 
       // Narrow to this manager's own reports (via under_works) when the caller
-      // isn't a global admin. getDepartmentFilterUserIds returns null for a
-      // global admin (no narrowing — preserves the previous "view all" shape).
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
+      // isn't a global admin. resolveServiceManagerTeamUserIds returns null for
+      // a global admin (no narrowing — preserves the previous "view all" shape).
+      const allowedUserIds = await resolveServiceManagerTeamUserIds(req);
       if (allowedUserIds) {
         const allowedSet = new Set(allowedUserIds);
         serviceUsers = serviceUsers.filter((u) => allowedSet.has(u.id));
@@ -307,7 +353,7 @@ export function registerServiceManagerRoutes(app: Express) {
       // Same role_id-based filter as queue-performance above — users.department
       // is never populated for service_* accounts.
       let serviceUsers = await db.select().from(users).where(sql`${users.roleId} ILIKE 'service_%'`);
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
+      const allowedUserIds = await resolveServiceManagerTeamUserIds(req);
       if (allowedUserIds) {
         const allowedSet = new Set(allowedUserIds);
         serviceUsers = serviceUsers.filter((u) => allowedSet.has(u.id));
@@ -603,7 +649,7 @@ export function registerServiceManagerRoutes(app: Express) {
   app.get("/api/service/manager/vas-target", serviceManagerGate, async (req: Request, res: Response) => {
     try {
       const { from, to } = getPeriodRange(String(req.query.period ?? "MONTH"));
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
+      const allowedUserIds = await resolveServiceManagerTeamUserIds(req);
 
       const achievedRows = await db
         .select({ achieved: sql<number>`COALESCE(SUM(${serviceRenewals.amount}), 0)::float` })
@@ -710,7 +756,7 @@ export function registerServiceManagerRoutes(app: Express) {
   app.get("/api/service/manager/customers", serviceManagerGate, async (req: Request, res: Response) => {
     try {
       const type = String(req.query.type || "gm").toLowerCase();
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
+      const allowedUserIds = await resolveServiceManagerTeamUserIds(req);
       if (allowedUserIds && allowedUserIds.length === 0) {
         return res.json([]);
       }
@@ -764,7 +810,7 @@ export function registerServiceManagerRoutes(app: Express) {
       let serviceUsers = await db.select({ id: users.id, fullName: users.fullName, username: users.username, roleId: users.roleId })
         .from(users)
         .where(sql`${users.roleId} ILIKE 'service_%'`);
-      const allowedUserIds = await getDepartmentFilterUserIds(req);
+      const allowedUserIds = await resolveServiceManagerTeamUserIds(req);
       if (allowedUserIds) {
         const allowedSet = new Set(allowedUserIds);
         serviceUsers = serviceUsers.filter((u) => allowedSet.has(u.id));
