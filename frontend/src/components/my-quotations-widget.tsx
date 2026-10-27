@@ -18,6 +18,7 @@ type QuotationRow = {
   isApproved?: boolean;
   downstreamKind?: "gm" | "invoice" | null;
   isGmConverted?: boolean;
+  isConverted?: boolean;
 };
 
 type SummaryResponse = {
@@ -63,6 +64,24 @@ export function MyQuotationsWidget() {
     },
     onError: (err: any) => {
       toast({ title: "Failed to confirm", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/quotations/${id}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to delete quotation");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Quotation deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/sales/quotations/my-summary"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to delete", description: err.message, variant: "destructive" });
     },
   });
 
@@ -163,13 +182,32 @@ export function MyQuotationsWidget() {
                   <td className="px-6 py-3 text-slate-500 dark:text-zinc-400">{fmtDate(item.date)}</td>
                   <td className="px-6 py-3">
                     {activeTab === "pendingRejected" && !item.isConfirmed ? (
-                      <button
-                        onClick={() => confirmMutation.mutate(item.id)}
-                        disabled={confirmMutation.isPending}
-                        className="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-emerald-700 transition-all disabled:opacity-50"
-                      >
-                        Done
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => confirmMutation.mutate(item.id)}
+                          disabled={confirmMutation.isPending}
+                          className="bg-emerald-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-emerald-700 transition-all disabled:opacity-50"
+                        >
+                          Done
+                        </button>
+                        <button
+                          onClick={() => setLocation(`/sales/quotation?id=${item.id}`)}
+                          className="bg-amber-500 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-amber-600 transition-all"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Delete the quotation for ${item.company}? This cannot be undone.`)) {
+                              deleteMutation.mutate(item.id);
+                            }
+                          }}
+                          disabled={deleteMutation.isPending}
+                          className="bg-rose-600 text-white text-xs px-3 py-1.5 rounded-md font-medium hover:bg-rose-700 transition-all disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     ) : activeTab === "pendingRejected" && item.isRejected ? (
                       <div className="flex items-center gap-2">
                         <span className="text-rose-600 dark:text-rose-400">{item.statusComment}</span>
