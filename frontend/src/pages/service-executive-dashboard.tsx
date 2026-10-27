@@ -9,6 +9,7 @@ import { ServiceQuickEntriesCard } from "@/components/service-quick-entries-card
 import { ImportantMetrics } from "@/components/important-metrics";
 import ServiceVasSystem from "@/pages/service-vas-system";
 import { CustomerMonthlyWidget } from "@/components/customer-monthly";
+import { MyQuotationsWidget } from "@/components/my-quotations-widget";
 import { TodayAppointment } from "@/components/today-appointment";
 import { ServiceAppointmentModal } from "@/components/service-appointment-modal";
 import {
@@ -496,6 +497,10 @@ export default function ServiceExecutiveDashboard() {
 
                 <div className="mt-6">
                     <CustomerMonthlyWidget />
+                </div>
+
+                <div className="mt-6">
+                    <MyQuotationsWidget />
                 </div>
             </div>
         </div>

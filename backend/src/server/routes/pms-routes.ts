@@ -783,14 +783,18 @@ function getPeriodRange(periodRaw: string) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const { projectId } = req.params;
-      // Sales Manager: self-only even inside a workspace they own — only
-      // tasks they personally created or are assigned to, never a
-      // teammate's row on the same project (explicit product decision).
-      const isSalesManagerRole = req.user.roleId === "sales_manager";
-      const selfScopeClause = isSalesManagerRole
-        ? "AND (t.owner_user_id = $2 OR t.assigned_to_user_id = $2)"
-        : "";
-      const queryParams = isSalesManagerRole ? [projectId, req.user.userId] : [projectId];
+      // Executives (and any other non-managerial role) only see their own
+      // rows in this project — a task a D&D manager assigned to one
+      // executive must never show up for a teammate on the same project.
+      // Managerial roles (and admin) keep seeing every task in the project,
+      // same as before. This mirrors the self-scope the Sales Manager case
+      // already had, just generalized to every executive instead of being
+      // sales_manager-only.
+      const isElevatedRole = isManagerialRole(req.user.roleId);
+      const selfScopeClause = isElevatedRole
+        ? ""
+        : "AND (t.owner_user_id = $2 OR t.assigned_to_user_id = $2)";
+      const queryParams = isElevatedRole ? [projectId] : [projectId, req.user.userId];
       const { rows } = await pool.query(`
         SELECT
           t.id,

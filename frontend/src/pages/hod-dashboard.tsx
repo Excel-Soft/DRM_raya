@@ -2268,14 +2268,15 @@ export default function HodDashboard() {
                       { label: "Late Coming", value: ">", nav: "/drm/late-coming" },
                       { label: "Add Penalty", value: ">", nav: "/drm/add-penalty" },
                       { label: "Commission Verification", value: ">", nav: "/drm/commission-verification" },
-                      { label: "Sale & Service Report", value: ">", nav: "/reports" },
+                      { label: "Sale & Service Report", value: ">", nav: "/reports/sale-service" },
                       { label: "Increment", value: ">", nav: "/drm/increment" },
-                      { label: "Update Sale And Service Report", value: ">", nav: "/reports" },
+                      { label: "Update Sale And Service Report", value: ">", nav: "/reports/sale-service/update" },
                       { label: "Roles Details", value: ">", nav: "/users" },
-                      { label: "Annual Leaves Reports", value: ">", nav: "/reports" },
-                      { label: "Daily Added GM Report", value: ">", nav: "/reports" },
-                      { label: "Follow Up Report", value: ">", nav: "/reports" },
-                      { label: "Follow-Up Meeting Report", value: ">", nav: "/reports" }
+                      { label: "Annual Leaves Reports", value: ">", nav: "/hr/attendance" },
+                      { label: "Daily Added GM Report", value: ">", nav: "/daily-reports/added-gm" },
+                      { label: "Follow Up Report", value: ">", nav: "/reports/hod-follow-up" },
+                      { label: "Follow-Up Meeting Report", value: ">", nav: "/reports/hod-meeting" },
+                      { label: "Quotation Report", value: ">", nav: "/reports/quotation-report" }
                     ].map((item, idx) => (
                       <div
                         key={idx}

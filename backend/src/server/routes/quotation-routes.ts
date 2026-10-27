@@ -966,6 +966,79 @@ export function registerQuotationRoutes(app: Express) {
     }
   });
 
+  // HOD "Quotation Report" — rebuild of a legacy PHP page (quotation_report.php,
+  // gated role_id===48/HOD only there). Unlike hod-pending above (actionable
+  // queue, drops items once decided), this is a browsable date-ranged history
+  // of every quotation regardless of status, with inline Approve/Reject
+  // actions. The legacy page's free-text status <select> doesn't match our
+  // real workflow (hod-approve/hod-reject below have their own guards —
+  // confirmed_at required, approved can't be re-rejected, etc.) so the
+  // frontend drives status changes through those existing endpoints rather
+  // than a raw status write here; "isLocked" mirrors the legacy is_locked
+  // (already converted to an Invoice or GM, or already approved).
+  app.get("/api/reports/quotation-report", async (req, res) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+      if (!hasHodAccess(req)) return res.status(403).json({ error: "FORBIDDEN", message: "Only a HOD can view the quotation report" });
+      await ensureQuotationTables();
+
+      const startDate = String(req.query.startDate ?? "");
+      const endDate = String(req.query.endDate ?? "");
+      if (!startDate || !endDate || Number.isNaN(Date.parse(startDate)) || Number.isNaN(Date.parse(endDate))) {
+        return res.status(400).json({ error: "BadRequest", message: "startDate and endDate are required (YYYY-MM-DD)" });
+      }
+      const status = String(req.query.status ?? "");
+      const search = req.query.search ? String(req.query.search).trim() : "";
+      const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
+      const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10) || 20));
+
+      const conditions = ["q.created_at >= $1", "q.created_at < ($2::date + interval '1 day')"];
+      const params: any[] = [startDate, endDate];
+      if (status === "Pending") conditions.push("q.hod_status is null");
+      else if (status === "Approved") conditions.push("q.hod_status = 'approved'");
+      else if (status === "Rejected") conditions.push("q.hod_status = 'rejected'");
+      if (search) {
+        params.push(`%${search}%`);
+        conditions.push(`q.company ILIKE $${params.length}`);
+      }
+      const where = conditions.join(" and ");
+
+      const countRes = await pool.query(`select count(*)::int as total from quotations q where ${where}`, params);
+      const total = Number(countRes.rows[0]?.total ?? 0);
+
+      params.push(limit, (page - 1) * limit);
+      const dataRes = await pool.query(
+        `select q.id, q.created_at, q.company, q.grand_total, q.hod_status, q.hod_comment,
+                q.confirmed_at, q.converted_invoice_id, q.converted_gm_id, q.converted_at,
+                coalesce(string_agg(distinct qi.detail, ', ') filter (where qi.detail is not null and qi.detail != ''), '') as service_details
+           from quotations q
+           left join quotation_items qi on qi.quotation_id = q.id
+          where ${where}
+          group by q.id
+          order by q.created_at desc
+          limit $${params.length - 1} offset $${params.length}`,
+        params,
+      );
+
+      const rows = dataRes.rows.map((r, idx) => ({
+        no: (page - 1) * limit + idx + 1,
+        id: r.id,
+        date: r.created_at,
+        companyName: r.company || "-",
+        services: r.service_details || "-",
+        grandTotal: Number(r.grand_total ?? 0),
+        hodStatus: r.hod_status,
+        hodComment: r.hod_comment,
+        confirmed: !!r.confirmed_at,
+        isLocked: r.hod_status === "approved" || !!r.converted_invoice_id || !!r.converted_gm_id || !!r.converted_at,
+      }));
+      res.json({ rows, total, page, limit });
+    } catch (err: any) {
+      console.error("Error building quotation report", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to load the quotation report" });
+    }
+  });
+
   app.get("/api/sales/quotations/approved-for-gm", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });

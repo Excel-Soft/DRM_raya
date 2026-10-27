@@ -49,6 +49,9 @@ import { registerDashboardRoutes } from "./dashboard-routes";
 import { registerGmPoolRoutes } from "./routes/gm-pool-routes";
 import { registerProjectActivityRoutes } from "./routes/project-activity-routes";
 import { registerQuotationRoutes } from "./routes/quotation-routes";
+import { registerSaleServiceReportRoutes } from "./routes/sale-service-report-routes";
+import { registerHodFollowUpReportRoutes } from "./routes/hod-follow-up-report-routes";
+import { registerHodMeetingReportRoutes } from "./routes/hod-meeting-report-routes";
 import { registerServicePoolRoutes } from "./routes/service-pool-routes";
 import { authMiddleware, getAuthToken } from "./middleware/auth.middleware";
 import { authService } from "./auth.service";
@@ -342,6 +345,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerGmBvPoolRoutes(app);
   registerProjectActivityRoutes(app);
   registerQuotationRoutes(app);
+  registerSaleServiceReportRoutes(app);
+  registerHodFollowUpReportRoutes(app);
+  registerHodMeetingReportRoutes(app);
   registerServicePoolRoutes(app);
 
   // Register newly created Service Department Workflow Routes
