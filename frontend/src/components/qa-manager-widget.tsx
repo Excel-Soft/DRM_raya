@@ -162,6 +162,16 @@ export function QAManagerWidget() {
     const [isStatusOpen, setIsStatusOpen] = useState(false);
     const [isLevelOpen, setIsLevelOpen] = useState(false);
 
+    // Per-Link Verification — additive on top of the existing whole-task QA
+    // queue above (Project List / Today / Pending), doesn't touch it.
+    // Grouped summary row per (project, tasker) with a "View Links" action,
+    // matching qa_vfy_dash.php's own Per-Link Verification tab — not a flat
+    // per-link list.
+    const [linksModalGroup, setLinksModalGroup] = useState<any>(null);
+    const [rejectLinkTarget, setRejectLinkTarget] = useState<any>(null);
+    const [rejectComment, setRejectComment] = useState("");
+    const [rejectImage, setRejectImage] = useState<File | null>(null);
+
     const openStatusDialog = (project: any) => {
         setSelectedProject(project);
         setIsStatusDialogOpen(true);
@@ -368,6 +378,63 @@ export function QAManagerWidget() {
         )
         .slice(0, parseInt(entriesCount));
 
+    // Per-Link Verification data/actions — grouped summary + a "View Links"
+    // modal fetching that task's full link list (shared with the manager's
+    // own modal endpoint, which has no role restriction beyond auth).
+    const { data: linksSummaryRes, isLoading: isLoadingLinksSummary } = useQuery<{ success: boolean; data: any[] }>({
+        queryKey: ["/api/product-posting/qa/links/summary"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/product-posting/qa/links/summary");
+            if (!res.ok) throw new Error("Failed to fetch links summary");
+            return res.json();
+        },
+    });
+    const linksSummaryForQa = linksSummaryRes?.data ?? [];
+
+    const { data: qaTaskLinksRes, isLoading: isLoadingQaTaskLinks } = useQuery<{ success: boolean; data: any[] }>({
+        queryKey: ["/api/product-posting/manager/links/by-task", linksModalGroup?.taskId],
+        enabled: !!linksModalGroup,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/product-posting/manager/links/by-task/${linksModalGroup.taskId}`);
+            if (!res.ok) throw new Error("Failed to fetch links");
+            return res.json();
+        },
+    });
+    const qaTaskLinks = (qaTaskLinksRes?.data ?? []).filter((l: any) => l.status === "pending_qa");
+
+    function refreshQaLinks() {
+        queryClient.invalidateQueries({ queryKey: ["/api/product-posting/qa/links/summary"] });
+        if (linksModalGroup) {
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting/manager/links/by-task", linksModalGroup.taskId] });
+        }
+    }
+
+    const approveLinkMutation = useMutation({
+        mutationFn: async (id: string) => {
+            const res = await apiRequest("POST", `/api/product-posting/qa/links/${id}/approve`, {});
+            if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed to approve link");
+            return res.json();
+        },
+        onSuccess: () => refreshQaLinks(),
+    });
+
+    const rejectLinkMutation = useMutation({
+        mutationFn: async ({ id, comment, image }: { id: string; comment: string; image: File }) => {
+            const form = new FormData();
+            form.append("comment", comment);
+            form.append("image", image);
+            const res = await apiRequest("POST", `/api/product-posting/qa/links/${id}/reject`, form);
+            if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed to reject link");
+            return res.json();
+        },
+        onSuccess: () => {
+            refreshQaLinks();
+            setRejectLinkTarget(null);
+            setRejectComment("");
+            setRejectImage(null);
+        },
+    });
+
     // Stage 3: removed localStorage 'qa-projects' poller and hardcoded
     // defaultPendingData. The QA queue is sourced exclusively from the backend
     // (/api/product-posting/qa/queue) so no mock/demo rows are shown.
@@ -514,6 +581,58 @@ export function QAManagerWidget() {
                                         <tr>
                                             <td colSpan={4} className="py-10 text-center text-gray-400 italic font-medium">No projects found</td>
                                         </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {/* Per-Link Verification — additive, separate from the whole-task
+                        queue above. Grouped summary row per (project, tasker) with a
+                        "View Links" action opening the individual links, matching
+                        qa_vfy_dash.php's own tab exactly. */}
+                    <div className="bg-white rounded-lg border shadow-sm overflow-hidden dark:bg-zinc-900">
+                        <div className="px-4 py-3 border-b">
+                            <h2 className="text-[15px] font-bold text-gray-800 dark:text-zinc-100">Per-Link Verification</h2>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-[12px]">
+                                <thead>
+                                    <tr className="bg-gray-50 dark:bg-zinc-900">
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Company</th>
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Project</th>
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Tasker</th>
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Pending Qty</th>
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {isLoadingLinksSummary ? (
+                                        <tr><td colSpan={5} className="py-10 text-center text-gray-400 italic font-medium">Loading...</td></tr>
+                                    ) : linksSummaryForQa.length === 0 ? (
+                                        <tr><td colSpan={5} className="py-10 text-center text-gray-400 italic font-medium">No links waiting for review</td></tr>
+                                    ) : (
+                                        linksSummaryForQa.map((row: any) => (
+                                            <tr key={row.taskId} className="border-b last:border-0 hover:bg-gray-50 dark:hover:bg-zinc-800/50">
+                                                <td className="px-4 py-3 font-semibold">{row.companyName}</td>
+                                                <td className="px-4 py-3">{row.projectName}</td>
+                                                <td className="px-4 py-3">{row.taskerName}</td>
+                                                <td className="px-4 py-3">
+                                                    <span className="inline-block rounded-full bg-amber-100 text-amber-700 px-2.5 py-0.5 text-[11px] font-bold">
+                                                        {row.pendingQty} Unsent
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <Button
+                                                        size="sm"
+                                                        className="h-7 px-3 bg-[#00a65a] hover:bg-[#00a65a]/90 text-white"
+                                                        onClick={() => setLinksModalGroup(row)}
+                                                    >
+                                                        View Links
+                                                    </Button>
+                                                </td>
+                                            </tr>
+                                        ))
                                     )}
                                 </tbody>
                             </table>
@@ -1068,6 +1187,99 @@ export function QAManagerWidget() {
                                 </div>
                             )}
                         </div>
+                    </DialogContent>
+                </Dialog>
+
+                <Dialog open={!!linksModalGroup} onOpenChange={(o) => !o && setLinksModalGroup(null)}>
+                    <DialogContent className="max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>
+                                Links — {linksModalGroup?.companyName} / {linksModalGroup?.projectName} / {linksModalGroup?.taskerName}
+                            </DialogTitle>
+                        </DialogHeader>
+                        <div className="max-h-[60vh] overflow-y-auto">
+                            <table className="w-full text-[12px]">
+                                <thead>
+                                    <tr className="bg-gray-50 dark:bg-zinc-900">
+                                        <th className="px-3 py-2 text-left font-bold text-gray-700 dark:text-zinc-400">Link</th>
+                                        <th className="px-3 py-2 text-left font-bold text-gray-700 dark:text-zinc-400">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {isLoadingQaTaskLinks ? (
+                                        <tr><td colSpan={2} className="py-8 text-center text-gray-400 italic font-medium">Loading...</td></tr>
+                                    ) : qaTaskLinks.length === 0 ? (
+                                        <tr><td colSpan={2} className="py-8 text-center text-gray-400 italic font-medium">No links waiting for review</td></tr>
+                                    ) : (
+                                        qaTaskLinks.map((link: any) => (
+                                            <tr key={link.id} className="border-b last:border-0 hover:bg-gray-50 dark:hover:bg-zinc-800/50">
+                                                <td className="px-3 py-2 max-w-[320px] truncate">
+                                                    <a href={link.link} target="_blank" rel="noopener noreferrer" className="text-[#00a65a] underline">{link.link}</a>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Button
+                                                            size="sm"
+                                                            className="h-7 px-3 bg-[#00a65a] hover:bg-[#00a65a]/90 text-white"
+                                                            disabled={approveLinkMutation.isPending}
+                                                            onClick={() => approveLinkMutation.mutate(link.id)}
+                                                        >
+                                                            Approve
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            className="h-7 px-3"
+                                                            onClick={() => { setRejectLinkTarget(link); setRejectComment(""); setRejectImage(null); }}
+                                                        >
+                                                            Reject
+                                                        </Button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </DialogContent>
+                </Dialog>
+
+                <Dialog open={!!rejectLinkTarget} onOpenChange={(o) => !o && setRejectLinkTarget(null)}>
+                    <DialogContent>
+                        <DialogHeader><DialogTitle>Reject Link</DialogTitle></DialogHeader>
+                        <div className="space-y-3">
+                            <div>
+                                <p className="text-[13px] font-medium mb-1">Reason for rejection</p>
+                                <Textarea
+                                    rows={3}
+                                    value={rejectComment}
+                                    onChange={(e) => setRejectComment(e.target.value)}
+                                    placeholder="Enter the reason for rejection"
+                                />
+                            </div>
+                            <div>
+                                <p className="text-[13px] font-medium mb-1">Proof image (required)</p>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => setRejectImage(e.target.files?.[0] ?? null)}
+                                    className="text-[13px]"
+                                />
+                            </div>
+                        </div>
+                        <DialogFooter>
+                            <Button
+                                variant="destructive"
+                                disabled={rejectLinkMutation.isPending || !rejectComment.trim() || !rejectImage}
+                                onClick={() => {
+                                    if (!rejectLinkTarget || !rejectImage || !rejectComment.trim()) return;
+                                    rejectLinkMutation.mutate({ id: rejectLinkTarget.id, comment: rejectComment.trim(), image: rejectImage });
+                                }}
+                            >
+                                {rejectLinkMutation.isPending ? "Rejecting..." : "Reject"}
+                            </Button>
+                        </DialogFooter>
                     </DialogContent>
                 </Dialog>
             </div>
