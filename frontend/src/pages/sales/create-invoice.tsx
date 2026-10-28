@@ -249,15 +249,38 @@ export default function CreateInvoice() {
         if (!quotationItems) return;
         setItems(
             quotationItems.length
-                ? quotationItems.map((it: any) => ({
-                      id: Math.random().toString(36).substr(2, 9),
-                      productId: it.productId || "",
-                      detail: it.detail || "",
-                      unitPrice: Number(it.unitPrice) || 0,
-                      quantity: Number(it.quantity) || 1,
-                      totalPkr: (Number(it.unitPrice) || 0) * (Number(it.quantity) || 1) * dollarRate,
-                      discount: 0,
-                  }))
+                ? quotationItems.map((it: any) => {
+                      // Quotations store real per-unit pricing (unitPrice x
+                      // quantity = line total); this Invoice page's own
+                      // convention is unitPrice fixed at 1 with quantity
+                      // carrying the dollar amount (confirmed against every
+                      // existing invoice row: SSL Certificate unitPrice=1/
+                      // quantity=35, Logo Design unitPrice=1/quantity=19,
+                      // etc. — see the fresh-product-select handler below,
+                      // which already does this). Converting here keeps a
+                      // quotation-sourced line consistent with that
+                      // convention instead of carrying over the quotation's
+                      // raw unitPrice/quantity verbatim (same grand total
+                      // either way, but the wrong breakdown — and these
+                      // fields are read-only once locked from a quotation,
+                      // so there was no way to fix it after the fact).
+                      // Prefer the quotation's own stored itemTotal (computed
+                      // at save time via computeLineItemUsd, which special-
+                      // cases at least one product — "Xlserp - Free Website"
+                      // — where unitPrice x quantity would be wrong) over
+                      // re-deriving it here.
+                      const lineTotalUsd =
+                          it.itemTotal != null ? Number(it.itemTotal) : (Number(it.unitPrice) || 0) * (Number(it.quantity) || 1);
+                      return {
+                          id: Math.random().toString(36).substr(2, 9),
+                          productId: it.productId || "",
+                          detail: it.detail || "",
+                          unitPrice: 1,
+                          quantity: lineTotalUsd,
+                          totalPkr: lineTotalUsd * dollarRate,
+                          discount: 0,
+                      };
+                  })
                 : items,
         );
         setPrefilledFromQuotation(true);
@@ -677,6 +700,7 @@ export default function CreateInvoice() {
                                     <div className="flex items-center space-x-2">
                                         <Checkbox
                                             id="in-percent"
+                                            disabled={isLockedFromQuotation}
                                             checked={discountType === "percentage"}
                                             onCheckedChange={() => setDiscountType("percentage")}
                                         />
@@ -685,6 +709,7 @@ export default function CreateInvoice() {
                                     <div className="flex items-center space-x-2">
                                         <Checkbox
                                             id="in-amount"
+                                            disabled={isLockedFromQuotation}
                                             checked={discountType === "amount"}
                                             onCheckedChange={() => setDiscountType("amount")}
                                         />
@@ -695,8 +720,9 @@ export default function CreateInvoice() {
                             <Input
                                 type="number"
                                 value={pkrDiscountValue}
-                                onChange={(e) => setPkrDiscountValue(parseFloat(e.target.value) || 0)}
-                                className="bg-[#f0f4f8] border-none h-11 dark:bg-zinc-900"
+                                readOnly={isLockedFromQuotation}
+                                onChange={(e) => !isLockedFromQuotation && setPkrDiscountValue(parseFloat(e.target.value) || 0)}
+                                className={cn("bg-[#f0f4f8] border-none h-11 dark:bg-zinc-900", isLockedFromQuotation && "bg-slate-100 dark:bg-zinc-800")}
                                 placeholder="..."
                             />
                         </div>
@@ -707,8 +733,9 @@ export default function CreateInvoice() {
                                 <Input
                                     type="number"
                                     value={gstPercent}
-                                    onChange={(e) => setGstPercent(parseFloat(e.target.value) || 0)}
-                                    className="bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800"
+                                    readOnly={isLockedFromQuotation}
+                                    onChange={(e) => !isLockedFromQuotation && setGstPercent(parseFloat(e.target.value) || 0)}
+                                    className={cn("bg-white border-slate-200 h-11 focus:ring-emerald-500 dark:bg-zinc-900 dark:border-zinc-800", isLockedFromQuotation && "bg-slate-50 dark:bg-zinc-800")}
                                 />
                             </div>
                             <div className="space-y-2">
@@ -764,13 +791,15 @@ export default function CreateInvoice() {
                         >
                             Download PDF
                         </Button>
-                        <Button
-                            variant="secondary"
-                            className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-12 font-bold text-lg rounded-md transition-all active:scale-95"
-                            onClick={() => setItems([{ id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, totalPkr: 0.5, discount: 0 }])}
-                        >
-                            Reset
-                        </Button>
+                        {!isLockedFromQuotation && (
+                            <Button
+                                variant="secondary"
+                                className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-12 font-bold text-lg rounded-md transition-all active:scale-95"
+                                onClick={() => setItems([{ id: Math.random().toString(36).substr(2, 9), productId: "", detail: "", unitPrice: 0.5, quantity: 1, totalPkr: 0.5, discount: 0 }])}
+                            >
+                                Reset
+                            </Button>
+                        )}
                     </div>
                 </CardContent>
             </Card>

@@ -96,6 +96,23 @@ export async function validateQuotationItemsForCustomer(
     [ids],
   );
   const nameById = new Map<string, string>(namesRes.rows.map((r) => [r.id, r.name]));
+  // The quotation builder's product picker (frontend/src/pages/quotation.tsx)
+  // flattens any top-level drm.services row with zero sub-services directly
+  // into the selectable list, using the top-level service's own id (e.g. a
+  // legacy "LEGACY_SVC_*"-coded catalog entry like "Alibaba Product Posting"
+  // or "SEO" that was never broken out into real sub-services) — confirmed
+  // 29 of the 35 LEGACY_SVC_* services have none. Without this fallback,
+  // picking any of them rejected with "Unknown product" and the quotation
+  // was silently discarded (an earlier bug in quotation.tsx's handleSave hid
+  // this error entirely — see that file's save handler for the fix).
+  const missingIds = ids.filter((id) => !nameById.has(id));
+  if (missingIds.length > 0) {
+    const topLevelRes = await client.query(
+      `select id, name from drm.services where id = any($1::uuid[])`,
+      [missingIds],
+    );
+    for (const row of topLevelRes.rows) nameById.set(row.id, row.name);
+  }
   for (const id of ids) {
     if (!nameById.has(id)) {
       return { ok: false, code: "INVALID_PRODUCT", message: `Unknown product ${id}` };
