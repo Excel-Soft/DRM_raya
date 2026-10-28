@@ -3155,8 +3155,21 @@ export function registerAccountRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
       const page = Math.max(1, parseInt(String(req.query.page ?? "1")) || 1);
-      const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit ?? "20")) || 20));
+      // Pending tab can request a larger page so Account sees the full queue.
+      const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit ?? "20")) || 20));
       const offset = (page - 1) * limit;
+      // pendingOnly=1 → only invoices still waiting on Account action
+      // (excludes already APPROVED / Paid / Partial / Overdue noise).
+      const pendingOnly =
+        String(req.query.pendingOnly ?? "").trim() === "1" ||
+        String(req.query.status ?? "").trim().toLowerCase() === "pending";
+
+      const productPostingStatusSql = pendingOnly
+        ? `p.status = 'PENDING_ACCOUNT'`
+        : `p.status IN ('PENDING_ACCOUNT', 'APPROVED')`;
+      const standardInvoiceStatusSql = pendingOnly
+        ? `i.status = 'Sent'`
+        : `i.status IN ('Sent', 'Paid', 'Partial', 'Overdue')`;
 
       const { rows } = await pool.query(`
         SELECT * FROM (
@@ -3226,7 +3239,7 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
         LEFT JOIN drm.customers cp ON cp.id = p.customer_id
-        WHERE p.status IN ('PENDING_ACCOUNT', 'APPROVED')
+        WHERE ${productPostingStatusSql}
         
         UNION ALL
         
@@ -3261,12 +3274,14 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
         LEFT JOIN drm.customers ci ON ci.id = i.customer_id
-        WHERE i.status IN ('Sent', 'Paid', 'Partial', 'Overdue')
+        WHERE ${standardInvoiceStatusSql}
         ) as combined_results
         ORDER BY COALESCE(combined_results."updatedAt", combined_results."createdAt") DESC NULLS LAST
         LIMIT $1 OFFSET $2
       `, [limit, offset]);
 
+      // Always expose the true pending count (for the Pending-tab badge),
+      // even when the list query returns the broader "All" mix.
       const countRes = await pool.query(
         `SELECT (
           (SELECT COUNT(*) FROM drm.quotations WHERE save_status = 'pending_account_manager') +
@@ -3274,11 +3289,18 @@ export function registerAccountRoutes(app: Express) {
           (SELECT COUNT(*) FROM drm.invoices WHERE status = 'Sent')
         )::int AS count`
       );
+      const pendingCount = countRes.rows[0]?.count ?? 0;
 
       return res.json({
         success: true,
         data: rows,
-        meta: { total: countRes.rows[0]?.count ?? 0, page, limit }
+        meta: {
+          total: pendingOnly ? pendingCount : rows.length,
+          pendingCount,
+          pendingOnly,
+          page,
+          limit,
+        },
       });
     } catch (error) {
       console.error("Error fetching pending quotations:", error);
