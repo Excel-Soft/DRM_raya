@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type RefObject, type MutableRefObject } from "react";
 import { useModuleData } from "@/hooks/use-module-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1009,13 +1009,23 @@ interface TaskFileEntry {
     uploadedByName: string | null;
 }
 
-function RichTextEditor({ onChange }: { onChange: (html: string) => void }) {
-    const editorRef = useRef<HTMLDivElement>(null);
+function RichTextEditor({
+    onChange,
+    contentRef,
+}: {
+    onChange: (html: string) => void;
+    contentRef?: RefObject<HTMLDivElement | null>;
+}) {
+    const localRef = useRef<HTMLDivElement>(null);
+    const setEditorRef = (el: HTMLDivElement | null) => {
+        (localRef as MutableRefObject<HTMLDivElement | null>).current = el;
+        if (contentRef) (contentRef as MutableRefObject<HTMLDivElement | null>).current = el;
+    };
 
     const handleCommand = (command: string, value: string = "") => {
-        editorRef.current?.focus();
+        localRef.current?.focus();
         document.execCommand(command, false, value || undefined);
-        onChange(editorRef.current?.innerHTML || "");
+        onChange(localRef.current?.innerHTML || "");
     };
 
     return (
@@ -1044,7 +1054,7 @@ function RichTextEditor({ onChange }: { onChange: (html: string) => void }) {
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); handleCommand('insertOrderedList'); }} className="hover:bg-gray-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors select-none" title="Numbered List">1. List</button>
             </div>
             <div
-                ref={editorRef}
+                ref={setEditorRef}
                 contentEditable
                 suppressContentEditableWarning
                 className="min-h-[140px] w-full resize-y p-4 text-[14px] outline-none focus:ring-0 overflow-auto bg-white dark:bg-zinc-900"
@@ -1227,6 +1237,8 @@ function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => vo
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [description, setDescription] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const editorRef = useRef<HTMLDivElement | null>(null);
+    const submittingRef = useRef(false);
     const taskId = task?.id;
 
     const { data: uploadedRes } = useQuery<{ success: boolean; data: TaskFileEntry[] }>({
@@ -1236,31 +1248,66 @@ function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => vo
     });
     const uploadedFiles = uploadedRes?.data || [];
 
+    const getPlainDescription = () => {
+        const html = editorRef.current?.innerHTML ?? description;
+        return html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim();
+    };
+
+    const clearEditor = () => {
+        setDescription("");
+        if (editorRef.current) editorRef.current.innerHTML = "";
+    };
+
     const submitMutation = useMutation({
-        mutationFn: async () => {
+        mutationFn: async (payload: { files: File[]; plainText: string }) => {
+            if (payload.files.length === 0 && !payload.plainText) {
+                throw new Error("Attach at least one file or add a description.");
+            }
             const form = new FormData();
-            pendingFiles.forEach((f) => form.append("files", f));
-            const plainText = description.replace(/<[^>]*>/g, "").trim();
-            if (plainText) form.append("description", plainText);
+            payload.files.forEach((f) => form.append("files", f));
+            if (payload.plainText) form.append("description", payload.plainText);
             return apiRequestJson("POST", `/api/tasks/${taskId}/files`, form);
         },
         onSuccess: () => {
+            submittingRef.current = false;
             queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
             setPendingFiles([]);
-            setDescription("");
+            clearEditor();
+            if (fileInputRef.current) fileInputRef.current.value = "";
             toast({ title: "Sent", description: "Your files/detail were submitted." });
         },
         onError: (err: any) => {
+            submittingRef.current = false;
             toast({ title: err?.message || "Failed to send files", variant: "destructive" });
         },
     });
 
+    const isLocked = task?.status === "READY_FOR_QA" || task?.status === "Completed";
+
+    const handleSubmit = (filesOverride?: File[]) => {
+        if (!task || isLocked || submitMutation.isPending || submittingRef.current) return;
+        const files = filesOverride ?? pendingFiles;
+        const plainText = getPlainDescription();
+        if (files.length === 0 && !plainText) {
+            toast({
+                title: "Attach at least one file or add a description.",
+                variant: "destructive",
+            });
+            return;
+        }
+        submittingRef.current = true;
+        submitMutation.mutate({ files, plainText });
+    };
+
+    const onFilesChosen = (files: File[]) => {
+        if (!files.length || isLocked) return;
+        setPendingFiles(files);
+        // Selecting / dropping files submits immediately (one request only).
+        handleSubmit(files);
+    };
+
     if (!task) return null;
     const providedLinks = extractProvidedLinks(task);
-    // Once submitted for review (or fully done), the task is locked — same
-    // rule as the "+" submit button elsewhere: no more work until the
-    // manager reviews it.
-    const isLocked = task.status === 'READY_FOR_QA' || task.status === 'Completed';
 
     return (
         <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1270,10 +1317,6 @@ function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => vo
                 </div>
 
                 <div className={`p-8 grid grid-cols-1 ${canUpload ? 'lg:grid-cols-2' : ''} gap-10 bg-white overflow-y-auto dark:bg-zinc-900`}>
-                    {/* Left: upload — the assigned executive's own submission
-                        surface. A manager/other viewer opening this via the
-                        "View Details" eye icon must not get a working
-                        upload/send UI for someone else's task. */}
                     {canUpload && (
                     <div className="space-y-4">
                         {isLocked && (
@@ -1284,50 +1327,53 @@ function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => vo
                         <div
                             role="button"
                             tabIndex={0}
-                            onClick={() => { if (!isLocked) fileInputRef.current?.click(); }}
+                            onClick={() => { if (!isLocked && !submitMutation.isPending) fileInputRef.current?.click(); }}
                             onDragOver={(e) => { if (!isLocked) e.preventDefault(); }}
                             onDrop={(e) => {
                                 e.preventDefault();
-                                if (isLocked) return;
+                                if (isLocked || submitMutation.isPending) return;
                                 const files = Array.from(e.dataTransfer.files || []);
-                                if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+                                onFilesChosen(files);
                             }}
-                            className={`border border-gray-300 dark:border-zinc-700 rounded-md h-[220px] flex flex-col items-center justify-center gap-3 transition-colors ${isLocked ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-emerald-400"}`}
+                            className={`border border-gray-300 dark:border-zinc-700 rounded-md h-[220px] flex flex-col items-center justify-center gap-3 transition-colors ${isLocked || submitMutation.isPending ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-emerald-400"}`}
                         >
                             <Upload className="w-8 h-8 text-slate-400" />
-                            <p className="text-[14px] font-semibold text-gray-600 dark:text-zinc-300">
-                                {pendingFiles.length > 0 ? `${pendingFiles.length} file(s) selected` : "Drop files here or click to upload."}
+                            <p className="text-[14px] font-semibold text-gray-600 dark:text-zinc-300 text-center px-4">
+                                {submitMutation.isPending
+                                    ? "Uploading..."
+                                    : pendingFiles.length > 0
+                                      ? `${pendingFiles.length} file(s) selected`
+                                      : "Drop files here or click to upload & send."}
                             </p>
                             <input
                                 ref={fileInputRef}
                                 type="file"
                                 multiple
-                                disabled={isLocked}
+                                disabled={isLocked || submitMutation.isPending}
                                 className="hidden"
-                                onChange={(e) => setPendingFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
+                                onChange={(e) => {
+                                    const files = Array.from(e.target.files || []);
+                                    onFilesChosen(files);
+                                    e.target.value = "";
+                                }}
                             />
                         </div>
-                        <Button
-                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
-                            disabled={submitMutation.isPending || isLocked}
-                            onClick={() => submitMutation.mutate()}
-                        >
-                            Send Files
-                        </Button>
 
                         <label className="block text-[14px] font-bold text-gray-700 dark:text-zinc-300 pt-2">Detail</label>
-                        <RichTextEditor onChange={setDescription} />
+                        <RichTextEditor onChange={setDescription} contentRef={editorRef} />
                         <Button
                             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
                             disabled={submitMutation.isPending || isLocked}
-                            onClick={() => submitMutation.mutate()}
+                            onClick={() => handleSubmit()}
                         >
                             {submitMutation.isPending ? "Sending..." : "Send Files"}
                         </Button>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400">
+                            Choosing files uploads them automatically. Use Send Files for description-only updates.
+                        </p>
                     </div>
                     )}
 
-                    {/* Right: what's already there */}
                     <div className="space-y-6">
                         <div>
                             <h4 className="text-[14px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Uploaded Files</h4>
@@ -1377,15 +1423,6 @@ function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => vo
 
                 <div className="p-4 border-t bg-slate-50 dark:bg-zinc-900 flex items-center justify-end gap-3 flex-shrink-0">
                     <Button variant="outline" className="h-10 px-6" onClick={onClose}>Close</Button>
-                    {canUpload && (
-                        <Button
-                            className="h-10 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                            disabled={submitMutation.isPending || isLocked}
-                            onClick={() => submitMutation.mutate()}
-                        >
-                            {submitMutation.isPending ? "Saving..." : "Save"}
-                        </Button>
-                    )}
                 </div>
             </DialogContent>
         </Dialog>
