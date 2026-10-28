@@ -301,16 +301,10 @@ router.post("/approvals/:id/approve", async (req, res) => {
     const response = { success: true, message: "Approved successfully", data: updated };
     logApi(req, 200, response);
 
-    // Generate 3 default invoices when a GM entry is approved
-    if (updated && (updated as any).source === "gm_entries") {
-      try {
-        const gmId = approvalId;
-        await generateInvoicesAfterFinalGmApproval(gmId, req.user!.userId, req);
-        console.log(`[HOD] Invoices generated for GM ${gmId} after approval`);
-      } catch (invErr) {
-        console.error("[HOD] Invoice generation failed (non-fatal):", invErr);
-      }
-    }
+    // The 2 default invoices are no longer generated here on HOD approval —
+    // per explicit request, they're only generated once the Account Manager
+    // approves this GM entry (see gm-pool-routes.ts's account-manager-approve
+    // handler), not as soon as HOD approves it via this generic queue.
 
     return res.json(response);
 
@@ -667,16 +661,11 @@ router.post("/verification/gms/:id/status", async (req, res) => {
         }
       }
 
-      // Generate default invoices when HOD approves an existing GM entry
-      if (status === "Approved" && entry) {
-        try {
-          const creatorId = entry.sales_person_id || entry.created_by || (req.user as any)?.userId;
-          await generateInvoicesAfterFinalGmApproval(String(id), String(creatorId), req);
-          console.log(`[HOD] Invoices generated for GM entry ${id} after HOD approval`);
-        } catch (invErr) {
-          console.error("[HOD] Invoice generation failed (non-fatal):", invErr);
-        }
-      }
+      // The 2 default invoices are no longer generated here on HOD approval —
+      // per explicit request, they're only generated once the Account
+      // Manager approves this GM entry (see gm-pool-routes.ts's
+      // account-manager-approve handler), not as soon as HOD approves it via
+      // this GM-verification screen.
 
       const response = { success: true, message: `GM entry ${status} successfully` };
       logApi(req, 200, response);

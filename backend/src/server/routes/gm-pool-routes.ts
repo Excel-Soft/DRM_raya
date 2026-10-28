@@ -1602,13 +1602,10 @@ export function registerGmPoolRoutes(app: Express) {
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const hodEntry = result.rows[0];
 
-      // Always generate the 3 default invoices on HOD approval of a GM entry (best-effort, idempotent)
-      try {
-        const invResult = await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
-        console.log(`[GM POOL] Invoice generation for GM ${id}:`, invResult);
-      } catch (invErr) {
-        console.error(`[GM POOL] Invoice generation failed for GM ${id} (non-fatal):`, invErr);
-      }
+      // The 2 default invoices are no longer generated here on HOD approval —
+      // per explicit request, they should only appear once the Account
+      // Manager approves this GM entry (see .../account-manager-approve
+      // below), not as soon as HOD approves it.
 
       // If this GM already had invoices (edited/resubmitted after a prior HOD
       // approval, not a first-time approval), refresh their company/notes to
@@ -1721,8 +1718,11 @@ export function registerGmPoolRoutes(app: Express) {
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
       const entry = result.rows[0];
 
-      // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
-      // No-op under the default ON_GM_CREATION policy; never throws.
+      // The 2 default invoices (Listing Page + Minisite) are generated here,
+      // on Account Manager approval — not on HOD approval (see .../hod-approve
+      // above) — per explicit request. generateDefaultInvoicesForGm is
+      // idempotent per (gmId, invoiceType), so this is safe even if this GM
+      // also finalizes via sales-manager-approve/super-hod-approve below.
       await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
       await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 
@@ -1823,8 +1823,12 @@ export function registerGmPoolRoutes(app: Express) {
         }
         await pool.query(`UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
 
-        // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
-        // No-op under the default ON_GM_CREATION policy; never throws.
+        // Safety net: this branch only runs once account_manager_status is
+        // already 'approved' (see the check above), meaning the Account
+        // Manager approval handler already generated these invoices — this
+        // call is a no-op in practice (idempotent per gmId+invoiceType) but
+        // kept in case this ever becomes reachable via a path that skips
+        // that handler.
         await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
         await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 
@@ -2009,8 +2013,10 @@ export function registerGmPoolRoutes(app: Express) {
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
 
-      // Patch 5 Stage 4 / P6 — dormant unless timing=AFTER_FINAL_GM_APPROVAL.
-      // No-op under the default ON_GM_CREATION policy; never throws.
+      // This escalation track (pending_super_hod -> approved) bypasses the
+      // normal Account Manager approval step entirely, so it's the one place
+      // this entry will ever get its default invoices generated — not a
+      // safety net like the sales-manager-approve branch above.
       await generateInvoicesAfterFinalGmApproval(String(id), req.user.userId, req);
       await ensureLoanReceivableOnFinalApproval(String(id), req.user.userId);
 

@@ -18,6 +18,17 @@ export const generateDefaultInvoicesForGm = async (params: any) => {
 
   for (const svc of defaultServices) {
     try {
+      // Idempotency guard: this is now called from the Account Manager
+      // approval step only, but is still invoked from a couple of
+      // alternate finalization paths (sales-manager-approve,
+      // super-hod-approve) as a safety net for entries that finalize via
+      // those routes instead — skip if this GM already has one of these 2
+      // auto-generated invoices so re-finalizing never creates duplicates.
+      const existing = await pool.query(
+        `SELECT 1 FROM drm.product_posting_invoices WHERE gm_id = $1 AND invoice_type = $2 LIMIT 1`,
+        [gmId, svc.invoiceType],
+      );
+      if ((existing.rowCount ?? 0) > 0) continue;
       await pool.query(
         `INSERT INTO drm.product_posting_invoices (
           amount,
