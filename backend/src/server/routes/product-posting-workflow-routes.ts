@@ -1,4 +1,7 @@
 import { Router } from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { pool } from "../db";
 import { NotificationService } from "./services/notification-service";
 import { projectsRepository } from "../repositories/projects.repository";
@@ -8,6 +11,192 @@ import { insertTaskSchema } from "@shared/schema";
 import { getStatsPeriodRange } from "./pms-routes";
 
 const router = Router();
+
+// Per-link QA review — a legacy workflow (sale&servicereport-style PHP spec
+// supplied by the user) layered on top of the EXISTING link submission
+// mechanism (drm.task_files description-only rows, see task-execution-routes.ts),
+// not a replacement for the existing whole-task QA flow above (qa/queue,
+// qa-review) — that one stays exactly as-is. This adds per-LINK state so a
+// Product Posting Manager can forward individual submitted links to QA, and
+// QA can approve/reject each one independently, matching the legacy
+// "Links for QA" / "Rejected Links" / "Per-Link Verification" tabs.
+let ensuredLinkQaColumns = false;
+async function ensureLinkQaColumns() {
+    if (ensuredLinkQaColumns) return;
+    try {
+        await pool.query(`alter table drm.task_files add column if not exists send_to_qa boolean not null default false`);
+        await pool.query(`alter table drm.task_files add column if not exists qa_status text null`);
+        await pool.query(`alter table drm.task_files add column if not exists qa_comment text null`);
+        await pool.query(`alter table drm.task_files add column if not exists qa_reject_image_url text null`);
+        await pool.query(`alter table drm.task_files add column if not exists qa_reviewed_at timestamptz null`);
+        await pool.query(`alter table drm.task_files add column if not exists qa_reviewed_by uuid null`);
+    } catch (err) {
+        console.error("Failed ensuring per-link QA columns (continuing):", err);
+    } finally {
+        ensuredLinkQaColumns = true;
+    }
+}
+
+function isProductPostingManagerRole(req: any): boolean {
+    const role = String(req.user?.activeRoleId || req.user?.roleId || req.user?.role || "").toLowerCase();
+    return role === "product_posting_manager" || role === "admin" || role === "super_admin";
+}
+
+const QA_REJECT_IMAGE_DIR = path.join(process.cwd(), "uploads", "qa-reject-images");
+fs.mkdirSync(QA_REJECT_IMAGE_DIR, { recursive: true });
+const qaRejectImageUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, QA_REJECT_IMAGE_DIR),
+        filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`),
+    }),
+    limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+}).single("image");
+
+// Same department scope as GET /manager/queue above, so a submitted link
+// "lands with the manager" via the identical, already-working mechanism —
+// not a new manager_id/under_works relationship this department doesn't use.
+const PRODUCT_POSTING_DEPARTMENT_TYPES_SQL = `p.department_type IN ('PRODUCT_POSTING', 'Product Posting', '9')`;
+
+// GET /api/product-posting/manager/links/summary?mode=qa|reject — one row
+// per (task, tasker) with aggregate counts, matching the legacy "Links for
+// QA" / "Rejected Links" tabs exactly: Company/Project/Tasker/Pending Qty
+// (the manager's required-link target from task.notes)/status counts, with
+// a "View Links" action that opens the full per-link list (see
+// /manager/links/by-task/:taskId below).
+router.get("/manager/links/summary", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        await ensureLinkQaColumns();
+        const { rows } = await pool.query(`
+            select t.id as "taskId", t.notes as "taskNotes",
+                   p.id as "projectId", p.name as "projectName",
+                   coalesce(c.company_name, p.name) as "companyName",
+                   f.uploaded_by_user_id as "taskerId",
+                   coalesce(u.full_name, u.name, u.username) as "taskerName",
+                   count(*) filter (where f.qa_status = 'approved')::int as "approvedQty",
+                   count(*) filter (where f.send_to_qa = false and f.qa_status is null)::int as "unsentQty",
+                   count(*) filter (where f.qa_status = 'rejected')::int as "rejectedQty"
+              from drm.task_files f
+              join drm.tasks t on t.id = f.task_id
+              join drm.projects p on p.id = t.project_id
+              left join drm.customers c on c.id = p.customer_id
+              left join drm.users u on u.id = f.uploaded_by_user_id
+             where ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
+               and f.file_url is null and f.description is not null and f.description <> ''
+             group by t.id, t.notes, p.id, p.name, c.company_name, f.uploaded_by_user_id, u.full_name, u.name, u.username
+        `);
+
+        const mapped = rows.map((r) => {
+            // notes is a plain text column holding a JSON blob (duration/links)
+            // set at assign-task time — not always valid JSON (older tasks may
+            // hold free-text notes instead), so parse defensively rather than
+            // casting in SQL (an invalid ::jsonb cast would fail the whole query).
+            let requiredQty = 0;
+            try { requiredQty = Number(JSON.parse(r.taskNotes || "{}")?.links) || 0; } catch { /* not JSON */ }
+            return {
+                taskId: r.taskId,
+                projectId: r.projectId,
+                projectName: r.projectName,
+                companyName: r.companyName,
+                taskerId: r.taskerId,
+                taskerName: r.taskerName,
+                requiredQty,
+                approvedQty: r.approvedQty,
+                unsentQty: r.unsentQty,
+                rejectedQty: r.rejectedQty,
+            };
+        });
+
+        const mode = String(req.query.mode || "qa");
+        const data = mode === "reject" ? mapped.filter((r) => r.rejectedQty > 0) : mapped.filter((r) => r.unsentQty > 0);
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error fetching links summary:", error);
+        res.status(500).json({ error: "Failed to fetch links summary" });
+    }
+});
+
+// GET /api/product-posting/manager/links/by-task/:taskId — every submitted
+// link for one task (all statuses), for the "View Links" / "View Rejected
+// Links" modal.
+router.get("/manager/links/by-task/:taskId", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        await ensureLinkQaColumns();
+        const { rows } = await pool.query(`
+            select f.id, f.description as link, f.send_to_qa as "sendToQa", f.qa_status as "qaStatus",
+                   f.qa_comment as "qaComment", f.qa_reject_image_url as "qaRejectImageUrl",
+                   f.created_at as "createdAt"
+              from drm.task_files f
+              join drm.tasks t on t.id = f.task_id
+              join drm.projects p on p.id = t.project_id
+             where f.task_id = $1
+               and ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
+               and f.file_url is null and f.description is not null and f.description <> ''
+             order by f.created_at asc
+        `, [req.params.taskId]);
+
+        const data = rows.map((r) => ({
+            id: r.id,
+            link: r.link,
+            createdAt: r.createdAt,
+            qaComment: r.qaComment,
+            qaRejectImageUrl: r.qaRejectImageUrl,
+            status: r.qaStatus === "approved" ? "approved" : r.qaStatus === "rejected" ? "rejected" : r.sendToQa ? "pending_qa" : "unsent",
+        }));
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error("Error fetching links for task:", error);
+        res.status(500).json({ error: "Failed to fetch links" });
+    }
+});
+
+// POST /api/product-posting/manager/links/send-to-qa — { linkIds: string[] }
+router.post("/manager/links/send-to-qa", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isProductPostingManagerRole(req)) return res.status(403).json({ error: "Only the Product Posting Manager can send links to QA." });
+        await ensureLinkQaColumns();
+        const linkIds = Array.isArray(req.body?.linkIds) ? req.body.linkIds.filter(Boolean) : [];
+        if (linkIds.length === 0) return res.status(400).json({ error: "linkIds is required" });
+        const result = await pool.query(
+            `update drm.task_files set send_to_qa = true
+               where id = any($1::uuid[]) and send_to_qa = false and qa_status is null
+             returning id`,
+            [linkIds],
+        );
+        res.json({ success: true, sent: result.rowCount });
+    } catch (error) {
+        console.error("Error sending links to QA:", error);
+        res.status(500).json({ error: "Failed to send links to QA" });
+    }
+});
+
+// POST /api/product-posting/manager/links/:id/resubmit — { link? } optionally
+// corrects the link text, then resends it to QA (same as the legacy
+// "Resubmit" action).
+router.post("/manager/links/:id/resubmit", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isProductPostingManagerRole(req)) return res.status(403).json({ error: "Only the Product Posting Manager can resubmit a link." });
+        await ensureLinkQaColumns();
+        const newLink = typeof req.body?.link === "string" ? req.body.link.trim() : "";
+        const result = await pool.query(
+            `update drm.task_files
+                set description = coalesce(nullif($2, ''), description),
+                    send_to_qa = true, qa_status = null, qa_comment = null,
+                    qa_reject_image_url = null, qa_reviewed_at = null, qa_reviewed_by = null
+              where id = $1 and qa_status = 'rejected'
+             returning id`,
+            [req.params.id, newLink],
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: "Rejected link not found" });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error resubmitting link:", error);
+        res.status(500).json({ error: "Failed to resubmit link" });
+    }
+});
 
 // Helper to get userId from req (if not present, fallback for safe typing)
 function getUserId(req: any): string {
@@ -725,6 +914,121 @@ router.post("/tasks/:id/qa-review", async (req: any, res: any) => {
     } catch (error) {
         console.error("Error recording QA review:", error);
         res.status(500).json({ error: "Failed to record QA review" });
+    }
+});
+
+// GET /api/product-posting/qa/links/summary — per-link review queue, grouped
+// by (task, tasker) exactly like qa_vfy_dash.php's own "Per-Link
+// Verification" tab (Company/Project/Tasker/Pending Qty/Action="View
+// Links", not a flat per-link list). Scoped to Product Posting only, same
+// department clause the manager's own queue uses — a deliberately separate,
+// narrower concept from the whole-task qa/queue above, which is
+// department-agnostic. The individual links for a row are fetched via the
+// existing /manager/links/by-task/:taskId (shared with the manager's own
+// modal, no department/role check beyond auth so QA can call it too).
+router.get("/qa/links/summary", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isQaManagerRole(req)) return res.status(403).json({ error: "Only QA can review links." });
+        await ensureLinkQaColumns();
+        const { rows } = await pool.query(`
+            select t.id as "taskId", p.id as "projectId", p.name as "projectName",
+                   coalesce(c.company_name, p.name) as "companyName",
+                   f.uploaded_by_user_id as "taskerId",
+                   coalesce(u.full_name, u.name, u.username) as "taskerName",
+                   count(*) filter (where f.send_to_qa = true and f.qa_status is null)::int as "pendingQty"
+              from drm.task_files f
+              join drm.tasks t on t.id = f.task_id
+              join drm.projects p on p.id = t.project_id
+              left join drm.customers c on c.id = p.customer_id
+              left join drm.users u on u.id = f.uploaded_by_user_id
+             where ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
+               and f.file_url is null and f.description is not null and f.description <> ''
+             group by t.id, p.id, p.name, c.company_name, f.uploaded_by_user_id, u.full_name, u.name, u.username
+            having count(*) filter (where f.send_to_qa = true and f.qa_status is null) > 0
+        `);
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error("Error fetching QA's links summary:", error);
+        res.status(500).json({ error: "Failed to fetch links summary" });
+    }
+});
+
+// POST /api/product-posting/qa/links/:id/approve
+router.post("/qa/links/:id/approve", async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isQaManagerRole(req)) return res.status(403).json({ error: "Only QA can review links." });
+        await ensureLinkQaColumns();
+        const result = await pool.query(
+            `update drm.task_files set qa_status = 'approved', qa_reviewed_at = now(), qa_reviewed_by = $2
+               where id = $1 and send_to_qa = true and qa_status is null
+             returning id, task_id`,
+            [req.params.id, getUserId(req)],
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: "Link not found or already reviewed" });
+
+        // Once every per-link item on this task is approved, forward the
+        // whole task (and with it, its project) into the existing
+        // Verification Manager queue — the same qa_reviewed_at flag
+        // GET /verification/queue and the whole-task /tasks/:id/qa-review
+        // already use, so no change is needed on the Verification side.
+        const taskId = result.rows[0].task_id;
+        const { rows: remaining } = await pool.query(
+            `select count(*) filter (where qa_status is distinct from 'approved')::int as "notApproved"
+               from drm.task_files
+              where task_id = $1 and file_url is null and description is not null and description <> ''`,
+            [taskId],
+        );
+        if ((remaining[0]?.notApproved ?? 1) === 0) {
+            await pool.query(
+                `update drm.tasks
+                    set sent_to_qa_at = coalesce(sent_to_qa_at, now()), qa_reviewed_at = now()
+                  where id = $1 and qa_reviewed_at is null`,
+                [taskId],
+            );
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error approving link:", error);
+        res.status(500).json({ error: "Failed to approve link" });
+    }
+});
+
+// POST /api/product-posting/qa/links/:id/reject — multipart: comment (required)
+// + image (required) — mirrors the legacy spec's mandatory rejection-proof image.
+router.post("/qa/links/:id/reject", (req: any, res: any, next: any) => {
+    qaRejectImageUpload(req, res, (err: any) => {
+        if (err) {
+            console.error("Error uploading QA reject image:", err);
+            return res.status(400).json({ error: err.message || "Failed to upload image" });
+        }
+        next();
+    });
+}, async (req: any, res: any) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: "Not authenticated" });
+        if (!isQaManagerRole(req)) return res.status(403).json({ error: "Only QA can review links." });
+        await ensureLinkQaColumns();
+        const comment = typeof req.body?.comment === "string" ? req.body.comment.trim() : "";
+        if (!comment) return res.status(400).json({ error: "A rejection comment is required." });
+        const file = (req as any).file as Express.Multer.File | undefined;
+        if (!file) return res.status(400).json({ error: "A proof image is required to reject a link." });
+        const imageUrl = `/uploads/qa-reject-images/${file.filename}`;
+        const result = await pool.query(
+            `update drm.task_files
+                set qa_status = 'rejected', qa_comment = $2, qa_reject_image_url = $3,
+                    qa_reviewed_at = now(), qa_reviewed_by = $4
+              where id = $1 and send_to_qa = true and qa_status is null
+             returning id`,
+            [req.params.id, comment, imageUrl, getUserId(req)],
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: "Link not found or already reviewed" });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error rejecting link:", error);
+        res.status(500).json({ error: "Failed to reject link" });
     }
 });
 

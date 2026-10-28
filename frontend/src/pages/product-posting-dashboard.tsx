@@ -18,6 +18,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import {
     ChevronRight,
@@ -47,6 +48,7 @@ import {
     Package,
     Download,
     X,
+    ExternalLink,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProductPostingExecutiveWidget } from "@/components/product-posting-executive-widget";
@@ -563,6 +565,94 @@ export default function ProductPostingDashboard() {
             toast({ title: "Task moved to QA review." });
         }
     });
+
+    // Per-link QA review (legacy "Links for QA" / "Rejected Links" tabs) —
+    // additive to everything above, doesn't touch the existing whole-task
+    // Verification & Assign Project flow or its table. Matches the legacy
+    // layout exactly: a grouped summary row per (project, tasker) with a
+    // "View Links" action opening a modal of the individual links.
+    const [linkQaTab, setLinkQaTab] = useState<"pending" | "rejected">("pending");
+    const [linksModalTask, setLinksModalTask] = useState<{ taskId: string; companyName: string; projectName: string; taskerName: string; mode: "qa" | "reject" } | null>(null);
+    const [selectedLinkIds, setSelectedLinkIds] = useState<Set<string>>(new Set());
+    const [resubmitEdits, setResubmitEdits] = useState<Record<string, string>>({});
+
+    const { data: linksSummaryData, isLoading: isLoadingLinksSummary } = useQuery<{ success: boolean; data: any[] }>({
+        queryKey: ["/api/product-posting/manager/links/summary", linkQaTab],
+        enabled: !isExecutiveView,
+        queryFn: () => apiRequestJson("GET", `/api/product-posting/manager/links/summary?mode=${linkQaTab === "rejected" ? "reject" : "qa"}`),
+    });
+    const linksSummary = linksSummaryData?.data ?? [];
+
+    const { data: taskLinksData, isLoading: isLoadingTaskLinks } = useQuery<{ success: boolean; data: any[] }>({
+        queryKey: ["/api/product-posting/manager/links/by-task", linksModalTask?.taskId],
+        enabled: !!linksModalTask,
+        queryFn: () => apiRequestJson("GET", `/api/product-posting/manager/links/by-task/${linksModalTask!.taskId}`),
+    });
+    const taskLinks = taskLinksData?.data ?? [];
+
+    function refreshLinksData() {
+        queryClient.invalidateQueries({ queryKey: ["/api/product-posting/manager/links/summary"] });
+        if (linksModalTask) {
+            queryClient.invalidateQueries({ queryKey: ["/api/product-posting/manager/links/by-task", linksModalTask.taskId] });
+        }
+    }
+
+    const sendToQaMutation = useMutation({
+        mutationFn: async (linkIds: string[]) => apiRequestJson("POST", "/api/product-posting/manager/links/send-to-qa", { linkIds }),
+        onSuccess: () => {
+            refreshLinksData();
+            setSelectedLinkIds(new Set());
+            toast({ title: "Sent to QA" });
+        },
+        onError: (err: any) => toast({ title: "Failed to send to QA", description: err?.message, variant: "destructive" }),
+    });
+
+    const resubmitLinkMutation = useMutation({
+        mutationFn: async ({ id, link }: { id: string; link: string }) =>
+            apiRequestJson("POST", `/api/product-posting/manager/links/${id}/resubmit`, { link }),
+        onSuccess: (_data, variables) => {
+            refreshLinksData();
+            setResubmitEdits((prev) => {
+                const next = { ...prev };
+                delete next[variables.id];
+                return next;
+            });
+            toast({ title: "Resubmitted to QA" });
+        },
+        onError: (err: any) => toast({ title: "Failed to resubmit", description: err?.message, variant: "destructive" }),
+    });
+
+    function getResubmitValue(row: { id: string; link: string }) {
+        return resubmitEdits[row.id] ?? row.link;
+    }
+
+    function toggleLinkSelected(id: string, checked: boolean) {
+        setSelectedLinkIds((prev) => {
+            const next = new Set(prev);
+            if (checked) next.add(id);
+            else next.delete(id);
+            return next;
+        });
+    }
+
+    function openLinksModal(row: any, mode: "qa" | "reject") {
+        setSelectedLinkIds(new Set());
+        setResubmitEdits({});
+        setLinksModalTask({ taskId: row.taskId, companyName: row.companyName, projectName: row.projectName, taskerName: row.taskerName, mode });
+    }
+
+    const LINK_STATUS_BADGE: Record<string, string> = {
+        approved: "bg-emerald-100 text-emerald-700",
+        rejected: "bg-rose-100 text-rose-700",
+        pending_qa: "bg-blue-100 text-blue-700",
+        unsent: "bg-amber-100 text-amber-700",
+    };
+    const LINK_STATUS_LABEL: Record<string, string> = {
+        approved: "Approved",
+        rejected: "Rejected",
+        pending_qa: "Pending QA",
+        unsent: "Unsent",
+    };
 
     const approveOvertimeMutation = useMutation({
         mutationFn: async ({ taskId, approvedMinutes }: { taskId: string, approvedMinutes: number }) => {
@@ -1536,6 +1626,211 @@ export default function ProductPostingDashboard() {
                                     </table>
                                 </CardContent>
                             </Card>
+
+                            {/* Links for QA / Rejected Links — additive per-link QA review on
+                                top of the existing link-submission mechanism (drm.task_files),
+                                separate from the task-level Verification & Assign Project flow
+                                above, which is unchanged. Grouped summary row per (project,
+                                tasker) with a "View Links" action opening the full link list,
+                                matching the legacy layout exactly. */}
+                            <Card>
+                                <CardHeader className="flex flex-row items-center justify-between gap-3 p-3">
+                                    <CardTitle style={{ fontSize: "14px", fontWeight: 600 }}>
+                                        Links for QA
+                                    </CardTitle>
+                                    <div className="flex items-center gap-2">
+                                        {([
+                                            { key: "pending" as const, label: "Links for QA" },
+                                            { key: "rejected" as const, label: "Rejected Links" },
+                                        ]).map((t) => (
+                                            <Button
+                                                key={t.key}
+                                                size="sm"
+                                                className={cn(
+                                                    "h-7 px-4",
+                                                    linkQaTab === t.key
+                                                        ? "bg-[#00a65a] text-white hover:bg-[#00a65a]/90"
+                                                        : "bg-transparent border text-foreground hover:bg-muted"
+                                                )}
+                                                style={{ fontSize: "12px" }}
+                                                variant={linkQaTab === t.key ? "default" : "outline"}
+                                                onClick={() => setLinkQaTab(t.key)}
+                                            >
+                                                {t.label}
+                                            </Button>
+                                        ))}
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="overflow-x-auto px-3 pb-3 pt-0">
+                                    <table className="w-full" style={{ fontSize: "12px" }}>
+                                        <thead>
+                                            <tr className="bg-muted/50">
+                                                <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Company</th>
+                                                <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Project</th>
+                                                <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Tasker</th>
+                                                {linkQaTab === "pending" ? (
+                                                    <>
+                                                        <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Pending Qty</th>
+                                                        <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Status (Approved / Unsent)</th>
+                                                    </>
+                                                ) : (
+                                                    <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Rejected Qty</th>
+                                                )}
+                                                <th className="px-3 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {isLoadingLinksSummary ? (
+                                                <tr><td colSpan={6} className="px-3 py-4 text-center text-muted-foreground" style={{ fontSize: "12px" }}>Loading...</td></tr>
+                                            ) : linksSummary.length === 0 ? (
+                                                <tr><td colSpan={6} className="px-3 py-4 text-center text-muted-foreground" style={{ fontSize: "12px" }}>
+                                                    {linkQaTab === "pending" ? "No links waiting to be sent to QA." : "No rejected links."}
+                                                </td></tr>
+                                            ) : (
+                                                linksSummary.map((row: any) => (
+                                                    <tr key={row.taskId} className="last:border-0 hover:bg-muted/40 transition-colors">
+                                                        <td className="px-3 py-2 font-semibold" style={{ fontSize: "12px" }}>{row.companyName}</td>
+                                                        <td className="px-3 py-2" style={{ fontSize: "12px" }}>{row.projectName}</td>
+                                                        <td className="px-3 py-2" style={{ fontSize: "12px" }}>{row.taskerName}</td>
+                                                        {linkQaTab === "pending" ? (
+                                                            <>
+                                                                <td className="px-3 py-2" style={{ fontSize: "12px" }}>{row.requiredQty || "-"}</td>
+                                                                <td className="px-3 py-2">
+                                                                    <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 mr-1.5" style={{ fontSize: "11px" }}>
+                                                                        {row.approvedQty} Approved
+                                                                    </Badge>
+                                                                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100" style={{ fontSize: "11px" }}>
+                                                                        {row.unsentQty} Unsent
+                                                                    </Badge>
+                                                                </td>
+                                                            </>
+                                                        ) : (
+                                                            <td className="px-3 py-2 font-bold text-rose-600" style={{ fontSize: "12px" }}>{row.rejectedQty}</td>
+                                                        )}
+                                                        <td className="px-3 py-2">
+                                                            <Button
+                                                                size="sm"
+                                                                className="h-7 px-3 bg-[#00a65a] hover:bg-[#00a65a]/90 text-white"
+                                                                style={{ fontSize: "11px" }}
+                                                                onClick={() => openLinksModal(row, linkQaTab === "pending" ? "qa" : "reject")}
+                                                            >
+                                                                {linkQaTab === "pending" ? "View Links" : "View Rejected Links"}
+                                                            </Button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </CardContent>
+                            </Card>
+
+                            {/* View Links / View Rejected Links modal — shows every submitted
+                                link for the chosen (project, tasker), with a checkbox to select
+                                unsent ones to send to QA (qa mode), or an editable field +
+                                Resubmit per rejected link (reject mode). */}
+                            <Dialog open={!!linksModalTask} onOpenChange={(o) => !o && setLinksModalTask(null)}>
+                                <DialogContent className="max-w-2xl">
+                                    <DialogHeader>
+                                        <DialogTitle>Links — {linksModalTask?.companyName} / {linksModalTask?.projectName} / {linksModalTask?.taskerName}</DialogTitle>
+                                    </DialogHeader>
+                                    <div className="max-h-[60vh] overflow-y-auto">
+                                        {linksModalTask?.mode === "qa" && selectedLinkIds.size > 0 && (
+                                            <div className="flex justify-end pb-2">
+                                                <Button
+                                                    size="sm"
+                                                    className="h-7 px-4 bg-[#00a65a] hover:bg-[#00a65a]/90 text-white"
+                                                    style={{ fontSize: "12px" }}
+                                                    disabled={sendToQaMutation.isPending}
+                                                    onClick={() => sendToQaMutation.mutate(Array.from(selectedLinkIds))}
+                                                >
+                                                    Send Selected to QA ({selectedLinkIds.size})
+                                                </Button>
+                                            </div>
+                                        )}
+                                        <table className="w-full" style={{ fontSize: "12px" }}>
+                                            <thead>
+                                                <tr className="bg-muted/50">
+                                                    {linksModalTask?.mode === "qa" && <th className="px-2 py-2 w-8"></th>}
+                                                    <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Link</th>
+                                                    <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Status</th>
+                                                    {linksModalTask?.mode === "reject" && <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>QA Comment</th>}
+                                                    {linksModalTask?.mode === "reject" && <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Proof</th>}
+                                                    {linksModalTask?.mode === "reject" && <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Action</th>}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {isLoadingTaskLinks ? (
+                                                    <tr><td colSpan={5} className="px-2 py-4 text-center text-muted-foreground" style={{ fontSize: "12px" }}>Loading...</td></tr>
+                                                ) : (linksModalTask?.mode === "reject" ? taskLinks.filter((l: any) => l.status === "rejected") : taskLinks).length === 0 ? (
+                                                    <tr><td colSpan={5} className="px-2 py-4 text-center text-muted-foreground" style={{ fontSize: "12px" }}>No links.</td></tr>
+                                                ) : (
+                                                    (linksModalTask?.mode === "reject" ? taskLinks.filter((l: any) => l.status === "rejected") : taskLinks).map((row: any) => (
+                                                        <tr key={row.id} className="border-b last:border-0">
+                                                            {linksModalTask?.mode === "qa" && (
+                                                                <td className="px-2 py-2">
+                                                                    {row.status === "unsent" && (
+                                                                        <Checkbox
+                                                                            checked={selectedLinkIds.has(row.id)}
+                                                                            onCheckedChange={(checked) => toggleLinkSelected(row.id, !!checked)}
+                                                                        />
+                                                                    )}
+                                                                </td>
+                                                            )}
+                                                            <td className="px-2 py-2 max-w-[240px]" style={{ fontSize: "12px" }}>
+                                                                {linksModalTask?.mode === "reject" ? (
+                                                                    <div className="flex items-center gap-1">
+                                                                        <Input
+                                                                            value={getResubmitValue(row)}
+                                                                            onChange={(e) => setResubmitEdits((prev) => ({ ...prev, [row.id]: e.target.value }))}
+                                                                            className="h-8 text-[12px]"
+                                                                        />
+                                                                        <a href={getResubmitValue(row)} target="_blank" rel="noopener noreferrer" title="Open link">
+                                                                            <ExternalLink className="h-3.5 w-3.5 text-[#00a65a] shrink-0" />
+                                                                        </a>
+                                                                    </div>
+                                                                ) : (
+                                                                    <a href={row.link} target="_blank" rel="noopener noreferrer" className="text-[#00a65a] underline truncate block" title={row.link}>{row.link}</a>
+                                                                )}
+                                                            </td>
+                                                            <td className="px-2 py-2">
+                                                                <Badge className={cn(LINK_STATUS_BADGE[row.status], "hover:" + LINK_STATUS_BADGE[row.status])} style={{ fontSize: "11px" }}>
+                                                                    {LINK_STATUS_LABEL[row.status]}
+                                                                </Badge>
+                                                            </td>
+                                                            {linksModalTask?.mode === "reject" && (
+                                                                <td className="px-2 py-2 max-w-[160px] truncate" style={{ fontSize: "12px" }} title={row.qaComment}>{row.qaComment}</td>
+                                                            )}
+                                                            {linksModalTask?.mode === "reject" && (
+                                                                <td className="px-2 py-2">
+                                                                    {row.qaRejectImageUrl && (
+                                                                        <a href={row.qaRejectImageUrl} target="_blank" rel="noopener noreferrer" className="text-[#00a65a] underline" style={{ fontSize: "12px" }}>
+                                                                            View Image
+                                                                        </a>
+                                                                    )}
+                                                                </td>
+                                                            )}
+                                                            {linksModalTask?.mode === "reject" && (
+                                                                <td className="px-2 py-2">
+                                                                    <Button
+                                                                        size="sm"
+                                                                        className="h-7 px-3 bg-[#00a65a] hover:bg-[#00a65a]/90 text-white"
+                                                                        style={{ fontSize: "11px" }}
+                                                                        disabled={resubmitLinkMutation.isPending || !getResubmitValue(row).trim()}
+                                                                        onClick={() => resubmitLinkMutation.mutate({ id: row.id, link: getResubmitValue(row) })}
+                                                                    >
+                                                                        Resubmit
+                                                                    </Button>
+                                                                </td>
+                                                            )}
+                                                        </tr>
+                                                    ))
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </DialogContent>
+                            </Dialog>
 
                             {/* Daily Report Section - matching screenshot design */}
                             <Card className="shadow-sm">
