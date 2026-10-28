@@ -1007,15 +1007,20 @@ export default function SeoSmmManagerDashboard() {
                                                 onChange={(e) => setAssignTaskForm((f) => ({ ...f, title: e.target.value }))}
                                                 className="h-10 text-[13px]"
                                             />
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="0.5"
-                                                placeholder="Time allotted (hours)..."
-                                                value={assignTaskForm.hours}
-                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, hours: e.target.value }))}
-                                                className="h-10 text-[13px]"
-                                            />
+                                            <div className="space-y-1">
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.5"
+                                                    placeholder="Time allotted (hours)..."
+                                                    value={assignTaskForm.hours}
+                                                    onChange={(e) => setAssignTaskForm((f) => ({ ...f, hours: e.target.value }))}
+                                                    className="h-10 text-[13px]"
+                                                />
+                                                <p className="text-[11px] font-semibold text-red-600">
+                                                    {Number(assignTaskForm.hours) || 0} hour{Number(assignTaskForm.hours) === 1 ? "" : "s"} ({Math.round((Number(assignTaskForm.hours) || 0) * 60)} minutes)
+                                                </p>
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <Button
