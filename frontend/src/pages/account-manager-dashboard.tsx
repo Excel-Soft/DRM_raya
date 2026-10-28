@@ -90,7 +90,7 @@ export default function AccountManagerDashboard() {
     // Defaults to "all" — a HOD-approved invoice waiting on a project doesn't
     // stop being actionable just because it wasn't approved today, so the
     // Create Project queue must not hide it by default.
-    const [filterType, setFilterType] = useState<'all' | 'today' | 'monthly' | 'monthly-task' | 'martini-status'>('all');
+    const [filterType, setFilterType] = useState<'all' | 'pending' | 'today' | 'monthly' | 'monthly-task' | 'martini-status'>('all');
     const [createProjectPage, setCreateProjectPage] = useState(1);
     const [invoicePage, setInvoicePage] = useState(1);
     const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -581,16 +581,33 @@ export default function AccountManagerDashboard() {
             .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
     }, [monthlyTaskItems]);
 
-    // Pending quotations/invoices forwarded by HOD
+    // Create Project "All/Today/Monthly" list — broader mix (includes already
+    // approved product-posting / paid invoices so Account can still browse them).
     const pendingQuotationsQuery = useQuery({
-        queryKey: ["account-pending-quotations"],
+        queryKey: ["account-pending-quotations", "all"],
         queryFn: async () => {
-            const res = await apiRequest("GET", "/api/account/pending-quotations?limit=20");
+            const res = await apiRequest("GET", "/api/account/pending-quotations?limit=50");
             if (!res.ok) throw new Error("Failed to fetch");
             return res.json();
         },
         refetchInterval: 30000,
     });
+
+    // Create Project "Pending" tab — only invoices still waiting on Account
+    // (quotations pending_account_manager, product_posting PENDING_ACCOUNT,
+    // standard invoices Sent).
+    const accountPendingOnlyQuery = useQuery({
+        queryKey: ["account-pending-quotations", "pending-only"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/account/pending-quotations?pendingOnly=1&limit=100");
+            if (!res.ok) throw new Error("Failed to fetch pending invoices");
+            return res.json();
+        },
+        refetchInterval: 30000,
+    });
+    const accountPendingCount =
+        Number(accountPendingOnlyQuery.data?.meta?.pendingCount ?? accountPendingOnlyQuery.data?.meta?.total ?? 0) ||
+        (Array.isArray(accountPendingOnlyQuery.data?.data) ? accountPendingOnlyQuery.data.data.length : 0);
 
     const dollarSystemQuery = useQuery({
         queryKey: ["account-dollar-system-list"],
@@ -650,7 +667,10 @@ export default function AccountManagerDashboard() {
         },
         onSuccess: (_, vars) => {
             queryClient.invalidateQueries({ queryKey: ["account-pending-quotations"] });
-            toast({ title: vars.action === "approve" ? "Invoice Approved ✅" : "Invoice Rejected", description: vars.action === "approve" ? "Invoice has been approved successfully." : "Invoice has been rejected." });
+            toast({
+                title: vars.action === "approve" ? "Invoice Approved ✅" : "Invoice Rejected",
+                description: vars.action === "approve" ? "Invoice has been approved successfully." : "Invoice has been rejected.",
+            });
         },
         onError: (err: any) => toast({ title: "Error", description: err?.message || "Failed", variant: "destructive" }),
     });
@@ -804,17 +824,37 @@ export default function AccountManagerDashboard() {
             : 'bg-slate-100 text-slate-700 border-emerald-500 hover:bg-slate-200'
         }`;
 
-    // "Create Project" section: ONLY pending invoices (GM entries excluded per requirement)
-    const createProjectPendingInvoices = Array.isArray(pendingQuotationsQuery.data?.data)
-        ? pendingQuotationsQuery.data.data.map((q: any) => ({ ...q, entrySource: 'invoice' }))
-        : [];
+    // "Create Project" section: GM entries excluded. Pending tab uses the
+    // pending-only API; All/Today/Monthly keep the broader list.
+    const isAccountPendingInvoice = (item: any) => {
+        const status = String(item?.saveStatus || "").trim();
+        const statusUpper = status.toUpperCase();
+        if (item?.source === "quotation" || status === "pending_account_manager") {
+            return status === "pending_account_manager";
+        }
+        if (item?.source === "product_posting" || statusUpper === "PENDING_ACCOUNT") {
+            return statusUpper === "PENDING_ACCOUNT";
+        }
+        if (item?.source === "standard_invoice") {
+            return statusUpper === "SENT";
+        }
+        // Fallback: anything Account can still act on (Create Project enabled).
+        return statusUpper !== "APPROVED" && statusUpper !== "PAID";
+    };
+    const createProjectSourceRows = filterType === "pending"
+        ? (Array.isArray(accountPendingOnlyQuery.data?.data) ? accountPendingOnlyQuery.data.data : [])
+        : (Array.isArray(pendingQuotationsQuery.data?.data) ? pendingQuotationsQuery.data.data : []);
+    const createProjectPendingInvoices = createProjectSourceRows.map((q: any) => ({ ...q, entrySource: "invoice" }));
     const createProjectCombined = createProjectPendingInvoices;
     const createProjectFilteredItems = createProjectCombined.filter((item: any) => {
-        if (filterType === 'all') return true;
+        if (filterType === "pending") return isAccountPendingInvoice(item);
+        if (filterType === "all") return true;
         const createdDate = new Date(item.createdAt || item.updatedAt);
         const updatedDate = new Date(item.updatedAt || item.createdAt);
-        if (filterType === 'today') return isToday(createdDate) || isToday(updatedDate);
-        if (filterType === 'monthly' || filterType === 'monthly-task') return isSameMonth(createdDate, new Date()) || isSameMonth(updatedDate, new Date());
+        if (filterType === "today") return isToday(createdDate) || isToday(updatedDate);
+        if (filterType === "monthly" || filterType === "monthly-task") {
+            return isSameMonth(createdDate, new Date()) || isSameMonth(updatedDate, new Date());
+        }
         return true;
     });
     const createProjectTotalPages = Math.max(1, Math.ceil(createProjectFilteredItems.length / DASHBOARD_PAGE_SIZE));
@@ -928,14 +968,26 @@ export default function AccountManagerDashboard() {
                                 <div className="flex items-center gap-2">
                                     <Button
                                         variant={filterType === 'all' ? 'default' : 'ghost'}
-                                        onClick={() => setFilterType('all')}
+                                        onClick={() => { setFilterType('all'); setCreateProjectPage(1); }}
                                         className={filterType === 'all' ? 'bg-emerald-600 hover:bg-emerald-700 h-10 px-6 rounded-md' : 'text-slate-600 dark:text-slate-300 h-10 px-4'}
                                     >
                                         All
                                     </Button>
                                     <Button
+                                        variant={filterType === 'pending' ? 'default' : 'ghost'}
+                                        onClick={() => { setFilterType('pending'); setCreateProjectPage(1); }}
+                                        className={filterType === 'pending' ? 'bg-emerald-600 hover:bg-emerald-700 h-10 px-6 rounded-md' : 'text-slate-600 dark:text-slate-300 h-10 px-4'}
+                                    >
+                                        <span className="flex items-center gap-1.5">
+                                            Pending
+                                            <span className="flex items-center justify-center bg-amber-500 text-white min-w-[1.25rem] h-5 px-1 rounded-full text-[10px] font-bold">
+                                                {accountPendingCount}
+                                            </span>
+                                        </span>
+                                    </Button>
+                                    <Button
                                         variant={filterType === 'today' ? 'default' : 'ghost'}
-                                        onClick={() => setFilterType('today')}
+                                        onClick={() => { setFilterType('today'); setCreateProjectPage(1); }}
                                         className={filterType === 'today' ? 'bg-emerald-600 hover:bg-emerald-700 h-10 px-6 rounded-md' : 'text-slate-600 dark:text-slate-300 h-10 px-4'}
                                     >
                                         Today
@@ -1206,7 +1258,11 @@ export default function AccountManagerDashboard() {
                                                     </TableCell>
                                                     <TableCell className="text-center">
                                                         <div className="flex flex-col gap-1 items-center justify-center">
-                                                            <span className="text-emerald-600 font-medium">Approved</span>
+                                                            {isAccountPendingInvoice(item) ? (
+                                                                <span className="text-amber-600 font-medium">Pending</span>
+                                                            ) : (
+                                                                <span className="text-emerald-600 font-medium">Approved</span>
+                                                            )}
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
