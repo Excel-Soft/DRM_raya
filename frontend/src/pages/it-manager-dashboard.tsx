@@ -3066,15 +3066,21 @@ export default function ItManagerDashboard() {
                                                 onChange={(e) => setAssignTaskForm((f) => ({ ...f, title: e.target.value }))}
                                                 className="h-10 text-[13px]"
                                             />
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="1"
-                                                placeholder="Time allotted (minutes)..."
-                                                value={assignTaskForm.duration}
-                                                onChange={(e) => setAssignTaskForm((f) => ({ ...f, duration: e.target.value }))}
-                                                className="h-10 text-[13px]"
-                                            />
+                                            <div className="space-y-1">
+                                                <Input
+                                                    type="number"
+                                                    min="0"
+                                                    step="1"
+                                                    placeholder="Time allotted (minutes)..."
+                                                    value={assignTaskForm.duration}
+                                                    onChange={(e) => setAssignTaskForm((f) => ({ ...f, duration: e.target.value }))}
+                                                    className="h-10 text-[13px]"
+                                                />
+                                                <p className="text-[11px] font-semibold text-red-600">
+                                                    {Number(assignTaskForm.duration) || 0} minute{Number(assignTaskForm.duration) === 1 ? "" : "s"}
+                                                    {Number(assignTaskForm.duration) >= 60 ? ` (${Math.floor(Number(assignTaskForm.duration) / 60)}h ${Number(assignTaskForm.duration) % 60}m)` : ""}
+                                                </p>
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <Button

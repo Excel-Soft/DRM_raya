@@ -1196,15 +1196,21 @@ export default function DDManagerDashboard() {
                                                     onChange={(e) => setTaskDetails((f) => ({ ...f, title: e.target.value }))}
                                                     className="h-10 text-[13px]"
                                                 />
-                                                <Input
-                                                    type="number"
-                                                    min="0"
-                                                    step="1"
-                                                    placeholder="Time allotted (minutes)..."
-                                                    value={taskDetails.duration}
-                                                    onChange={(e) => setTaskDetails((f) => ({ ...f, duration: e.target.value }))}
-                                                    className="h-10 text-[13px]"
-                                                />
+                                                <div className="space-y-1">
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="1"
+                                                        placeholder="Time allotted (minutes)..."
+                                                        value={taskDetails.duration}
+                                                        onChange={(e) => setTaskDetails((f) => ({ ...f, duration: e.target.value }))}
+                                                        className="h-10 text-[13px]"
+                                                    />
+                                                    <p className="text-[11px] font-semibold text-red-600">
+                                                        {Number(taskDetails.duration) || 0} minute{Number(taskDetails.duration) === 1 ? "" : "s"}
+                                                        {Number(taskDetails.duration) >= 60 ? ` (${Math.floor(Number(taskDetails.duration) / 60)}h ${Number(taskDetails.duration) % 60}m)` : ""}
+                                                    </p>
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 <Button

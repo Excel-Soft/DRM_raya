@@ -930,6 +930,10 @@ export default function ProductPostingDashboard() {
                                     onChange={(e) => setTaskDetails(prev => ({ ...prev, duration: e.target.value }))}
                                     className="border-gray-200 h-10 text-[13px] dark:border-zinc-800"
                                 />
+                                <p className="text-[11px] font-semibold text-red-600">
+                                    {Number(taskDetails.duration) || 0} minute{Number(taskDetails.duration) === 1 ? "" : "s"}
+                                    {Number(taskDetails.duration) >= 60 ? ` (${Math.floor(Number(taskDetails.duration) / 60)}h ${Number(taskDetails.duration) % 60}m)` : ""}
+                                </p>
                             </div>
                             <div className="space-y-1.5">
                                 <label className="text-[13px] font-bold text-gray-600 dark:text-zinc-300">Links</label>
