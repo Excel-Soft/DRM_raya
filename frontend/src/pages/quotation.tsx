@@ -595,7 +595,14 @@ export default function QuotationPage() {
           })),
       };
       const res = await apiRequest(form.id ? "PUT" : "POST", form.id ? `/api/quotations/${form.id}` : "/api/quotations", body);
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // apiRequest deliberately doesn't throw on non-OK responses (callers
+        // must check res.ok themselves) — this call site never did, so a
+        // rejected save (validation error, etc.) still showed "Quotation
+        // saved successfully" and silently discarded the quotation.
+        throw new Error(json?.message || json?.error || "Failed to save quotation");
+      }
       toast({ title: "Quotation saved successfully" });
       const returned = json?.data ?? json;
       if (returned?.quotation?.id) {

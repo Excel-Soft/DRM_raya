@@ -51,6 +51,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ProductPostingExecutiveWidget } from "@/components/product-posting-executive-widget";
 import { ProductPostingManagerWidget } from "@/components/product-posting-manager-widget";
+import { MyQuotationsWidget } from "@/components/my-quotations-widget";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -1316,6 +1317,7 @@ export default function ProductPostingDashboard() {
                 {isExecutiveView ? (
                     <div className="grid gap-4">
                         <ProductPostingExecutiveWidget />
+                        <MyQuotationsWidget />
                     </div>
                 ) : (
                     /* Two-column layout (Original Design) */

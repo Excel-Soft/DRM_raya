@@ -916,7 +916,14 @@ export function registerQuotationRoutes(app: Express) {
           gmEntryId: r.converted_gm_id,
         };
       });
-      const convertedInvoices = rows.filter((r) => r.isConverted);
+      // A quotation that's approved AND converted to a GM entry used to match
+      // neither `approved` (excluded by !isGmConverted) nor `convertedInvoices`
+      // (only checked isConverted, i.e. converted_invoice_id) nor
+      // `pendingRejected` (excluded by isApproved) — it fell through every
+      // bucket and silently vanished from the widget entirely. GM conversion
+      // is the normal/most common successful end-state (not just Invoice), so
+      // it belongs in the "converted" bucket too.
+      const convertedInvoices = rows.filter((r) => r.isConverted || r.isGmConverted);
       const approved = rows.filter((r) => r.isApproved && !r.isConverted && !r.isGmConverted);
       const pendingRejected = rows.filter((r) => !r.isApproved && !r.isConverted && !r.isGmConverted);
       res.json({
