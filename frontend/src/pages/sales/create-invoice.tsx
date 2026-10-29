@@ -246,7 +246,26 @@ export default function CreateInvoice() {
     useEffect(() => {
         if (!quotationId || prefilledFromQuotation) return;
         const quotationItems = quotationData?.data?.items;
+        const quotation = quotationData?.data?.quotation;
         if (!quotationItems) return;
+
+        // Carry dollar rate + PKR Extra Discount from the approved quotation
+        // so a ₨56,000 "In Amount" discount still nets to ₨0 on the invoice
+        // (previously only line items were copied and discount was dropped).
+        const qRate = Number(quotation?.dollarRate) || dollarRate || 280;
+        if (quotation?.dollarRate != null) {
+            setDollarRate(qRate);
+        }
+        const qDiscType = String(quotation?.discountType || "").toUpperCase();
+        if (qDiscType === "PERCENT" || qDiscType === "PERCENTAGE") {
+            setDiscountType("percentage");
+        } else if (qDiscType === "AMOUNT") {
+            setDiscountType("amount");
+        }
+        if (quotation?.discountValue != null) {
+            setPkrDiscountValue(Number(quotation.discountValue) || 0);
+        }
+
         setItems(
             quotationItems.length
                 ? quotationItems.map((it: any) => {
@@ -277,7 +296,7 @@ export default function CreateInvoice() {
                           detail: it.detail || "",
                           unitPrice: 1,
                           quantity: lineTotalUsd,
-                          totalPkr: lineTotalUsd * dollarRate,
+                          totalPkr: lineTotalUsd * qRate,
                           discount: 0,
                       };
                   })
