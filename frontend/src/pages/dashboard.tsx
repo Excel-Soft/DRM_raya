@@ -79,6 +79,7 @@ type ActivitiesResponse = {
       >;
       totals: { activities: number; timeMinutes: number };
     }>;
+    defaultTargets?: Record<string, number>;
   };
 };
 
@@ -178,17 +179,21 @@ const kpiConfig: Array<{ key: KpiKey; label: string; icon: any; color: string; i
   { key: "sponsorBrand", label: "Sponsor", icon: Award, color: "text-pink-600", iconBg: "bg-pink-500" },
 ];
 
+// Fallback defaults only for the first paint before /api/dashboard/activities
+// responds — once loaded, the real (period-scaled) defaultTargets from the
+// API always wins, so the heading stays in sync with what unconfigured rows
+// actually show instead of a static, period-agnostic guess.
 const activityColumns = [
-  { key: "mobile", label: "Mob(50)" },
-  { key: "whatsapp", label: "WA(20)" },
-  { key: "onsite", label: "Site(1)" },
-  { key: "email", label: "Mail(50)" },
-  { key: "seminar", label: "Sem(1)" },
-  { key: "webinar", label: "Web(1)" },
-  { key: "appointment", label: "Apt(3)" },
-  { key: "meeting", label: "Met(2)" },
-  { key: "aMinus", label: "A-(6)" },
-  { key: "bPlus", label: "B+(13)" },
+  { key: "mobile", prefix: "Mob", fallback: 50 },
+  { key: "whatsapp", prefix: "WA", fallback: 20 },
+  { key: "onsite", prefix: "Site", fallback: 1 },
+  { key: "email", prefix: "Mail", fallback: 50 },
+  { key: "seminar", prefix: "Sem", fallback: 1 },
+  { key: "webinar", prefix: "Web", fallback: 1 },
+  { key: "appointment", prefix: "Apt", fallback: 3 },
+  { key: "meeting", prefix: "Met", fallback: 2 },
+  { key: "aMinus", prefix: "A-", fallback: 6 },
+  { key: "bPlus", prefix: "B+", fallback: 13 },
 ];
 
 const quickEntries = [
@@ -369,6 +374,9 @@ export default function Dashboard() {
 
   const summary = summaryRes.data;
   const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes.data.rows ?? [];
+  const activityDefaultTargets = activitiesRes.data.defaultTargets;
+  const activityColumnLabel = (col: (typeof activityColumns)[number]) =>
+    `${col.prefix}(${activityDefaultTargets?.[col.key] ?? col.fallback})`;
 
   // Group rows as manager + their direct reports (managerId -> row.userId),
   // so a manager always renders together with their own team instead of
@@ -536,7 +544,7 @@ export default function Dashboard() {
                       <th className="px-1 py-1 text-left font-semibold w-[13%] truncate">Name</th>
                       {activityColumns.map((col) => (
                         <th key={col.key} className="px-0.5 py-1 text-center font-semibold whitespace-nowrap">
-                          {col.label}
+                          {activityColumnLabel(col)}
                         </th>
                       ))}
                       <th className="px-0.5 py-1 text-center font-semibold">Time</th>
