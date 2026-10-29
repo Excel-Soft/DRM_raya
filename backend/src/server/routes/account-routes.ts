@@ -3200,7 +3200,8 @@ export function registerAccountRoutes(app: Express) {
           NULL               AS "items",
           q.contact          AS "customerPhone",
           cq.address         AS "customerAddress",
-          q.dollar_rate      AS "dollarRate"
+          q.dollar_rate      AS "dollarRate",
+          q.pkr_total        AS "pkrTotal"
         FROM drm.quotations q
         LEFT JOIN drm.users u ON u.id::text = q.created_by::text
         LEFT JOIN drm.customers cq ON cq.id::text = q.customer_id
@@ -3235,7 +3236,8 @@ export function registerAccountRoutes(app: Express) {
           NULL               AS "items",
           cp.phone           AS "customerPhone",
           cp.address         AS "customerAddress",
-          NULL::numeric      AS "dollarRate"
+          NULL::numeric      AS "dollarRate",
+          NULL::numeric      AS "pkrTotal"
         FROM drm.product_posting_invoices p
         LEFT JOIN drm.users u ON u.id = p.sales_exec_id
         LEFT JOIN drm.customers cp ON cp.id = p.customer_id
@@ -3250,8 +3252,10 @@ export function registerAccountRoutes(app: Express) {
           i.customer_email    AS "email",
           i.customer_address  AS "contact",
           0                   AS "gstPercent",
-          'None'              AS "discountType",
-          0                   AS "discountValue",
+          -- Prefer the source quotation's PKR discount when this invoice was
+          -- created from a quotation (discount is not stored on invoices).
+          COALESCE(qi.discount_type, 'None') AS "discountType",
+          COALESCE(qi.discount_value, 0)::numeric AS "discountValue",
           i.subtotal::numeric AS "subAmount",
           i.tax::numeric      AS "gstAmount",
           i.total::numeric    AS "totalAmount",
@@ -3270,10 +3274,12 @@ export function registerAccountRoutes(app: Express) {
           i.items             AS "items",
           ci.phone            AS "customerPhone",
           COALESCE(i.customer_address, ci.address) AS "customerAddress",
-          i.dollar_rate       AS "dollarRate"
+          i.dollar_rate       AS "dollarRate",
+          qi.pkr_total        AS "pkrTotal"
         FROM drm.invoices i
         LEFT JOIN drm.users u ON u.id::text = i.created_by_user_id::text
         LEFT JOIN drm.customers ci ON ci.id = i.customer_id
+        LEFT JOIN drm.quotations qi ON qi.id = i.quotation_id
         WHERE ${standardInvoiceStatusSql}
         ) as combined_results
         ORDER BY COALESCE(combined_results."updatedAt", combined_results."createdAt") DESC NULLS LAST

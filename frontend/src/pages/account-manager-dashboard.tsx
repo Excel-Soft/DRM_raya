@@ -160,13 +160,32 @@ export default function AccountManagerDashboard() {
             finalQty = 100;
             finalDetail = "100";
         }
-        const amountUsd = Number(g?.amountUsd) || 0;
-        // Invoice-sourced rows never carried a real `amountPkr` (that field
-        // doesn't exist anywhere upstream, so it was always 0) — compute it
-        // the same way Sales does: USD * the invoice's own dollar rate,
-        // falling back to the same 280 default used elsewhere in the app
-        // when a source (e.g. product_posting) has no stored rate at all.
-        const amountPkr = Number(g?.amountPkr) || amountUsd * (Number(g?.dollarRate) || 280);
+        const amountUsd = Number(g?.amountUsd) || Number(g?.grandTotal) || 0;
+        const rate = Number(g?.dollarRate) || 280;
+        // Sub Total PKR is always the pre-discount figure (USD × rate), matching
+        // the quotation form. Net total comes from pkrTotal / discount fields.
+        const subTotalPkr = Math.round(amountUsd * rate);
+
+        const discountType = String(g?.discountType || "").toUpperCase();
+        const discountVal = Number(g?.discountValue) || 0;
+        let discountPkr = 0;
+        if (discountType === "AMOUNT") {
+            discountPkr = Math.round(discountVal);
+        } else if (discountType === "PERCENT" || discountType === "PERCENTAGE") {
+            discountPkr = Math.round((subTotalPkr * discountVal) / 100);
+        }
+
+        // Prefer the quotation's stored net PKR total (handles 100% PKR discount → 0).
+        // Fall back to amountPkr only when it is a real positive/zero from upstream
+        // that already reflects discount; otherwise subtract discount from subtotal.
+        let totalPkr: number;
+        if (g?.pkrTotal !== null && g?.pkrTotal !== undefined && g?.pkrTotal !== "") {
+            totalPkr = Math.max(0, Math.round(Number(g.pkrTotal)));
+        } else if (g?.amountPkr !== null && g?.amountPkr !== undefined && g?.amountPkr !== "" && Number(g.amountPkr) >= 0 && discountPkr === 0) {
+            totalPkr = Math.round(Number(g.amountPkr));
+        } else {
+            totalPkr = Math.max(0, subTotalPkr - discountPkr);
+        }
 
         let parsedItems: any[] = [];
         if (g?.items) {
@@ -217,10 +236,10 @@ export default function AccountManagerDashboard() {
             },
             items: parsedItems,
             subTotalUsd: amountUsd,
-            subTotalPkr: amountPkr,
+            subTotalPkr,
             taxUsd: 0,
-            discountPkr: 0,
-            totalPkr: amountPkr,
+            discountPkr,
+            totalPkr,
         };
     };
     const [projectForm, setProjectForm] = useState({
@@ -1249,12 +1268,31 @@ export default function AccountManagerDashboard() {
                                                         {format(new Date(item.createdAt), "MM/dd/yyyy hh:mm a")}
                                                     </TableCell>
                                                     <TableCell className="text-slate-600 font-medium text-center dark:text-zinc-300">
-                                                        {isInvoice 
-                                                            ? (item.grandTotal || 0)
-                                                            : (item.amountPkr 
-                                                                ? item.amountPkr 
-                                                                : (item.amountUsd ? item.amountUsd : "0"))
-                                                        }
+                                                        {(() => {
+                                                            // Always show PKR (not USD). Prefer quotation net pkrTotal
+                                                            // so a full Extra Discount still reads as 0 PKR.
+                                                            if (isInvoice) {
+                                                                if (item.pkrTotal !== null && item.pkrTotal !== undefined && item.pkrTotal !== "") {
+                                                                    return `${Math.round(Number(item.pkrTotal)).toLocaleString()} PKR`;
+                                                                }
+                                                                const usd = Number(item.grandTotal) || 0;
+                                                                const rate = Number(item.dollarRate) || 280;
+                                                                const subPkr = Math.round(usd * rate);
+                                                                const discType = String(item.discountType || "").toUpperCase();
+                                                                const discVal = Number(item.discountValue) || 0;
+                                                                let discPkr = 0;
+                                                                if (discType === "AMOUNT") discPkr = Math.round(discVal);
+                                                                else if (discType === "PERCENT" || discType === "PERCENTAGE") {
+                                                                    discPkr = Math.round((subPkr * discVal) / 100);
+                                                                }
+                                                                return `${Math.max(0, subPkr - discPkr).toLocaleString()} PKR`;
+                                                            }
+                                                            const pkr = Number(item.amountPkr) || 0;
+                                                            if (pkr) return `${Math.round(pkr).toLocaleString()} PKR`;
+                                                            const usd = Number(item.amountUsd) || 0;
+                                                            const rate = Number(item.dollarRate) || 280;
+                                                            return `${Math.round(usd * rate).toLocaleString()} PKR`;
+                                                        })()}
                                                     </TableCell>
                                                     <TableCell className="text-center">
                                                         <div className="flex flex-col gap-1 items-center justify-center">
@@ -1276,7 +1314,11 @@ export default function AccountManagerDashboard() {
                                                                                 ...item,
                                                                                 companyName: item.company,
                                                                                 amountUsd: item.grandTotal,
-                                                                                amountPkr: item.amountPkr || 0,
+                                                                                amountPkr: item.pkrTotal ?? item.amountPkr ?? 0,
+                                                                                pkrTotal: item.pkrTotal,
+                                                                                discountType: item.discountType,
+                                                                                discountValue: item.discountValue,
+                                                                                dollarRate: item.dollarRate,
                                                                                 salesPersonName: item.salesPersonName,
                                                                                 createdAt: item.createdAt,
                                                                                 entryType: 'Invoice'
@@ -1291,7 +1333,12 @@ export default function AccountManagerDashboard() {
                                                                     <button
                                                                         onClick={() => {
                                                                             setSelectedGm({...item, entrySource: 'invoice'});
-                                                                            const totalPkr = Number(item.amountPkr) || (Number(item.grandTotal) || 0) * (Number(item.dollarRate) || 280);
+                                                                            // Prefer quotation net PKR (after Extra/PKR discount); do not
+                                                                            // rebuild from USD×rate or a 100% discount becomes 56000 again.
+                                                                            const totalPkr =
+                                                                                item.pkrTotal !== null && item.pkrTotal !== undefined && item.pkrTotal !== ""
+                                                                                    ? Math.max(0, Math.round(Number(item.pkrTotal)))
+                                                                                    : (Number(item.amountPkr) || (Number(item.grandTotal) || 0) * (Number(item.dollarRate) || 280));
                                                                             setProjectForm({
                                                                                 name: item.company,
                                                                                 due: "0",
