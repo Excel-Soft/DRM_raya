@@ -23,6 +23,7 @@ interface TaskStatusHistoryRecord {
     qaReviewedAt?: string | null;
     currentStatus?: string | null;
     qaComment?: string | null;
+    vmComment?: string | null;
     departmentType?: string | null;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
@@ -224,6 +225,8 @@ export default function PmsTaskHistory() {
                     const parsed = JSON.parse(record.notes);
                     if (parsed.qaReturn) {
                         detailText = parsed.reason ? `QA Return: ${parsed.reason}` : "QA Returned Project";
+                    } else if (parsed.verificationReturn) {
+                        detailText = parsed.reason ? `Verification Return: ${parsed.reason}` : "Verification Returned Project";
                     } else if (typeof parsed.reason === "string" && parsed.reason) {
                         detailText = `Rejected: ${parsed.reason}`;
                     } else if (Array.isArray(parsed?.links)) {
@@ -255,7 +258,7 @@ export default function PmsTaskHistory() {
                 company: record.company || "—",
                 qa: qaCommentText,
                 isQaReturn,
-                vm: "",
+                vm: record.vmComment || "N/A",
                 project: record.task?.title || "—",
                 taskDesc: record.fromStatus
                     ? `${record.fromStatus} → ${record.toStatus ?? ""}`

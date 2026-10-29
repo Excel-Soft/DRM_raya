@@ -2796,22 +2796,34 @@ function getPeriodRange(periodRaw: string) {
       // it up separately per task so it keeps showing even after the row
       // that carried it is no longer the one displayed.
       const latestQaCommentByTaskId = new Map<string, { reason: string; changedAt: any }>();
+      // Same idea, for Verification's own "return" events (verificationReturn,
+      // see POST /api/product-posting/tasks/:id/verification-review) — the
+      // "VM Comment" column needs the same keep-showing-after-resubmit
+      // behavior the QA comment already has.
+      const latestVmCommentByTaskId = new Map<string, { reason: string; changedAt: any }>();
       for (const row of enriched) {
         const taskId = row.task?.id;
         if (!taskId || !row.notes) continue;
         try {
           const parsed = JSON.parse(row.notes);
-          if (!parsed.qaReturn || !parsed.reason) continue;
-          const existing = latestQaCommentByTaskId.get(taskId);
-          if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
-            latestQaCommentByTaskId.set(taskId, { reason: parsed.reason, changedAt: row.changedAt });
+          if (parsed.qaReturn && parsed.reason) {
+            const existing = latestQaCommentByTaskId.get(taskId);
+            if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
+              latestQaCommentByTaskId.set(taskId, { reason: parsed.reason, changedAt: row.changedAt });
+            }
+          }
+          if (parsed.verificationReturn && parsed.reason) {
+            const existing = latestVmCommentByTaskId.get(taskId);
+            if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
+              latestVmCommentByTaskId.set(taskId, { reason: parsed.reason, changedAt: row.changedAt });
+            }
           }
         } catch {
-          // Not JSON — not a QA-return note.
+          // Not JSON — not a QA/Verification-return note.
         }
       }
 
-      const latestByTaskId = new Map<string, (typeof enriched)[number] & { qaComment?: string | null }>();
+      const latestByTaskId = new Map<string, (typeof enriched)[number] & { qaComment?: string | null; vmComment?: string | null }>();
       for (const row of enriched) {
         const taskId = row.task?.id;
         if (!taskId) continue;
@@ -2824,7 +2836,11 @@ function getPeriodRange(periodRaw: string) {
         if (row.verificationReviewedAt) continue;
         const existing = latestByTaskId.get(taskId);
         if (!existing || new Date(row.changedAt).getTime() > new Date(existing.changedAt).getTime()) {
-          latestByTaskId.set(taskId, { ...row, qaComment: latestQaCommentByTaskId.get(taskId)?.reason ?? null });
+          latestByTaskId.set(taskId, {
+            ...row,
+            qaComment: latestQaCommentByTaskId.get(taskId)?.reason ?? null,
+            vmComment: latestVmCommentByTaskId.get(taskId)?.reason ?? null,
+          });
         }
       }
       const deduped = Array.from(latestByTaskId.values()).sort(
