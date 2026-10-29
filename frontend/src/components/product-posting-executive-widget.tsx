@@ -350,17 +350,6 @@ export function ProductPostingExecutiveWidget() {
                                                     >
                                                         <Eye className="w-4 h-4 text-[#00a65a] dark:text-zinc-400" />
                                                     </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 rounded-full hover:bg-emerald-50 p-0 transition-all active:scale-90"
-                                                        onClick={() => {
-                                                            setSelectedTask(task);
-                                                            setActionDialogOpen(true);
-                                                        }}
-                                                    >
-                                                        <Settings className="w-4 h-4 text-[#00a65a] dark:text-zinc-400" />
-                                                    </Button>
                                                 </div>
                                             </td>
                                         </tr>
