@@ -1572,8 +1572,8 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Office Vas" href="/office/vas" />
                                 <QuickLink label="Expense" href="/office/expenses" />
                                 <QuickLink label="Set Target" href="/target-system/set" />
-                                <QuickLink label="Salary Create" href="#" />
-                                <QuickLink label="Salary Report" href="#" />
+                                <QuickLink label="Salary Create" href="/reports/salary-create" />
+                                <QuickLink label="Salary Report" href="/reports/salary" />
                                 <QuickLink label="Attendance" href="/hr/attendance" />
                                 <QuickLink label="Vas Report" href="/reports/vas/new" />
                                 <QuickLink label="Gm Checking" href="/account/gm-entries" />
