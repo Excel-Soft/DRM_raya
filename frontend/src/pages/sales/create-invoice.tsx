@@ -194,7 +194,6 @@ export default function CreateInvoice() {
     const { data: meData } = useQuery<{ data: any }>({
         queryKey: ["/api/auth/me"],
     });
-    const currentDepartment = meData?.data?.department;
 
     const { data: products = [] } = useQuery({
         queryKey: ["/api/sales/services"],
@@ -240,7 +239,35 @@ export default function CreateInvoice() {
                 });
             }
         }
-        return list;
+        // Same service name can appear as a configured top-level Attributes row
+        // and as a blank nested subservice (quotation productId often points at
+        // the nested copy). Inherit Allowed/Project from the configured twin.
+        const byName = new Map<string, { routeDepartments: string[]; projectDepartment: string | null }>();
+        for (const item of list) {
+            const key = String(item.name || "").trim().toLowerCase();
+            if (!key) continue;
+            const rd = Array.isArray(item.routeDepartments) ? item.routeDepartments : [];
+            const pd = item.projectDepartment || null;
+            if (rd.length === 0 && !pd) continue;
+            const prev = byName.get(key);
+            if (!prev) {
+                byName.set(key, { routeDepartments: rd, projectDepartment: pd });
+            } else {
+                if (prev.routeDepartments.length === 0 && rd.length > 0) prev.routeDepartments = rd;
+                if (!prev.projectDepartment && pd) prev.projectDepartment = pd;
+            }
+        }
+        return list.map((item) => {
+            const key = String(item.name || "").trim().toLowerCase();
+            const cfg = byName.get(key);
+            if (!cfg) return item;
+            const rd = Array.isArray(item.routeDepartments) ? item.routeDepartments : [];
+            return {
+                ...item,
+                routeDepartments: rd.length > 0 ? rd : cfg.routeDepartments,
+                projectDepartment: item.projectDepartment || cfg.projectDepartment,
+            };
+        });
     }, [products]);
 
     useEffect(() => {
@@ -387,12 +414,22 @@ export default function CreateInvoice() {
             return;
         }
 
-        // Validate departments
+        // Validate departments. Allowed (routeDepartments) gates who can invoice;
+        // Project (projectDepartment) is the target routing dept shown in Attributes.
+        // Duplicate catalog rows often leave nested copies blank while the
+        // top-level Attributes row is configured — treat either field as enough
+        // to prove the service is wired, then enforce Allowed via role.
+        const role =
+            (typeof window !== "undefined" ? sessionStorage.getItem("userRole") : null) ||
+            meData?.data?.role ||
+            meData?.data?.roleId ||
+            "sales_executive";
         for (const item of items) {
             const product = flatProducts.find(p => p.id === item.productId);
             if (product) {
                 const routeDepts = product.routeDepartments || [];
-                if (routeDepts.length === 0) {
+                const projectDept = product.projectDepartment || null;
+                if (routeDepts.length === 0 && !projectDept) {
                     toast({
                         title: "Target Department Not Found",
                         description: `Target department not found for service "${product.name}". Please contact management to add a target department for this service.`,
@@ -400,7 +437,7 @@ export default function CreateInvoice() {
                     });
                     return;
                 }
-                if (currentDepartment && !routeDepts.includes(currentDepartment)) {
+                if (routeDepts.length > 0 && !isDepartmentAllowed(role, routeDepts)) {
                     toast({
                         title: "Department Not Allowed",
                         description: `You cannot create an Invoice for service "${product.name}". Please get this service allowed for your department first.`,
@@ -418,7 +455,10 @@ export default function CreateInvoice() {
             customerAddress,
             items: JSON.stringify(items.map(item => ({
                 ...item,
-                name: products.find((p: any) => p.id === item.productId)?.name || "Service",
+                // productId is often a subservice id — resolve via flatProducts, not top-level only
+                name: flatProducts.find((p: any) => p.id === item.productId)?.name
+                    || products.find((p: any) => p.id === item.productId)?.name
+                    || "Service",
             }))),
             subtotal: (subAmount / dollarRate).toString(),
             tax: (((subAmount / dollarRate) * gstPercent) / 100).toString(),
@@ -852,7 +892,9 @@ export default function CreateInvoice() {
                             address: customerAddress
                         },
                         items: items.map(item => ({
-                            name: products.find((p: any) => p.id === item.productId)?.name || "Service",
+                            name: flatProducts.find((p: any) => p.id === item.productId)?.name
+                                || products.find((p: any) => p.id === item.productId)?.name
+                                || "Service",
                             detail: item.detail,
                             price: item.unitPrice,
                             quantity: item.quantity,
@@ -893,7 +935,9 @@ export default function CreateInvoice() {
                                         address: customerAddress
                                     },
                                     items: items.map(item => ({
-                                        name: products.find((p: any) => p.id === item.productId)?.name || "Service",
+                                        name: flatProducts.find((p: any) => p.id === item.productId)?.name
+                                            || products.find((p: any) => p.id === item.productId)?.name
+                                            || "Service",
                                         detail: item.detail,
                                         price: item.unitPrice,
                                         quantity: item.quantity,

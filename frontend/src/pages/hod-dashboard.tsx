@@ -213,9 +213,13 @@ export default function HodDashboard() {
           const qty = Number(ri.quantity) || 1;
           const price = Number(ri.price || ri.unitPrice) || 0;
           calculatedSubTotal += (qty * price);
-          const itemName = (typeof ri.productId === 'object' && ri.productId?.name)
+          const rawName = (typeof ri.productId === 'object' && ri.productId?.name)
               ? ri.productId.name
-              : ri.name || ri.title || ri.productName || ri.serviceTitle || (typeof ri.productId === 'string' && ri.productId.length < 36 ? ri.productId : "Service");
+              : ri.name || ri.title || ri.productName || ri.serviceTitle || "";
+          const itemName =
+            rawName && String(rawName).trim() !== "" && String(rawName).trim() !== "Service"
+              ? rawName
+              : (typeof ri.productId === "string" && ri.productId.length < 36 ? ri.productId : "Service");
           return {
             name: itemName,
             detail: ri.detail || ri.description || "Details",
@@ -294,6 +298,31 @@ export default function HodDashboard() {
       }
     }
 
+    // Prefer line-item USD when present; otherwise orderDollar / grandTotal.
+    // Sub Total PKR is always pre-discount (USD × rate). Net total comes from
+    // quotation pkrTotal / discount fields (same as Account Manager preview).
+    const amountUsd = calculatedSubTotal || Number(item.orderDollar) || Number(item.grandTotal) || 0;
+    const rate = Number(item.dollarRate) || 280;
+    const subTotalPkr = Math.round(amountUsd * rate);
+
+    const discountType = String(item.discountType || "").toUpperCase();
+    const discountVal = Number(item.discountValue) || 0;
+    let discountPkr = 0;
+    if (discountType === "AMOUNT") {
+      discountPkr = Math.round(discountVal);
+    } else if (discountType === "PERCENT" || discountType === "PERCENTAGE") {
+      discountPkr = Math.round((subTotalPkr * discountVal) / 100);
+    }
+
+    let totalPkr: number;
+    if (item.pkrTotal !== null && item.pkrTotal !== undefined && item.pkrTotal !== "") {
+      totalPkr = Math.max(0, Math.round(Number(item.pkrTotal)));
+    } else if (item.amountPkr !== null && item.amountPkr !== undefined && item.amountPkr !== "" && Number(item.amountPkr) >= 0 && discountPkr === 0) {
+      totalPkr = Math.round(Number(item.amountPkr));
+    } else {
+      totalPkr = Math.max(0, subTotalPkr - discountPkr);
+    }
+
     const invoiceData = {
       invoiceNumber: item.invoiceNumber || item.invoice_number || item.memberId || item.referenceId || (item.id ? item.id.replace(/\D/g, "").slice(0, 6) : "9876"),
       date: new Date(item.createdAt),
@@ -311,11 +340,11 @@ export default function HodDashboard() {
         address: item.customerAddress || "-"
       },
       items: parsedItems,
-      subTotalUsd: calculatedSubTotal,
-      subTotalPkr: calculatedSubTotal * 280,
+      subTotalUsd: amountUsd,
+      subTotalPkr,
       taxUsd: 0,
-      discountPkr: 0,
-      totalPkr: calculatedSubTotal * 280
+      discountPkr,
+      totalPkr,
     };
     setSelectedInvoiceView(invoiceData);
     setShowInvoicePreview(true);

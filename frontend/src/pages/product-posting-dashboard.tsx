@@ -635,6 +635,26 @@ export default function ProductPostingDashboard() {
         });
     }
 
+    const unsentLinkIds = useMemo(
+        () => taskLinks.filter((l: any) => l.status === "unsent").map((l: any) => l.id as string),
+        [taskLinks],
+    );
+    const allUnsentSelected =
+        unsentLinkIds.length > 0 && unsentLinkIds.every((id) => selectedLinkIds.has(id));
+    const someUnsentSelected =
+        unsentLinkIds.some((id) => selectedLinkIds.has(id)) && !allUnsentSelected;
+
+    function toggleSelectAllUnsent(checked: boolean) {
+        setSelectedLinkIds((prev) => {
+            const next = new Set(prev);
+            for (const id of unsentLinkIds) {
+                if (checked) next.add(id);
+                else next.delete(id);
+            }
+            return next;
+        });
+    }
+
     function openLinksModal(row: any, mode: "qa" | "reject") {
         setSelectedLinkIds(new Set());
         setResubmitEdits({});
@@ -1751,7 +1771,16 @@ export default function ProductPostingDashboard() {
                                         <table className="w-full" style={{ fontSize: "12px" }}>
                                             <thead>
                                                 <tr className="bg-muted/50">
-                                                    {linksModalTask?.mode === "qa" && <th className="px-2 py-2 w-8"></th>}
+                                                    {linksModalTask?.mode === "qa" && (
+                                                        <th className="px-2 py-2 w-8" title="Select all unsent">
+                                                            <Checkbox
+                                                                checked={allUnsentSelected ? true : someUnsentSelected ? "indeterminate" : false}
+                                                                disabled={unsentLinkIds.length === 0}
+                                                                onCheckedChange={(checked) => toggleSelectAllUnsent(checked === true)}
+                                                                aria-label="Select all unsent links"
+                                                            />
+                                                        </th>
+                                                    )}
                                                     <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Link</th>
                                                     <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>Status</th>
                                                     {linksModalTask?.mode === "reject" && <th className="px-2 py-2 text-left font-semibold" style={{ fontSize: "12px" }}>QA Comment</th>}

@@ -603,14 +603,15 @@ export function QAManagerWidget() {
                                         <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Project</th>
                                         <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Tasker</th>
                                         <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Pending Qty</th>
+                                        <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">QA</th>
                                         <th className="px-4 py-3 text-left font-bold text-gray-700 dark:text-zinc-400">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {isLoadingLinksSummary ? (
-                                        <tr><td colSpan={5} className="py-10 text-center text-gray-400 italic font-medium">Loading...</td></tr>
+                                        <tr><td colSpan={6} className="py-10 text-center text-gray-400 italic font-medium">Loading...</td></tr>
                                     ) : linksSummaryForQa.length === 0 ? (
-                                        <tr><td colSpan={5} className="py-10 text-center text-gray-400 italic font-medium">No links waiting for review</td></tr>
+                                        <tr><td colSpan={6} className="py-10 text-center text-gray-400 italic font-medium">No links waiting for review</td></tr>
                                     ) : (
                                         linksSummaryForQa.map((row: any) => (
                                             <tr key={row.taskId} className="border-b last:border-0 hover:bg-gray-50 dark:hover:bg-zinc-800/50">
@@ -621,6 +622,11 @@ export function QAManagerWidget() {
                                                     <span className="inline-block rounded-full bg-amber-100 text-amber-700 px-2.5 py-0.5 text-[11px] font-bold">
                                                         {row.pendingQty} Unsent
                                                     </span>
+                                                </td>
+                                                <td className="px-4 py-3 font-bold tabular-nums" style={{ fontSize: "13px" }}>
+                                                    <span className="text-emerald-600">{Number(row.approvedQty) || 0}</span>
+                                                    <span className="text-gray-400 mx-0.5">/</span>
+                                                    <span className="text-red-600">{Number(row.totalQty) || 0}</span>
                                                 </td>
                                                 <td className="px-4 py-3">
                                                     <Button
