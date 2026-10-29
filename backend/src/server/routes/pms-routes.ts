@@ -570,18 +570,25 @@ function getPeriodRange(periodRaw: string) {
     }
   });
 
-  // GET /api/pms/tasks/pending-review — the manager's "Pending My Review"
-  // queue: tasks an executive has submitted (READY_FOR_QA) and that are now
-  // waiting on this manager to Approve (-> Completed, effectively handing it
-  // to QA) or Reject (-> Blocked, back to the executive for rework). Same
-  // department-scoping approach as /api/pms/department-status above — a
-  // manager only sees their own department's submissions; admin sees all.
+  // GET /api/pms/tasks/pending-review — the department manager's "Pending My
+  // Review" queue: tasks an executive has submitted (READY_FOR_QA) waiting on
+  // that manager to Approve (-> Completed) or Reject (-> Blocked).
+  // QA / Verification are managerial roles but must NOT see this queue —
+  // sequence is Manager approve → Manager Send to QA → QA → VM. Their work
+  // lands in /api/product-posting/qa/queue and /verification/queue instead.
   app.get("/api/pms/tasks/pending-review", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
 
-      const userRole = req.user.roleId || (req.user as any).role || "";
+      const userRole = String(req.user.roleId || (req.user as any).role || "").toLowerCase();
       if (!isManagerialRole(userRole)) return res.json([]);
+      if (
+        userRole === "qa_manager" ||
+        userRole.startsWith("qa_") ||
+        userRole.includes("verification")
+      ) {
+        return res.json([]);
+      }
 
       const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
       const userDept = userRes.rows[0]?.department || "";
@@ -593,11 +600,6 @@ function getPeriodRange(periodRaw: string) {
         product_posting: ["PRODUCT_POSTING"],
         software: ["SOFTWARE"],
         service: ["SERVICE"],
-        // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
-        // (or Software/Service) — pinned directly rather than derived from a
-        // role-name prefix, since "qa_manager" doesn't share a prefix with
-        // any of these and users.department is usually unset too.
-        qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
       };
       const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
       const deptCandidates = Array.from(new Set([
@@ -653,9 +655,14 @@ function getPeriodRange(periodRaw: string) {
   app.post("/api/pms/tasks/:id/send-to-qa", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const userRole = req.user.roleId || (req.user as any).role || "";
+      const userRole = String(req.user.roleId || (req.user as any).role || "").toLowerCase();
       if (!isManagerialRole(userRole)) {
         return res.status(403).json({ error: "Only a manager can send a task to QA." });
+      }
+      // QA / Verification receive work AFTER the department manager's Send to QA —
+      // they must not perform that hand-off themselves.
+      if (userRole === "qa_manager" || userRole.startsWith("qa_") || userRole.includes("verification")) {
+        return res.status(403).json({ error: "Only the department manager can send a task to QA." });
       }
 
       const taskRes = await pool.query(
@@ -783,9 +790,17 @@ function getPeriodRange(periodRaw: string) {
   app.post("/api/pms/tasks/:id/send-to-verification", async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      const userRole = req.user.roleId || (req.user as any).role || "";
+      const userRole = String(req.user.roleId || (req.user as any).role || "").toLowerCase();
       if (!isManagerialRole(userRole)) {
         return res.status(403).json({ error: "Only a manager can send a task to Verification." });
+      }
+      // Only QA (or admin) hands off to Verification — not the PP manager / VM.
+      if (
+        userRole !== "qa_manager" &&
+        !userRole.startsWith("qa_") &&
+        !["admin", "super_admin", "super_hod"].includes(userRole)
+      ) {
+        return res.status(403).json({ error: "Only QA can send a task to Verification." });
       }
 
       const taskRes = await pool.query(
@@ -2644,6 +2659,9 @@ function getPeriodRange(periodRaw: string) {
         // department-scoping approach as /api/pms/tasks/pending-review.
         const userRes = await pool.query("SELECT department FROM drm.users WHERE id = $1", [req.user.userId]);
         const userDept = userRes.rows[0]?.department || "";
+        const roleLower = String(userRole).toLowerCase();
+        const isQaRole = roleLower === "qa_manager" || roleLower.startsWith("qa_");
+        const isVerificationRole = roleLower.includes("verification");
         const ROLE_DEPT_VARIANTS: Record<string, string[]> = {
           seo_smm: ["SEO_SMM", "SEO/SMM"],
           it: ["IT"],
@@ -2651,18 +2669,23 @@ function getPeriodRange(periodRaw: string) {
           product_posting: ["PRODUCT_POSTING"],
           software: ["SOFTWARE"],
           service: ["SERVICE"],
-          // QA covers Product Posting, SEO/SMM, and D&D — explicitly not IT
-          // (or Software/Service) — pinned directly rather than derived
-          // from a role-name prefix, since "qa_manager" doesn't share a
-          // prefix with any of these and users.department is usually unset.
+          // QA / Verification cover Product Posting, SEO/SMM, and D&D — but
+          // their Completed Projects rows are further gated below by
+          // sent_to_qa_at / qa_reviewed_at so pre-handoff work stays hidden.
           qa_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
+          verification_manager: ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"],
         };
-        const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => userRole.startsWith(p));
+        const rolePrefix = Object.keys(ROLE_DEPT_VARIANTS).find((p) => roleLower.startsWith(p));
         const deptCandidates = Array.from(new Set([
           ...(userDept ? [userDept] : []),
           ...(rolePrefix ? ROLE_DEPT_VARIANTS[rolePrefix] : []),
+          // Verification role name doesn't share a dept prefix — still scope
+          // them to the QA-pipeline departments rather than the whole org.
+          ...(isVerificationRole && !rolePrefix
+            ? ["PRODUCT_POSTING", "SEO_SMM", "SEO/SMM", "DND", "DESIGN_DEVELOPMENT"]
+            : []),
         ]));
-        const isDeptBoundManager = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(userRole);
+        const isDeptBoundManager = deptCandidates.length > 0 && !["admin", "super_admin", "super_hod"].includes(roleLower);
         const deptFilter = isDeptBoundManager
           ? `AND p.department_type IN (${deptCandidates.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ")})`
           : "";
@@ -2672,6 +2695,20 @@ function getPeriodRange(periodRaw: string) {
         if (dateFrom) { params.push(new Date(dateFrom as string)); dateFilter += ` AND h.changed_at >= $${params.length}`; }
         if (dateTo) { params.push(new Date(dateTo as string)); dateFilter += ` AND h.changed_at <= $${params.length}`; }
         params.push(limitNum);
+
+        // Sequence gates on the history query itself so QA never even loads
+        // manager-pending rows, and VM never loads pre-QA-handoff rows.
+        let stageFilter = "";
+        if (isQaRole) {
+          stageFilter = ` AND (t.sent_to_qa_at IS NOT NULL OR t.qa_reviewed_at IS NOT NULL
+            OR (t.status = 'Blocked' AND EXISTS (
+              SELECT 1 FROM drm.task_status_history hx
+               WHERE hx.task_id = t.id AND hx.to_status = 'Blocked'
+                 AND (hx.notes LIKE '%"qaReturn":true%' OR hx.notes LIKE '%"verificationReturn":true%')
+            )))`;
+        } else if (isVerificationRole) {
+          stageFilter = ` AND t.qa_reviewed_at IS NOT NULL`;
+        }
 
         const { rows } = await pool.query(
           `SELECT
@@ -2685,7 +2722,7 @@ function getPeriodRange(periodRaw: string) {
            JOIN drm.tasks t ON t.id = h.task_id
            JOIN drm.projects p ON p.id = t.project_id
            JOIN drm.users u ON u.id = h.user_id
-           WHERE 1=1 ${deptFilter} ${dateFilter}
+           WHERE 1=1 ${deptFilter} ${stageFilter} ${dateFilter}
            ORDER BY h.changed_at DESC
            LIMIT $${params.length}`,
           params,

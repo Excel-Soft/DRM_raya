@@ -213,6 +213,20 @@ export function VerificationManagerWidget() {
     });
     const attachedDocuments = projectDocsResponse?.data || [];
 
+    // QA-approved product-posting links for the Links dialog (drm.task_files).
+    // Legacy fields on the queue row (evidenceLinks / links / qaLinks) are never
+    // populated for this flow — same gap QA's own Links dialog had.
+    const { data: taskLinksRes, isLoading: isLoadingTaskLinks } = useQuery<{ success: boolean; data: any[] }>({
+        queryKey: ["/api/product-posting/manager/links/by-task", linksProject?.id],
+        enabled: !!linksProject?.id && isLinksDialogOpen,
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/product-posting/manager/links/by-task/${linksProject!.id}`);
+            if (!res.ok) throw new Error("Failed to fetch links");
+            return res.json();
+        },
+    });
+    const qaApprovedLinks = (taskLinksRes?.data ?? []).filter((l: any) => l.status === "approved");
+
     // Real "Important" sidebar counts
     const { data: hodImportantStats } = useQuery({
         queryKey: ["/api/hod/dashboard/important-stats"],
@@ -944,63 +958,34 @@ export function VerificationManagerWidget() {
 
                         <div className="p-8 max-h-[70vh] overflow-y-auto">
                             <div className="space-y-3">
-                                {(() => {
-                                    const evidenceLinks = (() => {
-                                        if (linksProject?.raw?.evidenceLinks && linksProject.raw.evidenceLinks.length > 0) {
-                                            return linksProject.raw.evidenceLinks.map((link: any) => ({
-                                                url: link.url,
-                                                label: link.label || null
-                                            }));
-                                        }
-                                        if (linksProject?.links && linksProject.links.length > 0) {
-                                            return linksProject.links.map((url: string) => ({
-                                                url,
-                                                label: null
-                                            }));
-                                        }
-                                        if (linksProject?.qaLinks) {
-                                            const urlList = typeof linksProject.qaLinks === 'string'
-                                                ? linksProject.qaLinks.split('\n').map((l: string) => l.trim()).filter(Boolean)
-                                                : (Array.isArray(linksProject.qaLinks) ? linksProject.qaLinks : []);
-                                            if (urlList.length > 0) {
-                                                return urlList.map((url: string) => ({
-                                                    url,
-                                                    label: null
-                                                }));
-                                            }
-                                        }
-                                        return null;
-                                    })();
-
-                                    if (evidenceLinks && evidenceLinks.length > 0) {
-                                        return evidenceLinks.map((link: any, idx: number) => (
-                                            <div key={idx} className="flex items-start gap-2 text-[15px] font-medium leading-relaxed">
-                                                <span className="text-gray-500 min-w-[25px] dark:text-zinc-400">{idx + 1}.</span>
-                                                <div className="flex-1 min-w-0">
-                                                    {link.label && (
-                                                        <span className="text-gray-400 dark:text-zinc-500 mr-2 font-bold bg-gray-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-[12px] uppercase">
-                                                            {link.label}
-                                                        </span>
-                                                    )}
-                                                    <a
-                                                        href={link.url.startsWith('http') ? link.url : `https://${link.url}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="text-[#00a65a] hover:underline break-all dark:text-zinc-400 font-semibold"
-                                                    >
-                                                        {link.url}
-                                                    </a>
-                                                </div>
+                                {isLoadingTaskLinks ? (
+                                    <div className="py-6 text-center text-gray-400 dark:text-zinc-500 italic text-[13px]">
+                                        Loading links...
+                                    </div>
+                                ) : qaApprovedLinks.length > 0 ? (
+                                    qaApprovedLinks.map((row: any, idx: number) => (
+                                        <div key={row.id || idx} className="flex items-start gap-2 text-[15px] font-medium leading-relaxed">
+                                            <span className="text-gray-500 min-w-[25px] dark:text-zinc-400">{idx + 1}.</span>
+                                            <div className="flex-1 min-w-0 flex items-start gap-2 flex-wrap">
+                                                <a
+                                                    href={String(row.link || "").startsWith("http") ? row.link : `https://${row.link}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-[#00a65a] hover:underline break-all dark:text-zinc-400 font-semibold"
+                                                >
+                                                    {row.link}
+                                                </a>
+                                                <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-bold shrink-0">
+                                                    QA Approved
+                                                </span>
                                             </div>
-                                        ));
-                                    } else {
-                                        return (
-                                            <div className="py-6 text-center text-gray-400 dark:text-zinc-500 italic">
-                                                No evidence links have been submitted for this task yet.
-                                            </div>
-                                        );
-                                    }
-                                })()}
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="py-6 text-center text-gray-400 dark:text-zinc-500 italic">
+                                        No QA-approved links for this task yet.
+                                    </div>
+                                )}
                             </div>
 
                             {linksProject?.id && (

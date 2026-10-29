@@ -1083,6 +1083,8 @@ interface TaskFileEntry {
     description: string | null;
     createdAt: string;
     uploadedByName: string | null;
+    qaStatus?: string | null;
+    qaComment?: string | null;
 }
 
 function RichTextEditor({
@@ -1146,6 +1148,7 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [links, setLinks] = useState<string[]>([""]);
+    const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
     const taskId = task?.id;
 
     const { data: uploadedRes } = useQuery<{ success: boolean; data: TaskFileEntry[] }>({
@@ -1154,6 +1157,16 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         queryFn: () => apiRequestJson("GET", `/api/tasks/${taskId}/files`),
     });
     const submittedLinks = (uploadedRes?.data || []).filter((f) => !f.fileUrl && f.description);
+
+    useEffect(() => {
+        const next: Record<string, string> = {};
+        for (const f of submittedLinks) {
+            next[f.id] = f.description || "";
+        }
+        setEditDrafts(next);
+        // Only re-seed when the server list identity changes (ids + descriptions).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [uploadedRes?.data]);
 
     const submitMutation = useMutation({
         mutationFn: async () => {
@@ -1174,18 +1187,46 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         },
     });
 
+    const updateMutation = useMutation({
+        mutationFn: async () => {
+            const changes = submittedLinks.filter((f) => {
+                const draft = (editDrafts[f.id] || "").trim();
+                return draft && draft !== (f.description || "").trim();
+            });
+            if (changes.length === 0) throw new Error("No link changes to save.");
+            for (const f of changes) {
+                await apiRequestJson("PATCH", `/api/tasks/${taskId}/files/${f.id}`, {
+                    description: (editDrafts[f.id] || "").trim(),
+                });
+            }
+            return changes.length;
+        },
+        onSuccess: (count) => {
+            queryClient.invalidateQueries({ queryKey: [`/api/tasks/${taskId}/files`] });
+            toast({
+                title: "Links updated",
+                description: `${count} link(s) saved. Re-submit the task when ready — updated links need QA approval again.`,
+            });
+        },
+        onError: (err: any) => {
+            toast({ title: err?.message || "Failed to update links", variant: "destructive" });
+        },
+    });
+
     if (!task) return null;
     const hasValidLink = links.some((l) => l.trim());
     // Once submitted for review (or fully done), the task is locked — same
     // rule as FilesModal and the "+" submit button elsewhere: no more work
-    // until the manager reviews it.
-    const isLocked = task.status === 'READY_FOR_QA' || task.status === 'Completed';
+    // until the manager reviews it. Blocked / ToDo / InProgress (rework after
+    // Manager, QA, or VM rejection) stays editable so the executive can fix links.
+    const isLocked = task.status === "READY_FOR_QA" || task.status === "Completed";
+    const canEditExisting = !isLocked && submittedLinks.length > 0;
     const requiredCount = getRequiredLinksCount(task);
-    // Once the manager's required count is met, stop taking more — this is
-    // what was letting the executive send a 3rd link against a 2-required
-    // task with no limit at all.
     const requirementMet = requiredCount !== null && submittedLinks.length >= requiredCount;
     const canAddMore = !isLocked && !requirementMet;
+    const hasEditChanges = submittedLinks.some(
+        (f) => (editDrafts[f.id] || "").trim() !== (f.description || "").trim(),
+    );
 
     return (
         <Dialog open={!!task} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1197,9 +1238,6 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                 <div className="p-8 space-y-6 bg-white overflow-y-auto dark:bg-zinc-900">
                     <div>
                         <h3 className="text-[13px] font-bold text-gray-700 dark:text-zinc-300 mb-2">Required Links</h3>
-                        {/* Manager sets a required link COUNT at assignment time (task.notes.links),
-                            not actual URLs — only the count is shown here, same as Submitted Links
-                            below, no raw link/URL text exposed to the executive. */}
                         {getRequiredLinksCount(task) === null ? (
                             <p className="text-[13px] text-gray-400">No link requirement set by the manager.</p>
                         ) : (
@@ -1218,19 +1256,54 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                                 <p className="text-[13px] text-emerald-700 dark:text-emerald-500 mb-1.5">
                                     <span className="font-extrabold text-[16px]">{submittedLinks.length}</span> link{submittedLinks.length === 1 ? "" : "s"} submitted.
                                 </p>
-                                <div className="space-y-1">
-                                    {submittedLinks.map((f) => (
-                                        <a
-                                            key={f.id}
-                                            href={(f.description || "").startsWith("http") ? f.description! : `https://${f.description}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="block text-[13px] text-emerald-600 hover:text-emerald-800 underline truncate"
-                                        >
-                                            {f.description}
-                                        </a>
-                                    ))}
-                                </div>
+                                {canEditExisting ? (
+                                    <div className="space-y-2">
+                                        <p className="text-[12px] text-amber-700 dark:text-amber-400 font-medium">
+                                            Task is back for rework — edit links below, then Update Links and re-submit the task.
+                                        </p>
+                                        {submittedLinks.map((f) => (
+                                            <div key={f.id} className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <Input
+                                                        value={editDrafts[f.id] ?? f.description ?? ""}
+                                                        onChange={(e) =>
+                                                            setEditDrafts((prev) => ({ ...prev, [f.id]: e.target.value }))
+                                                        }
+                                                        className="h-10 text-[13px] border-gray-200 dark:border-zinc-800"
+                                                        placeholder="https://..."
+                                                    />
+                                                    {f.qaStatus === "rejected" && (
+                                                        <span className="shrink-0 rounded-full bg-rose-100 text-rose-700 px-2 py-0.5 text-[11px] font-bold">
+                                                            Rejected
+                                                        </span>
+                                                    )}
+                                                    {f.qaStatus === "approved" && (
+                                                        <span className="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 text-[11px] font-bold">
+                                                            Approved
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {f.qaStatus === "rejected" && f.qaComment && (
+                                                    <p className="text-[11px] text-rose-600 px-1">QA: {f.qaComment}</p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1">
+                                        {submittedLinks.map((f) => (
+                                            <a
+                                                key={f.id}
+                                                href={(f.description || "").startsWith("http") ? f.description! : `https://${f.description}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="block text-[13px] text-emerald-600 hover:text-emerald-800 underline truncate"
+                                            >
+                                                {f.description}
+                                            </a>
+                                        ))}
+                                    </div>
+                                )}
                             </>
                         )}
                     </div>
@@ -1271,13 +1344,15 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                                 )}
                             </div>
                         </div>
-                    ) : (
+                    ) : isLocked ? (
                         <div className="bg-slate-50 border border-slate-200 text-slate-500 text-[13px] font-semibold rounded-md px-4 py-3 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400">
-                            {isLocked
-                                ? "This task has been submitted for review — no more links can be sent until your manager reviews it."
-                                : "The required number of links has already been submitted."}
+                            This task has been submitted for review — no more links can be sent until your manager reviews it.
                         </div>
-                    )}
+                    ) : requirementMet && !canEditExisting ? (
+                        <div className="bg-slate-50 border border-slate-200 text-slate-500 text-[13px] font-semibold rounded-md px-4 py-3 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-400">
+                            The required number of links has already been submitted.
+                        </div>
+                    ) : null}
                 </div>
 
                 <div className="p-4 border-t bg-slate-50 flex justify-end gap-3 dark:bg-zinc-900 flex-shrink-0">
@@ -1287,6 +1362,15 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
                     >
                         Close
                     </button>
+                    {canEditExisting && (
+                        <button
+                            onClick={() => updateMutation.mutate()}
+                            disabled={updateMutation.isPending || !hasEditChanges}
+                            className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded text-[14px] font-bold shadow-lg disabled:opacity-50 transition-all active:scale-95"
+                        >
+                            {updateMutation.isPending ? "Updating..." : "Update Links"}
+                        </button>
+                    )}
                     {canAddMore && (
                         <button
                             onClick={() => submitMutation.mutate()}
@@ -1301,7 +1385,6 @@ function AddLinksModal({ task, onClose }: { task: any; onClose: () => void }) {
         </Dialog>
     );
 }
-
 
 function FilesModal({ task, onClose, canUpload }: { task: any; onClose: () => void; canUpload: boolean }) {
     const { toast } = useToast();

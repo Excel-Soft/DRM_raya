@@ -222,9 +222,14 @@ router.get("/:id/files", async (req: Request, res: Response) => {
       return res.status(403).json({ error: "You don't have access to this task's files." });
     }
 
+    // Product Posting link-QA columns may not exist on older DBs.
+    await pool.query(`alter table drm.task_files add column if not exists qa_status text null`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_comment text null`);
+
     const { rows } = await pool.query(
       `select f.id, f.file_url as "fileUrl", f.file_name as "fileName", f.description, f.created_at as "createdAt",
-              coalesce(u.full_name, u.name, u.username) as "uploadedByName"
+              coalesce(u.full_name, u.name, u.username) as "uploadedByName",
+              f.qa_status as "qaStatus", f.qa_comment as "qaComment"
        from drm.task_files f
        left join drm.users u on u.id = f.uploaded_by_user_id
        where f.task_id = $1
@@ -235,6 +240,68 @@ router.get("/:id/files", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error fetching task files:", error);
     res.status(500).json({ error: "Failed to fetch files" });
+  }
+});
+
+// PATCH /api/tasks/:id/files/:fileId — executive updates a submitted link URL
+// while the task is back in rework (ToDo / InProgress / Blocked after Manager,
+// QA, or VM rejection). Clears per-link QA state so the link must go through
+// Send-to-QA + QA approval again.
+router.patch("/:id/files/:fileId", async (req: Request, res: Response) => {
+  try {
+    const uid = userId(req);
+    if (!uid) return res.status(401).json({ error: "Not authenticated" });
+
+    const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+    if (!description) return res.status(400).json({ error: "Link URL is required." });
+
+    const taskRes = await pool.query(
+      `select id, assigned_to_user_id, status from drm.tasks where id = $1`,
+      [req.params.id],
+    );
+    if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
+    const task = taskRes.rows[0];
+    if (task.assigned_to_user_id !== uid) {
+      return res.status(403).json({ error: "Only the assigned executive can update links for this task." });
+    }
+    if (task.status === "READY_FOR_QA" || task.status === "Completed") {
+      return res.status(409).json({ error: "This task is under review — links cannot be edited.", code: "TASK_LOCKED" });
+    }
+
+    const fileRes = await pool.query(
+      `select id, file_url from drm.task_files where id = $1 and task_id = $2`,
+      [req.params.fileId, req.params.id],
+    );
+    if (fileRes.rowCount === 0) return res.status(404).json({ error: "Link not found" });
+    if (fileRes.rows[0].file_url) {
+      return res.status(400).json({ error: "Only link submissions can be edited here." });
+    }
+
+    await pool.query(`alter table drm.task_files add column if not exists send_to_qa boolean not null default false`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_status text null`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_comment text null`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_reject_image_url text null`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_reviewed_at timestamptz null`);
+    await pool.query(`alter table drm.task_files add column if not exists qa_reviewed_by uuid null`);
+
+    const updated = await pool.query(
+      `update drm.task_files
+          set description = $1,
+              send_to_qa = false,
+              qa_status = null,
+              qa_comment = null,
+              qa_reject_image_url = null,
+              qa_reviewed_at = null,
+              qa_reviewed_by = null
+        where id = $2 and task_id = $3
+        returning id, file_url as "fileUrl", file_name as "fileName", description, created_at as "createdAt",
+                  qa_status as "qaStatus", qa_comment as "qaComment"`,
+      [description, req.params.fileId, req.params.id],
+    );
+    res.json({ success: true, data: updated.rows[0] });
+  } catch (error) {
+    console.error("Error updating task link:", error);
+    res.status(500).json({ error: "Failed to update link" });
   }
 });
 

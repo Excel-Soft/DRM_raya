@@ -108,7 +108,16 @@ export default function PmsTaskHistory() {
     const { data: userData } = useQuery({ queryKey: ["/api/auth/me"] });
     const userRoleName = (sessionStorage.getItem("userRole") || "").toLowerCase().replace(/\s+/g, "_");
     const currentRole = ((userData as any)?.role || userRoleName).toLowerCase();
-    const isManager = currentRole.includes("manager") || currentRole.includes("admin") || currentRole.includes("hod");
+    // QA / Verification are "manager" roles but they must not see the
+    // department manager's READY_FOR_QA "Pending My Review" queue — that
+    // only opens after Manager approve + Send to QA / Send to Verification.
+    const isQaOrVerificationRole =
+        currentRole === "qa_manager" ||
+        currentRole.startsWith("qa_") ||
+        currentRole.includes("verification");
+    const isManager =
+        (currentRole.includes("manager") || currentRole.includes("admin") || currentRole.includes("hod")) &&
+        !isQaOrVerificationRole;
 
     const invalidateReview = () => {
         queryClient.invalidateQueries({ queryKey: [PENDING_REVIEW_KEY] });
@@ -341,11 +350,9 @@ export default function PmsTaskHistory() {
                 COMPLETE PROJECT
             </h1>
 
-            {/* Pending My Review — tasks an executive has submitted (READY_FOR_QA),
-                waiting on this manager to Approve (-> Completed, handed to QA) or
-                Reject (-> Blocked, back to the executive for rework). Only rendered
-                for managerial roles; the backend independently gates the data too
-                (GET /api/pms/tasks/pending-review returns [] for anyone else). */}
+            {/* Pending My Review — department managers only (not QA / VM).
+                Sequence: Executive submit → Manager approve → Manager Send to QA
+                → QA → VM. Backend returns [] for QA/Verification roles too. */}
             {isManager && (
                 <Card className="border-t-4 border-t-[#008d4c] shadow-sm mb-6">
                     <CardHeader className="pb-2 flex flex-row items-center gap-2">
