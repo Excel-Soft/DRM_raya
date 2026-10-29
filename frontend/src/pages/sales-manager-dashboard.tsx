@@ -91,6 +91,7 @@ type ActivitiesResponse = {
             >;
             totals: { activities: number; timeMinutes: number };
         }>;
+        defaultTargets?: Record<string, number>;
     };
 };
 
@@ -198,18 +199,22 @@ const kpiConfig: Array<{ key: KpiKey; label: string; icon: any; color: string; i
     { key: "sponsorBrand", label: "Sponsor", icon: Award, color: "text-pink-600", iconBg: "bg-pink-500" },
 ];
 
+// Fallback defaults only for the first paint before /api/dashboard/activities
+// responds — once loaded, the real (period-scaled) defaultTargets from the
+// API always wins, so the heading stays in sync with what unconfigured rows
+// actually show instead of a static, period-agnostic guess.
 const activityColumns = [
-    { key: "mobile", label: "Mobile (50)" },
-    { key: "whatsapp", label: "Whatsapp (20)" },
-    { key: "whCall", label: "WH-Call (5)" },
-    { key: "inMeeting", label: "In-meeting (2)" },
-    { key: "onsite", label: "Out-meeting (1)" },
-    { key: "email", label: "E-mail (50)" },
-    { key: "appointment", label: "Appointment (5)" },
-    { key: "seminar", label: "Seminar (1)" },
-    { key: "webinar", label: "OL-Meeting (10)" },
-    { key: "aMinus", label: "A- (6)" },
-    { key: "bPlus", label: "B+ (13)" },
+    { key: "mobile", prefix: "Mobile", fallback: 50 },
+    { key: "whatsapp", prefix: "Whatsapp", fallback: 20 },
+    { key: "whCall", prefix: "WH-Call", fallback: 5 },
+    { key: "inMeeting", prefix: "In-meeting", fallback: 2 },
+    { key: "onsite", prefix: "Out-meeting", fallback: 1 },
+    { key: "email", prefix: "E-mail", fallback: 50 },
+    { key: "appointment", prefix: "Appointment", fallback: 3 },
+    { key: "seminar", prefix: "Seminar", fallback: 1 },
+    { key: "webinar", prefix: "OL-Meeting", fallback: 1 },
+    { key: "aMinus", prefix: "A-", fallback: 6 },
+    { key: "bPlus", prefix: "B+", fallback: 13 },
 ];
 
 const activityExtraColumns = [
@@ -480,6 +485,9 @@ export default function SalesManagerDashboard() {
 
     const summary = summaryRes?.data || emptySummary.data;
     const activityRows: ActivitiesResponse["data"]["rows"] = activitiesRes?.data?.rows ?? [];
+    const activityDefaultTargets = activitiesRes?.data?.defaultTargets;
+    const activityColumnTarget = (col: (typeof activityColumns)[number]) =>
+        activityDefaultTargets?.[col.key] ?? col.fallback;
 
     const availableActivityUsers = useMemo(() => {
         const assignedNames = nonManagerAssignedUsers.map((u: any) => u.name || u.fullName);
@@ -701,14 +709,11 @@ export default function SalesManagerDashboard() {
                                         <thead>
                                             <tr className="bg-emerald-100/50 dark:bg-emerald-900/20 border-b border-border">
                                                 <th className="px-3 py-2 text-left font-bold text-slate-700 dark:text-zinc-300 whitespace-nowrap text-[11px]">Name</th>
-                                                {activityColumns.map((col) => {
-                                                    const parts = col.label.split('(');
-                                                    return (
-                                                        <th key={col.key} className="px-3 py-2 text-center font-bold text-slate-700 dark:text-zinc-300 whitespace-nowrap text-[11px]">
-                                                            {parts[0].trim()}{parts[1] ? <br/> : ''}{parts[1] ? `(${parts[1]}` : ''}
-                                                        </th>
-                                                    );
-                                                })}
+                                                {activityColumns.map((col) => (
+                                                    <th key={col.key} className="px-3 py-2 text-center font-bold text-slate-700 dark:text-zinc-300 whitespace-nowrap text-[11px]">
+                                                        {col.prefix}<br/>({activityColumnTarget(col)})
+                                                    </th>
+                                                ))}
                                                 {activityExtraColumns.map((col) => (
                                                     <th key={col.key} className="px-3 py-2 text-center font-bold text-slate-700 dark:text-zinc-300 whitespace-nowrap text-[11px]">
                                                         {col.label}
@@ -745,7 +750,7 @@ export default function SalesManagerDashboard() {
                                                                 if (isGrade) val = String(entry.done);
                                                                 else val = `${entry.done}/${entry.target}=${percent(entry.done, entry.target)}`;
                                                             } else {
-                                                                val = isGrade ? "0" : `0/${col.label.match(/\((\d+)\)/)?.[1] || "0"}=0%`;
+                                                                val = isGrade ? "0" : `0/${activityColumnTarget(col)}=0%`;
                                                             }
                                                             const minutes = entry?.minutes ?? 0;
                                                             return (

@@ -71,6 +71,42 @@ export function getPeriodRange(periodRaw: string): DateRange {
   }
 }
 
+// Full day-count of a named period, independent of what day "now" falls on
+// within it — used only to scale activity targets (see computeActivityRows),
+// not to bound the done-count queries (those correctly use getPeriodRange's
+// live `to`).
+function getFullPeriodDayCount(periodRaw: string): number {
+  const period = periodRaw?.toUpperCase() || "WC";
+  const now = new Date();
+  switch (period) {
+    case "TD":
+    case "LD":
+      return 1;
+    case "MC":
+    case "MONTH":
+      return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    case "LM":
+      return new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+    case "QC": {
+      const quarterStartMonth = Math.floor(now.getMonth() / 3) * 3;
+      const start = new Date(now.getFullYear(), quarterStartMonth, 1);
+      const end = new Date(now.getFullYear(), quarterStartMonth + 3, 1);
+      return Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24));
+    }
+    case "YC": {
+      const y = now.getFullYear();
+      const isLeap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+      return isLeap ? 366 : 365;
+    }
+    case "ALL":
+    case "OVERALL":
+      return 1;
+    case "WC":
+    default:
+      return 7;
+  }
+}
+
 function sendValidationError(res: any, error: z.ZodError) {
   res.status(400).json({
     error: "BadRequest",
@@ -1474,8 +1510,9 @@ export class DashboardController {
 export async function computeActivityRows(req: Request, roleList: string[]) {
   if (!req.user) throw new Error("Not authenticated");
   const period = String(req.query.period ?? "TD").toUpperCase();
+  const isCustomRange = Boolean(req.query.from && req.query.to);
   let from: Date, to: Date;
-  if (req.query.from && req.query.to) {
+  if (isCustomRange) {
       from = new Date(req.query.from as string);
       to = new Date(req.query.to as string);
       to.setHours(23, 59, 59, 999);
@@ -1606,8 +1643,17 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     new: 10,
   };
 
-  // Scale targets by the number of days in the selected period (minimum 1)
-  const dayDiff = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (1000 * 3600 * 24)));
+  // Scale targets by the FULL length of the selected period (minimum 1) — NOT
+  // by how much of it has elapsed so far. getPeriodRange's `to` is "now" for
+  // WC/MONTH/etc (correct for the done-count query above, which should only
+  // count what's actually happened up to this moment), but reusing that same
+  // now-minus-start delta to scale the denominator made the weekly/monthly
+  // target itself grow every day the period was in progress (e.g. the
+  // default Mobile target climbing from 50 on Monday to 350 by Sunday)
+  // instead of showing one stable full-period target throughout.
+  const dayDiff = isCustomRange
+    ? Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (1000 * 3600 * 24)))
+    : Math.max(1, getFullPeriodDayCount(period));
   if (dayDiff > 1) {
     for (const key of Object.keys(defaultTargets)) {
       (defaultTargets as any)[key] = (defaultTargets as any)[key] * dayDiff;
@@ -1825,5 +1871,10 @@ export async function computeActivityRows(req: Request, roleList: string[]) {
     to: to.toISOString(),
     rows,
     totals,
+    // Already scaled to the full selected period (see dayDiff above) — the
+    // frontend uses this to label each column's target instead of a static
+    // per-period-agnostic number, so the heading always matches what an
+    // unconfigured (no role override) row actually shows.
+    defaultTargets,
   };
 }
