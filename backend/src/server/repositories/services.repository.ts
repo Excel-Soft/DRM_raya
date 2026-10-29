@@ -207,6 +207,72 @@ export async function ensureServicesSchema() {
   }
 }
 
+type DeptCfg = {
+  routeDepartments: string[] | null;
+  projectDepartment: string | null;
+  depId: number | null;
+};
+
+/** Fill blank Allowed/Project/dep on duplicate-named catalog nodes from a configured twin. */
+function enrichDepartmentsBySameName(tree: ServiceWithChildren[]): ServiceWithChildren[] {
+  const byName = new Map<string, DeptCfg>();
+  const keyOf = (name: string) => (name || "").trim().toLowerCase();
+
+  const consider = (name: string, rd: string[] | null | undefined, pd: string | null | undefined, depId: number | null | undefined) => {
+    const k = keyOf(name);
+    if (!k) return;
+    const hasRd = Array.isArray(rd) && rd.length > 0;
+    const hasPd = !!pd;
+    const hasDep = depId != null;
+    if (!hasRd && !hasPd && !hasDep) return;
+    const prev = byName.get(k);
+    if (!prev) {
+      byName.set(k, {
+        routeDepartments: hasRd ? rd! : null,
+        projectDepartment: hasPd ? pd! : null,
+        depId: hasDep ? depId! : null,
+      });
+      return;
+    }
+    if ((!prev.routeDepartments || prev.routeDepartments.length === 0) && hasRd) prev.routeDepartments = rd!;
+    if (!prev.projectDepartment && hasPd) prev.projectDepartment = pd!;
+    if (prev.depId == null && hasDep) prev.depId = depId!;
+  };
+
+  for (const s of tree) {
+    consider(s.name, s.routeDepartments, s.projectDepartment, s.depId);
+    for (const sub of s.subServices || []) {
+      consider(sub.name, sub.routeDepartments, sub.projectDepartment, sub.depId);
+      for (const leaf of sub.subSubservices || []) {
+        consider(leaf.name, leaf.routeDepartments, leaf.projectDepartment, leaf.depId);
+      }
+    }
+  }
+
+  const apply = <T extends { name: string; routeDepartments: string[] | null; projectDepartment: string | null; depId: number | null }>(node: T): T => {
+    const cfg = byName.get(keyOf(node.name));
+    if (!cfg) return node;
+    const routeDepartments =
+      Array.isArray(node.routeDepartments) && node.routeDepartments.length > 0
+        ? node.routeDepartments
+        : cfg.routeDepartments ?? node.routeDepartments;
+    return {
+      ...node,
+      routeDepartments,
+      projectDepartment: node.projectDepartment || cfg.projectDepartment || null,
+      depId: node.depId != null ? node.depId : cfg.depId,
+    };
+  };
+
+  return tree.map((s) => ({
+    ...apply(s),
+    subServices: (s.subServices || []).map((sub) => ({
+      ...apply(sub),
+      subSubservices: (sub.subSubservices || []).map((leaf) => apply(leaf)),
+    })),
+  }));
+}
+
 export const servicesRepository = {
   async listActive(): Promise<Service[]> {
     return db
@@ -318,7 +384,7 @@ export const servicesRepository = {
       group by s.id, s.code, s.name, ${hasDesc ? "s.description," : ""} s.price, s.discount, s.min_day, s.max_day, s.is_active, s.created_at${svcCols.has("dep_id") ? ", s.dep_id" : ""}${svcCols.has("route_departments") ? ", s.route_departments" : ""}${svcCols.has("project_department") ? ", s.project_department" : ""}
       order by s.created_at asc, s.id asc
     `);
-    return res.rows.map((row: any) => ({
+    const tree: ServiceWithChildren[] = res.rows.map((row: any) => ({
       id: row.id,
       code: row.code,
       name: row.name,
@@ -363,6 +429,11 @@ export const servicesRepository = {
         })),
       })),
     }));
+    // Catalog has historically duplicated the same service name as both a
+    // top-level row (where Attributes admins set Allowed/Project depts) and
+    // nested subservices (often left blank). Inherit dept config by exact
+    // name so invoice/quotation validation matches what Attributes shows.
+    return enrichDepartmentsBySameName(tree);
   },
 
   async findByIds(ids: string[]): Promise<Service[]> {

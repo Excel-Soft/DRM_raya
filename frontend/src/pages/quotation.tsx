@@ -287,10 +287,10 @@ export default function QuotationPage() {
     for (const p of products) {
         if (p.subServices && p.subServices.length > 0) {
             for (const sub of p.subServices) {
-                list.push({ 
-                    ...sub, 
-                    parentName: p.name, 
-                    price: sub.price ?? p.price, 
+                list.push({
+                    ...sub,
+                    parentName: p.name,
+                    price: sub.price ?? p.price,
                     description: sub.description !== null && sub.description !== undefined ? sub.description : (p.description !== null && p.description !== undefined ? p.description : sub.name),
                     routeDepartments: sub.routeDepartments && sub.routeDepartments.length > 0 ? sub.routeDepartments : (p.routeDepartments || []),
                     projectDepartment: sub.projectDepartment || p.projectDepartment
@@ -305,7 +305,32 @@ export default function QuotationPage() {
             });
         }
     }
-    return list;
+    // Inherit Allowed/Project from a same-named catalog twin when nested copies are blank.
+    const byName = new Map<string, { routeDepartments: string[]; projectDepartment: string | null }>();
+    for (const item of list) {
+      const key = String(item.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const rd = Array.isArray(item.routeDepartments) ? item.routeDepartments : [];
+      const pd = item.projectDepartment || null;
+      if (rd.length === 0 && !pd) continue;
+      const prev = byName.get(key);
+      if (!prev) byName.set(key, { routeDepartments: rd, projectDepartment: pd });
+      else {
+        if (prev.routeDepartments.length === 0 && rd.length > 0) prev.routeDepartments = rd;
+        if (!prev.projectDepartment && pd) prev.projectDepartment = pd;
+      }
+    }
+    return list.map((item) => {
+      const key = String(item.name || "").trim().toLowerCase();
+      const cfg = byName.get(key);
+      if (!cfg) return item;
+      const rd = Array.isArray(item.routeDepartments) ? item.routeDepartments : [];
+      return {
+        ...item,
+        routeDepartments: rd.length > 0 ? rd : cfg.routeDepartments,
+        projectDepartment: item.projectDepartment || cfg.projectDepartment,
+      };
+    });
   }, [products]);
 
   const productsForPicker = useMemo(() => {

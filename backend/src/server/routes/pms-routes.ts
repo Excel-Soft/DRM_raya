@@ -658,7 +658,13 @@ function getPeriodRange(periodRaw: string) {
         return res.status(403).json({ error: "Only a manager can send a task to QA." });
       }
 
-      const taskRes = await pool.query(`SELECT id, status, sent_to_qa_at FROM drm.tasks WHERE id = $1`, [req.params.id]);
+      const taskRes = await pool.query(
+        `SELECT t.id, t.status, t.sent_to_qa_at, p.department_type
+           FROM drm.tasks t
+           LEFT JOIN drm.projects p ON p.id = t.project_id
+          WHERE t.id = $1`,
+        [req.params.id],
+      );
       if (taskRes.rowCount === 0) return res.status(404).json({ error: "Task not found" });
       const task = taskRes.rows[0];
       if (task.status !== "Completed") {
@@ -667,6 +673,41 @@ function getPeriodRange(periodRaw: string) {
 
       if (task.sent_to_qa_at) {
         return res.json({ success: true, sentToQaAt: task.sent_to_qa_at });
+      }
+
+      // Product Posting tasks carry per-link QA on drm.task_files — the
+      // whole-task "Send to QA" hand-off is only legal once every submitted
+      // link has qa_status = 'approved' (no pending / unsent / rejected left).
+      if (task.department_type === "PRODUCT_POSTING") {
+        const linkRes = await pool.query(
+          `SELECT count(*)::int AS total,
+                  count(*) FILTER (WHERE qa_status = 'approved')::int AS approved
+             FROM drm.task_files
+            WHERE task_id = $1
+              AND file_url IS NULL
+              AND description IS NOT NULL
+              AND description <> ''`,
+          [req.params.id],
+        );
+        const total = Number(linkRes.rows[0]?.total) || 0;
+        const approved = Number(linkRes.rows[0]?.approved) || 0;
+        const pending = Math.max(0, total - approved);
+        if (total === 0) {
+          return res.status(400).json({
+            error: "No links submitted for this Product Posting task yet. Links must be QA-approved before Send to QA.",
+            pendingLinks: 0,
+            totalLinks: 0,
+            approvedLinks: 0,
+          });
+        }
+        if (pending > 0) {
+          return res.status(400).json({
+            error: `${pending} of ${total} link(s) still pending QA approval. Approve all links before Send to QA.`,
+            pendingLinks: pending,
+            totalLinks: total,
+            approvedLinks: approved,
+          });
+        }
       }
 
       const updated = await pool.query(
@@ -2697,8 +2738,10 @@ function getPeriodRange(periodRaw: string) {
       // their "fully closed" test below can't wait on a review stage that
       // will never happen for them.
       let deptTypeByTaskId: Record<string, string | null> = {};
+      // Per-link QA progress for Product Posting (approved / total / pending).
+      let linkStatsByTaskId: Record<string, { approved: number; total: number; pending: number }> = {};
       if (taskIds.length > 0) {
-        const [companyRows, timeRows, qaRows, statusRows, verificationRows, deptRows] = await Promise.all([
+        const [companyRows, timeRows, qaRows, statusRows, verificationRows, deptRows, linkRows] = await Promise.all([
           pool.query(
             `SELECT t.id AS task_id, COALESCE(c.company_name, inv.company_name, p.name) AS company
                FROM drm.tasks t
@@ -2738,6 +2781,18 @@ function getPeriodRange(periodRaw: string) {
               WHERE t.id = ANY($1::uuid[])`,
             [taskIds],
           ),
+          pool.query(
+            `SELECT task_id,
+                    count(*)::int AS total,
+                    count(*) FILTER (WHERE qa_status = 'approved')::int AS approved
+               FROM drm.task_files
+              WHERE task_id = ANY($1::uuid[])
+                AND file_url IS NULL
+                AND description IS NOT NULL
+                AND description <> ''
+              GROUP BY task_id`,
+            [taskIds],
+          ),
         ]);
         companyByTaskId = companyRows.rows.reduce((acc: Record<string, string>, row: any) => {
           acc[row.task_id] = row.company;
@@ -2767,6 +2822,12 @@ function getPeriodRange(periodRaw: string) {
           acc[row.task_id] = row.department_type;
           return acc;
         }, {});
+        linkStatsByTaskId = linkRows.rows.reduce((acc: Record<string, { approved: number; total: number; pending: number }>, row: any) => {
+          const total = Number(row.total) || 0;
+          const approved = Number(row.approved) || 0;
+          acc[row.task_id] = { approved, total, pending: Math.max(0, total - approved) };
+          return acc;
+        }, {});
       }
 
       const enriched = history.map((h) => ({
@@ -2778,6 +2839,9 @@ function getPeriodRange(periodRaw: string) {
         qaReviewedAt: h.task?.id ? qaReviewedAtByTaskId[h.task.id] ?? null : null,
         verificationReviewedAt: h.task?.id ? verificationReviewedAtByTaskId[h.task.id] ?? null : null,
         departmentType: h.task?.id ? deptTypeByTaskId[h.task.id] ?? null : null,
+        linkApprovedQty: h.task?.id ? linkStatsByTaskId[h.task.id]?.approved ?? 0 : 0,
+        linkTotalQty: h.task?.id ? linkStatsByTaskId[h.task.id]?.total ?? 0 : 0,
+        linkPendingQty: h.task?.id ? linkStatsByTaskId[h.task.id]?.pending ?? 0 : 0,
       }));
 
       // This feed is one row per status-history EVENT, so a single task that

@@ -194,8 +194,15 @@ export default function AccountManagerDashboard() {
                 parsedItems = rawItems.map((ri: any) => {
                     const qty = Number(ri.quantity) || 1;
                     const price = Number(ri.price || ri.unitPrice) || 0;
+                    // Older invoices saved the placeholder "Service" when the
+                    // productId was a nested catalog id — prefer a real title.
+                    const rawName = ri.name || ri.title || ri.productName || "";
+                    const name =
+                        rawName && String(rawName).trim() !== "" && String(rawName).trim() !== "Service"
+                            ? rawName
+                            : finalItemName || ri.description || "Service";
                     return {
-                        name: ri.name || ri.title || ri.productName || ri.productId || ri.description || "Service",
+                        name,
                         detail: ri.detail || ri.description || "Details",
                         price: price,
                         quantity: qty,

@@ -932,11 +932,14 @@ router.get("/qa/links/summary", async (req: any, res: any) => {
         if (!isQaManagerRole(req)) return res.status(403).json({ error: "Only QA can review links." });
         await ensureLinkQaColumns();
         const { rows } = await pool.query(`
-            select t.id as "taskId", p.id as "projectId", p.name as "projectName",
+            select t.id as "taskId", t.notes as "taskNotes",
+                   p.id as "projectId", p.name as "projectName",
                    coalesce(c.company_name, p.name) as "companyName",
                    f.uploaded_by_user_id as "taskerId",
                    coalesce(u.full_name, u.name, u.username) as "taskerName",
-                   count(*) filter (where f.send_to_qa = true and f.qa_status is null)::int as "pendingQty"
+                   count(*) filter (where f.send_to_qa = true and f.qa_status is null)::int as "pendingQty",
+                   count(*) filter (where f.qa_status = 'approved')::int as "approvedQty",
+                   count(*)::int as "submittedQty"
               from drm.task_files f
               join drm.tasks t on t.id = f.task_id
               join drm.projects p on p.id = t.project_id
@@ -944,10 +947,27 @@ router.get("/qa/links/summary", async (req: any, res: any) => {
               left join drm.users u on u.id = f.uploaded_by_user_id
              where ${PRODUCT_POSTING_DEPARTMENT_TYPES_SQL}
                and f.file_url is null and f.description is not null and f.description <> ''
-             group by t.id, p.id, p.name, c.company_name, f.uploaded_by_user_id, u.full_name, u.name, u.username
+             group by t.id, t.notes, p.id, p.name, c.company_name, f.uploaded_by_user_id, u.full_name, u.name, u.username
             having count(*) filter (where f.send_to_qa = true and f.qa_status is null) > 0
         `);
-        res.json({ success: true, data: rows });
+        // totalQty prefers the assign-task required links target; falls back to
+        // how many links this tasker has actually submitted for the task.
+        const data = rows.map((r: any) => {
+            let requiredQty = 0;
+            try { requiredQty = Number(JSON.parse(r.taskNotes || "{}")?.links) || 0; } catch { /* not JSON */ }
+            return {
+                taskId: r.taskId,
+                projectId: r.projectId,
+                projectName: r.projectName,
+                companyName: r.companyName,
+                taskerId: r.taskerId,
+                taskerName: r.taskerName,
+                pendingQty: r.pendingQty,
+                approvedQty: r.approvedQty,
+                totalQty: requiredQty > 0 ? requiredQty : r.submittedQty,
+            };
+        });
+        res.json({ success: true, data });
     } catch (error) {
         console.error("Error fetching QA's links summary:", error);
         res.status(500).json({ error: "Failed to fetch links summary" });
@@ -968,26 +988,11 @@ router.post("/qa/links/:id/approve", async (req: any, res: any) => {
         );
         if (result.rowCount === 0) return res.status(404).json({ error: "Link not found or already reviewed" });
 
-        // Once every per-link item on this task is approved, forward the
-        // whole task (and with it, its project) into the existing
-        // Verification Manager queue — the same qa_reviewed_at flag
-        // GET /verification/queue and the whole-task /tasks/:id/qa-review
-        // already use, so no change is needed on the Verification side.
-        const taskId = result.rows[0].task_id;
-        const { rows: remaining } = await pool.query(
-            `select count(*) filter (where qa_status is distinct from 'approved')::int as "notApproved"
-               from drm.task_files
-              where task_id = $1 and file_url is null and description is not null and description <> ''`,
-            [taskId],
-        );
-        if ((remaining[0]?.notApproved ?? 1) === 0) {
-            await pool.query(
-                `update drm.tasks
-                    set sent_to_qa_at = coalesce(sent_to_qa_at, now()), qa_reviewed_at = now()
-                  where id = $1 and qa_reviewed_at is null`,
-                [taskId],
-            );
-        }
+        // Do NOT auto-set sent_to_qa_at / qa_reviewed_at when the last link
+        // is approved. Product Posting managers must manually click
+        // "Send to QA" on Task Complete once every link is QA-approved —
+        // that button stays disabled until then, then enables for a deliberate
+        // hand-off (see POST /api/pms/tasks/:id/send-to-qa).
 
         res.json({ success: true });
     } catch (error) {

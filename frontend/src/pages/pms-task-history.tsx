@@ -25,6 +25,9 @@ interface TaskStatusHistoryRecord {
     qaComment?: string | null;
     vmComment?: string | null;
     departmentType?: string | null;
+    linkApprovedQty?: number;
+    linkTotalQty?: number;
+    linkPendingQty?: number;
     task?: { id: string; title: string | null } | null;
     user?: { id: string; name: string | null } | null;
 }
@@ -275,6 +278,9 @@ export default function PmsTaskHistory() {
                 qaReviewedAt: record.qaReviewedAt || null,
                 currentStatus: record.currentStatus || null,
                 departmentType: record.departmentType || null,
+                linkApprovedQty: Number(record.linkApprovedQty) || 0,
+                linkTotalQty: Number(record.linkTotalQty) || 0,
+                linkPendingQty: Number(record.linkPendingQty) || 0,
             };
         });
     }, [historyRecords]);
@@ -680,16 +686,51 @@ export default function PmsTaskHistory() {
                                             >
                                                 <CheckCircle2 className="w-3.5 h-3.5" /> Sent
                                             </span>
-                                        ) : (
-                                            <Button
-                                                size="sm"
-                                                className="h-7 px-3 text-[11px] bg-[#2bc18c] hover:bg-[#25a87a] text-white"
-                                                disabled={sendToQaMutation.isPending}
-                                                onClick={() => sendToQaMutation.mutate(row.taskId)}
-                                            >
-                                                Send to QA
-                                            </Button>
-                                        )}
+                                        ) : (() => {
+                                            // Product Posting: whole-task Send to QA stays locked
+                                            // until every submitted link is QA-approved.
+                                            const isProductPosting = row.departmentType === "PRODUCT_POSTING";
+                                            const linkTotal = Number(row.linkTotalQty) || 0;
+                                            const linkApproved = Number(row.linkApprovedQty) || 0;
+                                            const linkPending = Number(row.linkPendingQty) || Math.max(0, linkTotal - linkApproved);
+                                            const linksReady = !isProductPosting || (linkTotal > 0 && linkPending === 0);
+                                            return (
+                                                <div className="inline-flex flex-col items-center gap-1">
+                                                    {isProductPosting && (
+                                                        <span className="text-[11px] font-bold tabular-nums" title="QA-approved links / total links">
+                                                            <span className="text-emerald-600">{linkApproved}</span>
+                                                            <span className="text-gray-400 mx-0.5">/</span>
+                                                            <span className="text-red-600">{linkTotal}</span>
+                                                        </span>
+                                                    )}
+                                                    <Button
+                                                        size="sm"
+                                                        className={`h-7 px-3 text-[11px] text-white ${
+                                                            linksReady
+                                                                ? "bg-[#2bc18c] hover:bg-[#25a87a]"
+                                                                : "bg-[#2bc18c]/50 hover:bg-[#2bc18c]/50 cursor-not-allowed"
+                                                        }`}
+                                                        disabled={sendToQaMutation.isPending}
+                                                        onClick={() => {
+                                                            if (!linksReady) {
+                                                                toast({
+                                                                    title: "Links pending QA approval",
+                                                                    description:
+                                                                        linkTotal === 0
+                                                                            ? "No links submitted yet. All Product Posting links must be QA-approved before Send to QA."
+                                                                            : `${linkPending} of ${linkTotal} link(s) still pending QA approval. Approve all links first.`,
+                                                                    variant: "destructive",
+                                                                });
+                                                                return;
+                                                            }
+                                                            sendToQaMutation.mutate(row.taskId);
+                                                        }}
+                                                    >
+                                                        Send to QA
+                                                    </Button>
+                                                </div>
+                                            );
+                                        })()}
                                     </td>
                                 </tr>
                             ))}
