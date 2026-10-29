@@ -1116,9 +1116,14 @@ router.get("/verification/stats", async (req: any, res: any) => {
 
 // POST /api/product-posting/tasks/:id/verification-review — { action:
 // "complete" | "return", remarks?, level? }. "complete" finalizes
-// verification (task stays Completed). "return" bounces the task back into
-// QA's own queue by clearing qaReviewedAt — QA reviews it again, the
-// executive is never involved at this stage.
+// verification (task stays Completed). "return" bounces the task all the way
+// back to the Product Posting Manager (not straight back into QA's queue) —
+// same Blocked state + cleared sent_to_qa_at that QA's own "return" already
+// uses, so the manager sees it in Completed Projects, gets it reworked, and
+// explicitly resends it to QA via the existing /send-to-qa action. A task
+// only ever reaches Verification after QA has approved it, so a
+// Verification return must go through QA's approval again too — never
+// straight back to Verification.
 router.post("/tasks/:id/verification-review", async (req: any, res: any) => {
     try {
         if (!req.user) return res.status(401).json({ error: "Not authenticated" });
@@ -1158,16 +1163,22 @@ router.post("/tasks/:id/verification-review", async (req: any, res: any) => {
             return res.json({ success: true });
         }
 
-        // action === "return" — send back to QA, not the executive.
+        // action === "return" — send back to the Product Posting Manager,
+        // the same Blocked + sent_to_qa_at-cleared state QA's own "return"
+        // uses (see /tasks/:id/qa-review above). qa_reviewed_at is cleared
+        // too so the task needs QA's approval again before it can ever come
+        // back to Verification.
         await pool.query(
-            `UPDATE drm.tasks SET qa_reviewed_at = null, qa_level = null, qa_remarks = null WHERE id = $1`,
+            `UPDATE drm.tasks SET status = 'Blocked', sent_to_qa_at = null, timer_started_at = null,
+                    qa_reviewed_at = null, qa_level = null, qa_remarks = null
+              WHERE id = $1`,
             [req.params.id],
         );
         await taskStatusHistoryRepository.create({
             taskId: req.params.id,
             userId,
             fromStatus: "Completed" as any,
-            toStatus: "Completed" as any,
+            toStatus: "Blocked" as any,
             notes: JSON.stringify({ reason: remarks || "Returned by Verification", verificationReturn: true }),
         } as any);
 
