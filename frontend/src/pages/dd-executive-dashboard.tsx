@@ -445,13 +445,6 @@ export default function DDExecutiveDashboard() {
                                                         >
                                                             <Eye className="h-4 w-4 text-indigo-400" />
                                                         </button>
-                                                        <button
-                                                            title="Task actions"
-                                                            onClick={() => openTaskDetail(task)}
-                                                            className="opacity-40 group-hover:opacity-100 transition-opacity hover:text-emerald-600"
-                                                        >
-                                                            <Settings className="h-4 w-4 text-emerald-500" />
-                                                        </button>
                                                     </div>
                                                 </TableCell>
                                                 <TableCell className="py-4 pr-6 text-right">
