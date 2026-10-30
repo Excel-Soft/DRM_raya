@@ -1574,16 +1574,15 @@ export default function AccountManagerDashboard() {
                                 <QuickLink label="Set Target" href="/target-system/set" />
                                 <QuickLink label="Salary Create" href="/reports/salary-create" />
                                 <QuickLink label="Salary Report" href="/reports/salary" />
-                                <QuickLink label="Attendance" href="/hr/attendance" />
+                                <QuickLink label="Attendance" href="/reports/attendance" />
                                 <QuickLink label="Vas Report" href="/reports/vas/new" />
-                                <QuickLink label="Gm Checking" href="/account/gm-entries" />
-                                <QuickLink label="Reports" href="/account/reports" />
+                                <QuickLink label="Gm Checking" href="/analytics/gm" />
                                 <QuickLink label="Settings" href="/account/settings" />
                                 <QuickLink label="BV Checking" href="/reports/bv/new" />
                                 <QuickLink label="Add Penalty" href="#" />
                                 <QuickLink label="Over Time" href="/hr/overtime" />
                                 <QuickLink label="Loan Application" href="/hr/loan" />
-                                <QuickLink label="Due Payment" href="/account/invoices" />
+                                <QuickLink label="Due Payment" href="/reports/due-payment" />
                                 <QuickLink label="Commission Verification" href="#" />
                             </div>
                         </CardContent>
