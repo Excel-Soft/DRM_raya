@@ -284,11 +284,15 @@ companyLedgerRouter.post("/api/account/payment", requireFinancialPermission(FINA
     // extracted back out by the GET /api/account/history/:companyId reader.
     const description = `Payment for invoice ${inv.invoiceNumber}${notes ? ` - ${notes}` : ''}${receiptImage ? ` [receipt:${receiptImage}]` : ''}`;
 
-    // Create a ledger entry for the payment
+    // `amount` is entered in PKR in both Make Payment modals (same convention
+    // as the approval flow) — store it as PKR exactly as entered rather than
+    // converting to the invoice's own currency up front, which would round
+    // a figure like 30,000 down to 2 decimal places of USD and lose it on
+    // the way back (see D-019). Readers convert at calculation time instead.
     const newEntry = await db.insert(ledgerEntries).values({
       entryType: "Credit",
       amount: amount.toString(),
-      currency: inv.currency || "USD",
+      currency: "PKR",
       description,
       category: "Invoice Payment",
       referenceId: invoiceId,

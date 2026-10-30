@@ -734,11 +734,11 @@ export default function AccountLedger() {
                                         name="amount"
                                         render={({ field }) => (
                                             <FormItem>
-                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Enter Amount</FormLabel>
+                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Enter Amount (PKR)</FormLabel>
                                                 <FormControl>
                                                     <div className="relative">
-                                                        <Input type="number" step="0.01" placeholder="0.00" {...field} className="h-11 border-slate-200 pl-8 font-bold dark:border-zinc-800" />
-                                                        <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                                        <Input type="number" step="0.01" placeholder="0.00" {...field} className="h-11 border-slate-200 pl-10 font-bold dark:border-zinc-800" />
+                                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">Rs</span>
                                                     </div>
                                                 </FormControl>
                                                 <FormMessage className="text-[10px]" />
