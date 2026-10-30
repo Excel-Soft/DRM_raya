@@ -3557,8 +3557,12 @@ export function registerAccountRoutes(app: Express) {
         // the 'quotation' branch above -- re-check status='Sent' in the
         // UPDATE's own WHERE clause instead of relying only on the earlier,
         // unlocked SELECT.
-        const checkRes = await pool.query(`SELECT notes FROM drm.invoices WHERE id = $1`, [id]);
-        let updatedNotes = checkRes.rows[0]?.notes || "";
+        const checkRes = await pool.query(
+          `SELECT notes, total, currency, dollar_rate AS "dollarRate", invoice_number AS "invoiceNumber" FROM drm.invoices WHERE id = $1`,
+          [id],
+        );
+        const invRow = checkRes.rows[0];
+        let updatedNotes = invRow?.notes || "";
         if (receiptNumber || receiptImage) {
             let parsedNotes: any = {};
             try { if (updatedNotes) parsedNotes = JSON.parse(updatedNotes); } catch (e) {}
@@ -3575,6 +3579,38 @@ export function registerAccountRoutes(app: Express) {
         if (!upd.rows[0]) {
           return res.status(404).json({ error: "Invoice not found or already processed" });
         }
+
+        // D-019: `amount` was accepted here and then silently discarded --
+        // approving always flipped status straight to 'Paid' with no record
+        // of how much was actually received, so a 30,000 PKR part-payment on
+        // a 70,000 PKR invoice got reported as fully paid/zero due everywhere
+        // (every pay/due read derives "paid in full" from status==='Paid'
+        // alone). The Create Project modal always computes `amount` in PKR
+        // (totalPkr - due), regardless of the invoice's own currency -- store
+        // it as the PKR amount actually entered (ledgerEntries.currency lets
+        // it differ from the invoice's currency) rather than dividing by
+        // dollarRate up front, which would round-trip a round PKR figure like
+        // 30,000 down to 107.14 USD and back to 29,999 once the amount
+        // column's 2-decimal-place limit eats the remainder. Readers convert
+        // at calculation time instead, in full floating-point precision.
+        if (approving && amount !== undefined && amount !== null) {
+          const nativeAmount = Number(amount);
+          if (nativeAmount > 0) {
+            await pool.query(
+              `INSERT INTO drm.ledger_entries
+                 (entry_type, amount, currency, description, category, reference_id, reference_type, entry_date, created_by_user_id, status, remarks)
+               VALUES ('Credit', $1, 'PKR', $2, 'Invoice Payment', $3, 'Invoice', now(), $4, 'Posted', $5)`,
+              [
+                nativeAmount,
+                `Payment recorded on approval of invoice ${invRow?.invoiceNumber || id}`,
+                id,
+                actorUserId,
+                paymentMethod || null,
+              ],
+            );
+          }
+        }
+
         quotation = { ...upd.rows[0], source: 'standard_invoice' };
       }
 
