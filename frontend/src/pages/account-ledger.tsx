@@ -17,18 +17,19 @@ import {
     Calendar,
     Search,
     ChevronLeft,
-    User,
     Eye,
     Download,
     Filter,
     BookOpen,
-    Trash2
+    Trash2,
+    Wallet,
+    Receipt
 } from "lucide-react";
 import { useState } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useLocation } from "wouter";
+import { Link } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -84,6 +85,26 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+const paymentFormSchema = z.object({
+    amount: z.string().min(1, "Amount is required"),
+    paymentMethod: z.string().default("Cash"),
+    detail: z.string().optional(),
+    entryDate: z.string().optional(),
+});
+
+type PaymentFormValues = z.infer<typeof paymentFormSchema>;
+
+// ledger_entries.entry_date is stored as a DATE column in the live database
+// even though the Drizzle schema (and this API's response) models it as a
+// timestamp, so it round-trips as an invalid value for every real (non-
+// synthetic) receipt. date-fns' format() throws on an Invalid Date, which
+// would otherwise crash this page the first time a real payment is opened.
+const formatSafeDate = (value: string | Date | null | undefined, pattern: string): string => {
+    if (!value) return "-";
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? "-" : format(d, pattern);
+};
+
 const categories = [
     "Revenue",
     "Expense",
@@ -100,15 +121,31 @@ const categories = [
 
 export default function AccountLedger() {
     const { toast } = useToast();
-    const [, setLocation] = useLocation();
     const [dialogOpen, setDialogOpen] = useState(false);
-    const [searchQuery, setSearchQuery] = useState("");
     const [companyFilter, setCompanyFilter] = useState("");
     const [contactFilter, setContactFilter] = useState("");
     const [ntnFilter, setNtnFilter] = useState("");
     const [dateFrom, setDateFrom] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
     const pageSize = 15;
+
+    const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+    const [receiptsModalOpen, setReceiptsModalOpen] = useState(false);
+    const [selectedRow, setSelectedRow] = useState<{ coName: string; due: number; referenceId: string | null } | null>(null);
+    const [viewReceiptOpen, setViewReceiptOpen] = useState(false);
+    const [viewReceipt, setViewReceipt] = useState<any>(null);
+    const [receiptFile, setReceiptFile] = useState<File | null>(null);
+
+    const paymentForm = useForm<PaymentFormValues>({
+        resolver: zodResolver(paymentFormSchema),
+        defaultValues: {
+            amount: "",
+            paymentMethod: "Cash",
+            detail: "",
+            entryDate: new Date().toISOString().split('T')[0],
+        },
+    });
+    const watchedPaymentAmount = paymentForm.watch("amount");
 
     const form = useForm<FormValues>({
         resolver: zodResolver(formSchema),
@@ -151,6 +188,65 @@ export default function AccountLedger() {
             toast({ title: "Error", description: "Failed to create ledger entry", variant: "destructive" });
         },
     });
+
+    const makePaymentMutation = useMutation({
+        mutationFn: async (data: PaymentFormValues) => {
+            let receiptImage: string | undefined;
+            if (receiptFile) {
+                const fd = new FormData();
+                fd.append("file", receiptFile);
+                const uploadRes = await apiRequest("POST", "/api/account/dollar-system/martini-status/upload-image", fd);
+                if (!uploadRes.ok) throw new Error("Receipt upload failed");
+                const uploadData = await uploadRes.json();
+                receiptImage = uploadData.url;
+            }
+            const res = await apiRequest("POST", "/api/account/payment", {
+                invoiceId: selectedRow?.referenceId,
+                amount: data.amount,
+                paymentMethod: data.paymentMethod,
+                notes: data.detail,
+                entryDate: data.entryDate,
+                receiptImage,
+            });
+            if (!res.ok) throw new Error("Failed to record payment");
+            return res.json();
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["/api/reports/ledger"] });
+            setPaymentModalOpen(false);
+            paymentForm.reset();
+            setReceiptFile(null);
+            toast({ title: "Success", description: "Payment recorded successfully" });
+        },
+        onError: (err: any) => {
+            toast({ title: "Error", description: err?.message || "Failed to record payment", variant: "destructive" });
+        },
+    });
+
+    const { data: companyHistory, isLoading: isHistoryLoading } = useQuery({
+        queryKey: ["/api/account/history", selectedRow?.coName],
+        queryFn: async () => {
+            const res = await apiRequest("GET", `/api/account/history/${encodeURIComponent(selectedRow?.coName || '')}`);
+            return res.json();
+        },
+        enabled: receiptsModalOpen && !!selectedRow?.coName,
+    });
+
+    const onSubmitPayment = (data: PaymentFormValues) => {
+        makePaymentMutation.mutate(data);
+    };
+
+    const openPaymentModal = (coName: string, due: number, referenceId: string | null) => {
+        setSelectedRow({ coName, due, referenceId });
+        paymentForm.reset({ amount: "", paymentMethod: "Cash", detail: "", entryDate: new Date().toISOString().split('T')[0] });
+        setReceiptFile(null);
+        setPaymentModalOpen(true);
+    };
+
+    const openReceiptsModal = (coName: string, due: number, referenceId: string | null) => {
+        setSelectedRow({ coName, due, referenceId });
+        setReceiptsModalOpen(true);
+    };
 
     const entries = ledgerData?.data || [];
     const summary = ledgerData?.summary || { totalGM: 0, totalRefund: 0, totalInvoice: 0, totalDonation: 0, outstandingDues: 0 };
@@ -262,7 +358,7 @@ export default function AccountLedger() {
                                     className="h-10 border-slate-200 text-[13px] bg-white rounded-lg focus:ring-emerald-500 focus:border-emerald-500 transition-all font-medium dark:bg-zinc-900 dark:border-zinc-800" 
                                     placeholder="Enter company name"
                                     value={companyFilter}
-                                    onChange={(e) => setCompanyFilter(e.target.value)}
+                                    onChange={(e) => { setCompanyFilter(e.target.value); setCurrentPage(1); }}
                                 />
                             </div>
                             <div className="space-y-2">
@@ -310,9 +406,9 @@ export default function AccountLedger() {
                                 <div className="relative">
                                     <Input 
                                         className="h-9 w-64 border-slate-200 pl-8 text-[13px] rounded-lg dark:border-zinc-800" 
-                                        placeholder="Search across columns..."
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search by company name..."
+                                        value={companyFilter}
+                                        onChange={(e) => { setCompanyFilter(e.target.value); setCurrentPage(1); }}
                                     />
                                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
                                 </div>
@@ -360,7 +456,9 @@ export default function AccountLedger() {
                                                 <TableRow key={entry.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-slate-100 transition-colors dark:border-zinc-800">
                                                     <TableCell className="text-[13px] font-bold text-slate-400 py-4 pl-6">{(currentPage - 1) * pageSize + i + 1}</TableCell>
                                                     <TableCell className="text-[13px] font-black text-slate-700 py-4 whitespace-nowrap dark:text-zinc-400">
-                                                        <div>{coName}</div>
+                                                        <Link href={`/account/history/${encodeURIComponent(coName)}`} className="hover:text-emerald-600 hover:underline">
+                                                            {coName}
+                                                        </Link>
                                                         {entry.accountName && (
                                                             <div className="text-[10px] text-slate-400 font-medium tracking-wide mt-1 uppercase">
                                                                 {entry.accountName}
@@ -389,18 +487,19 @@ export default function AccountLedger() {
                                                     </TableCell>
                                                     <TableCell className="py-4 pr-6">
                                                         <div className="flex items-center justify-center gap-2">
-                                                            <button 
-                                                                title="View Details"
-                                                                onClick={() => setLocation(`/account/history/${encodeURIComponent(coName)}`)}
+                                                            <button
+                                                                title="Payment"
+                                                                onClick={() => openPaymentModal(coName, due, entry.referenceId)}
                                                                 className="h-7 w-7 rounded-full bg-[#059669] shadow-sm hover:bg-[#047857] flex items-center justify-center transition-colors shadow-emerald-100"
                                                             >
-                                                                <User className="h-3.5 w-3.5 text-white" />
+                                                                <Wallet className="h-3.5 w-3.5 text-white" />
                                                             </button>
-                                                            <button 
-                                                                title="Invoice Receipt"
+                                                            <button
+                                                                title="Receipts"
+                                                                onClick={() => openReceiptsModal(coName, due, entry.referenceId)}
                                                                 className="h-7 w-7 rounded-full bg-[#059669] shadow-sm hover:bg-[#047857] flex items-center justify-center transition-colors shadow-emerald-100"
                                                             >
-                                                                <Eye className="h-3.5 w-3.5 text-white" />
+                                                                <Receipt className="h-3.5 w-3.5 text-white" />
                                                             </button>
                                                         </div>
                                                     </TableCell>
@@ -584,6 +683,233 @@ export default function AccountLedger() {
                                 </form>
                             </Form>
                         </div>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Make Payment Dialog */}
+                <Dialog open={paymentModalOpen} onOpenChange={setPaymentModalOpen}>
+                    <DialogContent className="sm:max-w-[450px] max-h-[90vh] flex flex-col border-none shadow-2xl p-0 overflow-hidden rounded-2xl">
+                        <DialogHeader className="bg-[#f8fafc] p-6 border-b border-gray-100 shrink-0 dark:bg-zinc-900 dark:border-zinc-800">
+                            <DialogTitle className="text-xl font-black text-[#1e293b] flex items-center gap-2 dark:text-zinc-100">
+                                <Wallet className="h-5 w-5 text-[#10b981] dark:text-zinc-100" />
+                                MAKE <span className="text-[#10b981] dark:text-zinc-100">PAYMENT</span>
+                            </DialogTitle>
+                        </DialogHeader>
+                        <div className="p-6 overflow-y-auto flex-1 min-h-0">
+                            <Form {...paymentForm}>
+                                <form onSubmit={paymentForm.handleSubmit(onSubmitPayment)} className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Company Name</Label>
+                                            <Input value={selectedRow?.coName || ""} disabled className="h-11 border-slate-200 font-bold dark:border-zinc-800" />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">
+                                                Due{Number(watchedPaymentAmount) > 0 ? " (After This Payment)" : ""}
+                                            </Label>
+                                            <Input
+                                                value={Math.max(0, (selectedRow?.due || 0) - (Number(watchedPaymentAmount) || 0)).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                                disabled
+                                                className="h-11 border-slate-200 font-bold text-rose-600 dark:border-zinc-800"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <FormField
+                                        control={paymentForm.control}
+                                        name="entryDate"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Date</FormLabel>
+                                                <FormControl>
+                                                    <Input type="date" {...field} className="h-11 border-slate-200 font-medium dark:border-zinc-800" />
+                                                </FormControl>
+                                                <FormMessage className="text-[10px]" />
+                                            </FormItem>
+                                        )}
+                                    />
+
+                                    <FormField
+                                        control={paymentForm.control}
+                                        name="amount"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Enter Amount</FormLabel>
+                                                <FormControl>
+                                                    <div className="relative">
+                                                        <Input type="number" step="0.01" placeholder="0.00" {...field} className="h-11 border-slate-200 pl-8 font-bold dark:border-zinc-800" />
+                                                        <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                                                    </div>
+                                                </FormControl>
+                                                <FormMessage className="text-[10px]" />
+                                            </FormItem>
+                                        )}
+                                    />
+
+                                    <FormField
+                                        control={paymentForm.control}
+                                        name="paymentMethod"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Payment Method</FormLabel>
+                                                <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                                    <FormControl>
+                                                        <SelectTrigger className="h-11 border-slate-200 dark:border-zinc-800">
+                                                            <SelectValue placeholder="Select method" />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        <SelectItem value="Cash" className="text-xs">Cash</SelectItem>
+                                                        <SelectItem value="BankTransfer" className="text-xs">Bank Transfer</SelectItem>
+                                                        <SelectItem value="Cheque" className="text-xs">Cheque</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage className="text-[10px]" />
+                                            </FormItem>
+                                        )}
+                                    />
+
+                                    <FormField
+                                        control={paymentForm.control}
+                                        name="detail"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Detail</FormLabel>
+                                                <FormControl>
+                                                    <Textarea placeholder="Payment details..." {...field} className="min-h-[60px] border-slate-200 resize-none text-sm dark:border-zinc-800" />
+                                                </FormControl>
+                                                <FormMessage className="text-[10px]" />
+                                            </FormItem>
+                                        )}
+                                    />
+
+                                    <div className="space-y-2">
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Screenshot (Optional)</Label>
+                                        <Input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                                            className="border-slate-200 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold dark:border-zinc-800"
+                                        />
+                                        {receiptFile && <p className="text-[11px] text-slate-400">{receiptFile.name}</p>}
+                                    </div>
+
+                                    <DialogFooter className="pt-2 gap-2">
+                                        <Button type="button" variant="ghost" onClick={() => setPaymentModalOpen(false)} className="h-10 text-xs font-bold text-slate-400">Close</Button>
+                                        <Button type="submit" disabled={makePaymentMutation.isPending} className="h-10 px-6 text-xs bg-[#10b981] hover:bg-[#059669] text-white shadow-lg font-bold">
+                                            {makePaymentMutation.isPending ? "Saving..." : "Save"}
+                                        </Button>
+                                    </DialogFooter>
+                                </form>
+                            </Form>
+                        </div>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Receipts List Dialog */}
+                <Dialog open={receiptsModalOpen} onOpenChange={setReceiptsModalOpen}>
+                    <DialogContent className="sm:max-w-[800px] max-h-[90vh] flex flex-col border-none shadow-2xl p-0 overflow-hidden rounded-2xl">
+                        <DialogHeader className="bg-[#f8fafc] p-6 border-b border-gray-100 shrink-0 dark:bg-zinc-900 dark:border-zinc-800">
+                            <DialogTitle className="text-xl font-black text-[#1e293b] flex items-center gap-2 dark:text-zinc-100">
+                                <Receipt className="h-5 w-5 text-[#10b981] dark:text-zinc-100" />
+                                PAYMENT <span className="text-[#10b981] dark:text-zinc-100">LIST</span>
+                                {selectedRow?.coName && <span className="text-xs font-medium text-slate-400 normal-case ml-1">— {selectedRow.coName}</span>}
+                            </DialogTitle>
+                        </DialogHeader>
+                        <div className="p-6 overflow-y-auto flex-1 min-h-0">
+                            <div className="overflow-x-auto border border-slate-100 rounded-xl dark:border-zinc-800">
+                                <Table>
+                                    <TableHeader className="bg-rose-50/50 dark:bg-rose-900/10">
+                                        <TableRow className="hover:bg-transparent border-none">
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 pl-6 uppercase tracking-wider dark:text-zinc-400">Invoice ID</TableHead>
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 uppercase tracking-wider dark:text-zinc-400">Rec Id</TableHead>
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 uppercase tracking-wider dark:text-zinc-400">Amount</TableHead>
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 uppercase tracking-wider dark:text-zinc-400">Method</TableHead>
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 uppercase tracking-wider dark:text-zinc-400">Date</TableHead>
+                                            <TableHead className="text-[11px] font-black text-slate-500 py-3 text-center pr-6 uppercase tracking-wider dark:text-zinc-400">View</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {isHistoryLoading ? (
+                                            <TableRow><TableCell colSpan={6} className="text-center py-6 text-slate-400">Loading...</TableCell></TableRow>
+                                        ) : !companyHistory?.data?.receipts?.length ? (
+                                            <TableRow><TableCell colSpan={6} className="text-center py-6 text-slate-400">No receipts found</TableCell></TableRow>
+                                        ) : (
+                                            companyHistory.data.receipts.map((rec: any) => {
+                                                const inv = (companyHistory.data.invoices || []).find((i: any) => i.id === rec.referenceId);
+                                                return (
+                                                    <TableRow key={rec.id} className="hover:bg-slate-50/50 dark:hover:bg-zinc-800 border-slate-100 transition-colors dark:border-zinc-800">
+                                                        <TableCell className="text-[13px] font-bold text-slate-700 py-3 pl-6 dark:text-zinc-300">{inv?.invoiceNumber || "-"}</TableCell>
+                                                        <TableCell className="text-[13px] text-slate-500 py-3 dark:text-zinc-400">{rec.id.slice(0, 8)}</TableCell>
+                                                        <TableCell className="text-[13px] font-bold text-emerald-600 py-3">{Number(rec.amount).toLocaleString()} {rec.currency}</TableCell>
+                                                        <TableCell className="text-[13px] text-slate-600 py-3 dark:text-zinc-400">{rec.remarks || "-"}</TableCell>
+                                                        <TableCell className="text-[13px] text-slate-500 py-3 dark:text-zinc-400">{formatSafeDate(rec.entryDate, 'dd/MM/yyyy HH:mm:ss')}</TableCell>
+                                                        <TableCell className="py-3 text-center pr-6">
+                                                            <button title="View" onClick={() => { setViewReceipt(rec); setViewReceiptOpen(true); }} className="inline-flex">
+                                                                <Eye className="h-4 w-4 text-rose-500" />
+                                                            </button>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </div>
+                        <DialogFooter className="px-6 pb-6">
+                            <Button type="button" variant="ghost" onClick={() => setReceiptsModalOpen(false)} className="h-10 text-xs font-bold text-slate-400">Close</Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Receipt Detail (View) Dialog */}
+                <Dialog open={viewReceiptOpen} onOpenChange={setViewReceiptOpen}>
+                    <DialogContent className="sm:max-w-[450px] border-none shadow-2xl p-0 overflow-hidden rounded-2xl">
+                        <DialogHeader className="bg-[#f8fafc] p-6 border-b border-gray-100 dark:bg-zinc-900 dark:border-zinc-800">
+                            <DialogTitle className="text-xl font-black text-[#1e293b] flex items-center gap-2 dark:text-zinc-100">
+                                <Eye className="h-5 w-5 text-[#10b981] dark:text-zinc-100" />
+                                RECEIPT <span className="text-[#10b981] dark:text-zinc-100">DETAIL</span>
+                            </DialogTitle>
+                        </DialogHeader>
+                        {viewReceipt && (
+                            <div className="p-6 space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Rec Id</Label>
+                                        <p className="text-sm font-bold text-slate-700 dark:text-zinc-300">{viewReceipt.id.slice(0, 20)}</p>
+                                    </div>
+                                    <div>
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Amount</Label>
+                                        <p className="text-sm font-bold text-emerald-600">{Number(viewReceipt.amount).toLocaleString()} {viewReceipt.currency}</p>
+                                    </div>
+                                    <div>
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Method</Label>
+                                        <p className="text-sm font-bold text-slate-700 dark:text-zinc-300">{viewReceipt.remarks || "-"}</p>
+                                    </div>
+                                    <div>
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Date</Label>
+                                        <p className="text-sm font-bold text-slate-700 dark:text-zinc-300">{formatSafeDate(viewReceipt.entryDate, "dd/MM/yyyy hh:mm a")}</p>
+                                    </div>
+                                </div>
+                                {viewReceipt.description && (
+                                    <div>
+                                        <Label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest dark:text-zinc-400">Detail</Label>
+                                        <p className="text-sm text-slate-600 dark:text-zinc-400">{viewReceipt.description}</p>
+                                    </div>
+                                )}
+                                {viewReceipt.receiptImage ? (
+                                    <a href={viewReceipt.receiptImage} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-md text-xs font-bold uppercase hover:bg-emerald-700">
+                                        <Eye className="h-3.5 w-3.5" /> Open Receipt File
+                                    </a>
+                                ) : (
+                                    <p className="text-xs text-slate-400">No receipt file was attached for this payment.</p>
+                                )}
+                            </div>
+                        )}
+                        <DialogFooter className="px-6 pb-6">
+                            <Button type="button" variant="ghost" onClick={() => setViewReceiptOpen(false)} className="h-10 text-xs font-bold text-slate-400">Close</Button>
+                        </DialogFooter>
                     </DialogContent>
                 </Dialog>
             </div>
