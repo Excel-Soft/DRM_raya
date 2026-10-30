@@ -1618,8 +1618,15 @@ export default function AccountManagerDashboard() {
                         <CardContent className="pt-4 p-0">
                             <div className="px-4 pb-2">
                                 {[
-                                { label: "Dollar Rate", value: recentGMsQuery.data?.find((g: any) => g.dollarRate)?.dollarRate || '-', icon: DollarSign, bg: "bg-emerald-100", text: "text-emerald-600", href: "#" },
-                                { label: "Monthly Gm", value: recentGMsQuery.data?.length || 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/account/gm-entries" },
+                                // Dollar / Monthly / Total come from /gm-entries/stats only —
+                                // never from recentGMsQuery.length (that list UNION ALLs
+                                // product_posting_invoices, which inflated Monthly Gm to match Invoices).
+                                { label: "Dollar Rate", value: (() => {
+                                    const raw = gmStatsQuery.data?.dollarRate ?? recentGMsQuery.data?.find((g: any) => g.dollarRate)?.dollarRate;
+                                    const n = Number(raw);
+                                    return Number.isFinite(n) ? n.toFixed(2) : '-';
+                                })(), icon: DollarSign, bg: "bg-emerald-100", text: "text-emerald-600", href: "#" },
+                                { label: "Monthly Gm", value: gmStatsQuery.data?.monthlyCount ?? 0, icon: Briefcase, bg: "bg-blue-100", text: "text-blue-600", href: "/account/gm-entries" },
                                 { label: "Total Gm", value: gmStatsQuery.data?.totalCount || 0, icon: Clock, bg: "bg-slate-100", text: "text-slate-600 dark:text-slate-300", href: "/account/gm-entries" },
                                 { label: "Pending GM", value: gmStatsQuery.data?.pendingCount || 0, icon: TrendingUp, bg: "bg-violet-100", text: "text-violet-600", href: "/account/gm-entries" },
                                 { label: "Loans", value: gmStatsQuery.data?.loanCount || 0, icon: Calendar, bg: "bg-rose-100", text: "text-rose-600", href: "/account/gm-entries" },
@@ -1647,10 +1654,10 @@ export default function AccountManagerDashboard() {
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <ActivityProgress label="GM" value={recentGMsQuery.data?.length || 0} total={gmStatsQuery.data?.totalCount || 1} color="bg-emerald-500" />
-                            <ActivityProgress label="Pending GM" value={gmStatsQuery.data?.pendingCount || 0} total={gmStatsQuery.data?.totalCount || 1} color="bg-amber-500" />
+                            <ActivityProgress label="GM" value={gmStatsQuery.data?.monthlyCount ?? 0} total={Math.max(gmStatsQuery.data?.totalCount || 1, 1)} color="bg-emerald-500" />
+                            <ActivityProgress label="Pending GM" value={gmStatsQuery.data?.pendingCount || 0} total={Math.max(gmStatsQuery.data?.totalCount || 1, 1)} color="bg-amber-500" />
                             <ActivityProgress label="Invoice" value={invoiceStatsQuery.data?.totalCount || 0} total={Math.max(invoiceStatsQuery.data?.totalCount || 1, 1)} color="bg-emerald-500" />
-                            <ActivityProgress label="Paid" value={invoiceStatsQuery.data?.paidCount || 0} total={Math.max(invoiceStatsQuery.data?.totalCount || 1, 1)} color="bg-slate-50 dark:bg-zinc-9000" />
+                            <ActivityProgress label="Paid" value={invoiceStatsQuery.data?.paidCount || 0} total={Math.max(invoiceStatsQuery.data?.totalCount || 1, 1)} color="bg-slate-400" />
                             <ActivityProgress label="Overdue" value={invoiceStatsQuery.data?.overdueCount || 0} total={Math.max(invoiceStatsQuery.data?.totalCount || 1, 1)} color="bg-rose-500" />
                         </CardContent>
                     </Card>

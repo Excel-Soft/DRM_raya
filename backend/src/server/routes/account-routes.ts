@@ -816,14 +816,28 @@ export function registerAccountRoutes(app: Express) {
   // GET /api/account/gm-entries/stats - Get GM entries statistics
   app.get("/api/account/gm-entries/stats", requireFinancialPermission(FINANCIAL_ACTIONS.gmEntriesView, { roles: FINANCIAL_VIEW_ROLES }), async (_req, res) => {
     try {
+      // Monthly = calendar month in Asia/Karachi (same TZ the Account team uses).
+      // Dollar rate = latest non-null rate on a real GM entry (not PP invoices).
       const { rows } = await pool.query(
         `
           select
             count(*)::int as total_count,
+            count(*) filter (
+              where date_trunc('month', timezone('Asia/Karachi', created_at))
+                  = date_trunc('month', timezone('Asia/Karachi', now()))
+            )::int as monthly_count,
             coalesce(sum(coalesce(amount_usd, amount, 0)),0)::numeric as total_amount,
             count(*) filter (where status = 'Pending')::int as pending_count,
             count(*) filter (where coalesce(is_loan,false))::int as loan_count,
-            count(*) filter (where coalesce(is_partial_payment,false))::int as partial_payment_count
+            count(*) filter (where coalesce(is_partial_payment,false))::int as partial_payment_count,
+            (
+              select dollar_rate
+                from drm.gm_entries
+               where coalesce(is_deleted,false)=false
+                 and dollar_rate is not null
+               order by created_at desc nulls last
+               limit 1
+            ) as latest_dollar_rate
           from drm.gm_entries
           where coalesce(is_deleted,false)=false
         `,
@@ -831,10 +845,12 @@ export function registerAccountRoutes(app: Express) {
       const row = rows[0] || {};
       res.json({
         totalCount: row.total_count ?? 0,
+        monthlyCount: row.monthly_count ?? 0,
         totalAmountUsd: row.total_amount ?? "0",
         pendingCount: row.pending_count ?? 0,
         loanCount: row.loan_count ?? 0,
         partialPaymentCount: row.partial_payment_count ?? 0,
+        dollarRate: row.latest_dollar_rate != null ? String(row.latest_dollar_rate) : null,
       });
     } catch (error) {
       console.error("Error fetching GM stats:", error);

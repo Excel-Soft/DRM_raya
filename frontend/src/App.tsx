@@ -646,8 +646,8 @@ function AppContent() {
               {renderBody()}
             </SidebarProvider>
             <AIAssistantButton />
-            {authStatus === "authed" && <TicketAssignmentPopup />}
-            {authStatus === "authed" && <TicketReviewPopup />}
+            {authStatus === "authed" && isSupportModuleEnabled() && <TicketAssignmentPopup />}
+            {authStatus === "authed" && isSupportModuleEnabled() && <TicketReviewPopup />}
             <Toaster />
           </AssistantProvider>
         </ScreenContextProvider>

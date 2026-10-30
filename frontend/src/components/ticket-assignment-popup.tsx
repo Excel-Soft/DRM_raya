@@ -4,6 +4,7 @@ import { Check, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson, queryClient } from "@/lib/queryClient";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 
 type PendingAssignment = {
   id: string;
@@ -23,10 +24,12 @@ export function TicketAssignmentPopup() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
+  const supportEnabled = isSupportModuleEnabled();
   const pendingQuery = useQuery<PendingAssignment[]>({
     queryKey: ["/api/support/tickets/my-assignments/pending"],
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    enabled: supportEnabled,
+    refetchInterval: supportEnabled ? 30_000 : false,
+    refetchOnWindowFocus: supportEnabled,
   });
 
   const respondMutation = useMutation({
