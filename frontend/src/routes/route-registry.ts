@@ -248,6 +248,7 @@ export const routeRegistry: RouteEntry[] = [
   { path: "/reports/salary-bonuses", component: "SalaryBonuses", title: "Employee Bonuses", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/salary", component: "SalaryReport", title: "Salary Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/attendance", component: "AttendanceReport", title: "Attendance Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
+  { path: "/reports/due-payment", component: "DuePaymentReport", title: "Due Payment", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ["admin", "super_hod", "hod", "account_manager"] },
   { path: "/reports/bv-pending-ecnc", component: "ReportsBvPendingEcnc", title: "BV Pending EC/NC Only", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/in-service", component: "ReportsInService", title: "In Service Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },
   { path: "/reports/diagnose", component: "ReportsDiagnose", title: "Diagnose Report", module: "Reports", sidebarVisible: true, sidebarGroup: "Reports", permissionKey: "Report", allowedRoles: ALL_STAFF },

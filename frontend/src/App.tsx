@@ -181,6 +181,7 @@ const LedgerReport = lazy(() => import("@/pages/ledger-report"));
 const GMReport = lazy(() => import("@/pages/gm-report"));
 const RefundReport = lazy(() => import("@/pages/refund-report"));
 const InvoiceReport = lazy(() => import("@/pages/invoice-report"));
+const DuePaymentReport = lazy(() => import("@/pages/due-payment-report"));
 const BvReportNew = lazy(() => import("@/pages/bv-report-new"));
 const LoanReportNew = lazy(() => import("@/pages/loan-report-new"));
 const VasReportNew = lazy(() => import("@/pages/vas-report-new"));
@@ -419,6 +420,7 @@ function Router() {
       <Route path="/reports/event" component={EventReport} />
       <Route path="/reports/department" component={DepartmentReport} />
       <Route path="/reports/edit-att" component={EditAtt} />
+      <Route path="/reports/due-payment" component={DuePaymentReport} />
       <Route path="/reports" component={UserReports} />
       <Route path="/reports/:type" component={UserReports} />
       <Route path="/analytics/user-activity" component={UserActivityReport} />

@@ -1940,7 +1940,7 @@ router.get("/reports/bv/export", requireReportPermission("bv_report", "export"),
 
 router.get("/reports/:type", async (req, res, next) => {
   const reportType = req.params.type as string;
-  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "due-payments", "users-list", "summary"];
   if (specificRoutes.includes(reportType)) {
     return next();
   }
@@ -2051,7 +2051,7 @@ router.get("/reports/:type", async (req, res, next) => {
 
 router.get("/reports/:type/export", async (req, res, next) => {
   const reportType = req.params.type as string;
-  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "due-payments", "users-list", "summary"];
   if (specificRoutes.includes(reportType)) {
     return next();
   }
@@ -2126,7 +2126,7 @@ router.get("/reports/:type/export", async (req, res, next) => {
 
 router.post("/reports/:type/email", async (req, res, next) => {
   const reportType = req.params.type as string;
-  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "users-list", "summary"];
+  const specificRoutes = ["user-activities", "ledger", "gm-entries", "refund-entries", "invoice-entries", "due-payments", "users-list", "summary"];
   if (specificRoutes.includes(reportType)) {
     return next();
   }
@@ -2543,6 +2543,51 @@ router.get("/reports/invoice-entries", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// GET /api/reports/due-payments — legacy duepayment.php equivalent: every
+// product-posting invoice that's been partially paid (paid_amount > 0) but
+// still has more than $100 left owing. No pagination, matching the legacy
+// page's own single-page-with-footer-totals layout.
+router.get("/reports/due-payments", async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+    const role = String((user as any).activeRoleId || user.roleId || "").toLowerCase();
+    if (!["admin", "super_admin", "super_hod", "hod", "account_manager"].includes(role)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const { rows } = await pool.query(`
+      select p.id,
+             p.company_name as "companyName",
+             coalesce(u.full_name, u.name, u.username) as "salesPerson",
+             p.amount::numeric as total,
+             coalesce(p.paid_amount, 0)::numeric as pay,
+             (p.amount - coalesce(p.paid_amount, 0))::numeric as due,
+             coalesce(p.invoice_date, p.created_at) as date
+        from drm.product_posting_invoices p
+        left join drm.users u on u.id = p.sales_exec_id
+       where coalesce(p.paid_amount, 0) > 0
+         and (p.amount - coalesce(p.paid_amount, 0)) > 100
+       order by coalesce(p.invoice_date, p.created_at) desc
+    `);
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.total += Number(r.total) || 0;
+        acc.pay += Number(r.pay) || 0;
+        acc.due += Number(r.due) || 0;
+        return acc;
+      },
+      { total: 0, pay: 0, due: 0 },
+    );
+
+    res.json({ success: true, data: rows, totals });
+  } catch (error: any) {
+    console.error("Error fetching due payments report:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/reports/users-list", async (req, res) => {
   try {
     if (!req.user) {
