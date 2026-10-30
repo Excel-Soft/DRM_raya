@@ -340,9 +340,11 @@ const gmPackages = [
  * `final_status = 'approved'`). A PARTIAL *or* FULL GM is blocked until its
  * recorded receipts cover the full customer dollar (remaining <= 0) — FULL GM
  * reuses the exact same receipts ledger, just with a single expected receipt
- * instead of several; a LOAN GM is blocked until an Admin (Super HOD) has
- * approved its loan terms. Returns the LEGACY `{ error, code, details }` body used
- * by the surrounding approval routes so existing frontends keep working unchanged.
+ * instead of several.
+ *
+ * LOAN GMs: Account Manager may finalize after HOD approval without waiting on
+ * Super HOD loan-terms approval. Customer repayment installments are tracked
+ * after final approval; Super HOD must not block AM Accountant Approve.
  */
 async function enforceLoanPartialFinalApprovalGate(
   id: string,
@@ -382,24 +384,8 @@ async function enforceLoanPartialFinalApprovalGate(
     */
   }
 
-  if (isLoan) {
-    const lt = await pool.query(
-      "SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
-      [id],
-    );
-    const status = (lt.rows[0]?.admin_approval_status as string | undefined) ?? "NONE";
-    if (status !== "APPROVED") {
-      return {
-        ok: false,
-        status: 409,
-        body: {
-          error: "Cannot grant final approval: this loan GM requires Admin (Super HOD) approval of its loan terms first.",
-          code: "LOAN_ADMIN_APPROVAL_REQUIRED",
-          details: { adminApprovalStatus: status },
-        },
-      };
-    }
-  }
+  // Loan Super HOD terms gate removed for AM final approval — see account-routes.
+  void isLoan;
 
   return { ok: true };
 }
@@ -409,9 +395,9 @@ async function enforceLoanPartialFinalApprovalGate(
  * ledger (`drm.gm_loan_receivables`) the moment its final approval actually
  * goes through. Best-effort and idempotent (unique index on gm_id) — never
  * throws, since a ledger-write failure must not block the approval itself.
- * No-ops for non-loan GMs or when loan terms aren't Admin-approved yet
- * (callers only reach this after `enforceLoanPartialFinalApprovalGate`
- * already confirmed both, so this is a defensive re-check).
+ *
+ * If Super HOD never approved loan terms, seed/promote them here so AM final
+ * approval still opens the repayment ledger (installments are collected after).
  */
 export async function ensureLoanReceivableOnFinalApproval(
   gmId: string,
@@ -419,19 +405,56 @@ export async function ensureLoanReceivableOnFinalApproval(
 ): Promise<void> {
   try {
     const gm = await pool.query(
-      "SELECT is_loan, customer_id FROM drm.gm_entries WHERE id = $1",
+      `SELECT is_loan, customer_id, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target
+         FROM drm.gm_entries WHERE id = $1`,
       [gmId],
     );
     if (Number(gm.rows[0]?.is_loan) !== 1) return;
+    const target = Number(gm.rows[0]?.target || 0);
 
-    const terms = await pool.query(
+    let terms = await pool.query(
       "SELECT loan_amount_usd, company_copay_usd, agreed_return_date, admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
       [gmId],
     );
-    const t = terms.rows[0];
-    if (!t || t.admin_approval_status !== "APPROVED" || !t.agreed_return_date) return;
+    if (terms.rowCount === 0) {
+      const returnDate = new Date();
+      returnDate.setDate(returnDate.getDate() + 30);
+      await pool.query(
+        `INSERT INTO drm.gm_loan_terms
+           (gm_id, loan_amount_usd, company_copay_usd, agreed_return_date,
+            admin_approval_status, admin_approved_by, admin_approved_at, admin_comment, created_by)
+         VALUES ($1, $2, 0, $3, 'APPROVED', $4, now(),
+                 'Auto-approved on Account Manager final approval', $4)
+         ON CONFLICT (gm_id) DO NOTHING`,
+        [gmId, target, returnDate.toISOString().slice(0, 10), actorUserId ?? null],
+      );
+      terms = await pool.query(
+        "SELECT loan_amount_usd, company_copay_usd, agreed_return_date, admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
+        [gmId],
+      );
+    } else if ((terms.rows[0]?.admin_approval_status as string) !== "APPROVED") {
+      await pool.query(
+        `UPDATE drm.gm_loan_terms
+            SET admin_approval_status = 'APPROVED',
+                admin_approved_by = COALESCE($2, admin_approved_by),
+                admin_approved_at = COALESCE(admin_approved_at, now()),
+                admin_comment = COALESCE(admin_comment, 'Auto-approved on Account Manager final approval'),
+                agreed_return_date = COALESCE(agreed_return_date, (CURRENT_DATE + INTERVAL '30 days')::date),
+                loan_amount_usd = CASE WHEN COALESCE(loan_amount_usd, 0) = 0 THEN $3 ELSE loan_amount_usd END,
+                updated_at = now()
+          WHERE gm_id = $1`,
+        [gmId, actorUserId ?? null, target],
+      );
+      terms = await pool.query(
+        "SELECT loan_amount_usd, company_copay_usd, agreed_return_date, admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
+        [gmId],
+      );
+    }
 
-    const loanAmount = Number(t.loan_amount_usd || 0);
+    const t = terms.rows[0];
+    if (!t || !t.agreed_return_date) return;
+
+    const loanAmount = Number(t.loan_amount_usd || target || 0);
     const webexcelsContribution = Number(t.company_copay_usd || 0);
     const customerContribution = Math.max(0, loanAmount - webexcelsContribution);
     await pool.query(

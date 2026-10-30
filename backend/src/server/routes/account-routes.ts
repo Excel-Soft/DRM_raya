@@ -188,12 +188,13 @@ async function enforceApprovalThreshold(
 }
 
 /**
- * Patch 5 Stage 3 — final-approval gate (mirror of the gm-pool-routes helper) for
- * FULL, PARTIAL (P4) and LOAN (P5) GMs. A PARTIAL or FULL GM is blocked until its
- * receipts cover the full customer dollar (FULL reuses the same ledger, just
- * expecting one receipt instead of several); a LOAN GM is blocked until its
- * loan terms are Admin (Super HOD) approved. Returns the LEGACY `{ error, code,
- * details }` body shape used by the surrounding approve route.
+ * Final-approval gate for FULL / PARTIAL / LOAN GMs (mirror of gm-pool-routes).
+ *
+ * Loan GMs: Account Manager may finalize after HOD approval without waiting on
+ * Super HOD loan-terms approval. Customer repayment installments are collected
+ * *after* final approval via the receivables ledger — Super HOD oversight of
+ * terms remains available in the admin queue but must not block AM "Cash
+ * Received" / Accountant Approve when the payment side is complete.
  */
 async function enforceLoanPartialFinalApprovalGate(
   id: string,
@@ -233,26 +234,60 @@ async function enforceLoanPartialFinalApprovalGate(
     */
   }
 
-  if (isLoan) {
-    const lt = await pool.query(
-      "SELECT admin_approval_status FROM drm.gm_loan_terms WHERE gm_id = $1",
-      [id],
-    );
-    const status = (lt.rows[0]?.admin_approval_status as string | undefined) ?? "NONE";
-    if (status !== "APPROVED") {
-      return {
-        ok: false,
-        status: 409,
-        body: {
-          error: "Cannot grant final approval: this loan GM requires Admin (Super HOD) approval of its loan terms first.",
-          code: "LOAN_ADMIN_APPROVAL_REQUIRED",
-          details: { adminApprovalStatus: status },
-        },
-      };
-    }
-  }
+  // Loan Super HOD terms gate removed for AM final approval (ops rule):
+  // HOD-approved loan GM + Account Manager payment confirmation is enough.
+  void isLoan;
 
   return { ok: true };
+}
+
+/** Promote / seed loan terms so the receivables ledger can open after AM approve. */
+async function ensureLoanTermsReadyForReceivable(
+  gmId: string,
+  actorUserId?: string | null,
+): Promise<void> {
+  try {
+    const gmRes = await pool.query(
+      `SELECT is_loan, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target
+         FROM drm.gm_entries WHERE id = $1`,
+      [gmId],
+    );
+    if (Number(gmRes.rows[0]?.is_loan) !== 1) return;
+    const target = Number(gmRes.rows[0]?.target || 0);
+
+    const lt = await pool.query(`SELECT * FROM drm.gm_loan_terms WHERE gm_id = $1`, [gmId]);
+    if (lt.rowCount === 0) {
+      const returnDate = new Date();
+      returnDate.setDate(returnDate.getDate() + 30);
+      await pool.query(
+        `INSERT INTO drm.gm_loan_terms
+           (gm_id, loan_amount_usd, company_copay_usd, agreed_return_date,
+            admin_approval_status, admin_approved_by, admin_approved_at, admin_comment, created_by)
+         VALUES ($1, $2, 0, $3, 'APPROVED', $4, now(),
+                 'Auto-approved on Account Manager final approval', $4)
+         ON CONFLICT (gm_id) DO NOTHING`,
+        [gmId, target, returnDate.toISOString().slice(0, 10), actorUserId || null],
+      );
+      return;
+    }
+
+    const row = lt.rows[0];
+    if ((row.admin_approval_status as string) === "APPROVED") return;
+    await pool.query(
+      `UPDATE drm.gm_loan_terms
+          SET admin_approval_status = 'APPROVED',
+              admin_approved_by = COALESCE($2, admin_approved_by),
+              admin_approved_at = COALESCE(admin_approved_at, now()),
+              admin_comment = COALESCE(admin_comment, 'Auto-approved on Account Manager final approval'),
+              agreed_return_date = COALESCE(agreed_return_date, (CURRENT_DATE + INTERVAL '30 days')::date),
+              loan_amount_usd = CASE WHEN COALESCE(loan_amount_usd, 0) = 0 THEN $3 ELSE loan_amount_usd END,
+              updated_at = now()
+        WHERE gm_id = $1`,
+      [gmId, actorUserId || null, target],
+    );
+  } catch (err) {
+    console.error(`[accounts] ensureLoanTermsReadyForReceivable failed for GM ${gmId} (non-fatal):`, err);
+  }
 }
 
 export function registerAccountRoutes(app: Express) {
@@ -2195,6 +2230,7 @@ export function registerAccountRoutes(app: Express) {
       const entry = rows[0];
 
       if (status === "Approved") {
+        await ensureLoanTermsReadyForReceivable(id, req.user.userId);
         await ensureLoanReceivableOnFinalApproval(id, req.user.userId);
       }
 
@@ -2288,6 +2324,7 @@ export function registerAccountRoutes(app: Express) {
       );
       if (!rows[0]) return res.status(404).json({ error: "GM entry not found or already processed" });
 
+      await ensureLoanTermsReadyForReceivable(req.params.id, req.user.userId);
       await ensureLoanReceivableOnFinalApproval(req.params.id, req.user.userId);
 
       const entry = rows[0];
