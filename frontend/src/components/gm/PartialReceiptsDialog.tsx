@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { mutationRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, extractApiError, mutationRequest, queryClient } from "@/lib/queryClient";
 import { Trash2, Plus, Wallet, Loader2, Pencil } from "lucide-react";
 
 interface Props {
@@ -27,6 +27,7 @@ interface ReceiptRow {
   method: string | null;
   reference: string | null;
   receiptDate: string;
+  screenshotUrl: string | null;
   collectedByName: string | null;
   due: number;
 }
@@ -73,6 +74,16 @@ const blankPayForm = (due: string): PayForm => ({
   date: todayStr(), due, dollar: "", dollarRate: "", paymentMethod: "", recoveryType: "",
 });
 
+/** PKR for save: when rate is set, always derive from dollar × rate (form PKR is display-only). */
+function resolveDraftRowPkr(row: DraftRow): number {
+  const dollar = Number(row.dollar) || 0;
+  const rate = Number(row.dollarRate) || 0;
+  if (rate > 0 && dollar > 0) {
+    return Number((dollar * rate).toFixed(2));
+  }
+  return row.pkr.trim() ? Number(row.pkr) : 0;
+}
+
 /**
  * Account History / Add New Installment — mirrors the legacy "Time History
  * Details" layout: a top form to schedule one or more installments (each a
@@ -87,7 +98,10 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [payingIndex, setPayingIndex] = useState<number | null>(null);
   const [payForm, setPayForm] = useState<PayForm>(blankPayForm("0.00"));
+  const [payScreenshotFile, setPayScreenshotFile] = useState<File | null>(null);
+  const [payScreenshotUploading, setPayScreenshotUploading] = useState(false);
   const formTopRef = useRef<HTMLDivElement>(null);
+  const payScreenshotInputRef = useRef<HTMLInputElement>(null);
 
   const key = ["/api/gm-pool", gmId, "partial-receipts"];
   const { data, isLoading } = useQuery<any>({
@@ -118,7 +132,11 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
     setDraftRows([blankRow()]);
   };
 
-  const cancelPay = () => setPayingIndex(null);
+  const cancelPay = () => {
+    setPayingIndex(null);
+    setPayScreenshotFile(null);
+    if (payScreenshotInputRef.current) payScreenshotInputRef.current.value = "";
+  };
 
   const submitInstallments = useMutation({
     mutationFn: async () => {
@@ -127,7 +145,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
         if (!r.dollar.trim()) throw new Error("Enter the installment's dollar amount");
         return mutationRequest("PATCH", `/api/gm-pool/${gmId}/installments/${editingIndex}`, {
           dollar: Number(r.dollar),
-          pkr: r.pkr ? Number(r.pkr) : 0,
+          pkr: resolveDraftRowPkr(r),
           dollarRate: r.dollarRate ? Number(r.dollarRate) : undefined,
           chequeNo: r.chequeNo || undefined,
           payDate: r.payDate || undefined,
@@ -137,7 +155,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
         .filter(r => r.dollar.trim() !== "")
         .map(r => ({
           dollar: Number(r.dollar),
-          pkr: r.pkr ? Number(r.pkr) : 0,
+          pkr: resolveDraftRowPkr(r),
           dollarRate: r.dollarRate ? Number(r.dollarRate) : undefined,
           chequeNo: r.chequeNo || undefined,
           payDate: r.payDate || undefined,
@@ -156,10 +174,18 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
   });
 
   const addReceipt = useMutation({
-    mutationFn: async (vars: { amountUsd: number; amountPkr?: number; dollarRate?: number; receiptDate?: string; method?: string; reference?: string; notes?: string }) =>
-      mutationRequest("POST", `/api/gm-pool/${gmId}/partial-receipts`, vars),
+    mutationFn: async (vars: {
+      amountUsd: number;
+      amountPkr?: number;
+      dollarRate?: number;
+      receiptDate?: string;
+      method?: string;
+      reference?: string;
+      notes?: string;
+      screenshotUrl?: string;
+    }) => mutationRequest("POST", `/api/gm-pool/${gmId}/partial-receipts`, vars),
     onSuccess: () => {
-      setPayingIndex(null);
+      cancelPay();
       invalidate();
       toast({ title: "Payment collected" });
     },
@@ -167,7 +193,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
       toast({ title: "Error", description: e?.message || "Failed to record receipt", variant: "destructive" }),
   });
 
-  const submitPayment = () => {
+  const submitPayment = async () => {
     if (payingIndex === null) return;
     const dollar = Number(payForm.dollar);
     if (!dollar || dollar <= 0) {
@@ -176,6 +202,25 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
     }
     const row = installments[payingIndex];
     const dollarRate = Number(payForm.dollarRate) || 0;
+    let screenshotUrl: string | undefined;
+    if (payScreenshotFile) {
+      setPayScreenshotUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", payScreenshotFile);
+        const uploadRes = await apiRequest("POST", "/api/gm-pool/partial-receipt-screenshot", fd);
+        const uploadBody = await uploadRes.json().catch(() => ({}));
+        if (!uploadRes.ok) {
+          throw new Error(extractApiError(uploadBody, uploadRes.status));
+        }
+        screenshotUrl = uploadBody.url ?? uploadBody.data?.url;
+      } catch (e: any) {
+        toast({ title: "Upload failed", description: e?.message || "Could not upload screenshot", variant: "destructive" });
+        setPayScreenshotUploading(false);
+        return;
+      }
+      setPayScreenshotUploading(false);
+    }
     addReceipt.mutate({
       amountUsd: dollar,
       amountPkr: dollarRate > 0 ? Number((dollar * dollarRate).toFixed(2)) : undefined,
@@ -184,6 +229,7 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
       method: payForm.paymentMethod || undefined,
       reference: row?.chequeNo ? `Cheque #${row.chequeNo}` : undefined,
       notes: payForm.recoveryType ? `Recovery Type: ${payForm.recoveryType}` : undefined,
+      screenshotUrl,
     });
   };
 
@@ -267,6 +313,9 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                       className="h-9 w-full border border-gray-300 rounded-md px-2 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-sm focus:outline-none"
                     >
                       <option value="">Choose...</option>
+                      <option value="Online Paid">Online Paid</option>
+                      <option value="Cash received">Cash received</option>
+                      <option value="Customer Paid">Customer Paid</option>
                       <option value="Cash">Cash</option>
                       <option value="Bank Transfer">Bank Transfer</option>
                       <option value="Cheque">Cheque</option>
@@ -285,10 +334,31 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                       <option value="Partial Recovery">Partial Recovery</option>
                     </select>
                   </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Payment Screenshot <span className="text-muted-foreground font-normal">(optional)</span>
+                    </label>
+                    <input
+                      ref={payScreenshotInputRef}
+                      type="file"
+                      accept="image/*,.pdf"
+                      className="block w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                      onChange={e => setPayScreenshotFile(e.target.files?.[0] ?? null)}
+                    />
+                    {payScreenshotFile && (
+                      <p className="text-[10px] text-emerald-600 mt-1 truncate">✓ {payScreenshotFile.name}</p>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
-                  <Button type="button" size="sm" disabled={addReceipt.isPending} onClick={submitPayment} className="gap-1 bg-[#00a65a] hover:bg-[#008d4c]">
-                    {addReceipt.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={addReceipt.isPending || payScreenshotUploading}
+                    onClick={() => void submitPayment()}
+                    className="gap-1 bg-[#00a65a] hover:bg-[#008d4c]"
+                  >
+                    {(addReceipt.isPending || payScreenshotUploading) && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={cancelPay}>
                     Cancel
@@ -408,6 +478,8 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                                     onClick={() => {
                                       setPayingIndex(row.no - 1);
                                       setPayForm(blankPayForm(row.due.toFixed(2)));
+                                      setPayScreenshotFile(null);
+                                      if (payScreenshotInputRef.current) payScreenshotInputRef.current.value = "";
                                       setEditingIndex(null);
                                       formTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
                                     }}
@@ -465,14 +537,14 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="bg-gray-50 dark:bg-zinc-800">
                         <tr>
-                          {["No", "Paid Date", "Company", "Person", "Dollar", "Dollar Rate", "Pkr", "Due", "Create"].map(h => (
+                          {["No", "Paid Date", "Company", "Person", "Dollar", "Dollar Rate", "Pkr", "Due", "Screenshot", "Create"].map(h => (
                             <th key={h} className="px-2 py-1.5 text-left font-semibold">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {receipts.length === 0 ? (
-                          <tr><td colSpan={9} className="px-2 py-4 text-center text-gray-400">No receipts yet</td></tr>
+                          <tr><td colSpan={10} className="px-2 py-4 text-center text-gray-400">No receipts yet</td></tr>
                         ) : (
                           receipts.map((r, i) => (
                             <tr key={r.id} className="border-t">
@@ -484,6 +556,18 @@ export function PartialReceiptsDialog({ gmId, companyName, isPartialPayment, ope
                               <td className="px-2 py-1.5">{r.dollarRate ?? "—"}</td>
                               <td className="px-2 py-1.5">{r.amountPkr ? Number(r.amountPkr).toLocaleString() : "—"}</td>
                               <td className="px-2 py-1.5">{fmt(r.due)}</td>
+                              <td className="px-2 py-1.5">
+                                {r.screenshotUrl ? (
+                                  <a
+                                    href={r.screenshotUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    View
+                                  </a>
+                                ) : "—"}
+                              </td>
                               <td className="px-2 py-1.5">{r.collectedByName || "—"}</td>
                             </tr>
                           ))

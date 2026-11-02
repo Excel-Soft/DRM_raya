@@ -28,6 +28,7 @@ import {
 } from "./services/gm-create-policy.service.js";
 import { mapGmTypeToDbFlags, GM_TYPES, GM_INVOICE_GENERATION_TIMING, type GmSalesConfig } from "../../shared/gm-sales-constants";
 import { assertQuotationForGmCreate } from "../services/sales-workflow.service";
+import { companyHasBlockingTempGm } from "../services/temp-gm-guards";
 import { transitionWorkflowStatus } from "./services/workflow-status.service.js";
 import { ApiError } from "../utils/api-error";
 import {
@@ -337,55 +338,52 @@ const gmPackages = [
 /**
  * Patch 5 Stage 3 — final-approval gate for FULL, PARTIAL (P4) and LOAN (P5)
  * GMs. Runs immediately before any transition that finalises a GM (sets
- * `final_status = 'approved'`). A PARTIAL *or* FULL GM is blocked until its
- * recorded receipts cover the full customer dollar (remaining <= 0) — FULL GM
- * reuses the exact same receipts ledger, just with a single expected receipt
- * instead of several.
+ * `final_status = 'approved'`).
  *
- * LOAN GMs: Account Manager may finalize after HOD approval without waiting on
- * Super HOD loan-terms approval. Customer repayment installments are tracked
- * after final approval; Super HOD must not block AM Accountant Approve.
+ * PARTIAL / LOAN: blocked until gm_partial_receipts cover the effective
+ * installment target. FULL: no installment gate (screenshot on Accountant UI).
+ * Super HOD loan-terms approval is NOT required for AM finalization.
  */
 async function enforceLoanPartialFinalApprovalGate(
   id: string,
 ): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
   const cur = await pool.query(
-    "SELECT is_loan, is_partial_payment, COALESCE(customer_dollar, amount_usd, 0)::numeric AS target FROM drm.gm_entries WHERE id = $1",
+    `SELECT is_loan, is_partial_payment, installments,
+            COALESCE(customer_dollar, amount_usd, 0)::numeric AS target
+       FROM drm.gm_entries WHERE id = $1`,
     [id],
   );
   const e = cur.rows[0];
   if (!e) return { ok: true }; // missing GM → let the route's own 404 handle it
-  const isLoan = Number(e.is_loan) === 1;
-  const isPartial = Number(e.is_partial_payment) === 1;
-  const isFull = !isLoan && !isPartial;
+  const isLoan = Number(e.is_loan) === 1 || e.is_loan === true;
+  const isPartial = Number(e.is_partial_payment) === 1 || e.is_partial_payment === true;
 
-  if (isPartial || isFull) {
-    /* BYPASS FOR TESTING: Disable the receipt-check for partial and full GMs
+  if (isPartial || isLoan) {
+    const instRows = Array.isArray(e.installments)
+      ? e.installments
+      : (typeof e.installments === "string"
+          ? (() => { try { return JSON.parse(e.installments); } catch { return []; } })()
+          : []);
+    const scheduledTotal = (instRows as any[]).reduce((sum, r) => sum + Number(r?.dollar || 0), 0);
+    const target = Math.max(Number(e.target || 0), Number(scheduledTotal.toFixed(2)));
     const paidRes = await pool.query(
       "SELECT COALESCE(SUM(amount_usd), 0)::numeric AS paid FROM drm.gm_partial_receipts WHERE gm_id = $1",
       [id],
     );
-    const target = Number(e.target || 0);
-    const paid = Number(paidRes.rows[0]?.paid || 0);
+    const paid = Number(Number(paidRes.rows[0]?.paid || 0).toFixed(2));
     const remaining = Number((target - paid).toFixed(2));
     if (remaining > 0.009) {
       return {
         ok: false,
         status: 409,
         body: {
-          error: isFull
-            ? `Cannot grant final approval: this GM's payment has not been recorded yet ($${remaining.toFixed(2)} unconfirmed). Log a receipt for the full amount first.`
-            : `Cannot grant final approval: this partial-payment GM still has an outstanding balance of $${remaining.toFixed(2)}. Record receipts until it is fully paid first.`,
-          code: isFull ? "FULL_PAYMENT_UNCONFIRMED" : "PARTIAL_PAYMENT_INCOMPLETE",
-          details: { target, paid, remaining },
+          error: "Approve all installments first, then this GM can be approved.",
+          code: isLoan ? "LOAN_INSTALLMENTS_INCOMPLETE" : "PARTIAL_PAYMENT_INCOMPLETE",
+          details: { target, paid, remaining, fullyPaid: false },
         },
       };
     }
-    */
   }
-
-  // Loan Super HOD terms gate removed for AM final approval — see account-routes.
-  void isLoan;
 
   return { ok: true };
 }
@@ -981,6 +979,13 @@ export function registerGmPoolRoutes(app: Express) {
       // so we reuse it instead of minting a new one for every GM entry.
       let existingDrmId: string | null = null;
       if (parsed.companyName && !req.body.allowDuplicate) {
+        if (await companyHasBlockingTempGm(pool, parsed.companyName)) {
+          throw new ApiError(
+            409,
+            "TEMP_GM_BLOCKS_GM",
+            "This company has an active Temp GM. Account must remove the Temp GM before you can add a GM from the pool.",
+          );
+        }
         const existingGmCheck = await pool.query(
           `SELECT id FROM drm.gm_entries 
             WHERE lower(trim(company_name)) = lower(trim($1)) 
@@ -2571,6 +2576,7 @@ export function registerGmPoolRoutes(app: Express) {
     method: z.string().trim().max(80).optional(),
     reference: z.string().trim().max(160).optional(),
     notes: z.string().trim().max(1000).optional(),
+    screenshotUrl: z.string().trim().max(2000).optional(),
   });
 
   // --- P4: list partial receipts + payment summary --------------------------
@@ -2588,7 +2594,7 @@ export function registerGmPoolRoutes(app: Express) {
       const receipts = await pool.query(
         `SELECT r.id, r.gm_id AS "gmId", r.amount_usd AS "amountUsd", r.amount_pkr AS "amountPkr",
                 r.dollar_rate AS "dollarRate", r.receipt_date AS "receiptDate", r.method, r.reference,
-                r.notes, r.collected_by AS "collectedBy", r.created_at AS "createdAt",
+                r.notes, r.screenshot_url AS "screenshotUrl", r.collected_by AS "collectedBy", r.created_at AS "createdAt",
                 COALESCE(u.full_name, u.name, u.username) AS "collectedByName"
            FROM drm.gm_partial_receipts r
            LEFT JOIN drm.users u ON u.id::text = r.collected_by::text
@@ -2613,13 +2619,17 @@ export function registerGmPoolRoutes(app: Express) {
       let remainingPaid = summary.paid;
       const installments = rawInstallments.map((row: any, idx: number) => {
         const dollar = Number(row.dollar || 0);
-        const pkr = Number(row.pkr || 0);
+        const rateRaw = row.dollarRate != null ? Number(row.dollarRate) : null;
+        let pkr = resolveInstallmentPkr(dollar, row.pkr, rateRaw);
         const pay = Number(Math.max(0, Math.min(dollar, remainingPaid)).toFixed(2));
         remainingPaid = Number((remainingPaid - pay).toFixed(2));
         // Rows added before this field existed have no stored rate — derive a
         // display-only rate from pkr/dollar so the column isn't blank for them.
-        const dollarRate = row.dollarRate != null ? Number(row.dollarRate)
+        const dollarRate = rateRaw != null ? rateRaw
           : (dollar > 0 && pkr > 0 ? Number((pkr / dollar).toFixed(4)) : null);
+        if (pkr <= 0 && dollarRate != null && dollar > 0) {
+          pkr = Number((dollar * dollarRate).toFixed(2));
+        }
         return {
           no: idx + 1,
           installmentDate: row.payDate || null,
@@ -2656,6 +2666,14 @@ export function registerGmPoolRoutes(app: Express) {
     }
   });
 
+  function resolveInstallmentPkr(dollar: number, pkr: number | undefined, dollarRate: number | undefined | null): number {
+    const stored = Number(pkr ?? 0);
+    const rate = dollarRate != null ? Number(dollarRate) : 0;
+    if (stored > 0) return Number(stored.toFixed(2));
+    if (rate > 0 && dollar > 0) return Number((dollar * rate).toFixed(2));
+    return 0;
+  }
+
   const installmentRowSchema = z.object({
     dollar: z.coerce.number().positive(),
     pkr: z.coerce.number().nonnegative().optional().default(0),
@@ -2687,7 +2705,7 @@ export function registerGmPoolRoutes(app: Express) {
         const now = new Date().toISOString();
         const newRows = input.rows.map((r) => ({
           dollar: r.dollar,
-          pkr: r.pkr ?? 0,
+          pkr: resolveInstallmentPkr(r.dollar, r.pkr, r.dollarRate ?? null),
           dollarRate: r.dollarRate ?? null,
           chequeNo: r.chequeNo || null,
           payDate: r.payDate ? r.payDate.toISOString().slice(0, 10) : null,
@@ -2739,7 +2757,11 @@ export function registerGmPoolRoutes(app: Express) {
         updated[idx] = {
           ...updated[idx],
           dollar: input.dollar,
-          pkr: input.pkr ?? 0,
+          pkr: resolveInstallmentPkr(
+            input.dollar,
+            input.pkr,
+            input.dollarRate ?? updated[idx].dollarRate ?? null,
+          ),
           dollarRate: input.dollarRate ?? updated[idx].dollarRate ?? null,
           chequeNo: input.chequeNo || null,
           payDate: input.payDate ? input.payDate.toISOString().slice(0, 10) : null,
@@ -2761,6 +2783,58 @@ export function registerGmPoolRoutes(app: Express) {
         if (err instanceof z.ZodError) return sendError(res, 400, "VALIDATION", "Invalid installment data", zodIssues(err));
         console.error("[gm-pool] edit installment error:", err);
         return sendError(res, 500, "INTERNAL", "Failed to edit installment");
+      }
+    },
+  );
+
+  // --- Optional payment screenshot for installment receipts (same auth as partial receipt) ---
+  router.post(
+    "/gm-pool/partial-receipt-screenshot",
+    requireGmSalesActionPermission(GM_SALES_ACTION_KEYS.GM_ADD_PARTIAL_RECEIPT, { auditUnauthorizedAttempt: true }),
+    async (req, res) => {
+      try {
+        if (!req.user) return sendError(res, 401, "UNAUTHENTICATED", "Authentication required");
+        const multer = (await import("multer")).default;
+        const path = await import("path");
+        const fs = await import("fs");
+
+        const uploadDir = path.join(process.cwd(), "uploads", "partial-receipts");
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+        const storage = multer.diskStorage({
+          destination: (_req: any, _file: any, cb: any) => cb(null, uploadDir),
+          filename: (_req: any, file: any, cb: any) => {
+            const ext = path.extname(file.originalname) || ".png";
+            cb(null, `receipt_${Date.now()}${ext}`);
+          },
+        });
+        const upload = multer({
+          storage,
+          limits: { fileSize: 10 * 1024 * 1024 },
+          fileFilter: (_req: any, file: any, cb: any) => {
+            const ok =
+              /^image\//.test(file.mimetype) ||
+              file.mimetype === "application/pdf" ||
+              /\.(png|jpe?g|gif|webp|pdf)$/i.test(file.originalname || "");
+            cb(null, ok);
+          },
+        });
+
+        upload.single("file")(req as any, res as any, (err: any) => {
+          if (err) {
+            return sendError(res, 400, "UPLOAD_FAILED", err.message || "Upload failed");
+          }
+          const file = (req as any).file;
+          if (!file) {
+            return sendError(res, 400, "NO_FILE", "No file uploaded");
+          }
+          return sendSuccess(res, {
+            url: `/uploads/partial-receipts/${file.filename}`,
+          });
+        });
+      } catch (err) {
+        console.error("[gm-pool] partial receipt screenshot upload error:", err);
+        return sendError(res, 500, "INTERNAL", "Upload failed");
       }
     },
   );
@@ -2796,8 +2870,8 @@ export function registerGmPoolRoutes(app: Express) {
         }
         const ins = await pool.query(
           `INSERT INTO drm.gm_partial_receipts
-             (gm_id, amount_usd, amount_pkr, dollar_rate, receipt_date, method, reference, notes, collected_by)
-           VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6, $7, $8, $9) RETURNING *`,
+             (gm_id, amount_usd, amount_pkr, dollar_rate, receipt_date, method, reference, notes, screenshot_url, collected_by)
+           VALUES ($1, $2, $3, $4, COALESCE($5, now()), $6, $7, $8, $9, $10) RETURNING *`,
           [
             id,
             input.amountUsd,
@@ -2807,6 +2881,7 @@ export function registerGmPoolRoutes(app: Express) {
             input.method ?? null,
             input.reference ?? null,
             input.notes ?? null,
+            input.screenshotUrl ?? null,
             req.user.userId,
           ],
         );

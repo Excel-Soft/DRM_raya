@@ -1563,7 +1563,6 @@ export default function AccountManagerDashboard() {
                         </CardHeader>
                         <CardContent>
                             <div className="grid grid-cols-2 gap-3">
-                                <QuickLink label="Daily Closing" href="#" badge="Under Development" badgeColor="text-red-500" />
                                 <QuickLink label="Dollar System" href="/account/dollar-system" />
                                 <QuickLink label="Ab Closing Report" href="/account/ab-report" />
                                 <QuickLink label="Add Gm" href="/account/gm-entries" />

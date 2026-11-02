@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,6 +76,13 @@ export default function PostingDataLinkReport() {
     },
   });
   const users = usersData?.users ?? [];
+
+  // Self-only users get a single entry — pre-select so the dropdown isn't empty-looking.
+  useEffect(() => {
+    if (users.length === 1 && !selectedUser) {
+      setSelectedUser(users[0].id);
+    }
+  }, [users, selectedUser]);
 
   const filteredUsers = useMemo(() => {
     const q = userSearch.trim().toLowerCase();

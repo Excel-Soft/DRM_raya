@@ -5,6 +5,9 @@ export default function CustomerAttributePage() {
     const [match, params] = useRoute("/customers/attribute/:id");
     const customerId = params?.id;
     const [, setLocation] = useLocation();
+    const search = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+    const initialOpenModal = search.get("open") === "account-gm-bv" ? "account_gm_bv" : null;
+    const initialGmEntryId = search.get("gmEntryId");
 
     if (!customerId) {
         return <div className="p-8 text-center text-muted-foreground">No customer ID provided</div>;
@@ -14,7 +17,9 @@ export default function CustomerAttributePage() {
         <CustomerAttributeView 
             customerId={customerId} 
             onBack={() => window.history.back()} 
-            backLabel="BACK" 
+            backLabel="BACK"
+            initialOpenModal={initialOpenModal}
+            initialGmEntryId={initialGmEntryId}
         />
     );
 }

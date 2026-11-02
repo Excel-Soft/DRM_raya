@@ -2572,17 +2572,6 @@ function ReportTab({
           <p className="text-sm text-muted-foreground">{reportTypeLabels[type].description}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          {type === "bv" && (
-            <Link href="/reports/bv/new">
-              <Button
-                size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                data-testid="button-create-bv-report"
-              >
-                + New BV Report
-              </Button>
-            </Link>
-          )}
           {type === "vas" && scope !== "company" && (
             <Link href="/reports/vas/new">
               <Button

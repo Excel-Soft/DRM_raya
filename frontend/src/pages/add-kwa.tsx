@@ -38,6 +38,15 @@ export default function AddKwa() {
     },
   });
 
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", "all-for-used-by"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users");
+      const body = await res.json().catch(() => null);
+      return body?.users || [];
+    },
+  });
+
   const groupedUsers = useMemo(() => {
     const grouped: Record<string, any[]> = {};
     users.forEach((u: any) => {
@@ -50,8 +59,22 @@ export default function AddKwa() {
       .sort((a, b) => a.role.localeCompare(b.role));
   }, [users]);
 
+  const groupedAllUsers = useMemo(() => {
+    const grouped: Record<string, any[]> = {};
+    allUsers.forEach((u: any) => {
+      const role = u.role || "Unassigned Role";
+      if (!grouped[role]) grouped[role] = [];
+      grouped[role].push(u);
+    });
+    return Object.entries(grouped)
+      .map(([role, roleUsers]) => ({ role, users: roleUsers }))
+      .sort((a, b) => a.role.localeCompare(b.role));
+  }, [allUsers]);
+
   // Form State
   const [company, setCompany] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedComId, setSelectedComId] = useState<string | null>(null);
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const [kwaValue, setKwaValue] = useState("");
   const [type, setType] = useState("none");
@@ -77,6 +100,12 @@ export default function AddKwa() {
   const [useAction, setUseAction] = useState<"Used" | "Refund">("Used");
   const [useDetail, setUseDetail] = useState("");
   const [usedByInput, setUsedByInput] = useState("");
+
+  const usedBySelectValue = useMemo(() => {
+    if (!usedByInput) return "none";
+    const match = allUsers.some((u) => (u.fullName || u.username || "") === usedByInput);
+    return match ? usedByInput : "none";
+  }, [usedByInput, allUsers]);
 
   const handleOpenUseModal = (row: any) => {
     setSelectedRow(row);
@@ -142,6 +171,8 @@ export default function AddKwa() {
 
       // Reset form
       setCompany("");
+      setSelectedCustomerId(null);
+      setSelectedComId(null);
       setKwaValue("");
       setType("none");
       setPerson("none");
@@ -161,6 +192,8 @@ export default function AddKwa() {
 
     saveKwaMutation.mutate({
       company,
+      companyId: selectedCustomerId || undefined,
+      comId: selectedComId || undefined,
       employee: person,
       kwa: kwaValue,
       detail,
@@ -191,6 +224,8 @@ export default function AddKwa() {
                     value={company}
                     onChange={(e) => {
                       setCompany(e.target.value);
+                      setSelectedCustomerId(null);
+                      setSelectedComId(null);
                       setShowCompanyDropdown(true);
                     }}
                     onFocus={() => setShowCompanyDropdown(true)}
@@ -207,6 +242,8 @@ export default function AddKwa() {
                         key={c.id}
                         onMouseDown={() => {
                           setCompany(c.company_name);
+                          setSelectedCustomerId(c.id || null);
+                          setSelectedComId(c.drm_id || null);
                           setShowCompanyDropdown(false);
                         }}
                         className="px-2 py-1.5 text-sm cursor-pointer hover:bg-green-50 border-b border-gray-50 dark:border-zinc-800 dark:hover:bg-zinc-800"
@@ -311,12 +348,32 @@ export default function AddKwa() {
                 </div>
                 <div>
                   <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Used By:</label>
-                  <Input
-                    placeholder="Who is using this?"
-                    value={usedByInput}
-                    onChange={(e) => setUsedByInput(e.target.value)}
-                    className="h-10"
-                  />
+                  <Select
+                    value={usedBySelectValue}
+                    onValueChange={(v) => setUsedByInput(v === "none" ? "" : v)}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Choose..." />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[min(320px,60vh)]">
+                      <SelectItem value="none">Choose...</SelectItem>
+                      {groupedAllUsers.map(({ role, users: roleUsers }) => (
+                        <SelectGroup key={role}>
+                          <SelectLabel>{role}</SelectLabel>
+                          {roleUsers
+                            .filter((u) => u.fullName || u.username)
+                            .map((u) => {
+                              const label = u.fullName || u.username;
+                              return (
+                                <SelectItem key={u.id} value={label}>
+                                  {label}
+                                </SelectItem>
+                              );
+                            })}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
@@ -405,7 +462,7 @@ export default function AddKwa() {
                     {kwaData.map((row, index) => (
                       <TableRow key={row.id}>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{index + 1}</TableCell>
-                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.id}</TableCell>
+                        <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.comId || "—"}</TableCell>
                         <TableCell className="text-sm text-gray-700 uppercase dark:text-zinc-400">{row.company}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.employee}</TableCell>
                         <TableCell className="text-sm text-gray-700 dark:text-zinc-400">{row.kwa}$</TableCell>

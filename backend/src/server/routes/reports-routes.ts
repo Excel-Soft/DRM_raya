@@ -293,22 +293,31 @@ function isBvApprover(req: any): boolean {
  */
 async function resolveBvScope(req: any): Promise<string[] | null> {
   const user = req.user;
-  // Sales Manager: self-only, never team/org-wide (explicit product decision).
-  const effectiveBvRole = (req.user as any)?.activeRoleId || user.roleId;
-  if (normalizeRole(effectiveBvRole) === ROLES.SALES_MANAGER) return [user.userId];
-  const isPrivileged = isManagerialRole(user.roleId);
-  const isGlobalAdmin = ["admin", "super_admin", "super_hod", "hod"].includes(normalizeRole(user.roleId));
+  // Use the role the user is *acting as* (sidebar role switcher), not only the
+  // base account role — otherwise "Acting as: account_manager" still scoped like
+  // a sales executive and the BV Pending list came back empty.
+  const actingRole = normalizeRole((req.user as any)?.activeRoleId ?? user.roleId);
   const queryUserId =
     typeof req.query.userId === "string" && req.query.userId !== "all" ? req.query.userId : null;
+
+  if (actingRole === ROLES.SALES_MANAGER) return [user.userId];
+
+  const companyWideBvRoles = [
+    "admin",
+    "super_admin",
+    "super_hod",
+    "hod",
+    ROLES.ACCOUNT_MANAGER,
+  ];
+  if (companyWideBvRoles.includes(actingRole)) {
+    return queryUserId ? [queryUserId] : null;
+  }
+
+  const isPrivileged = isManagerialRole(actingRole);
   if (!isPrivileged) return [user.userId];
-  if (isGlobalAdmin) return queryUserId ? [queryUserId] : null;
+
   const allowedIds = await getDepartmentFilterUserIds(req);
   if (queryUserId) {
-    // null from getDepartmentFilterUserIds means "unrestricted" for this role
-    // (global, department-wide access), not "nobody allowed" — the same fix
-    // already applied to the main /reports/:type dispatcher's equivalent
-    // branch. Previously `allowedIds && ...` short-circuited null to false
-    // and denied every specific-user request for such a role.
     return (allowedIds === null || allowedIds.includes(queryUserId))
       ? [queryUserId]
       : ["00000000-0000-0000-0000-000000000000"];
@@ -1152,7 +1161,7 @@ async function getGmReport(userIds: string[] | null, fromDate: Date, toDate: Dat
     }>(
       `SELECT id, status, approval_status, account_manager_status, final_status,
               hod_approved_at, gm_bv_submitted_at, gm_bv_date, pay_date, hod_status, accountant_status
-         FROM drm.gm_entries WHERE id = ANY($1::uuid[])`,
+         FROM drm.gm_entries WHERE id::text = ANY($1::text[])`,
       [ids]
     );
     for (const r of extraRows.rows) extraById.set(r.id, r);
@@ -1322,8 +1331,9 @@ async function getBvReportCompanyWide(
   // "confirmed" (default, main BV Report): entries with a real gm_bv_date.
   // "submitted" (BV Pending page, default): any entry ever submitted for BV
   // (gm_bv_submitted_at set), confirmed or not — the user's full BV worklist.
-  // "pending": submitted but still awaiting confirmation (the "Pending Bv"
-  // checkbox narrows "submitted" down to this).
+  // "pending": account team has not set account_bv_date yet (Dollar System
+  // "Company & BV Date Details" — same as rows still missing BV date).
+  // "submitted": customer/submission activity or still awaiting account BV date.
   options: { bvFilter?: "confirmed" | "pending" | "submitted" } = {},
 ): Promise<ReportData> {
   const conditions = [
@@ -1332,7 +1342,13 @@ async function getBvReportCompanyWide(
     eq(gmEntries.isDeleted, false),
   ];
   if (userIds && userIds.length > 0) {
-    conditions.push(inArray(gmEntries.salesPersonId, userIds));
+    // sales_person_id is uuid in DB; schema maps it as varchar — cast for PG.
+    conditions.push(
+      sql`${gmEntries.salesPersonId}::text = ANY(ARRAY[${sql.join(
+        userIds.map((id) => sql`${id}`),
+        sql`, `,
+      )}]::text[])`,
+    );
   }
 
   const allEntries = await db
@@ -1341,11 +1357,31 @@ async function getBvReportCompanyWide(
     .where(and(...conditions))
     .orderBy(desc(gmEntries.createdAt));
 
-  const extraById = new Map<string, { gm_bv_date: Date | null; pay_date: Date | null; gm_bv_submitted_at: Date | null }>();
+  const extraById = new Map<string, {
+    gm_bv_date: Date | null;
+    pay_date: Date | null;
+    gm_bv_submitted_at: Date | null;
+    account_bv_date: Date | null;
+    customer_id: string | null;
+  }>();
   if (allEntries.length > 0) {
     const ids = allEntries.map((e) => e.id);
-    const extraRows = await pool.query<{ id: string; gm_bv_date: Date | null; pay_date: Date | null; gm_bv_submitted_at: Date | null }>(
-      `SELECT id, gm_bv_date, pay_date, gm_bv_submitted_at FROM drm.gm_entries WHERE id = ANY($1::uuid[])`,
+    const extraRows = await pool.query<{
+      id: string;
+      gm_bv_date: Date | null;
+      pay_date: Date | null;
+      gm_bv_submitted_at: Date | null;
+      account_bv_date: Date | null;
+      customer_id: string | null;
+    }>(
+      `SELECT id, gm_bv_date, pay_date, gm_bv_submitted_at, account_bv_date,
+              COALESCE(
+                customer_id::text,
+                (SELECT c.id::text FROM drm.customers c
+                   WHERE lower(trim(c.company_name)) = lower(trim(gm_entries.company_name))
+                   LIMIT 1)
+              ) AS customer_id
+         FROM drm.gm_entries WHERE id::text = ANY($1::text[])`,
       [ids],
     );
     for (const r of extraRows.rows) extraById.set(r.id, r);
@@ -1354,12 +1390,29 @@ async function getBvReportCompanyWide(
   const bvFilter = options.bvFilter ?? "confirmed";
   const entries = allEntries.filter((e) => {
     const extra = extraById.get(e.id);
-    const hasBvDate = Boolean(extra?.gm_bv_date);
+    const hasGmBvDate = Boolean(extra?.gm_bv_date);
+    const hasAccountBvDate = Boolean(extra?.account_bv_date);
     const hasSubmission = Boolean(extra?.gm_bv_submitted_at);
-    if (bvFilter === "confirmed") return hasBvDate;
-    if (bvFilter === "pending") return hasSubmission && !hasBvDate;
-    return hasSubmission;
+    if (bvFilter === "confirmed") return hasGmBvDate || hasAccountBvDate;
+    if (bvFilter === "pending") return !hasAccountBvDate;
+    return hasSubmission || !hasAccountBvDate;
   });
+
+  const abPayByGmId = new Map<string, Date | null>();
+  if (entries.length > 0) {
+    const entryIds = entries.map((e) => e.id);
+    const abRows = await pool.query<{ id: string; ab_pay_date: Date | null }>(
+      `SELECT gm_entry_id::text AS id,
+              MAX(paid_date) AS ab_pay_date
+         FROM drm.ab_payments
+        WHERE gm_entry_id::text = ANY($1::text[])
+          AND COALESCE(is_deleted, false) = false
+          AND status = 'paid'
+        GROUP BY gm_entry_id`,
+      [entryIds],
+    );
+    for (const r of abRows.rows) abPayByGmId.set(r.id, r.ab_pay_date);
+  }
 
   const salesPersonIds = Array.from(new Set(entries.map((e) => e.salesPersonId).filter(Boolean))) as string[];
   const targetsByUser = new Map<string, (typeof targetSystemUserTargets.$inferSelect)[]>();
@@ -1426,6 +1479,8 @@ async function getBvReportCompanyWide(
     const comm = packageBaseCommission(e.packageType, e.entryType);
     return {
       id: e.id,
+      gmEntryId: e.id,
+      customerId: extra?.customer_id ?? null,
       companyName: e.companyName,
       package: e.packageType,
       // Catalog/sticker price, falling back to the real order amount when the
@@ -1455,9 +1510,15 @@ async function getBvReportCompanyWide(
       pay: latestInstallmentPayDate(e.installments) ?? extra?.pay_date ?? null,
       // Real BV-submission date (legacy "BV Submit" column).
       bvSubmit: extra?.gm_bv_submitted_at || null,
-      // Real BV-verification date (legacy "BV" column).
-      bv: extra?.gm_bv_date || null,
+      // Account-confirmed BV date (Dollar System), else customer GM BV date.
+      bv: extra?.account_bv_date || extra?.gm_bv_date || null,
+      accountBvDate: extra?.account_bv_date || null,
       rcNew: e.entryType,
+      // Legacy BV Pending table: Payment Received = verify_gm create_date;
+      // here that is the GM entry's created_at (date portion in UI).
+      paymentReceived: e.createdAt,
+      // Legacy Ab Pay Date = verify_gm pay_date → ab_payments.paid_date when paid.
+      abPayDate: abPayByGmId.get(e.id) ?? extra?.pay_date ?? null,
       // Drives the existing Select Status dropdown (New/Renew/Expire/Rc-Up) —
       // real gm_entries.entry_type, though in current data every row is "New".
       status: e.entryType,
