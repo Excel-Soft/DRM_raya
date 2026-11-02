@@ -1702,6 +1702,10 @@ function LoanReportTable({
   const [appliedStart, setAppliedStart] = useState("");
   const [appliedEnd, setAppliedEnd] = useState("");
   const [selectedEmployee, setSelectedEmployee] = useState<string>("all");
+  const [addLoanTargetUserId, setAddLoanTargetUserId] = useState<string>("");
+  const [payAmount, setPayAmount] = useState<string>("");
+  const [rejectingLoanId, setRejectingLoanId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const uniqueEmployees = useMemo(() => {
     const names = safeLoans.map(l => l.employeeName).filter(Boolean);
@@ -1714,6 +1718,10 @@ function LoanReportTable({
   });
 
   const isManager = currentUser?.role && ['admin', 'manager', 'hod', 'assistant_manager', 'super_hod', 'super_admin'].some(r => currentUser.role.toLowerCase().includes(r));
+  // HOD-tier: who may perform the second-stage HOD approval (mirrors the
+  // backend's isHodAllowed — hod/super_hod/admin/sales_manager).
+  const activeRole = (currentUser?.role || "").toLowerCase();
+  const isHodTier = ["admin", "super_admin", "hod", "super_hod", "sales_manager"].includes(activeRole);
 
   const { data: allUsers } = useQuery<any[]>({
     queryKey: ["/api/users", { assigned: true }],
@@ -1736,10 +1744,13 @@ function LoanReportTable({
       .sort((a, b) => a.role.localeCompare(b.role));
   }, [allUsers]);
 
-  // Mutation for creating loans (admin endpoint)
+  // Managers/HOD/account_manager submit via /api/admin/loans (lets them pick
+  // the target employee, and auto-approves since they already hold decision
+  // authority over loans). Plain employees self-serve via /api/loans.
   const createLoanMutation = useMutation({
     mutationFn: async (data: { userId: string; amount: string; installmentAmount: string; detail: string }) => {
-      const res = await fetch("/api/loans", {
+      const url = isManager ? "/api/admin/loans" : "/api/loans";
+      const res = await fetch(url, {
         method: "POST",
         headers: { ...getAuthHeader(), "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -1752,8 +1763,59 @@ function LoanReportTable({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/reports", "loan"] });
-      toast({ title: "Success", description: "Loan request created successfully" });
+      toast({ title: "Success", description: isManager ? "Loan added and approved" : "Loan request created successfully" });
       setActiveSubTab("list");
+      setAddLoanTargetUserId("");
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const decideLoanMutation = useMutation({
+    mutationFn: async ({ id, action, reason }: { id: string; action: "manager-approve" | "hod-approve" | "reject" | "complete"; reason?: string }) => {
+      const res = await fetch(`/api/loans/${id}/${action}`, {
+        method: "PATCH",
+        headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+        body: action === "reject" ? JSON.stringify({ reason }) : undefined,
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || "Action failed");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { action }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports", "loan"] });
+      const labels: Record<string, string> = {
+        "manager-approve": "Loan approved", "hod-approve": "Loan HOD-approved",
+        "reject": "Loan rejected", "complete": "Loan marked completed",
+      };
+      toast({ title: labels[action] || "Updated" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const payInstallmentMutation = useMutation({
+    mutationFn: async ({ id, amount }: { id: string; amount: number }) => {
+      const res = await fetch(`/api/loans/${id}/pay-installment`, {
+        method: "PATCH",
+        headers: { ...getAuthHeader(), "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to record payment");
+      }
+      return res.json();
+    },
+    onSuccess: (record: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/reports", "loan"] });
+      toast({ title: record?.status === "Completed" ? "Payment recorded — loan fully repaid" : "Payment recorded" });
+      setViewItem(null);
+      setPayAmount("");
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -1950,12 +2012,35 @@ function LoanReportTable({
           <form onSubmit={handleAddLoan} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-white dark:bg-zinc-900 p-4 rounded-md border border-slate-200 dark:border-zinc-800 shadow-sm">
             <div className="space-y-1.5 md:col-span-1">
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Employee</Label>
-              <Input
-                readOnly
-                value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
-                className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
-              />
-              <input type="hidden" name="userId" value={currentUser?.id || currentUser?.userId || ""} />
+              {isManager ? (
+                <>
+                  <Select value={addLoanTargetUserId} onValueChange={setAddLoanTargetUserId}>
+                    <SelectTrigger className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 text-xs">
+                      <SelectValue placeholder="Choose employee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groupedUsers.map(({ role, users }) => (
+                        <SelectGroup key={role}>
+                          <SelectLabel className="text-[10px] uppercase">{role}</SelectLabel>
+                          {users.map((u: any) => (
+                            <SelectItem key={u.id} value={u.id}>{u.fullName || u.username}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <input type="hidden" name="userId" value={addLoanTargetUserId} />
+                </>
+              ) : (
+                <>
+                  <Input
+                    readOnly
+                    value={currentUser?.fullName || currentUser?.name || currentUser?.username || "Loading..."}
+                    className="bg-[#f0f2f5] dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 h-9 text-xs text-[#555] dark:text-zinc-300 cursor-not-allowed focus-visible:ring-0"
+                  />
+                  <input type="hidden" name="userId" value={currentUser?.id || currentUser?.userId || ""} />
+                </>
+              )}
             </div>
             <div className="space-y-1.5 md:col-span-1">
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Amount:</Label>
@@ -1969,10 +2054,11 @@ function LoanReportTable({
               <Label className="text-xs font-semibold text-slate-600 dark:text-zinc-400">Detail</Label>
               <Textarea name="detail" required placeholder="add detail" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 h-9 min-h-[36px] py-1.5 text-xs resize-none" />
             </div>
-            <div className="md:col-span-5">
-              <Button type="submit" disabled={createLoanMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-bold text-sm rounded-sm">
+            <div className="md:col-span-5 flex items-center gap-3">
+              <Button type="submit" disabled={createLoanMutation.isPending || (isManager && !addLoanTargetUserId)} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-8 h-9 font-bold text-sm rounded-sm">
                 {createLoanMutation.isPending ? "..." : "Submit"}
               </Button>
+              {isManager && <span className="text-[11px] text-slate-400">Loans you add here are approved automatically.</span>}
             </div>
           </form>
         )}
@@ -2059,18 +2145,21 @@ function LoanReportTable({
                 <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Instalment</TableHead>
                 <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Remaining</TableHead>
                 <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Date</TableHead>
+                <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-left">Status</TableHead>
                 {isManager && <TableHead className="py-2.5 px-3 font-bold text-[#555] dark:text-zinc-400 text-center">Action</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody className="bg-[#f8f9fa] dark:bg-zinc-900">
               {filtered.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={isManager ? 8 : 7} className="text-center text-muted-foreground py-4">
+                  <TableCell colSpan={isManager ? 9 : 8} className="text-center text-muted-foreground py-4">
                     No data available in table
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((loan, idx) => (
+                filtered.map((loan, idx) => {
+                  const isRejectingThis = rejectingLoanId === loan.id;
+                  return (
                   <TableRow key={loan.id} className="border-b border-white dark:border-zinc-800 hover:bg-[#f1f3f5] dark:hover:bg-zinc-800 transition-colors">
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300">{idx + 1}</TableCell>
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 font-semibold">{loan.employeeName} (Main)</TableCell>
@@ -2081,18 +2170,65 @@ function LoanReportTable({
                     <TableCell className="py-3 px-3 text-[#555] dark:text-zinc-300 whitespace-nowrap">
                       {loan.date ? new Date(loan.date).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : "-"}
                     </TableCell>
+                    <TableCell className="py-3 px-3">
+                      <Badge variant={
+                        loan.status === "HODApproved" ? "default" :
+                        loan.status === "Rejected" ? "destructive" :
+                        loan.status === "Completed" ? "outline" : "secondary"
+                      } className="text-[10px]">{loan.status}</Badge>
+                    </TableCell>
                     {isManager && (
                       <TableCell className="py-3 px-3 text-center">
-                        <button onClick={() => setViewItem(loan)} className="text-[#00a65a] hover:text-[#008d4c] transition-colors">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-plus-circle" viewBox="0 0 16 16">
-                            <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
-                            <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-                          </svg>
-                        </button>
+                        {isRejectingThis ? (
+                          <div className="flex items-center gap-1.5 justify-center">
+                            <Input
+                              autoFocus
+                              value={rejectReason}
+                              onChange={e => setRejectReason(e.target.value)}
+                              placeholder="Reason"
+                              className="h-7 w-28 text-[11px]"
+                            />
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={decideLoanMutation.isPending}
+                              onClick={() => { decideLoanMutation.mutate({ id: loan.id, action: "reject", reason: rejectReason }); setRejectingLoanId(null); setRejectReason(""); }}
+                              className="h-7 px-2 text-[11px]"
+                            >Confirm</Button>
+                            <Button size="sm" variant="secondary" onClick={() => { setRejectingLoanId(null); setRejectReason(""); }} className="h-7 px-2 text-[11px]">Cancel</Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 justify-center flex-wrap">
+                            {loan.status === "Pending" && (
+                              <>
+                                <Button size="sm" disabled={decideLoanMutation.isPending} onClick={() => decideLoanMutation.mutate({ id: loan.id, action: "manager-approve" })} className="h-7 px-2 text-[11px] bg-[#00a65a] hover:bg-[#008d4c] text-white">Approve</Button>
+                                <Button size="sm" variant="secondary" disabled={decideLoanMutation.isPending} onClick={() => setRejectingLoanId(loan.id)} className="h-7 px-2 text-[11px]">Reject</Button>
+                              </>
+                            )}
+                            {loan.status === "ManagerApproved" && isHodTier && (
+                              <>
+                                <Button size="sm" disabled={decideLoanMutation.isPending} onClick={() => decideLoanMutation.mutate({ id: loan.id, action: "hod-approve" })} className="h-7 px-2 text-[11px] bg-[#00a65a] hover:bg-[#008d4c] text-white">HOD Approve</Button>
+                                <Button size="sm" variant="secondary" disabled={decideLoanMutation.isPending} onClick={() => setRejectingLoanId(loan.id)} className="h-7 px-2 text-[11px]">Reject</Button>
+                              </>
+                            )}
+                            {loan.status === "HODApproved" && (
+                              <button onClick={() => setViewItem(loan)} title="Record Payment" className="text-[#00a65a] hover:text-[#008d4c] transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" className="bi bi-plus-circle" viewBox="0 0 16 16">
+                                  <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/>
+                                  <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                                </svg>
+                              </button>
+                            )}
+                            {(loan.status === "Rejected" || loan.status === "Completed") && (
+                              <span className="text-slate-400 dark:text-zinc-600">—</span>
+                            )}
+                          </div>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>
-                ))
+                  );
+                })
               )}
             </TableBody>
           </Table>
@@ -2101,7 +2237,7 @@ function LoanReportTable({
         <p className="text-sm text-muted-foreground">
           Showing {filtered.length} of {safeLoans.length} entries
         </p>
-        <Dialog open={!!viewItem} onOpenChange={(open) => setViewItem(open ? viewItem : null)}>
+        <Dialog open={!!viewItem} onOpenChange={(open) => { if (!open) { setViewItem(null); setPayAmount(""); } }}>
           <DialogContent className="max-w-[450px] p-0 gap-0">
             <DialogHeader className="p-4 border-b border-slate-100 dark:border-zinc-800 bg-white dark:bg-zinc-900">
               <DialogTitle className="text-[17px] font-bold text-[#555] dark:text-zinc-100 text-left">Pay Loan</DialogTitle>
@@ -2109,8 +2245,12 @@ function LoanReportTable({
             {viewItem && (
               <form onSubmit={(e) => {
                 e.preventDefault();
-                // TODO: implement loan payment submission logic
-                setViewItem(null);
+                const amt = parseFloat(payAmount);
+                if (!amt || amt <= 0) {
+                  toast({ title: "Error", description: "Enter a valid payment amount", variant: "destructive" });
+                  return;
+                }
+                payInstallmentMutation.mutate({ id: viewItem.id, amount: amt });
               }} className="p-5 space-y-4 bg-white dark:bg-zinc-900">
                 <div className="space-y-1.5">
                   <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Name</Label>
@@ -2118,35 +2258,40 @@ function LoanReportTable({
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Remaning</Label>
+                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Remaining</Label>
                   <Input readOnly value={Number(viewItem.remainingAmount || 0).toString()} className="bg-white dark:bg-zinc-900 border-slate-200 dark:border-zinc-700 text-[#555] dark:text-zinc-300 h-9 focus-visible:ring-0" />
                 </div>
 
                 <div className="space-y-1.5">
                   <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Pay</Label>
-                  <Input type="number" step="0.01" placeholder="00:00" className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0" />
+                  <Input
+                    type="number" step="0.01" placeholder="00:00"
+                    value={payAmount} onChange={e => setPayAmount(e.target.value)}
+                    className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Any amount is accepted — skip a month, then pay a lump sum later; the loan closes automatically once the remaining balance reaches zero.
+                  </p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-[13px] font-bold text-[#555] dark:text-zinc-400">Status</Label>
-                  <Select defaultValue="Pending">
-                    <SelectTrigger className="bg-white dark:bg-zinc-900 dark:text-zinc-100 border-slate-200 dark:border-zinc-700 text-[#555] h-9 focus-visible:ring-0">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="Completed">Completed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] dark:bg-zinc-800 text-[#555] dark:text-zinc-300 hover:bg-[#e4e6e9] dark:hover:bg-zinc-700 border-none px-5 h-9 text-[13px] font-semibold">
-                    Close
+                <div className="flex justify-between items-center gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={decideLoanMutation.isPending}
+                    onClick={() => { decideLoanMutation.mutate({ id: viewItem.id, action: "complete" }); setViewItem(null); }}
+                    className="text-[12px] font-semibold text-slate-500 hover:text-slate-700"
+                  >
+                    Mark fully repaid
                   </Button>
-                  <Button type="submit" className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-9 text-[13px] font-semibold">
-                    Save
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline" onClick={() => setViewItem(null)} className="bg-[#f0f2f5] dark:bg-zinc-800 text-[#555] dark:text-zinc-300 hover:bg-[#e4e6e9] dark:hover:bg-zinc-700 border-none px-5 h-9 text-[13px] font-semibold">
+                      Close
+                    </Button>
+                    <Button type="submit" disabled={payInstallmentMutation.isPending} className="bg-[#00a65a] hover:bg-[#008d4c] text-white px-5 h-9 text-[13px] font-semibold">
+                      {payInstallmentMutation.isPending ? "..." : "Save"}
+                    </Button>
+                  </div>
                 </div>
               </form>
             )}

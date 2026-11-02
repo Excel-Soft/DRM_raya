@@ -137,7 +137,12 @@ export class LoanRepository {
     };
   }
 
-  async create(data: InsertLoanRequest): Promise<LoanRequest> {
+  // `autoApproveByUserId`: when the creator already holds decision authority
+  // over loans (account_manager/HOD/admin creating one on behalf of an
+  // employee), the loan is inserted already fully approved — they'd just be
+  // approving their own submission a moment later anyway, so skip the queue
+  // entirely rather than making them wait on themselves.
+  async create(data: InsertLoanRequest, autoApproveByUserId?: string): Promise<LoanRequest> {
     const amount = typeof data.amount === 'string' ? parseFloat(data.amount) : data.amount;
     const installmentAmount = typeof data.installmentAmount === 'string' ? parseFloat(data.installmentAmount) : data.installmentAmount;
 
@@ -152,8 +157,9 @@ export class LoanRepository {
       throw new Error("Installment amount cannot exceed total amount");
     }
 
-    console.log(`[LOAN_REPO] Creating loan: userId=${data.userId}, amount=${amount}, installment=${installmentAmount}`);
+    console.log(`[LOAN_REPO] Creating loan: userId=${data.userId}, amount=${amount}, installment=${installmentAmount}, autoApprove=${!!autoApproveByUserId}`);
 
+    const now = new Date();
     const result = await db
       .insert(loanRequests)
       .values({
@@ -162,7 +168,13 @@ export class LoanRepository {
         installmentAmount: String(installmentAmount),
         remainingAmount: String(amount),
         detail: data.detail,
-        status: "Pending",
+        status: autoApproveByUserId ? "HODApproved" : "Pending",
+        ...(autoApproveByUserId ? {
+          managerApprovedByUserId: autoApproveByUserId,
+          managerApprovedAt: now,
+          hodApprovedByUserId: autoApproveByUserId,
+          hodApprovedAt: now,
+        } : {}),
       })
       .returning();
 

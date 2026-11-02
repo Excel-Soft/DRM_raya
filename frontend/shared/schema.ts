@@ -1228,16 +1228,18 @@ export const refundGmEntries = drmSchema.table("refund_gm_entries", {
 });
 
 // Donations
+// Kept in sync by hand with backend/src/shared/schema.ts (this repo has no
+// automated copy step between the two) — see that file's comment for why
+// these columns don't match a literal 1:1 reading of the live DB table.
 export const donations = drmSchema.table("donations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  companyName: text("company_name").notNull(),
   title: text("title").notNull().default("Mr."), // Mr., Ms., Dr., etc.
-  personName: text("person_name").notNull(),
+  personName: text("donor_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  currency: text("currency").notNull().default("PKR"), // PKR, Dollar
-  comment: text("comment"),
+  currency: text("currency").notNull().default("PKR"), // PKR, USD
+  referenceNumber: text("reference_number"),
+  comment: text("notes"),
   status: text("status").notNull().default("Pending"),
-  paymentProof: text("payment_proof"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -1905,6 +1907,13 @@ export const dollarBuying = drmSchema.table("dollar_buying", {
   screenshotUrl: text("screenshot_url"),
   detail: text("detail"),
   martini: text("martini").default("Show"),
+  // Current Day Transactions pipeline: a new buy lands as unconfirmed
+  // ("Martini" tab) until manually confirmed into the active "Buy" pool.
+  isConfirmed: boolean("is_confirmed").notNull().default(false),
+  confirmedAt: timestamp("confirmed_at"),
+  confirmedByUserId: varchar("confirmed_by_user_id"),
+  balanceStatus: text("balance_status").notNull().default("Show"),
+  balanceStatusDate: date("balance_status_date"),
   createdById: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -3216,6 +3225,12 @@ export const penalties = drmSchema.table("penalties", {
   voidedBy: uuid("voided_by").references(() => users.id),
   voidedAt: timestamp("voided_at"),
   voidReason: text("void_reason"),
+  employeeDisputedAt: timestamp("employee_disputed_at"),
+  disputeReason: text("dispute_reason"),
+  disputeStatus: text("dispute_status"),
+  disputeResolvedBy: uuid("dispute_resolved_by").references(() => users.id),
+  disputeResolvedAt: timestamp("dispute_resolved_at"),
+  disputeResolutionNote: text("dispute_resolution_note"),
 }, (t) => [
   index("idx_penalties_employee").on(t.employeeId),
   index("idx_penalties_created_by").on(t.createdBy),

@@ -1260,6 +1260,14 @@ export const gmEntries = drmSchema.table("gm_entries", {
   withdrawalActionedBy: uuid("withdrawal_actioned_by").references(() => users.id),
   withdrawalActionedAt: timestamp("withdrawal_actioned_at"),
 
+  // Set once POST /api/account/refund-gm successfully refunds this GM — the
+  // one flag every other GM workflow (approvals, Dollar System's Pay Alibaba,
+  // invoice generation) must check and refuse to act on further.
+  isRefunded: boolean("is_refunded").notNull().default(false),
+  refundedAt: timestamp("refunded_at"),
+  refundedByUserId: uuid("refunded_by_user_id"),
+  refundGmEntryId: uuid("refund_gm_entry_id"),
+
   createdBy: varchar("created_by").notNull().references(() => users.id),
   // Patch 5 Stage 2 — active role of the creator at GM creation (nullable, additive).
   createdByRole: text("created_by_role"),
@@ -1339,22 +1347,32 @@ export const refundGmEntries = drmSchema.table("refund_gm_entries", {
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
   amountType: text("amount_type").notNull().default("PKR"), // PKR, Dollar
   comment: text("comment"),
+  // Which specific GM order this refund is against — nullable only for rows
+  // created before this column existed (the old company-name-only flow).
+  // Every new refund must resolve one via the Paid-Alibaba check below.
+  gmEntryId: uuid("gm_entry_id"),
   status: text("status").notNull().default("pending"), // pending, approved, rejected
   createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// Donations
+// Donations — note the live table's real columns are donor_name/notes/date
+// (not person_name/comment), so account-routes.ts addresses this table with
+// raw SQL throughout rather than through this Drizzle definition; kept here
+// as a type/documentation reference only. title/currency/status/
+// reference_number used to be accepted by the form and silently discarded
+// (the live table never had columns for them) — real now via the
+// ensure-columns block in account-routes.ts. company_name/payment_proof were
+// never real columns either; removed rather than perpetuated.
 export const donations = drmSchema.table("donations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  companyName: text("company_name").notNull(),
   title: text("title").notNull().default("Mr."), // Mr., Ms., Dr., etc.
-  personName: text("person_name").notNull(),
+  personName: text("donor_name").notNull(),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  currency: text("currency").notNull().default("PKR"), // PKR, Dollar
-  comment: text("comment"),
+  currency: text("currency").notNull().default("PKR"), // PKR, USD
+  referenceNumber: text("reference_number"),
+  comment: text("notes"),
   status: text("status").notNull().default("Pending"),
-  paymentProof: text("payment_proof"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -1426,7 +1444,13 @@ export const ledgerEntries = drmSchema.table("ledger_entries", {
   referenceId: varchar("reference_id"), // Links to invoice, gm_entry, donation, etc.
   referenceType: text("reference_type"), // "invoice", "gm_entry", "donation", etc.
   balanceAfter: decimal("balance_after", { precision: 12, scale: 2 }),
-  entryDate: timestamp("entry_date").notNull().defaultNow(),
+  // Physically a DATE column in the live DB (confirmed via
+  // information_schema — not a `timestamp`, despite how this used to be
+  // declared), which silently made Drizzle return null for every read of
+  // this column (the OID the driver got back never matched what a
+  // `timestamp()` column builder expects). Declaring it correctly as
+  // `date()` is what actually makes this column round-trip through Drizzle.
+  entryDate: date("entry_date").notNull().defaultNow(),
   createdByUserId: varchar("created_by_user_id").notNull().references(() => users.id),
   // Patch 4 Stage 2 — account-head linkage + posting lifecycle + voucher refs
   // (additive). No FK on the linkage columns (mixed varchar/uuid id types);
@@ -2076,6 +2100,20 @@ export const dollarBuying = drmSchema.table("dollar_buying", {
   // payment. Defaults to dollarAmount at insert time; decremented transactionally
   // by /api/account/dollar-system/allocate-payment as it gets spent down.
   remainingUsd: decimal("remaining_usd", { precision: 12, scale: 2 }),
+  // Current Day Transactions pipeline: a new buy lands as unconfirmed
+  // ("Martini" tab) until manually confirmed into the active "Buy" pool.
+  isConfirmed: boolean("is_confirmed").notNull().default(false),
+  confirmedAt: timestamp("confirmed_at"),
+  // No DB-level FK: users.id is uuid while this table's *_user_id columns are
+  // varchar(50) (a pre-existing mismatch on this table — see createdById).
+  confirmedByUserId: varchar("confirmed_by_user_id"),
+  // Manual Balance-tab label ("Ab Payment Status") — "Not Show" or "Refund"
+  // don't touch remainingUsd, they're just a reviewable status. "Refund"
+  // also mirrors into `martini`. Kept separate from that column even though
+  // the vocabulary overlaps, so toggling this never perturbs the other
+  // Martini Status dashboard's own stats.
+  balanceStatus: text("balance_status").notNull().default("Show"),
+  balanceStatusDate: date("balance_status_date"),
   createdById: varchar("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -3929,6 +3967,15 @@ export const penalties = drmSchema.table("penalties", {
   voidedBy: uuid("voided_by").references(() => users.id),
   voidedAt: timestamp("voided_at"),
   voidReason: text("void_reason"),
+  // Employee dispute workflow: an alternative to plain acknowledge — pushes
+  // back with a reason instead of accepting; a decide-scoped manager/HOD
+  // then resolves it (uphold = stands, withdraw = voids via the void path).
+  employeeDisputedAt: timestamp("employee_disputed_at"),
+  disputeReason: text("dispute_reason"),
+  disputeStatus: text("dispute_status"),
+  disputeResolvedBy: uuid("dispute_resolved_by").references(() => users.id),
+  disputeResolvedAt: timestamp("dispute_resolved_at"),
+  disputeResolutionNote: text("dispute_resolution_note"),
 }, (t) => [
   index("idx_penalties_employee").on(t.employeeId),
   index("idx_penalties_created_by").on(t.createdBy),

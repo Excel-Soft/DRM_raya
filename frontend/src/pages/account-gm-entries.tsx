@@ -55,6 +55,7 @@ interface GmEntry {
   payDate: string | null;
   isLoan: boolean;
   isPartialPayment: boolean;
+  isRefunded?: boolean;
   fullyPaid?: boolean;
   installmentsTotal?: number;
   installmentsCollected?: number;
@@ -538,7 +539,14 @@ export default function AccountGmEntries() {
                   </td>
                   <td className="px-3 py-2 text-[11px] max-w-[100px] truncate text-slate-500" title={entry.memberId || ""}>{entry.memberId || "—"}</td>
                   <td className="px-3 py-2 text-[11px] max-w-[130px] truncate text-slate-500" title={entry.orderId || ""}>{entry.orderId || "—"}</td>
-                  <td className="px-3 py-2 max-w-[160px] truncate font-semibold text-slate-800 dark:text-slate-200" title={entry.companyName}>{entry.companyName}</td>
+                  <td className="px-3 py-2 max-w-[160px] font-semibold text-slate-800 dark:text-slate-200">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate" title={entry.companyName}>{entry.companyName}</span>
+                      {entry.isRefunded && (
+                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100 text-[10px] px-1.5 py-0 shrink-0">Refunded</Badge>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-3 py-2 truncate max-w-[120px]" title={entry.salesPersonName || ""}>
                     {entry.salesPersonName || "—"}
                   </td>

@@ -397,9 +397,17 @@ export class HodRepository {
         );
         break;
       case "drm.loan_requests":
+        // 'Approved' is not a valid drm.loan_status enum value (the real
+        // states are Pending/ManagerApproved/HODApproved/Rejected/Completed)
+        // — approving from this generic inbox goes straight to HODApproved,
+        // filling in the manager-approval fields with the same approver so
+        // the audit trail stays sensible for a combined single-step approval.
         await pool.query(
           `update drm.loan_requests
-           set status = 'Approved', hod_approved_by_user_id = $2, hod_approved_at = now(), updated_at = now()
+           set status = 'HODApproved',
+               manager_approved_by_user_id = coalesce(manager_approved_by_user_id, $2),
+               manager_approved_at = coalesce(manager_approved_at, now()),
+               hod_approved_by_user_id = $2, hod_approved_at = now(), updated_at = now()
            where id = $1 and status = 'Pending'`,
           [id, approverId],
         );

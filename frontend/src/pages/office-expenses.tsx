@@ -142,6 +142,33 @@ const SearchableSelect = ({ options, value, onChange, placeholder = "Select..." 
   );
 };
 
+// Uploaded expense files are stored as data: URIs (no server-side upload for
+// this page), but Chrome (and other Chromium browsers) blocks top-level
+// navigation straight to a data: URL — clicking <a href="data:..."
+// target="_blank"> just opens a blank white tab with nothing rendered. Convert
+// to a blob: URL first, which isn't subject to that restriction and opens
+// correctly for images, PDFs, and anything else the browser can display.
+function openUploadedFile(url: string, fileName?: string) {
+  if (!url) return;
+  if (!url.startsWith("data:")) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  try {
+    const [header, base64] = url.split(",");
+    const mime = header.match(/data:(.*?);base64/)?.[1] || "application/octet-stream";
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  } catch (err) {
+    console.error(`Failed to open ${fileName || "file"}:`, err);
+  }
+}
+
 export default function OfficeExpenses() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -667,18 +694,18 @@ export default function OfficeExpenses() {
                               return (
                                 <div className="flex flex-wrap items-center justify-center gap-1">
                                   {parsed.map((file, idx) => (
-                                    <a key={idx} href={file.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
+                                    <button key={idx} type="button" onClick={() => openUploadedFile(file.url, file.name)} className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
                                       <FileText className="w-3 h-3" /> {idx + 1}
-                                    </a>
+                                    </button>
                                   ))}
                                 </div>
                               );
                             }
                           } catch {}
                           return (
-                            <a href={expense.fileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
+                            <button type="button" onClick={() => openUploadedFile(expense.fileUrl!)} className="inline-flex items-center gap-1 bg-white border border-[#2bc185] text-[#2bc185] hover:bg-[#2bc185] hover:text-white px-2 py-0.5 rounded text-[11px] font-medium transition-colors">
                               <FileText className="w-3 h-3" /> 1
-                            </a>
+                            </button>
                           );
                         })()}
                       </TableCell>
@@ -843,7 +870,7 @@ export default function OfficeExpenses() {
                       File {idx + 1}
                     </div>
                     <div className="border border-y border-gray-300 px-3 py-2 text-[13px] text-gray-500 flex-1 h-10 flex items-center bg-white dark:bg-zinc-900 truncate">
-                      <a href={file.url} target="_blank" rel="noopener noreferrer" className="hover:underline truncate w-full text-blue-500">{file.name}</a>
+                      <button type="button" onClick={() => openUploadedFile(file.url, file.name)} className="hover:underline truncate w-full text-left text-blue-500">{file.name}</button>
                     </div>
                     <Button 
                       type="button" 

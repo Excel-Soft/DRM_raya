@@ -53,6 +53,13 @@ const ROW_SELECT = `
   p.voided_by              as "voidedById",
   coalesce(v.full_name, v.name, v.email) as "voidedByName",
   p.voided_at              as "voidedAt",
+  p.employee_disputed_at   as "employeeDisputedAt",
+  p.dispute_reason         as "disputeReason",
+  p.dispute_status         as "disputeStatus",
+  p.dispute_resolved_by    as "disputeResolvedById",
+  coalesce(d.full_name, d.name, d.email) as "disputeResolvedByName",
+  p.dispute_resolved_at    as "disputeResolvedAt",
+  p.dispute_resolution_note as "disputeResolutionNote",
   p.created_at             as "createdAt",
   p.updated_at             as "updatedAt"
 `;
@@ -64,6 +71,7 @@ const ROW_JOINS = `
   left join drm.users a on a.id = p.approved_by
   left join drm.users r on r.id = p.rejected_by
   left join drm.users v on v.id = p.voided_by
+  left join drm.users d on d.id = p.dispute_resolved_by
 `;
 
 export interface ListFilters {
@@ -198,12 +206,31 @@ export async function getPenaltyById(id: string) {
   return rows[0] || null;
 }
 
+// For the dashboard "accept / dispute" popup: this employee's own approved,
+// non-voided penalties still awaiting their own action (not acknowledged,
+// and not already sitting in a pending dispute).
+export async function getPendingAcknowledgementForEmployee(employeeId: string) {
+  const { rows } = await pool.query(
+    `select ${ROW_SELECT} ${ROW_JOINS}
+      where p.employee_id::text = $1::text
+        and p.deleted_at is null
+        and p.approval_status = 'APPROVED'
+        and coalesce(p.status, 'ACTIVE') <> 'VOIDED'
+        and p.employee_acknowledged_at is null
+        and coalesce(p.dispute_status, '') <> 'PENDING'
+      order by p.created_at desc`,
+    [employeeId],
+  );
+  return rows;
+}
+
 /** Raw row (incl. created_by/employee_id/status/deleted_at) for permission checks. */
 export async function getPenaltyRaw(id: string) {
   const { rows } = await pool.query(
     `select id, employee_id as "employeeId", created_by as "createdBy", department,
             approval_status as "approvalStatus", coalesce(status, 'ACTIVE') as "status",
-            deleted_at as "deletedAt"
+            deleted_at as "deletedAt", employee_acknowledged_at as "employeeAcknowledgedAt",
+            dispute_status as "disputeStatus"
        from drm.penalties where id::text = $1::text limit 1`,
     [id],
   );
@@ -354,6 +381,70 @@ export async function acknowledgePenalty(id: string) {
     [id],
   );
   return getPenaltyById(id);
+}
+
+// The penalized employee pushes back with a reason instead of accepting.
+// Mutually exclusive with acknowledge — the route blocks disputing an
+// already-acknowledged penalty and vice versa.
+export async function disputePenalty(id: string, reason: string) {
+  await pool.query(
+    `update drm.penalties
+       set employee_disputed_at = now(), dispute_reason = $2, dispute_status = 'PENDING',
+           updated_at = now()
+     where id::text = $1::text and deleted_at is null`,
+    [id, reason],
+  );
+  const updated = await getPenaltyById(id);
+  // Notify the creator that the employee disputed their penalty.
+  try {
+    if (updated?.addedById) {
+      await NotificationService.notify({
+        userId: updated.addedById,
+        message: `${updated.employeeName ?? "An employee"} disputed a penalty (${updated.penaltyHead}) you created.`,
+        type: "WARNING",
+        targetUrl: "/drm/add-penalty",
+      });
+    }
+  } catch { /* non-fatal */ }
+  return updated;
+}
+
+// A decide-scoped manager/HOD resolves a pending dispute: "uphold" leaves the
+// penalty exactly as it was (still APPROVED, still counts for salary);
+// "withdraw" voids it via the same voidPenalty() path the HOD already uses
+// elsewhere, so there's only one place that actually cancels a penalty.
+export async function resolveDispute(
+  id: string,
+  resolvedBy: string,
+  action: "uphold" | "withdraw",
+  note?: string | null,
+) {
+  if (action === "withdraw") {
+    const voided = await voidPenalty(id, resolvedBy, note || "Dispute upheld — penalty withdrawn.");
+    if (!voided) return null;
+  }
+  const { rowCount } = await pool.query(
+    `update drm.penalties
+       set dispute_status = 'RESOLVED', dispute_resolved_by = $2::uuid, dispute_resolved_at = now(),
+           dispute_resolution_note = $3, updated_at = now()
+     where id::text = $1::text and deleted_at is null and dispute_status = 'PENDING'`,
+    [id, resolvedBy, note ?? null],
+  );
+  if (!rowCount && action === "uphold") return null;
+  const updated = await getPenaltyById(id);
+  try {
+    if (updated?.employeeId) {
+      await NotificationService.notify({
+        userId: updated.employeeId,
+        message: action === "withdraw"
+          ? `Your dispute of a penalty (${updated.penaltyHead}) was upheld — it has been withdrawn.`
+          : `Your dispute of a penalty (${updated.penaltyHead}) was reviewed and the penalty stands.`,
+        type: action === "withdraw" ? "SUCCESS" : "INFO",
+        targetUrl: "/drm/add-penalty",
+      });
+    }
+  } catch { /* non-fatal */ }
+  return updated;
 }
 
 export async function softDeletePenalty(id: string) {

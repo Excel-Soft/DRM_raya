@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getAuthHeader } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient, getAuthHeader } from "@/lib/queryClient";
 import type { Cheque } from "@shared/schema";
 
 function numberToWords(num: number): string {
@@ -66,6 +66,21 @@ export default function ChequeSystem() {
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to add cheque", variant: "destructive" });
+    },
+  });
+
+  // Marks a cheque used/unused (and Cleared/Bounced/Cancelled for the
+  // in-between real-world outcomes) — the backend already had this endpoint
+  // fully built (with audit logging), it just had no UI control calling it.
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      apiRequestJson("PATCH", `/api/office/cheques/${id}/status`, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/office/cheques"] });
+      toast({ title: "Updated", description: "Cheque status updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not update status", description: err?.message || "Failed to update cheque status", variant: "destructive" });
     },
   });
 
@@ -326,11 +341,26 @@ export default function ChequeSystem() {
 
                     {/* Footer text */}
                     <div className="flex justify-between items-end mt-2">
-                      <span className="text-gray-400 text-[13px] font-bold">Please do not write bellow this line</span>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-gray-400 text-[13px] font-bold">Please do not write bellow this line</span>
+                        <Select
+                          value={cheque.status}
+                          onValueChange={(v) => statusMutation.mutate({ id: cheque.id, status: v })}
+                        >
+                          <SelectTrigger
+                            className={`h-6 w-32 text-[11px] font-semibold px-2 ${cheque.status === 'Pending' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Pending">Un-used</SelectItem>
+                            <SelectItem value="Cleared">Used</SelectItem>
+                            <SelectItem value="Bounced">Bounced</SelectItem>
+                            <SelectItem value="Cancelled">Cancelled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <div className="w-56 text-center pt-1 relative">
-                        <span className="text-gray-600 text-[11px] absolute -top-3.5 left-0 right-0">
-                          {cheque.status === 'Pending' ? 'not used' : 'used'}
-                        </span>
                         <div className="border-t border-gray-400"></div>
                         <span className="text-gray-400 text-[13px] mt-0.5 block">Signature</span>
                       </div>

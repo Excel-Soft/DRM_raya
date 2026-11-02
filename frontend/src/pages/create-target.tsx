@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,24 +9,20 @@ import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 
-const dummyData = [
-  { id: 1, name: "p & p (100-200)", number: 0, price: 1, bonus: "50%", package: "", reward: 50, kwa: 0, vas: 0, create: "27 Apr 2025 06:29 PM" },
-  { id: 2, name: "P&P(1040-1559)", number: 0, price: 1040, bonus: "15", package: "", reward: 4000, kwa: 0, vas: 0, create: "15 Apr 2026 05:20 PM" },
-  { id: 3, name: "P&P(1040-1559)", number: 0, price: 1040, bonus: "4000%", package: "", reward: 15, kwa: 0, vas: 0, create: "15 Apr 2026 05:19 PM" },
-  { id: 4, name: "P&P(1040-1559)", number: 0, price: 0, bonus: "0", package: "", reward: 4000, kwa: 0, vas: 0, create: "15 Apr 2026 04:55 PM" },
-  { id: 5, name: "P&P(1040-1559)", number: 0, price: 0, bonus: "4000", package: "", reward: 0, kwa: 0, vas: 0, create: "15 Apr 2026 04:51 PM" },
-  { id: 6, name: "P&P", number: 0, price: 1040, bonus: "4000", package: "", reward: 4000, kwa: 0, vas: 0, create: "15 Apr 2026 04:49 PM" },
-  { id: 7, name: "VAS (Rs 150,000/- or Above)", number: 0, price: 150000, bonus: "15%", package: "", reward: 7500, kwa: 0, vas: 0, create: "14 Mar 2026 11:41 AM" },
-  { id: 8, name: "VAS (Rs. 70,000/- to Rs. 99,999/-)", number: 0, price: 70000, bonus: "10%", package: "", reward: 2500, kwa: 0, vas: 0, create: "14 Mar 2026 11:39 AM" },
-  { id: 9, name: "VAS (Below Rs. 70,000/-)", number: 0, price: 1, bonus: "10%", package: "", reward: 0, kwa: 0, vas: 0, create: "14 Mar 2026 11:21 AM" },
-  { id: 10, name: "VAS (Rs. 100,000 to Rs 150,000/-)", number: 0, price: 100000, bonus: "12%", package: "", reward: 5000, kwa: 0, vas: 0, create: "14 Mar 2026 11:19 AM" },
-];
+// Packages whose service includes a KWA allotment — mirrors the legacy
+// targetcreate.php condition (package in 'Basic Pro'/'Standard'/'Premium'/
+// 'KWA'/'TSA'/'Verified Supplier'), mapped onto this app's actual package
+// names since "Basic Pro" and "TSA" don't exist here (closest equivalents:
+// Basic, and the Kwa-flavored packages).
+const KWA_PACKAGES = new Set(["Basic", "Standard", "Premium", "Verified Supplier", "Kwa", "Kwa-Pro", "KWA-KAP"]);
+// VAS is only relevant for Basic Plus — exact match with the legacy condition.
+const VAS_PACKAGE = "Basic Plus";
 
 export default function CreateTarget() {
   const [showForm, setShowForm] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
+
   // State for form fields
   const [targetName, setTargetName] = useState("");
   const [category, setCategory] = useState("none");
@@ -41,6 +37,14 @@ export default function CreateTarget() {
   const [kwa, setKwa] = useState(0);
   const [vas, setVas] = useState(0);
   const [conversion, setConversion] = useState(0);
+
+  const showKwaField = KWA_PACKAGES.has(pkg);
+  const showVasField = pkg === VAS_PACKAGE;
+
+  // Table controls
+  const [search, setSearch] = useState("");
+  const [pageSize, setPageSize] = useState("10");
+  const [page, setPage] = useState(1);
 
   const { data: targets, isLoading } = useQuery({
     queryKey: ["/api/target-system/targets"],
@@ -62,7 +66,7 @@ export default function CreateTarget() {
       const token = sessionStorage.getItem("token");
       const res = await fetch("/api/target-system/targets", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
@@ -113,18 +117,33 @@ export default function CreateTarget() {
       penalty,
       amount,
       number,
-      kwa,
-      vas,
+      kwa: showKwaField ? kwa : 0,
+      vas: showVasField ? vas : 0,
       conversion,
     });
   };
 
+  const filteredTargets = useMemo(() => {
+    const rows: any[] = Array.isArray(targets) ? targets : [];
+    if (!search.trim()) return rows;
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) =>
+      [row.targetName, row.category, row.package, row.bonus]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(q))
+    );
+  }, [targets, search]);
+
+  const limit = Number(pageSize) || 10;
+  const totalPages = Math.max(1, Math.ceil(filteredTargets.length / limit));
+  const currentPage = Math.min(page, totalPages);
+  const pagedTargets = filteredTargets.slice((currentPage - 1) * limit, currentPage * limit);
 
   return (
     <div className="p-6">
       <div className="mb-6 flex items-center font-bold text-lg uppercase">
         <span className="text-gray-700 mr-1 dark:text-zinc-400">TARGET SYSTEM /</span>
-        <span 
+        <span
           className="text-[#00a65a] cursor-pointer hover:underline dark:text-zinc-400"
           onClick={() => setShowForm(!showForm)}
         >
@@ -190,21 +209,21 @@ export default function CreateTarget() {
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Reward:</label>
                 <div className="flex">
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-r-none px-3 h-9"
                     onClick={() => setReward(r => Math.max(0, r - 1))}
                   >
                     -
                   </Button>
-                  <Input 
-                    type="number" 
-                    value={reward} 
-                    onChange={e => setReward(Number(e.target.value))} 
-                    className="rounded-none text-center h-9" 
+                  <Input
+                    type="number"
+                    value={reward}
+                    onChange={e => setReward(Number(e.target.value))}
+                    className="rounded-none text-center h-9"
                   />
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-l-none px-3 h-9"
                     onClick={() => setReward(r => r + 1)}
                   >
@@ -231,21 +250,21 @@ export default function CreateTarget() {
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Price:</label>
                 <div className="flex">
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-r-none px-3 h-9"
                     onClick={() => setPrice(p => Math.max(0, p - 1))}
                   >
                     -
                   </Button>
-                  <Input 
-                    type="number" 
-                    value={price} 
-                    onChange={e => setPrice(Number(e.target.value))} 
-                    className="rounded-none text-center h-9" 
+                  <Input
+                    type="number"
+                    value={price}
+                    onChange={e => setPrice(Number(e.target.value))}
+                    className="rounded-none text-center h-9"
                   />
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-l-none px-3 h-9"
                     onClick={() => setPrice(p => p + 1)}
                   >
@@ -256,21 +275,21 @@ export default function CreateTarget() {
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Max Price:</label>
                 <div className="flex">
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-r-none px-3 h-9"
                     onClick={() => setMaxPrice(p => Math.max(0, p - 1))}
                   >
                     -
                   </Button>
-                  <Input 
-                    type="number" 
-                    value={maxPrice} 
-                    onChange={e => setMaxPrice(Number(e.target.value))} 
-                    className="rounded-none text-center h-9" 
+                  <Input
+                    type="number"
+                    value={maxPrice}
+                    onChange={e => setMaxPrice(Number(e.target.value))}
+                    className="rounded-none text-center h-9"
                   />
-                  <Button 
-                    variant="default" 
+                  <Button
+                    variant="default"
                     className="bg-[#00a65a] hover:bg-[#008d4c] rounded-l-none px-3 h-9"
                     onClick={() => setMaxPrice(p => p + 1)}
                   >
@@ -288,7 +307,7 @@ export default function CreateTarget() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mt-4">
               <div>
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Number (quota):</label>
                 <Input type="number" value={number} onChange={e => setNumber(Number(e.target.value))} className="h-9" />
@@ -297,14 +316,18 @@ export default function CreateTarget() {
                 <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">Conversion:</label>
                 <Input type="number" value={conversion} onChange={e => setConversion(Number(e.target.value))} className="h-9" />
               </div>
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">KWA:</label>
-                <Input type="number" value={kwa} onChange={e => setKwa(Number(e.target.value))} className="h-9" />
-              </div>
-              <div>
-                <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">VAS:</label>
-                <Input type="number" value={vas} onChange={e => setVas(Number(e.target.value))} className="h-9" />
-              </div>
+              {showKwaField && (
+                <div>
+                  <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">KWA:</label>
+                  <Input type="number" value={kwa} onChange={e => setKwa(Number(e.target.value))} className="h-9" />
+                </div>
+              )}
+              {showVasField && (
+                <div>
+                  <label className="block text-sm mb-1 text-gray-700 dark:text-zinc-400">VAS:</label>
+                  <Input type="number" value={vas} onChange={e => setVas(Number(e.target.value))} className="h-9" />
+                </div>
+              )}
               <div>
                 <Button
                   className="w-full bg-[#00a65a] hover:bg-[#008d4c] h-9"
@@ -327,7 +350,7 @@ export default function CreateTarget() {
             <div className="flex justify-between items-center">
               <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-zinc-300">
                 <span>Show</span>
-                <Select defaultValue="10">
+                <Select value={pageSize} onValueChange={(v) => { setPageSize(v); setPage(1); }}>
                   <SelectTrigger className="w-[70px] h-8">
                     <SelectValue />
                   </SelectTrigger>
@@ -341,11 +364,15 @@ export default function CreateTarget() {
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600 dark:text-zinc-300">Search:</span>
-                <Input className="h-8 w-48" />
+                <Input
+                  className="h-8 w-48"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                />
               </div>
             </div>
           </div>
-          
+
           <div className="overflow-x-auto">
             <Table>
               <TableHeader className="bg-[#dcfce7] dark:bg-zinc-900">
@@ -371,21 +398,21 @@ export default function CreateTarget() {
                       <Loader2 className="w-6 h-6 animate-spin mx-auto text-gray-400" />
                     </TableCell>
                   </TableRow>
-                ) : targets?.length === 0 ? (
+                ) : pagedTargets.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={12} className="text-center py-8 text-gray-500 dark:text-zinc-400">
-                      No targets found. Create one above!
+                      {search ? "No targets match your search." : "No targets found. Create one above!"}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  targets?.map((row: any, index: number) => (
+                  pagedTargets.map((row: any, index: number) => (
                     <TableRow key={row.id}>
-                      <TableCell className="text-center font-medium">{index + 1}</TableCell>
+                      <TableCell className="text-center font-medium">{(currentPage - 1) * limit + index + 1}</TableCell>
                       <TableCell className="text-center">{row.targetName}</TableCell>
                       <TableCell className="text-center">{row.category || "-"}</TableCell>
                       <TableCell className="text-center">{row.number}</TableCell>
                       <TableCell className="text-center">
-                        {row.amount}
+                        {row.price}
                       </TableCell>
                       <TableCell className="text-center">{row.bonus}</TableCell>
                       <TableCell className="text-center">{row.package === "none" ? "" : row.package}</TableCell>
@@ -404,16 +431,34 @@ export default function CreateTarget() {
           </div>
 
           <div className="p-4 flex items-center justify-between border-t text-sm text-gray-600 dark:text-zinc-300">
-            <div>Showing {targets?.length || 0} entries</div>
+            <div>Showing {pagedTargets.length} of {filteredTargets.length} entries</div>
             <div className="flex space-x-1">
-              <Button variant="outline" className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400">Previous</Button>
-              <Button variant="default" className="h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]">1</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">2</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">3</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">4</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">5</Button>
-              <Button variant="outline" className="h-8 w-8 p-0">6</Button>
-              <Button variant="outline" className="h-8 px-3">Next</Button>
+              <Button
+                variant="outline"
+                className="h-8 px-3 text-gray-500 bg-gray-50 dark:bg-zinc-900 dark:text-zinc-400"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+              >
+                Previous
+              </Button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <Button
+                  key={p}
+                  variant={p === currentPage ? "default" : "outline"}
+                  className={p === currentPage ? "h-8 w-8 p-0 bg-[#00a65a] hover:bg-[#008d4c]" : "h-8 w-8 p-0"}
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                className="h-8 px-3"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+              >
+                Next
+              </Button>
             </div>
           </div>
         </CardContent>

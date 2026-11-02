@@ -28,7 +28,7 @@ async function main() {
     category: "Invoice Payment",
     referenceId: inv.id,
     referenceType: "Invoice",
-    entryDate: new Date(),
+    entryDate: new Date().toISOString().split("T")[0],
     createdByUserId: inv.createdByUserId,
     status: "Posted",
     remarks: inv.paymentMethod || null,

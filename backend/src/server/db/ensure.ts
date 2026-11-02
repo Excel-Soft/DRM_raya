@@ -32,6 +32,28 @@ async function ensurePenaltiesSchema(client: {
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_penalties_lifecycle_status ON drm.penalties (status)`,
   );
+  // Employee dispute workflow: an alternative to plain acknowledge — the
+  // penalized employee can push back with a reason instead of accepting,
+  // which a decide-scoped manager/HOD then resolves (uphold = stands as-is,
+  // withdraw = voids it via the existing void path).
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS employee_disputed_at timestamptz`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS dispute_reason text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS dispute_status text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS dispute_resolved_by uuid REFERENCES drm.users(id)`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS dispute_resolved_at timestamptz`,
+  );
+  await client.query(
+    `ALTER TABLE drm.penalties ADD COLUMN IF NOT EXISTS dispute_resolution_note text`,
+  );
 }
 
 /**

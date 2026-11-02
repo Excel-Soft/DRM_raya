@@ -201,9 +201,12 @@ export function registerLoanRoutes(app: Express) {
         return res.status(401).json({ error: "Not authenticated" });
       }
 
-      // Check if user has admin permissions
-      const userRole = req.user.roleId?.toLowerCase();
-      const isAdmin = ["admin", "super_hod", "hod", "manager", "assistant_manager"].includes(userRole);
+      // Check if user has admin/managerial permissions — consistent with
+      // every other role gate in this file (isManagerialRole), rather than a
+      // separate hand-rolled list that (among other gaps) omitted
+      // account_manager entirely.
+      const userRole = callerRole(req);
+      const isAdmin = isManagerialRole(userRole);
 
       if (!isAdmin) {
         console.error("[LOAN_ADMIN] Non-admin user attempted access:", req.user.userId, userRole);
@@ -228,8 +231,12 @@ export function registerLoanRoutes(app: Express) {
         return res.status(404).json({ error: "Employee not found" });
       }
 
-      console.log(`[LOAN_ADMIN] Creating loan for user: ${parseResult.data.userId} by admin: ${req.user.userId}`);
-      const record = await loanRepository.create(parseResult.data);
+      // The creator already holds loan-decision authority (manager tier or
+      // HOD tier) — auto-approve straight through rather than making them
+      // queue behind their own submission.
+      const autoApprove = isManagerialRole(userRole) || isHodAllowed(userRole);
+      console.log(`[LOAN_ADMIN] Creating loan for user: ${parseResult.data.userId} by admin: ${req.user.userId} (autoApprove=${autoApprove})`);
+      const record = await loanRepository.create(parseResult.data, autoApprove ? req.user.userId : undefined);
       console.log(`[LOAN_ADMIN] Created successfully:`, record.id);
       await ActivityLogService.log({
         userId: req.user.userId,

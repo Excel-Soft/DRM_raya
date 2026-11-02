@@ -113,3 +113,28 @@ export const penaltyVoidSchema = z
   .superRefine((val, ctx) => {
     if (!val.reason) ctx.addIssue({ code: custom, message: "reason is required to void a penalty" });
   });
+
+/**
+ * DISPUTE — the employee's own pushback reason is mandatory. Output is `{ reason }`.
+ */
+export const penaltyDisputeSchema = z
+  .object({ reason: z.any().optional() })
+  .transform((b) => ({ reason: b.reason ? String(b.reason).trim() : "" }))
+  .superRefine((val, ctx) => {
+    if (!val.reason) ctx.addIssue({ code: custom, message: "reason is required to dispute a penalty" });
+  });
+
+/**
+ * DISPUTE RESOLVE — action must be "uphold" or "withdraw"; note is optional.
+ */
+export const penaltyDisputeResolveSchema = z
+  .object({ action: z.any().optional(), note: z.any().optional() })
+  .transform((b) => ({
+    action: String(b.action ?? "").toLowerCase(),
+    note: b.note ? String(b.note).trim() : "",
+  }))
+  .superRefine((val, ctx) => {
+    if (val.action !== "uphold" && val.action !== "withdraw") {
+      ctx.addIssue({ code: custom, message: "action must be 'uphold' or 'withdraw'" });
+    }
+  });

@@ -19,6 +19,14 @@ import { normalizeRole, isManagerialRole } from "../utils/role-utils";
 
 export const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
 export const HR_ROLES = ["hr", "hr_manager"];
+// Account Manager and HOD create/view penalties for any employee
+// company-wide — explicit product request — rather than being scoped to
+// their own department like the other managerial roles below. This does
+// NOT widen canDecide/canVoid: HOD keeps department-scoped decide/void
+// authority (see the `purpose` param below) so a HOD can flag a penalty
+// against anyone company-wide, but can only approve/reject/void one that's
+// in their own department.
+export const COMPANY_WIDE_VIEW_ROLES = ["account_manager", "hod"];
 
 export function getUserId(req: Request): string | undefined {
   return (req.user as any)?.userId || (req.user as any)?.id;
@@ -67,14 +75,21 @@ export async function getDepartment(userId: string): Promise<string | null> {
 /**
  * Returns the list of employee_ids this requester may view, or null for "all".
  *   - full access / HR -> null (all)
+ *   - account_manager / HOD, purpose="view" -> null (all) — company-wide carve-out
  *   - HOD / managerial -> their department (+ self)
  *   - everyone else    -> [self]
+ *
+ * `purpose` distinguishes "view/create" scope (where HOD is company-wide)
+ * from "decide/void" scope (where HOD stays department-only — approving or
+ * voiding someone else's department's penalty is a different, narrower
+ * authority than merely being allowed to flag one against them).
  */
-export async function getAllowedEmployeeIds(req: Request): Promise<string[] | null> {
+export async function getAllowedEmployeeIds(req: Request, purpose: "view" | "decide" = "view"): Promise<string[] | null> {
   const myId = getUserId(req);
   if (!myId) return [];
   const role = getActiveRole(req);
   if (isFullAccess(role) || isHr(role)) return null;
+  if (purpose === "view" && COMPANY_WIDE_VIEW_ROLES.includes(role)) return null;
 
   if (isHod(role) || isManagerialRole(role)) {
     const dept = await getDepartment(String(myId));
@@ -95,8 +110,8 @@ export async function getAllowedEmployeeIds(req: Request): Promise<string[] | nu
   return [String(myId)];
 }
 
-export async function canViewEmployee(req: Request, employeeId: string): Promise<boolean> {
-  const allowed = await getAllowedEmployeeIds(req);
+export async function canViewEmployee(req: Request, employeeId: string, purpose: "view" | "decide" = "view"): Promise<boolean> {
+  const allowed = await getAllowedEmployeeIds(req, purpose);
   if (allowed === null) return true;
   return allowed.includes(String(employeeId));
 }

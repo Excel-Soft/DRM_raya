@@ -126,6 +126,7 @@ export default function DollarBuying() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/buying"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
       toast({ title: "Buying record added" });
       setBuyerId("");
       setReferenceId("");

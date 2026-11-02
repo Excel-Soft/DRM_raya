@@ -13,6 +13,7 @@ import {
   syncGmInvoicesAfterHodApproval,
 } from "./services/gm-invoice-generation.service.js";
 import { CrossDepartmentStatusService } from "./services/cross-department-status.service.js";
+import { checkGmNotRefunded } from "./services/gm-refund-guard.service.js";
 import { NotificationService } from "./services/notification-service.js";
 import { requireGmSalesActionPermission, GM_SALES_ACTION_KEYS, resolveAllowedRoles } from "../utils/gm-sales-permissions";
 import { getConfig } from "./services/gm-sales-config.service.js";
@@ -727,6 +728,8 @@ export function registerGmPoolRoutes(app: Express) {
           account_manager_approved_at as "accountManagerApprovedAt",
           is_loan as "isLoan",
           is_partial_payment as "isPartialPayment",
+          is_refunded as "isRefunded",
+          refunded_at as "refundedAt",
           notes,
           installments,
           dropout,
@@ -1531,6 +1534,9 @@ export function registerGmPoolRoutes(app: Express) {
       if (!thr.ok) return res.status(thr.status).json(thr.body);
       const checkEntryRes = await pool.query(`SELECT * FROM drm.gm_entries WHERE id = $1`, [id]);
       const e = checkEntryRes.rows[0];
+      if (e?.is_refunded) {
+        return res.status(400).json({ error: "This GM has already been refunded — no further action can be taken on it." });
+      }
       if (e) {
         const missing: string[] = [];
         if (!e.member_id || !String(e.member_id).trim()) missing.push("Member ID");
@@ -1656,7 +1662,7 @@ export function registerGmPoolRoutes(app: Express) {
       const hodRejectParams: any[] = [id, req.user.userId, comment];
       const hodRejectScope = await gmApprovalScopeClause(req, hodRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_hod', final_status = 'rejected', status = 'Rejected', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod'${hodRejectScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_hod', final_status = 'rejected', status = 'Rejected', hod_approved_at = NOW(), hod_approved_by = $2, hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_hod' AND coalesce(is_refunded,false) = false${hodRejectScope} RETURNING *`,
         hodRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -1706,13 +1712,15 @@ export function registerGmPoolRoutes(app: Express) {
       }).parse(req.body ?? {});
       const thr = await enforceApprovalThreshold(id, req);
       if (!thr.ok) return res.status(thr.status).json(thr.body);
+      const refundBlock = await checkGmNotRefunded(id);
+      if (refundBlock) return res.status(400).json({ error: refundBlock });
       // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
       const gate = await enforceLoanPartialFinalApprovalGate(id);
       if (!gate.ok) return res.status(gate.status).json(gate.body);
       const amApproveParams: any[] = [id, req.user.userId, comment || null, paymentStatus || null, alibabaStatus || null];
       const amApproveScope = await gmApprovalScopeClause(req, amApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, payment_status = COALESCE($4, payment_status), alibaba_status = COALESCE($5, alibaba_status), updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', account_manager_status = 'approved', approval_status = 'approved', final_status = 'approved', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, payment_status = COALESCE($4, payment_status), alibaba_status = COALESCE($5, alibaba_status), updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' AND coalesce(is_refunded,false) = false${amApproveScope} RETURNING *`,
         amApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -1783,7 +1791,7 @@ export function registerGmPoolRoutes(app: Express) {
       const amRejectParams: any[] = [id, req.user.userId, comment];
       const amRejectScope = await gmApprovalScopeClause(req, amRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_account_manager', final_status = 'rejected', account_manager_status = 'rejected', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending'${amRejectScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_account_manager', final_status = 'rejected', account_manager_status = 'rejected', account_manager_approved_at = NOW(), account_manager_approved_by = $2, account_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND account_manager_status = 'pending' AND coalesce(is_refunded,false) = false${amRejectScope} RETURNING *`,
         amRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -1802,7 +1810,7 @@ export function registerGmPoolRoutes(app: Express) {
       const smApproveParams: any[] = [id, req.user.userId, comment || null];
       const smApproveScope = await gmApprovalScopeClause(req, smApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET sales_manager_status = 'approved', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending'${smApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET sales_manager_status = 'approved', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending' AND coalesce(is_refunded,false) = false${smApproveScope} RETURNING *`,
         smApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -1821,7 +1829,7 @@ export function registerGmPoolRoutes(app: Express) {
             data: entry,
           });
         }
-        await pool.query(`UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1`, [id]);
+        await pool.query(`UPDATE drm.gm_entries SET status = 'Approved', accountant_status = 'approved', approval_status = 'approved', final_status = 'approved', updated_at = NOW() WHERE id = $1 AND coalesce(is_refunded,false) = false`, [id]);
 
         // Safety net: this branch only runs once account_manager_status is
         // already 'approved' (see the check above), meaning the Account
@@ -1891,7 +1899,7 @@ export function registerGmPoolRoutes(app: Express) {
       const smRejectParams: any[] = [id, req.user.userId, comment || 'Rejected by Sales Manager'];
       const smRejectScope = await gmApprovalScopeClause(req, smRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_sales_manager', final_status = 'rejected', sales_manager_status = 'rejected', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending'${smRejectScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_sales_manager', final_status = 'rejected', sales_manager_status = 'rejected', sales_manager_approved_at = NOW(), sales_manager_approved_by = $2, sales_manager_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_managers' AND sales_manager_status = 'pending' AND coalesce(is_refunded,false) = false${smRejectScope} RETURNING *`,
         smRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -2001,6 +2009,8 @@ export function registerGmPoolRoutes(app: Express) {
       // Patch 5 Stage 3 — block final approval of an unpaid PARTIAL / un-admin-approved LOAN GM.
       const gate = await enforceLoanPartialFinalApprovalGate(id);
       if (!gate.ok) return res.status(gate.status).json(gate.body);
+      const refundBlock = await checkGmNotRefunded(id);
+      if (refundBlock) return res.status(400).json({ error: refundBlock });
       // MD-15 (corrected 2026-07-20, DECISION_LOG.md D-012): this route was
       // shipped with no scope clause on the false assumption that
       // pending_super_hod is a dead stage — it isn't (see the pending-list
@@ -2008,7 +2018,7 @@ export function registerGmPoolRoutes(app: Express) {
       const superHodApproveParams: any[] = [id, req.user.userId, comment || null];
       const superHodApproveScope = await gmApprovalScopeClause(req, superHodApproveParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod'${superHodApproveScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'approved', final_status = 'approved', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod' AND coalesce(is_refunded,false) = false${superHodApproveScope} RETURNING *`,
         superHodApproveParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });
@@ -2046,7 +2056,7 @@ export function registerGmPoolRoutes(app: Express) {
       const superHodRejectParams: any[] = [id, req.user.userId, comment || 'Rejected by Super HOD'];
       const superHodRejectScope = await gmApprovalScopeClause(req, superHodRejectParams);
       const result = await pool.query(
-        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_super_hod', final_status = 'rejected', status = 'Rejected', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod'${superHodRejectScope} RETURNING *`,
+        `UPDATE drm.gm_entries SET approval_status = 'rejected_by_super_hod', final_status = 'rejected', status = 'Rejected', super_hod_approved_at = NOW(), super_hod_approved_by = $2, super_hod_comment = $3, updated_at = NOW() WHERE id = $1 AND approval_status = 'pending_super_hod' AND coalesce(is_refunded,false) = false${superHodRejectScope} RETURNING *`,
         superHodRejectParams
       );
       if (result.rowCount === 0) return res.status(404).json({ error: "GM entry not found or already processed" });

@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import type { Donation } from "@shared/schema";
 
@@ -34,7 +34,7 @@ export default function AccountDonations() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const [formData, setFormData] = useState({
-    companyName: "",
+    referenceNumber: "",
     title: "Mr.",
     personName: "",
     amount: "",
@@ -48,8 +48,8 @@ export default function AccountDonations() {
 
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) =>
-      apiRequest("POST", "/api/account/donations", {
-        companyName: data.companyName,
+      apiRequestJson("POST", "/api/account/donations", {
+        referenceNumber: data.referenceNumber || null,
         title: data.title,
         personName: data.personName,
         amount: data.amount,
@@ -59,11 +59,11 @@ export default function AccountDonations() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/donations"] });
       setDialogOpen(false);
-      setFormData({ companyName: "", title: "Mr.", personName: "", amount: "", currency: "PKR", comment: "" });
+      setFormData({ referenceNumber: "", title: "Mr.", personName: "", amount: "", currency: "PKR", comment: "" });
       toast({ title: "Success", description: "Donation added successfully" });
     },
-    onError: () =>
-      toast({ title: "Error", description: "Failed to add donation", variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Could not add donation", description: err?.message || "Failed to add donation", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -83,7 +83,7 @@ export default function AccountDonations() {
     return donations.filter(
       (d) =>
         (d.personName || "").toLowerCase().includes(q) ||
-        (d.companyName || "").toLowerCase().includes(q) ||
+        (d.referenceNumber || "").toLowerCase().includes(q) ||
         (d.comment || "").toLowerCase().includes(q)
     );
   }, [donations, searchQuery]);
@@ -163,6 +163,7 @@ export default function AccountDonations() {
                   <tr className="bg-gray-100 border-b border-gray-200 dark:border-zinc-800 dark:bg-zinc-900">
                     <th className="text-left px-4 py-2.5 font-semibold text-gray-700 w-12 dark:text-zinc-400">No#</th>
                     <th className="text-left px-4 py-2.5 font-semibold text-gray-700 dark:text-zinc-400">Name</th>
+                    <th className="text-left px-4 py-2.5 font-semibold text-gray-700 w-32 dark:text-zinc-400">Reference #</th>
                     <th className="text-left px-4 py-2.5 font-semibold text-gray-700 w-28 dark:text-zinc-400">Amount</th>
                     <th className="text-left px-4 py-2.5 font-semibold text-gray-700 dark:text-zinc-400">Detail</th>
                     <th className="text-left px-4 py-2.5 font-semibold text-gray-700 w-28 dark:text-zinc-400">Create</th>
@@ -172,7 +173,7 @@ export default function AccountDonations() {
                 <tbody>
                   {paginatedDonations.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center py-10 text-gray-400">
+                      <td colSpan={7} className="text-center py-10 text-gray-400">
                         {searchQuery ? "No donations found" : "No donations yet"}
                       </td>
                     </tr>
@@ -188,6 +189,9 @@ export default function AccountDonations() {
                         </td>
                         <td className="px-4 py-2 text-blue-600 cursor-pointer hover:underline" data-testid={`text-person-${donation.id}`}>
                           {donation.title ? `${donation.title} ` : ""}{donation.personName}
+                        </td>
+                        <td className="px-4 py-2 text-gray-600 dark:text-zinc-300">
+                          {donation.referenceNumber || "—"}
                         </td>
                         <td className="px-4 py-2 text-gray-800 dark:text-zinc-100">
                           {parseFloat(donation.amount || "0").toLocaleString()}
@@ -284,13 +288,13 @@ export default function AccountDonations() {
             </div>
 
             <div>
-              <Label className="text-xs text-gray-600 dark:text-zinc-300">Company Name</Label>
+              <Label className="text-xs text-gray-600 dark:text-zinc-300">Reference Number</Label>
               <Input
                 className="h-9 text-sm mt-1"
-                placeholder="Enter company name"
-                value={formData.companyName}
-                onChange={(e) => setFormData((f) => ({ ...f, companyName: e.target.value }))}
-                data-testid="input-company"
+                placeholder="Enter reference / receipt number"
+                value={formData.referenceNumber}
+                onChange={(e) => setFormData((f) => ({ ...f, referenceNumber: e.target.value }))}
+                data-testid="input-reference-number"
               />
             </div>
 
@@ -315,7 +319,7 @@ export default function AccountDonations() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="PKR">PKR</SelectItem>
-                    <SelectItem value="Dollar">Dollar</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

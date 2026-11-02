@@ -7,7 +7,9 @@
  * Access control (enforced on the backend, never trusted from the client):
  *   - admin / super_admin / super_hod  -> view all, create, edit, delete, approve/reject, reports
  *   - hod                              -> view their department, approve/reject, reports, create
- *   - dd_manager / managerial roles    -> create; view their department; edit/soft-delete their own
+ *   - account_manager                  -> create/view for ANY employee company-wide; edit/soft-delete
+ *                                         their own PENDING penalties only; cannot approve/reject/void
+ *   - dd_manager / other managerial    -> create; view their department; edit/soft-delete their own
  *                                         PENDING penalties only
  *   - hr / hr_manager                  -> view all + reports (no create/approve/delete)
  *   - employee / executive / other     -> view ONLY their own penalties; acknowledge own; no create
@@ -25,6 +27,9 @@ import {
   updatePenalty,
   decidePenalty,
   acknowledgePenalty,
+  disputePenalty,
+  resolveDispute,
+  getPendingAcknowledgementForEmployee,
   softDeletePenalty,
   voidPenalty,
   monthlyReport,
@@ -50,6 +55,8 @@ import {
   penaltyUpdateSchema,
   penaltyDecisionSchema,
   penaltyVoidSchema,
+  penaltyDisputeSchema,
+  penaltyDisputeResolveSchema,
 } from "../validators/penalty.validators";
 
 function badRequest(res: Response, message: string) {
@@ -95,6 +102,23 @@ export function registerPenaltyRoutes(app: Express) {
         role,
       },
     });
+  });
+
+  // GET /api/penalties/pending-acknowledgement — the current user's own
+  // approved, non-voided penalties still awaiting their accept/dispute
+  // action. Backs the dashboard popup; anyone authenticated may call it for
+  // themselves (it only ever reads the caller's own employee_id).
+  app.get("/api/penalties/pending-acknowledgement", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const myId = getUserId(req);
+      if (!myId) return res.status(401).json({ error: "Unauthorized" });
+      const rows = await getPendingAcknowledgementForEmployee(String(myId));
+      res.json({ penalties: rows });
+    } catch (err) {
+      console.error("[penalty] pending-acknowledgement error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to fetch pending penalties" });
+    }
   });
 
   // GET /api/penalties/reports/monthly
@@ -322,8 +346,9 @@ export function registerPenaltyRoutes(app: Express) {
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
-      // HOD scoped to their department.
-      if (!(await canViewEmployee(req, raw.employeeId))) {
+      // HOD scoped to their own department for deciding — company-wide
+      // create/view access does not extend to approve/reject.
+      if (!(await canViewEmployee(req, raw.employeeId, "decide"))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to decide this penalty" });
       }
       // Phase 13 — segregation of duties: the creator cannot decide their own
@@ -381,6 +406,9 @@ export function registerPenaltyRoutes(app: Express) {
       if (!isSelf) {
         return res.status(403).json({ error: "Forbidden", message: "You can only acknowledge your own penalty" });
       }
+      if (raw.disputeStatus === "PENDING") {
+        return res.status(409).json({ error: "Conflict", message: "You already disputed this penalty — withdraw the dispute first or wait for it to be resolved." });
+      }
       const updated = await acknowledgePenalty(id);
       await recordAuditLog({
         actorUserId: String(getUserId(req)),
@@ -394,6 +422,84 @@ export function registerPenaltyRoutes(app: Express) {
     } catch (err) {
       console.error("[penalty] acknowledge error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to acknowledge penalty" });
+    }
+  });
+
+  // PATCH /api/penalties/:id/dispute — employee pushes back with a reason
+  // instead of accepting. Mutually exclusive with acknowledge.
+  app.patch("/api/penalties/:id/dispute", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const id = String(req.params.id);
+      const raw = await getPenaltyRaw(id);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (raw.status === "VOIDED") {
+        return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be disputed" });
+      }
+      const isSelf = String(raw.employeeId) === String(getUserId(req));
+      if (!isSelf) {
+        return res.status(403).json({ error: "Forbidden", message: "You can only dispute your own penalty" });
+      }
+      if (raw.employeeAcknowledgedAt) {
+        return res.status(409).json({ error: "Conflict", message: "You already accepted this penalty — it can no longer be disputed." });
+      }
+      if (raw.disputeStatus === "PENDING") {
+        return res.status(409).json({ error: "Conflict", message: "You already disputed this penalty." });
+      }
+      const parsed = penaltyDisputeSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0]?.message || "Invalid request");
+      const updated = await disputePenalty(id, parsed.data.reason);
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.dispute",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        req,
+      });
+      res.json({ success: true, penalty: updated });
+    } catch (err) {
+      console.error("[penalty] dispute error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to dispute penalty" });
+    }
+  });
+
+  // PATCH /api/penalties/:id/dispute/resolve — decide-scoped manager/HOD
+  // resolves a pending dispute (uphold = stands, withdraw = voids).
+  app.patch("/api/penalties/:id/dispute/resolve", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const role = getActiveRole(req);
+      if (!canDecide(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "Only HOD/admin can resolve a penalty dispute" });
+      }
+      const id = String(req.params.id);
+      const raw = await getPenaltyRaw(id);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (!(await canViewEmployee(req, raw.employeeId, "decide"))) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to resolve this dispute" });
+      }
+      if (String(raw.createdBy) === String(getUserId(req))) {
+        return res.status(403).json({ error: "Forbidden", message: "You cannot resolve a dispute on a penalty you created." });
+      }
+      if (raw.disputeStatus !== "PENDING") {
+        return res.status(409).json({ error: "Conflict", message: "This penalty has no pending dispute" });
+      }
+      const parsed = penaltyDisputeResolveSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error.issues[0]?.message || "Invalid request");
+      const updated = await resolveDispute(id, String(getUserId(req)), parsed.data.action as "uphold" | "withdraw", parsed.data.note);
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: parsed.data.action === "withdraw" ? "penalty.dispute_withdraw" : "penalty.dispute_uphold",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        req,
+      });
+      res.json({ success: true, penalty: updated });
+    } catch (err) {
+      console.error("[penalty] dispute resolve error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to resolve dispute" });
     }
   });
 
@@ -449,8 +555,9 @@ export function registerPenaltyRoutes(app: Express) {
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
-      // HOD is scoped to their own department.
-      if (!(await canViewEmployee(req, raw.employeeId))) {
+      // HOD is scoped to their own department for voiding — company-wide
+      // create/view access does not extend to void.
+      if (!(await canViewEmployee(req, raw.employeeId, "decide"))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to void this penalty" });
       }
       // Phase 13 — segregation of duties: the creator cannot void their own

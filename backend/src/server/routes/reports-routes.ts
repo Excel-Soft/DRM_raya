@@ -2296,10 +2296,10 @@ router.get("/reports/ledger", async (req, res) => {
       conditions.push(ilike(ledgerEntries.description, `%${company}%`));
     }
     if (from) {
-      conditions.push(gte(ledgerEntries.entryDate, new Date(from as string)));
+      conditions.push(gte(ledgerEntries.entryDate, new Date(from as string).toISOString().split("T")[0]));
     }
     if (to) {
-      conditions.push(lte(ledgerEntries.entryDate, new Date(to as string)));
+      conditions.push(lte(ledgerEntries.entryDate, new Date(to as string).toISOString().split("T")[0]));
     }
     const contact = req.query.contact as string | undefined;
     const ntn = req.query.ntn as string | undefined;
@@ -2715,15 +2715,15 @@ router.get("/reports/:reportType/export-csv", async (req, res) => {
       const conditions = [];
       if (!isPrivileged) conditions.push(eq(ledgerEntries.createdByUserId, user.userId));
       if (company) conditions.push(ilike(ledgerEntries.description, `%${company}%`));
-      if (fromDate) conditions.push(gte(ledgerEntries.entryDate, fromDate));
-      if (toDate) conditions.push(lte(ledgerEntries.entryDate, toDate));
+      if (fromDate) conditions.push(gte(ledgerEntries.entryDate, fromDate.toISOString().split("T")[0]));
+      if (toDate) conditions.push(lte(ledgerEntries.entryDate, toDate.toISOString().split("T")[0]));
 
       data = await db.select().from(ledgerEntries).where(conditions.length > 0 ? and(...conditions) : undefined);
       headers = "ID,Description,Entry Type,Category,Reference ID,Amount,Currency,Date,Created By";
       filename = "ledger_report.csv";
 
       const csvContent = headers + "\n" + data.map(e =>
-        `${e.id},"${e.description}",${e.entryType},${e.category},${e.referenceId || ''},${e.amount},${e.currency},${e.entryDate?.toISOString().split('T')[0]},${e.createdByUserId}`
+        `${e.id},"${e.description}",${e.entryType},${e.category},${e.referenceId || ''},${e.amount},${e.currency},${e.entryDate || ''},${e.createdByUserId}`
       ).join("\n");
 
       res.setHeader("Content-Type", "text/csv");

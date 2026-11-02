@@ -261,6 +261,13 @@ export default function DollarSystem() {
   const [activeTab, setActiveTab] = useState("full");
   const [activeTxTab, setActiveTxTab] = useState("balance");
   const [txPage, setTxPage] = useState(1);
+  const [confirmingBuyId, setConfirmingBuyId] = useState<string | null>(null);
+  const [confirmBuyError, setConfirmBuyError] = useState("");
+  const [balanceStatusUpdatingId, setBalanceStatusUpdatingId] = useState<string | null>(null);
+  const [balanceStatusViewItem, setBalanceStatusViewItem] = useState<any>(null);
+  const [balanceStatusEditItem, setBalanceStatusEditItem] = useState<any>(null);
+  const [balanceStatusDraft, setBalanceStatusDraft] = useState("Show");
+  const [balanceStatusDateDraft, setBalanceStatusDateDraft] = useState("");
   const [viewItem, setViewItem] = useState<any>(null);
   const [attachItem, setAttachItem] = useState<any>(null);
   const [uploading, setUploading] = useState(false);
@@ -406,7 +413,9 @@ export default function DollarSystem() {
       remaining -= useDollar;
       slots.push({
         id: String(r.id),
-        checked: true,
+        // Suggested, not auto-applied — the user must tick each slot
+        // themselves before it counts toward the allocated total.
+        checked: false,
         buyerName: r.name || "-",
         buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
         email: r.buyer_reference_paypal_email || "",
@@ -428,7 +437,7 @@ export default function DollarSystem() {
       return {
         slots: [{
           id: String(exact.id),
-          checked: true,
+          checked: false,
           buyerName: exact.name || "-",
           buyDate: exact.buy_date ? safeDate(exact.buy_date, "yyyy-MM-dd") : "-",
           email: exact.buyer_reference_paypal_email || "",
@@ -440,24 +449,29 @@ export default function DollarSystem() {
         shortfall: 0,
       };
     }
+    // No single exact match — fall back to smallest-first, same as the
+    // Standard allocator, clamping the last slot's Use Dollar to whatever's
+    // left. A strict "only strictly-smaller records" rule here used to skip
+    // every record once the remaining target dropped below their size,
+    // sometimes leaving nothing (or too little) to even offer the user.
+    const sorted = [...records].sort((a, b) => Number(a.dollars) - Number(b.dollars));
     let remaining = orderAmount;
     const slots: any[] = [];
-    for (const r of records) {
+    for (const r of sorted) {
       const dollars = Number(r.dollars) || 0;
-      if (dollars < remaining) {
-        remaining -= dollars;
-        slots.push({
-          id: String(r.id),
-          checked: true,
-          buyerName: r.name || "-",
-          buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
-          email: r.buyer_reference_paypal_email || "",
-          rate: Number(r.dollar_rate) || 0,
-          totalShort: r.total_short_dollars ?? "-",
-          dollars,
-          useDollar: dollars,
-        });
-      }
+      const useDollar = Math.max(0, Math.min(dollars, remaining));
+      remaining -= useDollar;
+      slots.push({
+        id: String(r.id),
+        checked: false,
+        buyerName: r.name || "-",
+        buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
+        email: r.buyer_reference_paypal_email || "",
+        rate: Number(r.dollar_rate) || 0,
+        totalShort: r.total_short_dollars ?? "-",
+        dollars,
+        useDollar: Number(useDollar.toFixed(2)),
+      });
       if (remaining <= 0) break;
     }
     return { slots, shortfall: Math.max(0, remaining) };
@@ -466,31 +480,22 @@ export default function DollarSystem() {
   // A deliberately huge sentinel for the modal's first, unfiltered load — wide
   // enough that no real dollar_buying balance could ever exceed it — so the
   // discovery fetch below always sees every available buy regardless of size.
-  const UNBOUNDED_SLIDER_MAX = 100_000_000;
-
   const loadAndAllocate = async (
     min: number,
     max: number,
     targetDollar: number,
     isTemp: boolean,
-    opts: { widenSliderToFit?: boolean } = {},
+    rate: number,
   ) => {
     setSlotsLoading(true);
     try {
+      // Restricted to buyer-dollar lots bought at this order's own rate — never
+      // silently blend in a different-rate buy into this allocation.
       const res = await apiRequestJson<{ records: any[] }>(
         "GET",
-        `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}`
+        `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}&rate=${rate}`
       );
       const records = res?.records || [];
-      // Fetched records can never exceed `max`, so this only ever widens the
-      // bound (on the initial, deliberately-huge discovery fetch) — a later,
-      // user-narrowed slider drag is a no-op here and never shrinks it back.
-      if (opts.widenSliderToFit) {
-        const maxAvailable = records.reduce((m, r) => Math.max(m, Number(r.dollars) || 0), 0);
-        const widened = Math.max(getSliderBound(targetDollar), Math.ceil(maxAvailable));
-        setSliderBound(widened);
-        setDollarForm((prev: any) => ({ ...prev, sliderMax: widened }));
-      }
       const { slots, shortfall } = isTemp
         ? allocateExactMatchFirst(records, targetDollar)
         : allocateSmallestFirst(records, targetDollar);
@@ -507,13 +512,12 @@ export default function DollarSystem() {
     }
   };
 
-  // The slider's upper bound used to be a hardcoded 500, then a multiple of the
-  // order's own target — either way, a single dollar_buying row bigger than
-  // that guess was silently unreachable no matter how far the handle was
-  // dragged. `sliderBound` state (widened in openDollarModal once the real
-  // buyer balances are known) is now the actual source of truth; this stays
-  // only as the initial guess before that discovery fetch resolves.
-  const getSliderBound = (targetDollar: number) => Math.max(500, Math.ceil(targetDollar * 3));
+  // The slider itself always displays/drags across a fixed 0–500 range — but
+  // that's a manual narrowing tool only. The list of available entries is
+  // NOT limited to it: every matching-rate buy shows up regardless of size
+  // until the user actually drags the handle to narrow things down.
+  const SLIDER_MAX_BOUND = 500;
+  const UNBOUNDED_FETCH_MAX = 100_000_000;
 
   const handleSliderChange = (type: "min" | "max", val: number) => {
     const bound = sliderBound;
@@ -554,7 +558,8 @@ export default function DollarSystem() {
       // Mirrors the PHP slider's onFinish: re-fetch the available buy pool for the
       // new range and re-run the same allocation the modal opened with.
       const targetDollar = parseFloat(dollarForm.dollar) || 0;
-      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? sliderBound, targetDollar, !!dollarForm.isTemp);
+      const rate = parseFloat(dollarModalItem?.rate || 0) || 0;
+      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? sliderBound, targetDollar, !!dollarForm.isTemp, rate);
     }
   };
 
@@ -581,8 +586,7 @@ export default function DollarSystem() {
     const pkrVal = item.pkr ? Number(item.pkr) : Math.round(targetDollar * rateVal);
     const dateVal = item.date ? safeDate(item.date, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
 
-    const bound = getSliderBound(targetDollar);
-    setSliderBound(bound);
+    setSliderBound(SLIDER_MAX_BOUND);
     setDollarModalItem({ ...item, pkr: pkrVal, rate: rateVal });
     setDollarSlots([]);
     setAllocError("");
@@ -594,7 +598,7 @@ export default function DollarSystem() {
       memberId: item.memberId || "",
       orderId: item.orderId || "",
       sliderMin: 0,
-      sliderMax: bound,
+      sliderMax: SLIDER_MAX_BOUND,
       removeUnselected: true,
       dollar: String(targetDollar.toFixed(2)),
       dollarRate: String(rateVal.toFixed(2)),
@@ -603,10 +607,7 @@ export default function DollarSystem() {
       type: item.type || "New",
       detail: item.notes || item.detail || ""
     });
-    // Discover every available buyer balance up front (not just whatever falls
-    // within the target-based guess above) and widen the slider to fit — a
-    // single buy bigger than that guess must never be silently unreachable.
-    loadAndAllocate(0, UNBOUNDED_SLIDER_MAX, targetDollar, isTemp, { widenSliderToFit: true });
+    loadAndAllocate(0, UNBOUNDED_FETCH_MAX, targetDollar, isTemp, rateVal);
   };
 
   const handleUseDollarChange = (id: string, val: string) => {
@@ -646,11 +647,12 @@ export default function DollarSystem() {
   } = useMemo(() => {
     if (!dollarModalItem) return { totalUsedDollars: 0, totalUsedPkrs: 0, customDollarRate: "0.00", profitOrLoss: "0.00", remainingDollars: "0.00", shortSum: "0.00", dollarPkr: "0", isProfit: false };
 
-    // Every present slot counts toward the sum regardless of its own checkbox —
-    // "checked" only controls what survives the "remove unselected" master toggle,
-    // matching the legacy PHP where the per-row checkbox isn't a submitted field.
-    const totalUsed = dollarSlots.reduce((acc, s) => acc + (parseFloat(s.useDollar) || 0), 0);
-    const totalPkrs = dollarSlots.reduce((acc, s) => acc + ((parseFloat(s.useDollar) || 0) * (parseFloat(s.rate) || 0)), 0);
+    // Only checked slots count toward the allocated total — a suggested slot
+    // sits in the list with its own suggested Use Dollar amount, but doesn't
+    // contribute anything until the user explicitly ticks it themselves.
+    const checkedSlots = dollarSlots.filter(s => s.checked);
+    const totalUsed = checkedSlots.reduce((acc, s) => acc + (parseFloat(s.useDollar) || 0), 0);
+    const totalPkrs = checkedSlots.reduce((acc, s) => acc + ((parseFloat(s.useDollar) || 0) * (parseFloat(s.rate) || 0)), 0);
 
     const targetDollar = parseFloat(dollarForm.dollar) || 0;
     const cusRate = totalUsed > 0 ? (totalPkrs / totalUsed).toFixed(2) : "0.00";
@@ -674,8 +676,36 @@ export default function DollarSystem() {
     };
   }, [dollarModalItem, dollarSlots, dollarForm.dollar]);
 
-  const canSubmitDollarForm = dollarSlots.length > 0
+  const canSubmitDollarForm = dollarSlots.some(s => s.checked)
     && Math.abs(totalUsedDollars - (parseFloat(dollarForm.dollar) || 0)) < 0.01;
+
+  const handleConfirmBuy = async (id: string) => {
+    if (confirmingBuyId) return;
+    setConfirmingBuyId(id);
+    setConfirmBuyError("");
+    try {
+      await apiRequestJson("POST", `/api/account/dollar-system/buying/${id}/confirm`, {});
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
+    } catch (err: any) {
+      setConfirmBuyError(err?.message || "Failed to confirm buy.");
+    } finally {
+      setConfirmingBuyId(null);
+    }
+  };
+
+  const handleBalanceStatusChange = async (id: string, status: string, statusDate?: string) => {
+    if (balanceStatusUpdatingId) return;
+    setBalanceStatusUpdatingId(id);
+    setConfirmBuyError("");
+    try {
+      await apiRequestJson("PATCH", `/api/account/dollar-system/buying/${id}/balance-status`, { status, statusDate: statusDate || undefined });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/list"] });
+    } catch (err: any) {
+      setConfirmBuyError(err?.message || "Failed to update status.");
+    } finally {
+      setBalanceStatusUpdatingId(null);
+    }
+  };
 
   const handleDollarSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -697,7 +727,7 @@ export default function DollarSystem() {
         profitOrLoss,
         type: dollarForm.type,
         detail: dollarForm.detail,
-        allocations: dollarSlots.map(s => ({
+        allocations: dollarSlots.filter(s => s.checked).map(s => ({
           dollarBuyingId: s.id,
           useDollar: parseFloat(s.useDollar) || 0,
           rate: s.rate,
@@ -852,6 +882,72 @@ export default function DollarSystem() {
               ))}
               {viewItem.proofUrl && <div className="pt-3 border-t border-gray-100"><a href={viewItem.proofUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 bg-[#00a65a] text-white px-4 py-2 rounded-md text-[11px] font-black uppercase hover:bg-[#008d4c]"><Eye size={14}/> View File</a></div>}
             </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {balanceStatusViewItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setBalanceStatusViewItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">{balanceStatusViewItem.name || "Buyer"}</div>
+              <button onClick={()=>setBalanceStatusViewItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <div className="p-6 space-y-3">
+              {[
+                ["Paypal Email", balanceStatusViewItem.email],
+                ["Date", safeDate(balanceStatusViewItem.date, "dd MMM yyyy")],
+                ["Dollar Rate", balanceStatusViewItem.rate],
+                ["Amount", balanceStatusViewItem.amount ? "$ "+balanceStatusViewItem.amount : "-"],
+                ["Ab Payment Status", balanceStatusViewItem.balanceStatus || "Show"],
+                ["Status Date", balanceStatusViewItem.balanceStatusDate ? safeDate(balanceStatusViewItem.balanceStatusDate, "dd MMM yyyy") : "-"],
+              ].map(([l,v]) => (
+                <div key={l} className="flex items-start gap-2 text-[12px]"><span className="w-32 font-black text-gray-500 uppercase shrink-0 dark:text-zinc-400">{l}</span><span className="font-bold text-gray-800 dark:text-zinc-200">{v||"-"}</span></div>
+              ))}
+            </div>
+          </div>
+        </div>, document.body
+      )}
+
+      {balanceStatusEditItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setBalanceStatusEditItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
+              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">{balanceStatusEditItem.name || "Buyer"}</div>
+              <button onClick={()=>setBalanceStatusEditItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+            </div>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              await handleBalanceStatusChange(balanceStatusEditItem.id, balanceStatusDraft, balanceStatusDateDraft);
+              setBalanceStatusEditItem(null);
+            }} className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Paypal Email</label>
+                  <Input value={balanceStatusEditItem.email || ""} readOnly className="h-9 bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300"/>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Ab Payment Status</label>
+                  <select
+                    value={balanceStatusDraft}
+                    onChange={e => setBalanceStatusDraft(e.target.value)}
+                    className="h-9 w-full border border-gray-300 rounded-md px-2 bg-white dark:bg-zinc-900 dark:border-zinc-700 text-gray-800 dark:text-zinc-200 focus:outline-none"
+                  >
+                    <option value="">Choose...</option>
+                    <option value="Show">Show</option>
+                    <option value="Not Show">Not Show</option>
+                    <option value="Refund">Refund</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-gray-700 dark:text-zinc-300 mb-1">Date</label>
+                  <Input type="date" value={balanceStatusDateDraft} onChange={e => setBalanceStatusDateDraft(e.target.value)} className="h-9 border-gray-300 dark:border-zinc-700"/>
+                </div>
+              </div>
+              <Button type="submit" disabled={!balanceStatusDraft || balanceStatusUpdatingId === balanceStatusEditItem.id} className="w-full h-10 bg-[#00a65a] hover:bg-[#008d4c] disabled:opacity-50 text-white font-bold text-sm uppercase rounded-md flex items-center justify-center gap-2">
+                {balanceStatusUpdatingId === balanceStatusEditItem.id && <Loader2 size={14} className="animate-spin"/>} Submit
+              </Button>
+            </form>
           </div>
         </div>, document.body
       )}
@@ -1305,12 +1401,17 @@ export default function DollarSystem() {
                           </span>
                         </div>
 
-                        {/* End Limit Badge */}
-                        <div className="absolute top-0 right-0 pointer-events-none">
-                          <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                            {bound}
-                          </span>
-                        </div>
+                        {/* End Limit Badge — only shown once the max thumb has
+                            actually been dragged below the full bound; otherwise
+                            it duplicates (and visually overlaps) the Floating Max
+                            Badge above, which already reads the same value. */}
+                        {(dollarForm.sliderMax ?? bound) < bound && (
+                          <div className="absolute top-0 right-0 pointer-events-none">
+                            <span className="bg-[#e9ecef] text-gray-700 text-[11px] font-bold px-2 py-0.5 rounded shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
+                              {bound}
+                            </span>
+                          </div>
+                        )}
 
                         {/* Slider Track */}
                         <div 
@@ -1641,7 +1742,7 @@ export default function DollarSystem() {
                 </div>
               </div>
 
-              {/* CURRENT DAY TRANSACTIONS — 5 tabs: Balance / Buy / Sell / Martini / Not Used */}
+              {/* CURRENT DAY TRANSACTIONS — Martini (pending) -> Buy (confirmed) -> Sell (spent), plus Balance as a running overview */}
               <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden dark:bg-zinc-900 dark:border-zinc-800">
                 <div className="p-4 font-bold text-gray-800 text-sm border-b uppercase dark:text-zinc-100 dark:border-zinc-800">Current Day Transactions</div>
                 <div className="p-3">
@@ -1662,6 +1763,7 @@ export default function DollarSystem() {
                       </button>
                     ))}
                   </div>
+                  {confirmBuyError && <div className="text-[10px] text-red-500 font-bold mb-2">{confirmBuyError}</div>}
                   <div className="space-y-3">
                     {txPagedItems.length > 0 ? txPagedItems.map((tx, i) => (
                       <div key={i} className="flex gap-2 pb-3 border-b border-gray-50 last:border-0 last:pb-0 items-start dark:border-zinc-800">
@@ -1675,10 +1777,48 @@ export default function DollarSystem() {
                             <div className="text-[10px] font-black text-gray-800 uppercase truncate w-28 dark:text-zinc-100">{tx.name||"-"}</div>
                             <div className="text-[9px] text-gray-400 font-bold uppercase">{safeDate(tx.date, "dd MMM yyyy")}</div>
                             <div className="text-[9px] text-blue-400 font-medium italic truncate w-28">{tx.email||"-"}</div>
+                            {activeTxTab==="martini" && (
+                              <button
+                                type="button"
+                                disabled={confirmingBuyId===tx.id}
+                                onClick={() => handleConfirmBuy(tx.id)}
+                                className="mt-1 text-[8px] font-black uppercase bg-[#00a65a] text-white px-2 py-1 rounded shadow-sm disabled:opacity-50"
+                              >
+                                {confirmingBuyId===tx.id ? "Confirming…" : "Confirm → Move to Buy"}
+                              </button>
+                            )}
+                            {(activeTxTab==="balance"||activeTxTab==="martini") && tx.balanceStatus && tx.balanceStatus !== "Show" && (
+                              <span className={cn("inline-block mt-1 text-[8px] font-black uppercase px-1.5 py-0.5 rounded",
+                                tx.balanceStatus==="Not Show" ? "bg-gray-400 text-white" : "bg-red-500 text-white"
+                              )}>{tx.balanceStatus}</span>
+                            )}
                           </div>
-                          <div className="text-right">
-                            <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">{tx.rate||"-"}</div>
-                            <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">$ {tx.amount||"0"}</div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="text-right">
+                              <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">{tx.rate||"-"}</div>
+                              <div className="text-[10px] font-black text-gray-800 dark:text-zinc-100">$ {tx.amount||"0"}</div>
+                            </div>
+                            {(activeTxTab==="balance"||activeTxTab==="martini") && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  title="View"
+                                  onClick={() => setBalanceStatusViewItem(tx)}
+                                  className="h-7 w-7 rounded-full border border-gray-200 dark:border-zinc-700 flex items-center justify-center text-gray-500 hover:bg-gray-50 dark:text-zinc-400 dark:hover:bg-zinc-800 shrink-0"
+                                >
+                                  <Eye size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Update Status"
+                                  disabled={balanceStatusUpdatingId===tx.id}
+                                  onClick={() => { setBalanceStatusEditItem(tx); setBalanceStatusDraft(tx.balanceStatus || "Show"); setBalanceStatusDateDraft(tx.balanceStatusDate || ""); }}
+                                  className="h-7 w-7 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center disabled:opacity-50 shrink-0"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

@@ -297,7 +297,7 @@ companyLedgerRouter.post("/api/account/payment", requireFinancialPermission(FINA
       category: "Invoice Payment",
       referenceId: invoiceId,
       referenceType: "Invoice",
-      entryDate: entryDate ? new Date(entryDate) : new Date(),
+      entryDate: entryDate || new Date().toISOString().split("T")[0],
       createdByUserId: req.user.userId,
       status: "Posted",
       remarks: paymentMethod || null

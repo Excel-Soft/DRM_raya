@@ -13,17 +13,29 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiRequestJson, queryClient } from "@/lib/queryClient";
 import { Trash2, ChevronDown } from "lucide-react";
 import type { RefundGmEntry } from "@shared/schema";
 
-type Customer = { id: string; company_name: string; drm_id?: string; person_name?: string };
 type User = { id: string; full_name: string; email: string; role: string };
+
+// A specific GM/order (not just a company name) — the Paid-Alibaba refund
+// check needs a real gm_entries row to check against.
+type GmOption = {
+  id: string;
+  drmId: string | null;
+  company: string | null;
+  orderDollar: string | number | null;
+  pkr: string | number | null;
+  status: string | null;
+  isRefunded: boolean | null;
+};
 
 export default function AccountRefundGm() {
   const { toast } = useToast();
   const [currentPage, setCurrentPage] = useState(1);
   const [companySearch, setCompanySearch] = useState("");
+  const [gmSearchDebounced, setGmSearchDebounced] = useState("");
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
   const [showForm, setShowForm] = useState(true);
   const companyRef = useRef<HTMLDivElement>(null);
@@ -31,9 +43,10 @@ export default function AccountRefundGm() {
   const rowsPerPage = 10;
 
   const [formData, setFormData] = useState({
+    gmEntryId: "",
     companyName: "",
     amount: "0.0",
-    amountType: "Pkr",
+    amountType: "PKR",
     personName: "",
     comment: "",
   });
@@ -49,26 +62,28 @@ export default function AccountRefundGm() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // ── Real customers from DB ────────────────────────────────────
-  const { data: allCustomers = [] } = useQuery<Customer[]>({
-    queryKey: ["/api/account/customers-list"],
-    staleTime: 60_000,
+  // Debounce the GM search box before hitting the server.
+  useEffect(() => {
+    const t = setTimeout(() => setGmSearchDebounced(companySearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [companySearch]);
+
+  // ── Real GM/order entries from DB — searching by company name, DRM ID,
+  // member ID or order ID (same search this endpoint already supports for
+  // the GM Pool page itself). A specific GM row is what the Paid-Alibaba
+  // check needs, not just a company name string.
+  const { data: gmSearchRes, isFetching: isSearchingGm } = useQuery<{ data: GmOption[] }>({
+    queryKey: ["/api/gm-pool", "refund-search", gmSearchDebounced],
+    queryFn: () => apiRequestJson("GET", `/api/gm-pool?search=${encodeURIComponent(gmSearchDebounced)}&pageSize=20`),
+    enabled: gmSearchDebounced.length > 0,
   });
+  const gmOptions = gmSearchRes?.data ?? [];
 
   // ── Real users from DB (for Person dropdown) ─────────────────
   const { data: allUsers = [] } = useQuery<User[]>({
     queryKey: ["/api/account/users-list"],
     staleTime: 60_000,
   });
-
-  // Filter customers by search text
-  const filteredCustomers = companySearch.trim()
-    ? allCustomers.filter(
-      (c) =>
-        c.company_name?.toLowerCase().includes(companySearch.toLowerCase()) ||
-        c.drm_id?.toLowerCase().includes(companySearch.toLowerCase())
-    )
-    : allCustomers;
 
   // ── Refund entries ────────────────────────────────────────────
   const { data: entries = [], isLoading } = useQuery<RefundGmEntry[]>({
@@ -77,7 +92,8 @@ export default function AccountRefundGm() {
 
   const createMutation = useMutation({
     mutationFn: async (data: typeof formData) =>
-      apiRequest("POST", "/api/account/refund-gm", {
+      apiRequestJson("POST", "/api/account/refund-gm", {
+        gmEntryId: data.gmEntryId,
         companyName: data.companyName,
         personName: data.personName,
         amount: data.amount,
@@ -86,12 +102,13 @@ export default function AccountRefundGm() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/refund-gm"] });
-      setFormData({ companyName: "", amount: "0.0", amountType: "Pkr", personName: "", comment: "" });
+      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
+      setFormData({ gmEntryId: "", companyName: "", amount: "0.0", amountType: "PKR", personName: "", comment: "" });
       setCompanySearch("");
       toast({ title: "Success", description: "Refund entry added successfully" });
     },
-    onError: () =>
-      toast({ title: "Error", description: "Failed to add refund entry", variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Could not add refund", description: err?.message || "Failed to add refund entry", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -107,6 +124,10 @@ export default function AccountRefundGm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.gmEntryId) {
+      toast({ title: "Validation Error", description: "Search and select the specific GM/order to refund", variant: "destructive" });
+      return;
+    }
     if (!formData.companyName || !formData.amount || !formData.personName) {
       toast({ title: "Validation Error", description: "Please fill all required fields", variant: "destructive" });
       return;
@@ -146,15 +167,16 @@ export default function AccountRefundGm() {
               {/* Row 1: Company | Amount | Amount Type | Person */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
 
-                {/* Company Name */}
+                {/* GM/Order — picking a specific GM is what lets the backend check
+                    whether it's already reached Paid Alibaba before allowing a refund. */}
                 <div className="relative" ref={companyRef}>
-                  <Label className="text-xs text-gray-600 mb-1 block dark:text-zinc-300">Company Name</Label>
+                  <Label className="text-xs text-gray-600 mb-1 block dark:text-zinc-300">GM / Company</Label>
                   <div
                     className="relative flex items-center h-9 border border-gray-300 rounded bg-white cursor-pointer px-3 dark:bg-zinc-900 dark:border-zinc-800"
                     onClick={() => setShowCompanyDropdown((v) => !v)}
                   >
                     <span className={`flex-1 text-sm truncate ${formData.companyName ? "text-gray-800 dark:text-slate-200" : "text-gray-400"}`}>
-                      {formData.companyName || "Search Company Through Id/Name"}
+                      {formData.companyName || "Search GM by company/DRM ID/order ID"}
                     </span>
                     <ChevronDown className={`h-4 w-4 text-gray-400 flex-shrink-0 ml-1 transition-transform ${showCompanyDropdown ? "rotate-180" : ""}`} />
                   </div>
@@ -172,25 +194,44 @@ export default function AccountRefundGm() {
                         />
                       </div>
                       <div className="overflow-auto flex-1">
-                        {filteredCustomers.length > 0 ? (
-                          filteredCustomers.slice(0, 100).map((c, idx) => (
+                        {!companySearch.trim() ? (
+                          <div className="px-3 py-3 text-sm text-gray-400 text-center">Start typing to search GMs</div>
+                        ) : isSearchingGm ? (
+                          <div className="px-3 py-3 text-sm text-gray-400 text-center">Searching...</div>
+                        ) : gmOptions.length > 0 ? (
+                          gmOptions.map((g) => (
                             <div
-                              key={c.id}
-                              className={`px-3 py-2 text-sm cursor-pointer flex items-center gap-2 hover:bg-green-50 ${idx === 0 && !companySearch ? "bg-green-600 text-white hover:bg-green-700" : ""}`}
+                              key={g.id}
+                              className={`px-3 py-2 text-sm flex items-center gap-2 ${g.isRefunded ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-green-50"}`}
                               onClick={() => {
-                                setFormData((f) => ({ ...f, companyName: c.company_name }));
+                                if (g.isRefunded) return;
+                                setFormData((f) => {
+                                  // Auto-fill the order's own amount as a starting point — still a
+                                  // plain editable number input, so it can be adjusted up or down
+                                  // (e.g. a partial refund) before submitting.
+                                  const autoAmount = f.amountType === "PKR" ? g.pkr : g.orderDollar;
+                                  return {
+                                    ...f,
+                                    gmEntryId: g.id,
+                                    companyName: g.company || "",
+                                    amount: autoAmount != null && Number(autoAmount) > 0 ? String(autoAmount) : f.amount,
+                                  };
+                                });
                                 setCompanySearch("");
                                 setShowCompanyDropdown(false);
                               }}
                             >
-                              <span className={`font-semibold text-xs ${idx === 0 && !companySearch ? "text-white" : "text-green-700"}`}>
-                                {c.drm_id || c.id?.substring(0, 8)}
-                              </span>
-                              <span className="truncate">{c.company_name}</span>
+                              <span className="font-semibold text-xs text-green-700">{g.drmId || g.id.substring(0, 8)}</span>
+                              <span className="truncate flex-1">{g.company}</span>
+                              {g.isRefunded ? (
+                                <span className="text-[10px] font-semibold text-red-500 uppercase shrink-0">Refunded</span>
+                              ) : (
+                                <span className="text-[11px] text-gray-400 shrink-0">${Number(g.orderDollar || 0).toLocaleString()}</span>
+                              )}
                             </div>
                           ))
                         ) : (
-                          <div className="px-3 py-3 text-sm text-gray-400 text-center">No companies found</div>
+                          <div className="px-3 py-3 text-sm text-gray-400 text-center">No matching GM found</div>
                         )}
                       </div>
                     </div>
@@ -220,9 +261,9 @@ export default function AccountRefundGm() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Pkr">Pkr</SelectItem>
-                      <SelectItem value="Dollar">Dollar</SelectItem>
-                      <SelectItem value="Euro">Euro</SelectItem>
+                      <SelectItem value="PKR">PKR</SelectItem>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

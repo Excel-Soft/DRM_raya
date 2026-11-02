@@ -66,6 +66,12 @@ interface PenaltyRow {
   voidedByName: string | null;
   voidedAt: string | null;
   employeeAcknowledgedAt: string | null;
+  employeeDisputedAt: string | null;
+  disputeReason: string | null;
+  disputeStatus: string | null;
+  disputeResolvedByName: string | null;
+  disputeResolvedAt: string | null;
+  disputeResolutionNote: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 }
@@ -269,6 +275,20 @@ export default function AddPenaltyPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const resolveDisputeMutation = useMutation({
+    mutationFn: async ({ id, action, note }: { id: string; action: "uphold" | "withdraw"; note?: string }) => {
+      const res = await apiRequest("PATCH", `/api/penalties/${id}/dispute/resolve`, { action, note });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || "Action failed");
+      return json;
+    },
+    onSuccess: (_data, { action }) => {
+      toast({ title: action === "withdraw" ? "Dispute upheld — penalty withdrawn" : "Dispute dismissed — penalty stands" });
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiRequest("DELETE", `/api/penalties/${id}`);
@@ -462,6 +482,9 @@ export default function AddPenaltyPage() {
                         <div className="flex flex-wrap items-center gap-1">
                           {statusBadge(row.approvalStatus)}
                           {isVoided && statusBadge("VOIDED")}
+                          {row.disputeStatus === "PENDING" && (
+                            <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-0 text-[11px] font-medium">Disputed</Badge>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-[13px]">
@@ -491,11 +514,27 @@ export default function AddPenaltyPage() {
                               className="text-[12px] text-orange-600 hover:underline"
                             >Void</button>
                           )}
-                          {!row.employeeAcknowledgedAt && !isVoided && (
+                          {!row.employeeAcknowledgedAt && row.disputeStatus !== "PENDING" && !isVoided && (
                             <button
                               onClick={() => acknowledgeMutation.mutate(row.id)}
                               className="text-[12px] text-purple-600 hover:underline"
                             >Acknowledge</button>
+                          )}
+                          {canDecide && row.disputeStatus === "PENDING" && (
+                            <>
+                              <button
+                                disabled={resolveDisputeMutation.isPending}
+                                onClick={() => resolveDisputeMutation.mutate({ id: row.id, action: "uphold" })}
+                                className="text-[12px] text-blue-600 hover:underline disabled:opacity-50"
+                                title={row.disputeReason || ""}
+                              >Dismiss Dispute</button>
+                              <button
+                                disabled={resolveDisputeMutation.isPending}
+                                onClick={() => resolveDisputeMutation.mutate({ id: row.id, action: "withdraw" })}
+                                className="text-[12px] text-orange-600 hover:underline disabled:opacity-50"
+                                title={row.disputeReason || ""}
+                              >Uphold Dispute (Withdraw)</button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -730,6 +769,20 @@ export default function AddPenaltyPage() {
                 </>
               )}
               <Detail label="Acknowledged" value={viewRow.employeeAcknowledgedAt ? fmtDateTime(viewRow.employeeAcknowledgedAt) : "Not acknowledged"} />
+              {viewRow.employeeDisputedAt && (
+                <>
+                  <Detail label="Disputed At" value={fmtDateTime(viewRow.employeeDisputedAt)} />
+                  <Detail label="Dispute Status" value={viewRow.disputeStatus} />
+                  <div className="col-span-2"><Detail label="Dispute Reason" value={viewRow.disputeReason} /></div>
+                  {viewRow.disputeResolvedAt && (
+                    <>
+                      <Detail label="Dispute Resolved By" value={viewRow.disputeResolvedByName} />
+                      <Detail label="Dispute Resolved At" value={fmtDateTime(viewRow.disputeResolvedAt)} />
+                      <div className="col-span-2"><Detail label="Resolution Note" value={viewRow.disputeResolutionNote} /></div>
+                    </>
+                  )}
+                </>
+              )}
               <Detail label="Created" value={fmtDateTime(viewRow.createdAt)} />
               <Detail label="Updated" value={fmtDateTime(viewRow.updatedAt)} />
               {viewRow.attachmentUrl && (

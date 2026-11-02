@@ -23,6 +23,7 @@ import { eq, desc, sql, and, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { NotificationService } from "./services/notification-service";
 import { generateDefaultInvoicesForGm, revertGmInvoicesToHodOnReject } from "./services/gm-invoice-generation.service";
+import { hasReachedPaidAlibaba, checkGmNotRefunded } from "./services/gm-refund-guard.service";
 import { getOrCreateProductPostingWorkflow } from "./services/product-posting-workflow.service";
 import { requireManualInvoiceCreator } from "../utils/gm-sales-permissions";
 import { projects, projectFinancials, projectApprovals } from "@shared/schema";
@@ -93,7 +94,10 @@ const gmRejectReasonSchema = z.object({
 
 const donationCreateSchema = z.object({
   personName: z.string().trim().min(1, "personName is required").max(500),
+  title: z.string().trim().max(20).optional(),
   amount: z.coerce.number().positive("amount must be positive"),
+  currency: z.enum(["PKR", "USD"]).default("PKR"),
+  referenceNumber: z.string().trim().max(200).optional(),
   comment: z.string().trim().max(2000).optional(),
 }).strict();
 
@@ -111,10 +115,18 @@ const tempGmStatusSchema = z.object({
 }).strict();
 
 const refundGmCreateSchema = z.object({
+  // The specific GM/order being refunded — required so the Paid-Alibaba
+  // check below has something concrete to check against (a free-text
+  // company name alone can't be checked, and could match zero or several
+  // real GM entries).
+  gmEntryId: z.string().uuid("Select a specific GM to refund"),
   companyName: z.string().trim().min(1, "companyName is required").max(500),
   personName: z.string().trim().min(1, "personName is required").max(500),
   amount: z.coerce.number().positive("amount must be positive"),
-  amountType: z.enum(["PKR", "USD"]).default("PKR"),
+  // The form's own Amount Type select offers PKR/USD/EUR — accept all 3
+  // (previously only PKR/USD were accepted here, silently rejecting every
+  // Euro-denominated submission with a generic "Invalid payload").
+  amountType: z.enum(["PKR", "USD", "EUR"]).default("PKR"),
   comment: z.string().trim().max(2000).optional(),
 }).strict();
 
@@ -296,7 +308,11 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists gm_bv_submitted_at timestamptz,
           add column if not exists gm_bv_date date,
           add column if not exists account_bv_date date,
-          add column if not exists account_bv_end_date date
+          add column if not exists account_bv_end_date date,
+          add column if not exists is_refunded boolean default false not null,
+          add column if not exists refunded_at timestamptz,
+          add column if not exists refunded_by_user_id uuid,
+          add column if not exists refund_gm_entry_id uuid
       `);
 
 
@@ -321,9 +337,23 @@ export function registerAccountRoutes(app: Express) {
           add column if not exists comment text,
           add column if not exists status text default 'pending' not null,
           add column if not exists created_by_user_id uuid,
-          add column if not exists created_at timestamptz default now();
+          add column if not exists created_at timestamptz default now(),
+          add column if not exists gm_entry_id uuid;
       `);
 
+      // 2b. Donations — title/currency/status were always accepted by the
+      // form but silently discarded (the live table never had columns for
+      // them, so every row always showed the hardcoded 'Mr.'/'PKR'/'Pending'
+      // regardless of what was actually picked). reference_number replaces
+      // the old company_name field, which was collected but never even read
+      // by the insert, let alone persisted.
+      await pool.query(`
+        alter table drm.donations
+          add column if not exists title text default 'Mr.' not null,
+          add column if not exists currency text default 'PKR' not null,
+          add column if not exists status text default 'Pending' not null,
+          add column if not exists reference_number text
+      `);
 
       // 3. Ledger Entries Enum
       const enumCheck = await pool.query(`
@@ -418,6 +448,31 @@ export function registerAccountRoutes(app: Express) {
         ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS paid_pkr numeric(12,2) NOT NULL DEFAULT 0;
         ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS pay_status text NOT NULL DEFAULT 'Pending';
         ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS installments jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+        -- Current Day Transactions pipeline: a new buy lands here unconfirmed
+        -- ("Martini" tab) until an account manager manually confirms it into
+        -- the active "Buy" pool. Existing rows are backfilled as already
+        -- confirmed so historical buys don't retroactively disappear from Buy.
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS is_confirmed boolean NOT NULL DEFAULT false;
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS confirmed_at timestamptz;
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS confirmed_by_user_id varchar(50);
+
+        -- Manual label on the Balance tab: a buy can be flagged "Not Show"
+        -- (its dollars were consumed outside the formal Pay-Alibaba
+        -- allocation flow) or "Refund" (the money went back to the buyer).
+        -- Doesn't touch remaining_usd — that stays the true unspent-dollar
+        -- figure; this is purely a reviewable status label. A separate
+        -- column from drm.dollar_buying.martini (a different, pre-existing
+        -- feature's PKR-liability flag) even though the values now share
+        -- vocabulary — kept apart so toggling this never silently perturbs
+        -- that other dashboard's own Martini Status stats.
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS balance_status text NOT NULL DEFAULT 'Show';
+        ALTER TABLE drm.dollar_buying ALTER COLUMN balance_status SET DEFAULT 'Show';
+        ALTER TABLE drm.dollar_buying ADD COLUMN IF NOT EXISTS balance_status_date date;
+        UPDATE drm.dollar_buying SET balance_status = CASE balance_status
+          WHEN 'Available' THEN 'Show' WHEN 'Used' THEN 'Not Show' WHEN 'Refunded' THEN 'Refund' ELSE balance_status END
+          WHERE balance_status IN ('Available', 'Used', 'Refunded');
+        UPDATE drm.dollar_buying SET is_confirmed = true, confirmed_at = COALESCE(confirmed_at, created_at) WHERE is_confirmed IS DISTINCT FROM true AND created_at < now() - interval '1 day';
 
         CREATE TABLE IF NOT EXISTS drm.dollar_allocations (
           id varchar(50) primary key default gen_random_uuid(),
@@ -2386,23 +2441,21 @@ export function registerAccountRoutes(app: Express) {
   // GET /api/account/donations - List all donations
   app.get("/api/account/donations", async (req, res) => {
     try {
-      // Actual DB columns: id, donor_name, amount, date, notes, created_at, updated_at, is_deleted
       const { rows } = await pool.query(
         `SELECT
            id,
            donor_name AS "personName",
-           ''         AS "companyName",
-           'Mr.'      AS title,
+           title,
+           reference_number AS "referenceNumber",
            amount,
-           'PKR'      AS currency,
+           currency,
            notes      AS comment,
-           'Pending'  AS status,
-           COALESCE(date, created_at) AS "createdAt"
+           status,
+           created_at AS "createdAt"
          FROM drm.donations
          WHERE is_deleted IS NOT TRUE
-         ORDER BY COALESCE(date, created_at) DESC`
+         ORDER BY created_at DESC`
       );
-      console.log(`[donations GET] rows returned: ${rows.length}`, rows.length > 0 ? JSON.stringify(rows[0]) : 'empty');
       res.json(rows);
     } catch (error) {
       console.error("Error fetching donations:", error);
@@ -2443,31 +2496,18 @@ export function registerAccountRoutes(app: Express) {
   app.post("/api/account/donations", requireFinancialPermission(FINANCIAL_ACTIONS.donationCreate), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-      // Actual columns: donor_name, amount, date, notes
-            const _don = donationCreateSchema.safeParse(req.body);
+      const _don = donationCreateSchema.safeParse(req.body);
       if (!_don.success) return res.status(400).json({ error: "Invalid payload", issues: _don.error.issues });
-      const { personName, amount, comment } = _don.data;
-      if (!personName || !amount) return res.status(400).json({ error: "personName and amount are required" });
+      const { personName, title, amount, currency, referenceNumber, comment } = _don.data;
 
       const { rows } = await pool.query(
-        `INSERT INTO drm.donations (donor_name, amount, date, notes)
-         VALUES ($1, $2, now(), $3)
-         RETURNING id, donor_name AS "personName", amount,
-                   COALESCE(date, created_at) AS "createdAt", notes AS comment`,
-        [personName, amount, comment || null]
+        `INSERT INTO drm.donations (donor_name, title, amount, currency, reference_number, notes, status, date)
+         VALUES ($1, $2, $3, $4, $5, $6, 'Pending', now())
+         RETURNING id, donor_name AS "personName", title, reference_number AS "referenceNumber",
+                   amount, currency, notes AS comment, status, created_at AS "createdAt"`,
+        [personName, title || "Mr.", amount, currency, referenceNumber || null, comment || null]
       );
-      const row = rows[0];
-      res.status(201).json({
-        id: row.id,
-        personName: row.personName || personName,
-        companyName: '',
-        title: 'Mr.',
-        amount: row.amount,
-        currency: 'PKR',
-        comment: row.comment || null,
-        status: 'Pending',
-        createdAt: row.createdAt,
-      });
+      res.status(201).json(rows[0]);
     } catch (error) {
       console.error("Error creating donation:", error);
       res.status(500).json({ error: "Failed to create donation" });
@@ -2871,8 +2911,8 @@ export function registerAccountRoutes(app: Express) {
       const conditions = [];
       if (entryType) conditions.push(eq(ledgerEntries.entryType, entryType as any));
       if (category) conditions.push(eq(ledgerEntries.category, category as string));
-      if (dateFrom) conditions.push(gte(ledgerEntries.entryDate, new Date(dateFrom as string)));
-      if (dateTo) conditions.push(lte(ledgerEntries.entryDate, new Date(dateTo as string)));
+      if (dateFrom) conditions.push(gte(ledgerEntries.entryDate, new Date(dateFrom as string).toISOString().split("T")[0]));
+      if (dateTo) conditions.push(lte(ledgerEntries.entryDate, new Date(dateTo as string).toISOString().split("T")[0]));
 
       if (conditions.length > 0) {
         query = query.where(and(...conditions));
@@ -3102,15 +3142,19 @@ export function registerAccountRoutes(app: Express) {
   });
 
   // POST /api/account/refund-gm - Create new refund GM entry
+  //
+  // Business rule: a GM can only be refunded while it hasn't yet reached
+  // "Paid Alibaba" in the Dollar System (i.e. no real money has been sent to
+  // Alibaba for it yet, via drm.ab_payments) — once it has, the money's
+  // already gone and this must be blocked. A successful refund marks the GM
+  // is_refunded=true, which every other GM workflow (approvals, Pay Alibaba,
+  // invoice generation) checks and refuses to act on further.
   app.post("/api/account/refund-gm", requireFinancialPermission(FINANCIAL_ACTIONS.refundGmCreate), async (req, res) => {
     try {
       if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-            const _rgm = refundGmCreateSchema.safeParse(req.body);
+      const _rgm = refundGmCreateSchema.safeParse(req.body);
       if (!_rgm.success) return res.status(400).json({ error: "Invalid payload", issues: _rgm.error.issues });
-      const { companyName, personName, amount, amountType, comment } = _rgm.data;
-      if (!companyName || !personName || !amount) {
-        return res.status(400).json({ error: "companyName, personName, amount are required" });
-      }
+      const { gmEntryId, companyName, personName, amount, amountType, comment } = _rgm.data;
       // Stage 8: refund amount must be positive and the reason is mandatory.
       if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
         return res.status(400).json({ error: "Refund amount must be greater than 0" });
@@ -3119,14 +3163,40 @@ export function registerAccountRoutes(app: Express) {
         return res.status(400).json({ error: "A reason (comment) is required for a refund" });
       }
       const userId = getUserId(req)!;
-      const { rows } = await pool.query(
-        `INSERT INTO drm.refund_gm_entries (company_name, person_name, amount, amount_type, comment, status, created_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, 'pending', $6)
-         RETURNING id, company_name AS "companyName", person_name AS "personName",
-                   amount, amount_type AS "amountType", comment, status, created_at AS "createdAt"`,
-        [companyName, personName, amount, amountType, comment || null, userId]
+
+      const gmRes = await pool.query(
+        `select id, is_refunded as "isRefunded" from drm.gm_entries where id = $1`,
+        [gmEntryId],
       );
-      res.status(201).json(rows[0]);
+      if (!gmRes.rows.length) return res.status(404).json({ error: "GM entry not found" });
+      if (gmRes.rows[0].isRefunded) {
+        return res.status(400).json({ error: "This GM has already been refunded." });
+      }
+      if (await hasReachedPaidAlibaba(gmEntryId)) {
+        return res.status(400).json({
+          error: "This GM has already reached Paid Alibaba in the Dollar System — the money has already been sent, so it can no longer be refunded.",
+        });
+      }
+
+      const created = await withPgTransaction(async (client) => {
+        const inserted = await client.query(
+          `INSERT INTO drm.refund_gm_entries (company_name, person_name, amount, amount_type, comment, status, created_by_user_id, gm_entry_id)
+           VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+           RETURNING id, company_name AS "companyName", person_name AS "personName",
+                     amount, amount_type AS "amountType", comment, status, created_at AS "createdAt", gm_entry_id AS "gmEntryId"`,
+          [companyName, personName, amount, amountType, comment || null, userId, gmEntryId],
+        );
+        const refundRow = inserted.rows[0];
+        await client.query(
+          `UPDATE drm.gm_entries
+              SET is_refunded = true, refunded_at = now(), refunded_by_user_id = $2, refund_gm_entry_id = $3
+            WHERE id = $1`,
+          [gmEntryId, userId, refundRow.id],
+        );
+        return refundRow;
+      });
+
+      res.status(201).json(created);
     } catch (error) {
       console.error("Error creating refund GM entry:", error);
       res.status(500).json({ error: "Failed to create refund GM entry" });
@@ -5491,73 +5561,80 @@ export function registerAccountRoutes(app: Express) {
         ORDER BY created_at DESC LIMIT 50
       `, params);
 
-      // 5. Daily Transactions segmented by type (matching PHP 5-tab structure: Balance, Buy, Sell, Martini, Not Used)
+      // 5. Daily Transactions pipeline (Martini -> Buy -> Sell, plus Balance
+      // as a running overview): a new buy lands unconfirmed in Martini; an
+      // account manager manually confirms it into Buy; dollar_allocations
+      // rows record it actually being spent (Sell) against a Paid Alibaba
+      // payment.
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      // Balance tab: dollar_buying entries that still have an unused/remaining
-      // dollar balance — once a buy's remaining_usd is fully allocated (spent
-      // on an Alibaba payment), it drops off this list.
+      // Balance tab: existing/overall balance — confirmed buys that still
+      // have an unused/remaining dollar balance. Not day-scoped on purpose;
+      // this is a running total, not "today's" activity.
       const txBalance = await pool.query(`
         SELECT id, buyer_name as "name", date, paypal_email as "email",
-               dollar_amount as "amount", dollar_rate as "rate", 'balance' as "txType"
+               dollar_amount as "amount", dollar_rate as "rate", 'balance' as "txType",
+               balance_status as "balanceStatus", balance_status_date as "balanceStatusDate"
         FROM drm.dollar_buying
-        WHERE coalesce(is_deleted, false) = false
+        WHERE is_confirmed = true
           AND COALESCE(remaining_usd, dollar_amount) > 0.009
         ORDER BY date DESC LIMIT 20
       `);
 
-      // Buy tab: dollar purchases today
+      // Buy tab: buys confirmed today (moved out of Martini today).
       const txBuy = await pool.query(`
         SELECT id, buyer_name as "name", date, paypal_email as "email",
                dollar_amount as "amount", dollar_rate as "rate", 'buy' as "txType"
         FROM drm.dollar_buying
-        WHERE date >= $1 AND date < $2
-        ORDER BY id DESC
+        WHERE is_confirmed = true
+          AND confirmed_at >= $1 AND confirmed_at < $2
+        ORDER BY confirmed_at DESC
       `, [today, tomorrow]);
 
-      // Sell tab: gm_entries paid today
+      // Sell tab: dollars actually spent today — sourced from
+      // dollar_allocations, the real buy<->Alibaba-payment ledger, not
+      // gm_entries (which only reflects a customer order being approved,
+      // not any dollar actually changing hands).
       const txSell = await pool.query(`
-        SELECT id, company_name as "name", created_at as "date", notes as "email",
-               amount_usd as "amount", dollar_rate as "rate", 'sell' as "txType"
-        FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false
-          AND created_at >= $1 AND created_at < $2
-          AND status = 'Approved'
-        ORDER BY id DESC
+        SELECT da.id,
+               COALESCE(ap.company_name, db.buyer_name) as "name",
+               da.created_at as "date",
+               COALESCE(ap.order_id, da.order_id) as "email",
+               da.amount_usd as "amount",
+               COALESCE(da.rate, da.custom_dollar_rate) as "rate",
+               'sell' as "txType"
+        FROM drm.dollar_allocations da
+        LEFT JOIN drm.ab_payments ap ON ap.id = da.ab_payment_id
+        LEFT JOIN drm.dollar_buying db ON db.id = da.dollar_buying_id
+        WHERE da.created_at >= $1 AND da.created_at < $2
+        ORDER BY da.created_at DESC LIMIT 20
       `, [today, tomorrow]);
 
-      // Martini tab: gm_entries not yet shown on AB
+      // Martini tab: buys added via Add Dollar still awaiting manual
+      // confirmation into Buy. Not day-scoped — a pending item stays here
+      // until someone acts on it, however long that takes.
       const txMartini = await pool.query(`
-        SELECT id, company_name as "name", created_at as "date", notes as "email",
-               amount_usd as "amount", dollar_rate as "rate", 'martini' as "txType"
-        FROM drm.gm_entries
-        WHERE coalesce(is_deleted, false) = false
-          AND status = 'Approved'
-          AND coalesce(is_partial_payment, false) = false
-          AND coalesce(is_loan, false) = false
-          AND NOT EXISTS (
-            SELECT 1 FROM drm.ab_payments ap
-            WHERE ap.gm_drm_id = drm.gm_entries.drm_id
-            AND coalesce(ap.is_deleted,false) = false
-          )
-        ORDER BY id DESC LIMIT 20
+        SELECT id, buyer_name as "name", date, paypal_email as "email",
+               dollar_amount as "amount", dollar_rate as "rate", 'martini' as "txType"
+        FROM drm.dollar_buying
+        WHERE is_confirmed = false
+        ORDER BY date DESC LIMIT 20
       `);
 
-      // Not Used tab: dollar_buying entries not linked to any gm payment
+      // Not Used tab: confirmed buys that have never had a single dollar
+      // allocated against them yet (no row in dollar_allocations at all) —
+      // completely untouched, as opposed to Balance which includes buys
+      // that are only partially spent down.
       const txNotUsed = await pool.query(`
         SELECT db.id, db.buyer_name as "name", db.date, db.paypal_email as "email",
                db.dollar_amount as "amount", db.dollar_rate as "rate", 'notUsed' as "txType"
         FROM drm.dollar_buying db
-        WHERE coalesce(db.is_deleted, false) = false
-          AND (db.gm_id IS NULL OR NOT EXISTS (
-            SELECT 1 FROM drm.gm_entries ge
-            WHERE ge.id::text = db.gm_id::text
-            AND coalesce(ge.is_deleted, false) = false
-            AND ge.status = 'Approved'
-          ))
+        WHERE db.is_confirmed = true
+          AND COALESCE(db.remaining_usd, db.dollar_amount) > 0.009
+          AND NOT EXISTS (SELECT 1 FROM drm.dollar_allocations da WHERE da.dollar_buying_id = db.id)
         ORDER BY db.date DESC LIMIT 20
       `);
 
@@ -5986,6 +6063,77 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
+  // POST /api/account/dollar-system/buying/:id/confirm — Current Day
+  // Transactions pipeline: manually moves a buy out of "Martini" (pending,
+  // just added via Add Dollar) into the active "Buy" pool.
+  app.post("/api/account/dollar-system/buying/:id/confirm", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingCreate), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = req.user as any;
+      const userId = user?.id || user?.userId;
+
+      const existing = await pool.query(
+        `SELECT id, is_confirmed FROM drm.dollar_buying WHERE id = $1`,
+        [id]
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "Buy record not found" });
+      }
+      if (existing.rows[0].is_confirmed) {
+        return res.status(400).json({ error: "This buy has already been confirmed." });
+      }
+
+      const result = await pool.query(
+        `UPDATE drm.dollar_buying
+         SET is_confirmed = true, confirmed_at = now(), confirmed_by_user_id = $2
+         WHERE id = $1
+         RETURNING *`,
+        [id, userId]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      console.error("Failed to confirm buying record:", err);
+      res.status(500).json({ error: "Failed to confirm buy" });
+    }
+  });
+
+  // PATCH /api/account/dollar-system/buying/:id/balance-status — manual
+  // Show/Not Show/Refund label on a Balance tab row ("Ab Payment Status").
+  // "Refund" also flips the existing martini liability flag (and reverting
+  // back to "Show" un-flips it); "Not Show" only touches this label.
+  const BALANCE_STATUSES = ["Show", "Not Show", "Refund"] as const;
+  const balanceStatusSchema = z.object({
+    status: z.enum(BALANCE_STATUSES),
+    statusDate: z.string().trim().min(1).optional().nullable(),
+  });
+  app.patch("/api/account/dollar-system/buying/:id/balance-status", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingCreate), async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, statusDate } = balanceStatusSchema.parse(req.body);
+
+      const existing = await pool.query(`SELECT id FROM drm.dollar_buying WHERE id = $1`, [id]);
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "Buy record not found" });
+      }
+
+      const martiniVal = status === "Refund" ? "Refund" : "Show";
+      const result = await pool.query(
+        `UPDATE drm.dollar_buying
+         SET balance_status = $2, balance_status_date = $3, martini = $4, updated_at = now()
+         WHERE id = $1
+         RETURNING *`,
+        [id, status, statusDate || null, martiniVal]
+      );
+      res.json(result.rows[0]);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+      console.error("Failed to update balance status:", err);
+      res.status(500).json({ error: "Failed to update balance status" });
+    }
+  });
+
   app.delete("/api/account/buying/:id", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingDelete, { roles: FINANCIAL_VOID_ROLES }), async (req, res) => {
     try {
       await pool.query(`DELETE FROM drm.dollar_buying WHERE id = $1`, [req.params.id]);
@@ -6001,6 +6149,19 @@ export function registerAccountRoutes(app: Express) {
     try {
       const min = Number(req.query.min ?? 0) || 0;
       const max = Number(req.query.max ?? 500) || 500;
+      // Optional rate filter: the Pay Alibaba allocation modal restricts the
+      // candidate buyer-dollar pool to lots bought at the same rate as the
+      // order being paid, so it never silently blends in a different-rate buy.
+      const rate = req.query.rate !== undefined ? Number(req.query.rate) : null;
+      const params: any[] = [min, max];
+      let rateWhere = "";
+      // A zero/missing rate means the order itself has no rate set — don't
+      // filter anything out in that case (an empty candidate pool would
+      // silently brick the allocation modal for that order).
+      if (rate !== null && !Number.isNaN(rate) && rate > 0) {
+        params.push(rate);
+        rateWhere = ` AND b.dollar_rate = $${params.length}`;
+      }
       const { rows } = await pool.query(`
         SELECT
           b.id,
@@ -6016,8 +6177,9 @@ export function registerAccountRoutes(app: Express) {
         FROM drm.dollar_buying b
         WHERE COALESCE(b.remaining_usd, b.dollar_amount) > 0
           AND COALESCE(b.remaining_usd, b.dollar_amount) BETWEEN $1 AND $2
+          ${rateWhere}
         ORDER BY COALESCE(b.remaining_usd, b.dollar_amount) ASC
-      `, [min, max]);
+      `, params);
       res.json({ records: rows });
     } catch (err) {
       console.error("Failed to fetch buyer dollar short records:", err);
@@ -6393,6 +6555,11 @@ export function registerAccountRoutes(app: Express) {
       const sumUsed = allocations.reduce((acc: number, a: any) => acc + (Number(a.useDollar) || 0), 0);
       if (Math.abs(sumUsed - target) > 0.01) {
         return res.status(400).json({ error: `Allocated amount ($${sumUsed.toFixed(2)}) must equal the order amount ($${target.toFixed(2)})` });
+      }
+
+      if (gmEntryId) {
+        const blockedReason = await checkGmNotRefunded(String(gmEntryId));
+        if (blockedReason) return res.status(400).json({ error: blockedReason });
       }
 
       const userId = (req.user as any)?.userId || null;
