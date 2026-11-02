@@ -14,6 +14,8 @@ import { TicketAssignmentPopup } from "@/components/ticket-assignment-popup";
 import { TicketReviewPopup } from "@/components/ticket-review-popup";
 import { PenaltyAcknowledgementPopup } from "@/components/penalty-acknowledgement-popup";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { ErrorBoundary, type FallbackProps } from "react-error-boundary";
+import { Button } from "@/components/ui/button";
 import { useRouteProtection } from "@/hooks/useRouteProtection";
 
 // ---------------------------------------------------------------------------
@@ -268,8 +270,29 @@ function PageLoader() {
   );
 }
 
-function Router() {
+function RouteErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   return (
+    <div className="flex min-h-[40vh] flex-col items-center justify-center gap-4 p-8 text-center">
+      <p className="text-sm font-medium text-destructive">This page failed to load.</p>
+      <p className="text-xs text-muted-foreground max-w-md">
+        {(error as Error)?.message || "Try again or refresh the browser."}
+      </p>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => resetErrorBoundary()}>
+          Try again
+        </Button>
+        <Button type="button" size="sm" onClick={() => window.location.reload()}>
+          Refresh
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function Router() {
+  const [location] = useLocation();
+  return (
+    <ErrorBoundary FallbackComponent={RouteErrorFallback} resetKeys={[location]}>
     <Suspense fallback={<PageLoader />}>
     <Switch>
       <Route path="/auth" component={AuthPage} />
@@ -497,6 +520,7 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
     </Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -530,6 +554,11 @@ function AppContent() {
   useEffect(() => {
     // The auth page does not require a validated session.
     if (isAuthRoute) return;
+
+    // Re-validating on every in-app route change caused overlapping /api/auth/me
+    // requests; a slow/failed response could set unauthed and render null (blank
+    // screen) until a full refresh. Session is checked once per app load / login.
+    if (authStatus === "authed") return;
 
     const token = sessionStorage.getItem("token");
     const storedName = sessionStorage.getItem("userName");
@@ -588,7 +617,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [location, isAuthRoute, setLocation]);
+  }, [location, isAuthRoute, setLocation, authStatus]);
 
   const handleLogout = () => {
     sessionStorage.removeItem("token");
@@ -649,8 +678,8 @@ function AppContent() {
               {renderBody()}
             </SidebarProvider>
             <AIAssistantButton />
-            {authStatus === "authed" && <TicketAssignmentPopup />}
-            {authStatus === "authed" && <TicketReviewPopup />}
+            {authStatus === "authed" && isSupportModuleEnabled() && <TicketAssignmentPopup />}
+            {authStatus === "authed" && isSupportModuleEnabled() && <TicketReviewPopup />}
             {authStatus === "authed" && <PenaltyAcknowledgementPopup />}
             <Toaster />
           </AssistantProvider>

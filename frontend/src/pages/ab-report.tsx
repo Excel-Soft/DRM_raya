@@ -20,6 +20,245 @@ function fmt(n: number | string | undefined) {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function fmtRate(n: number | string | undefined) {
+  const v = Number(n || 0);
+  return v === 0 ? "" : v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+type FullReportSummary = {
+  clientAndBuy: {
+    clientPkrRecd: number;
+    clientDollarRecd: number;
+    clientAvgRate: number;
+    buyClientPkr: number;
+    buyClientDollar: number;
+    avgBuyRate: number;
+    diffPkr: number;
+    rateDiff: number;
+    diffPkrPerClientAvgRate: number;
+  };
+  chequeRecovery: {
+    buyChequePkr: number;
+    buyChequeDollar: number;
+    buyChequeAvgRate: number;
+    buyRecoveryPkr: number;
+    buyRecoveryDollar: number;
+    buyRecoveryAvgRate: number;
+  };
+  alibabaPaid: {
+    abPkrPaid: number;
+    abDollarPaid: number;
+    abAvgRate: number;
+    buyClientPkr: number;
+    buyClientDollar: number;
+    avgBuyRate: number;
+    diffPkr: number;
+    rateDiff: number;
+    diffPkrPerAbAvgRate: number;
+  };
+  exchangeRateProfit: {
+    clientRateDiff: number;
+    abPaidRateDiff: number;
+    exchangeRateDiff: number;
+    exchangeDiffPkr: number;
+    exchangeDiffPkrPerClientAvgRate: number;
+  };
+};
+
+function FullReportMetricRow({
+  cells,
+  className = "",
+}: {
+  cells: { label?: string; value?: string | number; colSpan?: number; isValue?: boolean }[];
+  className?: string;
+}) {
+  return (
+    <tr className={`border-b border-slate-200 text-[10px] dark:border-zinc-700 ${className}`}>
+      {cells.map((cell, i) =>
+        cell.label !== undefined ? (
+          <th
+            key={i}
+            colSpan={cell.colSpan}
+            className="px-2 py-1.5 text-left font-bold text-slate-700 dark:text-zinc-300"
+          >
+            {cell.label}
+          </th>
+        ) : (
+          <td
+            key={i}
+            colSpan={cell.colSpan}
+            className={`px-2 py-1.5 text-slate-600 dark:text-zinc-400 ${cell.isValue ? "text-right tabular-nums" : "text-center font-bold text-slate-800 dark:text-zinc-200"}`}
+          >
+            {cell.value ?? ""}
+          </td>
+        )
+      )}
+    </tr>
+  );
+}
+
+function FullReportSummaryBlock({ summary }: { summary: FullReportSummary | null | undefined }) {
+  if (!summary) {
+    return (
+      <p className="text-center text-sm text-slate-400 italic py-6 dark:text-zinc-500">
+        Select start and end dates, then click View to load the full report summary.
+      </p>
+    );
+  }
+
+  const { clientAndBuy: c, chequeRecovery: ch, alibabaPaid: a, exchangeRateProfit: ex } = summary;
+
+  const tableClass = "w-full border-collapse border border-slate-300 text-[10px] dark:border-zinc-600";
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mt-8 pt-6 border-t border-slate-200 dark:border-zinc-800">
+      <div className="overflow-x-auto">
+        <table className={tableClass}>
+          <thead>
+            <tr className="bg-amber-100 dark:bg-amber-950/40">
+              <th colSpan={6} className="px-2 py-2 text-center font-bold text-slate-800 dark:text-zinc-100">
+                Full Report Client &amp; Buy Dollar
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <FullReportMetricRow
+              cells={[
+                { label: "Client PKR Recd" },
+                { value: fmt(c.clientPkrRecd), isValue: true },
+                { label: "Client Dollar Recd" },
+                { value: fmt(c.clientDollarRecd), isValue: true },
+                { label: "Client Avg Rate" },
+                { value: fmtRate(c.clientAvgRate), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Client PKR" },
+                { value: fmt(c.buyClientPkr), isValue: true },
+                { label: "Buy Client Dollar" },
+                { value: fmt(c.buyClientDollar), isValue: true },
+                { label: "Avg Buy Rate" },
+                { value: fmtRate(c.avgBuyRate), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Client Dollar * Rate Diff = Diff PKR", colSpan: 3 },
+                { value: fmt(c.diffPkr), isValue: true },
+                { label: "Rate Diff" },
+                { value: fmtRate(c.rateDiff), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Diff PKR / Client Avg Rate", colSpan: 3 },
+                { value: fmt(c.diffPkrPerClientAvgRate), colSpan: 3 },
+              ]}
+            />
+            <tr className="border-b border-slate-200 dark:border-zinc-700">
+              <th colSpan={6} className="px-2 py-2 text-center font-bold text-slate-800 dark:text-zinc-100">
+                Cheque &amp; Recovery Balance
+              </th>
+            </tr>
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Cheque PKR" },
+                { value: fmt(ch.buyChequePkr), isValue: true },
+                { label: "Buy Cheque Dollar" },
+                { value: fmt(ch.buyChequeDollar), isValue: true },
+                { label: "Buy Cheque Avg Rate" },
+                { value: fmtRate(ch.buyChequeAvgRate), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Recovery PKR" },
+                { value: fmt(ch.buyRecoveryPkr), isValue: true },
+                { label: "Buy Recovery Dollar" },
+                { value: fmt(ch.buyRecoveryDollar), isValue: true },
+                { label: "Buy Recovery Avg Rate" },
+                { value: fmtRate(ch.buyRecoveryAvgRate), isValue: true },
+              ]}
+            />
+          </tbody>
+        </table>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className={tableClass}>
+          <thead>
+            <tr className="bg-sky-100 dark:bg-sky-950/40">
+              <th colSpan={6} className="px-2 py-2 text-center font-bold text-slate-800 dark:text-zinc-100">
+                Full Report Alibaba Paid
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <FullReportMetricRow
+              cells={[
+                { label: "Ab PKR Paid" },
+                { value: fmt(a.abPkrPaid), isValue: true },
+                { label: "Ab Dollar Paid" },
+                { value: fmt(a.abDollarPaid), isValue: true },
+                { label: "Ab Avg Rate" },
+                { value: fmtRate(a.abAvgRate), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Client PKR" },
+                { value: fmt(a.buyClientPkr), isValue: true },
+                { label: "Buy Client Dollar" },
+                { value: fmt(a.buyClientDollar), isValue: true },
+                { label: "Avg Buy Rate" },
+                { value: fmtRate(a.avgBuyRate), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Buy Client Dollar * Rate Diff = Diff PKR", colSpan: 3 },
+                { value: fmt(a.diffPkr), isValue: true },
+                { label: "Rate Diff" },
+                { value: fmtRate(a.rateDiff), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Diff PKR / Ab Avg Rate", colSpan: 3 },
+                { value: fmt(a.diffPkrPerAbAvgRate), colSpan: 3 },
+              ]}
+            />
+            <tr className="border-b border-slate-200 dark:border-zinc-700">
+              <th colSpan={6} className="px-2 py-2 text-center font-bold text-slate-800 dark:text-zinc-100">
+                Exchange Rate Profit
+              </th>
+            </tr>
+            <FullReportMetricRow
+              cells={[
+                { label: "Client Rate Diff" },
+                { value: fmtRate(ex.clientRateDiff), isValue: true },
+                { label: "Ab Paid Rate Diff" },
+                { value: fmtRate(ex.abPaidRateDiff), isValue: true },
+                { label: "Exchange Rate Diff" },
+                { value: fmtRate(ex.exchangeRateDiff), isValue: true },
+              ]}
+            />
+            <FullReportMetricRow
+              cells={[
+                { label: "Client Dollar Recd * Exchange Rate Diff = Exchange Diff PKR", colSpan: 2 },
+                { value: fmt(ex.exchangeDiffPkr), isValue: true },
+                { label: "Exchange Diff PKR / Client Avg Rate", colSpan: 2 },
+                { value: fmt(ex.exchangeDiffPkrPerClientAvgRate), isValue: true },
+              ]}
+            />
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function Tooltip({ children, text }: { children: ReactNode; text: string }) {
   return (
     <span className="group/tip relative inline-flex items-center">
@@ -345,11 +584,15 @@ function TimeRangeDropdown({
 }
 
 export default function AbReport() {
-    const [dateRange, setDateRange] = useState({ from: "", to: "" });
+    // Applied range drives API queries; draft is what the Dollar System date inputs edit until View.
+    const [appliedDateRange, setAppliedDateRange] = useState({ from: "", to: "" });
+    const [draftDateRange, setDraftDateRange] = useState({ from: "", to: "" });
     const [rangeLabel, setRangeLabel] = useState("Current Quarter");
 
     const applyRange = (from: string, to: string, label: string) => {
-        setDateRange({ from, to });
+        const next = { from, to };
+        setAppliedDateRange(next);
+        setDraftDateRange(next);
         setRangeLabel(label);
     };
 
@@ -358,13 +601,13 @@ export default function AbReport() {
     const chequeDetailLabels: Record<string, string> = { full: "Full Cheque", paid: "Paid Cheque", unpaid: "Un-Paid Cheque" };
 
     const { data: chequeDetailData, isLoading: chequeDetailLoading } = useQuery({
-        queryKey: ["/api/account/ab-report/cheque-detail", chequeDetail, dateRange],
+        queryKey: ["/api/account/ab-report/cheque-detail", chequeDetail, appliedDateRange],
         queryFn: () => {
             const url = new URL("/api/account/ab-report/cheque-detail", window.location.origin);
             url.searchParams.append("bucket", String(chequeDetail?.bucket));
             if (chequeDetail?.type) url.searchParams.append("type", chequeDetail.type);
-            if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-            if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
             return apiRequestJson("GET", url.pathname + url.search);
         },
         enabled: !!chequeDetail,
@@ -373,14 +616,14 @@ export default function AbReport() {
     const [metricDetail, setMetricDetail] = useState<{ key: string; label: string } | null>(null);
 
     const { data: metricDetailData, isLoading: metricDetailLoading } = useQuery({
-        queryKey: ["/api/account/ab-report/metric-detail", metricDetail?.key, dateRange],
+        queryKey: ["/api/account/ab-report/metric-detail", metricDetail?.key, appliedDateRange],
         queryFn: () => {
             const [metricKey, extraFilter] = String(metricDetail?.key).split(":");
             const url = new URL("/api/account/ab-report/metric-detail", window.location.origin);
             url.searchParams.append("metric", metricKey);
             if (metricKey === "temp-gm" && extraFilter) url.searchParams.append("reason", extraFilter);
-            if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-            if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
             return apiRequestJson("GET", url.pathname + url.search);
         },
         enabled: !!metricDetail,
@@ -398,24 +641,24 @@ export default function AbReport() {
     const [notesMetric, setNotesMetric] = useState<{ key: string; label: string } | null>(null);
     const [newNote, setNewNote] = useState("");
 
-    const { data: stats, isLoading: statsLoading } = useQuery({
-        queryKey: ["/api/account/ab-report/stats", dateRange],
+    const { data: stats, isLoading: statsLoading, isFetching: statsFetching } = useQuery({
+        queryKey: ["/api/account/ab-report/stats", appliedDateRange],
         queryFn: async () => {
             const url = new URL("/api/account/ab-report/stats", window.location.origin);
-            if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-            if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch stats");
             return res.json();
         }
     });
 
-    const { data: dollarList, isLoading: listLoading, isFetching: listFetching, refetch: refetchDollarList } = useQuery({
-        queryKey: ["/api/account/dollar-system/list", dateRange],
+    const { data: dollarList, isLoading: listLoading, isFetching: listFetching } = useQuery({
+        queryKey: ["/api/account/dollar-system/list", appliedDateRange],
         queryFn: async () => {
             const url = new URL("/api/account/dollar-system/list", window.location.origin);
-            if (dateRange.from) url.searchParams.append("startDate", dateRange.from);
-            if (dateRange.to) url.searchParams.append("endDate", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("startDate", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("endDate", appliedDateRange.to);
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch lists");
             return res.json();
@@ -423,11 +666,11 @@ export default function AbReport() {
     });
 
     const { data: closingSummary, isLoading: closingLoading } = useQuery({
-        queryKey: ["/api/account/ab-closing/summary", dateRange],
+        queryKey: ["/api/account/ab-closing/summary", appliedDateRange],
         queryFn: async () => {
             const url = new URL("/api/account/ab-closing/summary", window.location.origin);
-            if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-            if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch closing summary");
             return res.json();
@@ -435,12 +678,12 @@ export default function AbReport() {
     });
 
     const { data: abPaymentsData } = useQuery({
-        queryKey: ["/api/account/ab-payments", dateRange],
+        queryKey: ["/api/account/ab-payments", appliedDateRange],
         queryFn: async () => {
             const url = new URL("/api/account/ab-payments", window.location.origin);
             url.searchParams.append("status", "paid");
-            if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-            if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+            if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+            if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
             const res = await fetch(url.toString(), { credentials: "include" });
             if (!res.ok) throw new Error("Failed to fetch AB payments");
             return res.json();
@@ -495,12 +738,26 @@ export default function AbReport() {
     const handleExportCsv = () => {
         const url = new URL("/api/account/ab-payments/export", window.location.origin);
         url.searchParams.append("status", "paid");
-        if (dateRange.from) url.searchParams.append("dateFrom", dateRange.from);
-        if (dateRange.to) url.searchParams.append("dateTo", dateRange.to);
+        if (appliedDateRange.from) url.searchParams.append("dateFrom", appliedDateRange.from);
+        if (appliedDateRange.to) url.searchParams.append("dateTo", appliedDateRange.to);
         window.open(url.toString(), "_blank");
     };
 
-    if (statsLoading || listLoading) {
+    const applyDraftDateRange = () => {
+        if (!draftDateRange.from || !draftDateRange.to) {
+            toast({
+                title: "Select full date range",
+                description: "Choose both start date and end date, then click View.",
+                variant: "destructive",
+            });
+            return;
+        }
+        setAppliedDateRange({ ...draftDateRange });
+        setRangeLabel("Custom Date Range");
+    };
+
+    const isInitialLoad = (statsLoading && !stats) || (listLoading && !dollarList);
+    if (isInitialLoad) {
         return (
             <div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-zinc-900">
                 <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
@@ -519,8 +776,10 @@ export default function AbReport() {
     const auditRows = closingSummary?.auditHistory || [];
     const paidAbRows = abPaymentsData?.data || [];
 
+    const isRefreshing = statsFetching || listFetching;
+
     return (
-        <div className="flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 p-6 space-y-6">
+        <div className={`flex flex-col min-h-screen bg-slate-50/50 dark:bg-zinc-950 p-6 space-y-6 transition-opacity ${isRefreshing ? "opacity-70 pointer-events-none" : ""}`}>
             {/* Breadcrumb — "Dollar Buying / View Ab Report" in the legacy page */}
             <div className="flex items-center justify-between">
                 <h4 className="text-lg font-semibold text-slate-800 dark:text-zinc-100">
@@ -533,8 +792,8 @@ export default function AbReport() {
             <div className="flex items-center justify-between rounded border border-[#80808036] bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
                 <TimeRangeDropdown
                     currentLabel={rangeLabel}
-                    currentFrom={dateRange.from}
-                    currentTo={dateRange.to}
+                    currentFrom={appliedDateRange.from}
+                    currentTo={appliedDateRange.to}
                     onApply={applyRange}
                 />
                 <h1 className="text-sm font-bold uppercase tracking-wide text-slate-700 dark:text-zinc-200">account</h1>
@@ -543,7 +802,7 @@ export default function AbReport() {
             <div className="-mt-4 flex items-center gap-3 rounded-md border border-sky-100 bg-sky-50 p-3 text-sm font-medium text-sky-700 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-sky-400">
                 <Info className="h-4 w-4 flex-shrink-0" />
                 Currently viewing: <strong className="capitalize">{rangeLabel}</strong>
-                {dateRange.from && <span>({dateRange.from} - {dateRange.to || "Today"})</span>}
+                {appliedDateRange.from && <span>({appliedDateRange.from} - {appliedDateRange.to || "Today"})</span>}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -567,9 +826,9 @@ export default function AbReport() {
                                 count={account.cash?.cheque?.count || 0}
                                 amount={account.cash?.cheque?.amount || 0}
                                 breakdown={[
-                                    { label: "Full cheque", count: (account.cash?.cheque?.count || 0) + (account.tempPayment?.pendingCheque?.count || 0), amount: (account.cash?.cheque?.amount || 0) + (account.tempPayment?.pendingCheque?.amount || 0), onView: () => setChequeDetailBucket("full") },
-                                    { label: "Paid cheque", count: account.cash?.cheque?.count || 0, amount: account.cash?.cheque?.amount || 0, onView: () => setChequeDetailBucket("paid") },
-                                    { label: "Un-paid cheque", count: account.tempPayment?.pendingCheque?.count || 0, amount: account.tempPayment?.pendingCheque?.amount || 0, onView: () => setChequeDetailBucket("unpaid") },
+                                    { label: "Full cheque", count: account.cash?.cheque?.count || 0, amount: account.cash?.cheque?.amount || 0, onView: () => setChequeDetailBucket("full") },
+                                    { label: "Paid cheque", count: account.cash?.cheque?.paid?.count || 0, amount: account.cash?.cheque?.paid?.amount || 0, onView: () => setChequeDetailBucket("paid") },
+                                    { label: "Un-paid cheque", count: (account.cash?.cheque?.unpaid?.count ?? account.tempPayment?.pendingCheque?.count) || 0, amount: (account.cash?.cheque?.unpaid?.amount ?? account.tempPayment?.pendingCheque?.amount) || 0, onView: () => setChequeDetailBucket("unpaid") },
                                 ]}
                             />
                             <MetricRow label="Loan Recovered" count={account.cash?.loanRecovered?.count || 0} amount={account.cash?.loanRecovered?.amount || 0} infoTooltip="Company Loan Recovered" onView={() => viewMetric("loan-recovered", "Loan Recovered")} />
@@ -649,7 +908,6 @@ export default function AbReport() {
                                 ]}
                             />
                             <MetricRow label="Pending Cheque" count={account.tempPayment?.pendingCheque?.count || 0} amount={account.tempPayment?.pendingCheque?.amount || 0} />
-                            <MetricRow label="Advance Pay" count={account.tempPayment?.advancePay?.count || 0} amount={account.tempPayment?.advancePay?.amount || 0} onView={() => viewMetric("advance-pay", "Advance Pay")} />
                         </DataBox>
 
                         {/* ACCOUNT CLOSING Column */}
@@ -669,9 +927,9 @@ export default function AbReport() {
                                 count={account.accountClosing?.cheque?.count || 0}
                                 amount={account.accountClosing?.cheque?.amount || 0}
                                 breakdown={[
-                                    { label: "Full Cheque", count: (account.accountClosing?.cheque?.count || 0) + (account.accountClosing?.pendingCheque?.count || 0), amount: (account.accountClosing?.cheque?.amount || 0) + (account.accountClosing?.pendingCheque?.amount || 0), onView: () => setChequeDetailBucket("full") },
-                                    { label: "Paid Cheque", count: account.accountClosing?.cheque?.count || 0, amount: account.accountClosing?.cheque?.amount || 0, onView: () => setChequeDetailBucket("paid") },
-                                    { label: "Un-Paid Cheque", count: account.accountClosing?.pendingCheque?.count || 0, amount: account.accountClosing?.pendingCheque?.amount || 0, onView: () => setChequeDetailBucket("unpaid") },
+                                    { label: "Full Cheque", count: account.accountClosing?.cheque?.count || 0, amount: account.accountClosing?.cheque?.amount || 0, onView: () => setChequeDetailBucket("full") },
+                                    { label: "Paid Cheque", count: account.accountClosing?.cheque?.paid?.count || 0, amount: account.accountClosing?.cheque?.paid?.amount || 0, onView: () => setChequeDetailBucket("paid") },
+                                    { label: "Un-Paid Cheque", count: (account.accountClosing?.cheque?.unpaid?.count ?? account.accountClosing?.pendingCheque?.count) || 0, amount: (account.accountClosing?.cheque?.unpaid?.amount ?? account.accountClosing?.pendingCheque?.amount) || 0, onView: () => setChequeDetailBucket("unpaid") },
                                 ]}
                             />
                             <MetricRow label="Pending Cheque" count={account.accountClosing?.pendingCheque?.count || 0} amount={account.accountClosing?.pendingCheque?.amount || 0} />
@@ -694,9 +952,9 @@ export default function AbReport() {
                                 count={account.webExcels?.cash?.chequePay?.count || 0}
                                 amount={account.webExcels?.cash?.chequePay?.amount || 0}
                                 breakdown={[
-                                    { label: "Full Cheque", count: (account.webExcels?.cash?.chequePay?.count || 0) + (account.tempPayment?.pendingCheque?.count || 0), amount: (account.webExcels?.cash?.chequePay?.amount || 0) + (account.tempPayment?.pendingCheque?.amount || 0), onView: () => setChequeDetailBucket("full") },
-                                    { label: "Paid Cheque", count: account.webExcels?.cash?.chequePay?.count || 0, amount: account.webExcels?.cash?.chequePay?.amount || 0, onView: () => setChequeDetailBucket("paid") },
-                                    { label: "Un-Paid Cheque", count: account.tempPayment?.pendingCheque?.count || 0, amount: account.tempPayment?.pendingCheque?.amount || 0, onView: () => setChequeDetailBucket("unpaid") },
+                                    { label: "Full Cheque", count: account.webExcels?.cash?.chequePay?.count || 0, amount: account.webExcels?.cash?.chequePay?.amount || 0, onView: () => setChequeDetailBucket("full") },
+                                    { label: "Paid Cheque", count: account.webExcels?.cash?.chequePay?.paid?.count || 0, amount: account.webExcels?.cash?.chequePay?.paid?.amount || 0, onView: () => setChequeDetailBucket("paid") },
+                                    { label: "Un-Paid Cheque", count: (account.webExcels?.cash?.chequePay?.unpaid?.count ?? account.tempPayment?.pendingCheque?.count) || 0, amount: (account.webExcels?.cash?.chequePay?.unpaid?.amount ?? account.tempPayment?.pendingCheque?.amount) || 0, onView: () => setChequeDetailBucket("unpaid") },
                                 ]}
                             />
                             <MetricRow
@@ -789,9 +1047,9 @@ export default function AbReport() {
                                 count={account.webExcels?.closing?.chequePay?.count || 0}
                                 amount={account.webExcels?.closing?.chequePay?.amount || 0}
                                 breakdown={[
-                                    { label: "Full Cheque", count: (account.webExcels?.closing?.chequePay?.count || 0) + (account.tempPayment?.pendingCheque?.count || 0), amount: (account.webExcels?.closing?.chequePay?.amount || 0) + (account.tempPayment?.pendingCheque?.amount || 0), onView: () => setChequeDetailBucket("full") },
-                                    { label: "Paid Cheque", count: account.webExcels?.closing?.chequePay?.count || 0, amount: account.webExcels?.closing?.chequePay?.amount || 0, onView: () => setChequeDetailBucket("paid") },
-                                    { label: "Un-Paid Cheque", count: account.tempPayment?.pendingCheque?.count || 0, amount: account.tempPayment?.pendingCheque?.amount || 0, onView: () => setChequeDetailBucket("unpaid") },
+                                    { label: "Full Cheque", count: account.webExcels?.closing?.chequePay?.count || 0, amount: account.webExcels?.closing?.chequePay?.amount || 0, onView: () => setChequeDetailBucket("full") },
+                                    { label: "Paid Cheque", count: account.webExcels?.closing?.chequePay?.paid?.count || 0, amount: account.webExcels?.closing?.chequePay?.paid?.amount || 0, onView: () => setChequeDetailBucket("paid") },
+                                    { label: "Un-Paid Cheque", count: (account.webExcels?.closing?.chequePay?.unpaid?.count ?? account.tempPayment?.pendingCheque?.count) || 0, amount: (account.webExcels?.closing?.chequePay?.unpaid?.amount ?? account.tempPayment?.pendingCheque?.amount) || 0, onView: () => setChequeDetailBucket("unpaid") },
                                 ]}
                             />
                             <MetricRow
@@ -1016,8 +1274,8 @@ export default function AbReport() {
                                 <input 
                                     type="date" 
                                     className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
-                                    value={dateRange.from}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, from: e.target.value }))}
+                                    value={draftDateRange.from}
+                                    onChange={(e) => setDraftDateRange((prev) => ({ ...prev, from: e.target.value }))}
                                 />
                             </div>
                             <div className="md:col-span-2 space-y-2">
@@ -1025,13 +1283,14 @@ export default function AbReport() {
                                 <input 
                                     type="date" 
                                     className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-slate-500 dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-100 [&::-webkit-calendar-picker-indicator]:dark:invert"
-                                    value={dateRange.to}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, to: e.target.value }))}
+                                    value={draftDateRange.to}
+                                    onChange={(e) => setDraftDateRange((prev) => ({ ...prev, to: e.target.value }))}
                                 />
                             </div>
                             <Button
-                                onClick={() => refetchDollarList()}
-                                disabled={listFetching}
+                                type="button"
+                                onClick={applyDraftDateRange}
+                                disabled={listFetching || !draftDateRange.from || !draftDateRange.to}
                                 className="bg-emerald-700 hover:bg-emerald-800 h-10 font-bold uppercase transition-all shadow-md disabled:opacity-70"
                             >
                                 {listFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : "View"}
@@ -1146,6 +1405,8 @@ export default function AbReport() {
                                 </div>
                             </div>
                         </div>
+
+                        <FullReportSummaryBlock summary={dollarList?.fullReportSummary as FullReportSummary | null | undefined} />
                     </CardContent>
                 </Card>
             </div>

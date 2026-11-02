@@ -181,7 +181,7 @@ export default function HodDashboard() {
   });
 
   // Verification tabs state
-  const [verificationTab, setVerificationTab] = useState<"waiting" | "quotation" | "leave-form" | "gm-approval" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
+  const [verificationTab, setVerificationTab] = useState<"waiting" | "quotation" | "leave-form" | "gm-approval" | "temp-gm" | "update-request" | "gm-withdrawal" | "invoice">("invoice");
 
   const invoicesCount = approvalsQuery.data?.meta?.total ?? 0;
   const approvals = approvalsQuery.data?.data ?? [];
@@ -555,6 +555,15 @@ export default function HodDashboard() {
       const res = await apiRequest("GET", "/api/hod/verification/update-requests");
       return res.json();
     },
+  });
+
+  const tempGmQuery = useQuery<{ success: boolean; data: any[] }>({
+    queryKey: ["hod-verification-temp-gm"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/hod/verification/temp-gm");
+      return res.json();
+    },
+    refetchInterval: verificationTab === "temp-gm" ? 15000 : false,
   });
 
   const withdrawalsQuery = useQuery<{ success: boolean; data: any[] }>({
@@ -1301,6 +1310,19 @@ export default function HodDashboard() {
                     </Button>
                     <Button
                       size="sm"
+                      onClick={() => setVerificationTab("temp-gm")}
+                      className={`h-8 text-xs relative ${verificationTab === "temp-gm"
+                        ? "bg-green-600 hover:bg-green-700 text-white"
+                        : "bg-gray-200 hover:bg-gray-300 text-gray-700"
+                        }`}
+                    >
+                      Temp GM
+                      <span className="ml-2 inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-teal-600 rounded-full border border-white">
+                        {tempGmQuery.data?.data?.length || 0}
+                      </span>
+                    </Button>
+                    <Button
+                      size="sm"
                       onClick={() => setVerificationTab("update-request")}
                       className={`h-8 text-xs relative ${verificationTab === "update-request"
                         ? "bg-green-600 hover:bg-green-700 text-white"
@@ -1499,6 +1521,17 @@ export default function HodDashboard() {
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Accountant</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Payment Type</TableHead>
                               <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Approved By HOD</TableHead>
+                              <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Action</TableHead>
+                            </>
+                          )}
+                          {verificationTab === "temp-gm" && (
+                            <>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Company</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Person</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Amount</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Reason</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Status</TableHead>
+                              <TableHead className="font-bold text-slate-700 dark:text-zinc-400">Date</TableHead>
                               <TableHead className="font-bold text-slate-700 text-right dark:text-zinc-400">Action</TableHead>
                             </>
                           )}
@@ -1787,6 +1820,86 @@ export default function HodDashboard() {
                             </>
                           );
                         })()}
+
+                        {verificationTab === "temp-gm" && (
+                          <>
+                            {tempGmQuery.isLoading ? (
+                              <TableRow>
+                                <TableCell colSpan={7} className="text-center py-4">
+                                  <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-400" />
+                                </TableCell>
+                              </TableRow>
+                            ) : tempGmQuery.data?.data && tempGmQuery.data.data.length > 0 ? (
+                              tempGmQuery.data.data.map((entry: any) => (
+                                <TableRow key={entry.id}>
+                                  <TableCell className="font-medium text-blue-600">{entry.companyName || "-"}</TableCell>
+                                  <TableCell>{entry.personName || entry.requestedBy || "-"}</TableCell>
+                                  <TableCell>
+                                    {entry.amount != null
+                                      ? `${parseFloat(String(entry.amount)).toLocaleString()} ${entry.amountType || ""}`.trim()
+                                      : "-"}
+                                  </TableCell>
+                                  <TableCell className="max-w-[200px] truncate" title={entry.reason || ""}>
+                                    {entry.reason || "-"}
+                                  </TableCell>
+                                  <TableCell>{getStatusBadge(entry.status || "pending")}</TableCell>
+                                  <TableCell>{entry.createdAt ? format(new Date(entry.createdAt), "dd/MM/yyyy HH:mm") : "-"}</TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex gap-2 justify-end">
+                                      <Button
+                                        size="sm"
+                                        className="bg-green-600 hover:bg-green-700 text-white h-7 text-xs"
+                                        onClick={async () => {
+                                          try {
+                                            const res = await apiRequest("POST", `/api/hod/verification/temp-gm/${entry.id}/approve`, {});
+                                            const d = await res.json();
+                                            if (!res.ok) throw new Error(d?.message || "Failed to approve");
+                                            tempGmQuery.refetch();
+                                            queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm"] });
+                                            toast({ title: "Approved", description: "Temp GM status updated." });
+                                          } catch (e: any) {
+                                            toast({ title: "Approve failed", description: e.message || "Error", variant: "destructive" });
+                                          }
+                                        }}
+                                      >
+                                        Approve
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        className="h-7 text-xs"
+                                        onClick={async () => {
+                                          const reason = window.prompt("Rejection reason (required):");
+                                          if (!reason?.trim()) return;
+                                          try {
+                                            const res = await apiRequest("POST", `/api/hod/verification/temp-gm/${entry.id}/reject`, {
+                                              reason: reason.trim(),
+                                            });
+                                            const d = await res.json();
+                                            if (!res.ok) throw new Error(d?.message || "Failed to reject");
+                                            tempGmQuery.refetch();
+                                            queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm"] });
+                                            toast({ title: "Rejected", description: "Temp GM status updated." });
+                                          } catch (e: any) {
+                                            toast({ title: "Reject failed", description: e.message || "Error", variant: "destructive" });
+                                          }
+                                        }}
+                                      >
+                                        Reject
+                                      </Button>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              ))
+                            ) : (
+                              <TableRow>
+                                <TableCell colSpan={7} className="text-center text-muted-foreground py-4">
+                                  No pending Temp GM requests
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </>
+                        )}
 
                         {verificationTab === "update-request" && (
                           <>

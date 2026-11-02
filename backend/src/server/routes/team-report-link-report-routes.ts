@@ -3,16 +3,14 @@
  *
  * Real, DB-backed. Mounted AFTER auth + IP + URL-permission middleware, so all
  * routes require an authenticated user. Access is additionally scoped here:
- *   - admin / super_hod        -> all users
- *   - hod / managerial roles   -> own department (+ self)
- *   - everyone else (executive)-> self only, and cannot verify commission
+ *   - admin / super_hod / hod / account_manager -> all users in dropdown
+ *   - everyone else -> self only (and cannot verify commission unless managerial)
  *
  * Base path:  /api/team-report/link-report
  * Alias path: /api/posting-data/link-report   (compatibility with the page URL)
  */
 import type { Express, Request, Response } from "express";
-import { pool } from "../db";
-import { normalizeRole, isManagerialRole } from "../utils/role-utils";
+import { normalizeRole, isManagerialRole, ROLES } from "../utils/role-utils";
 import {
   listUsersForReport,
   listLinkReport,
@@ -25,7 +23,13 @@ import {
 } from "./services/link-report.service";
 import { ActivityLogService } from "./services/activity-service";
 
-const FULL_ACCESS_ROLES = ["admin", "super_hod"]; // super_admin normalizes to admin
+/** Roles that may pick any user on Link Report (legacy linkreport.php admin/HOD/account view). */
+const LINK_REPORT_ALL_USERS_ROLES: string[] = [
+  ROLES.ADMIN,
+  ROLES.SUPER_HOD,
+  ROLES.HOD,
+  ROLES.ACCOUNT_MANAGER,
+];
 
 function getUserId(req: Request): string | undefined {
   return (req.user as any)?.userId || (req.user as any)?.id;
@@ -33,11 +37,11 @@ function getUserId(req: Request): string | undefined {
 function getActiveRole(req: Request): string {
   return normalizeRole((req.user as any)?.activeRoleId || (req.user as any)?.roleId);
 }
-function isFullAccess(role: string): boolean {
-  return FULL_ACCESS_ROLES.includes(role);
+function canListAllUsersForLinkReport(role: string): boolean {
+  return LINK_REPORT_ALL_USERS_ROLES.includes(role);
 }
 function isHod(role: string): boolean {
-  return role === "hod";
+  return role === ROLES.HOD;
 }
 /**
  * Who may verify commission: full-access, HOD, and managerial roles (not
@@ -48,19 +52,7 @@ function isHod(role: string): boolean {
  * asserting they currently happen to agree.
  */
 export function canVerify(role: string): boolean {
-  return isFullAccess(role) || isHod(role) || isManagerialRole(role);
-}
-
-async function getDepartment(userId: string): Promise<string | null> {
-  try {
-    const { rows } = await pool.query(
-      `select department from drm.users where id::text = $1::text limit 1`,
-      [userId],
-    );
-    return rows[0]?.department ?? null;
-  } catch {
-    return null;
-  }
+  return canListAllUsersForLinkReport(role) || isManagerialRole(role);
 }
 
 /** Returns the list of user ids this requester may view, or null for "all". */
@@ -68,23 +60,7 @@ async function getAllowedUserIds(req: Request): Promise<string[] | null> {
   const myId = getUserId(req);
   if (!myId) return [];
   const role = getActiveRole(req);
-  if (isFullAccess(role)) return null;
-
-  if (isHod(role) || isManagerialRole(role)) {
-    const dept = await getDepartment(String(myId));
-    if (!dept) return [String(myId)];
-    try {
-      const { rows } = await pool.query(
-        `select id from drm.users where department = $1 or id::text = $2::text`,
-        [dept, myId],
-      );
-      const ids = rows.map((r) => String(r.id));
-      ids.push(String(myId));
-      return Array.from(new Set(ids));
-    } catch {
-      return [String(myId)];
-    }
-  }
+  if (canListAllUsersForLinkReport(role)) return null;
   return [String(myId)];
 }
 
@@ -257,7 +233,7 @@ function registerLinkReportRoutes(app: Express, base: string) {
       void ActivityLogService.log({
         userId: String(myId),
         action: "link_report.verify_link",
-        resourceType: "product_posting_evidence_link",
+        resourceType: "link_report_link",
         resourceId: linkId,
         details: JSON.stringify({ status, note }),
       });

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -17,10 +17,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { mutationRequest, getAuthHeader } from "@/lib/queryClient";
+import { mutationRequest, getAuthHeader, apiRequestJson } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const AMOUNT_MATCH_EPSILON = 0.01;
+
+function resolveGmKind(gmEntry: any): "FULL" | "PARTIAL" | "LOAN" {
+  const type = String(gmEntry?.gmType || "").toUpperCase();
+  if (type === "LOAN" || gmEntry?.isLoan) return "LOAN";
+  if (type === "PARTIAL" || gmEntry?.isPartialPayment) return "PARTIAL";
+  return "FULL";
+}
 
 export function AccountApprovalModal({
   open,
@@ -40,6 +47,11 @@ export function AccountApprovalModal({
   const [uploadingScreenshot, setUploadingScreenshot] = useState(false);
   const [enteredAmount, setEnteredAmount] = useState("");
 
+  const gmKind = resolveGmKind(gmEntry);
+  const isLoanOrPartial = gmKind === "LOAN" || gmKind === "PARTIAL";
+  // Full GM: screenshot required. Loan / Partial: optional (installments cover payment proof).
+  const screenshotRequired = !isLoanOrPartial;
+
   useEffect(() => {
     if (open) {
       setPaymentStatus("Cash Received");
@@ -50,6 +62,36 @@ export function AccountApprovalModal({
       setEnteredAmount("");
     }
   }, [open, gmEntry?.id]);
+
+  // Loan / Partial: all scheduled installments must be collected (account-approved
+  // via Dollar System / partial-receipts) before GM final Save is allowed.
+  const installmentsQuery = useQuery<{
+    success?: boolean;
+    data?: { summary?: { fullyPaid?: boolean; paid?: number; remaining?: number; target?: number } };
+  }>({
+    queryKey: ["/api/gm-pool", gmEntry?.id, "partial-receipts"],
+    enabled: open && !!gmEntry?.id && isLoanOrPartial,
+    queryFn: () => apiRequestJson("GET", `/api/gm-pool/${gmEntry.id}/partial-receipts`),
+    refetchOnWindowFocus: true,
+  });
+
+  const knownFullyPaid =
+    gmEntry?.fullyPaid === true ||
+    (Number(gmEntry?.partialPendingAmount) === 0 &&
+      gmEntry?.partialReceivedAmount != null &&
+      Number(gmEntry.partialReceivedAmount) > 0);
+
+  const installmentsFullyPaid = useMemo(() => {
+    if (!isLoanOrPartial) return true;
+    if (installmentsQuery.data?.data?.summary?.fullyPaid === true) return true;
+    if (installmentsQuery.data?.data?.summary?.fullyPaid === false) return false;
+    // Fallback while loading / if receipts API unavailable: use row flag when present.
+    if (typeof gmEntry?.fullyPaid === "boolean") return gmEntry.fullyPaid;
+    return knownFullyPaid;
+  }, [isLoanOrPartial, installmentsQuery.data, gmEntry?.fullyPaid, knownFullyPaid]);
+
+  const installmentsLoading = isLoanOrPartial && installmentsQuery.isLoading;
+  const installmentsBlockSave = isLoanOrPartial && !installmentsLoading && !installmentsFullyPaid;
 
   const expectedAmount = Number(gmEntry?.amountPkr ?? 0);
   const enteredAmountNum = enteredAmount.trim() === "" ? null : Number(enteredAmount);
@@ -88,6 +130,11 @@ export function AccountApprovalModal({
   const invalidateAfterAction = () => {
     queryClient.invalidateQueries({ queryKey: ["accounts-gm-summary"] });
     queryClient.invalidateQueries({ queryKey: ["/api/gm-pool"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/account/gm-entries"] });
+    queryClient.invalidateQueries({ queryKey: ["account-gm-entries"] });
+    if (gmEntry?.id) {
+      queryClient.invalidateQueries({ queryKey: ["/api/gm-pool", gmEntry.id, "partial-receipts"] });
+    }
   };
 
   const approveMutation = useMutation({
@@ -119,9 +166,21 @@ export function AccountApprovalModal({
 
   const isPending = approveMutation.isPending || rejectMutation.isPending;
   const requiresAmountVerification = alibabaStatus !== "Rejected";
-  const canSave =
+
+  // Full GM: screenshot + matching amount required.
+  // Loan / Partial: screenshot optional; if amount entered it must match; installments must be fully paid.
+  const screenshotOk = !requiresAmountVerification || !screenshotRequired || !!screenshotUrl;
+  const amountOk =
     !requiresAmountVerification ||
-    (!!screenshotUrl && enteredAmountNum !== null && !hasAmountMismatch);
+    (screenshotRequired
+      ? enteredAmountNum !== null && !hasAmountMismatch
+      : enteredAmountNum === null || !hasAmountMismatch);
+
+  const canSave =
+    screenshotOk &&
+    amountOk &&
+    !installmentsBlockSave &&
+    !installmentsLoading;
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isPending && onOpenChange(next)}>
@@ -158,10 +217,33 @@ export function AccountApprovalModal({
             </div>
           </div>
 
+          {isLoanOrPartial && requiresAmountVerification && (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900">
+              {installmentsLoading ? (
+                <p className="text-xs text-muted-foreground">Checking installments…</p>
+              ) : installmentsFullyPaid ? (
+                <p className="text-xs text-emerald-700 font-medium">
+                  All installments are approved — you can save this GM.
+                </p>
+              ) : (
+                <p className="text-xs text-red-600 font-semibold">
+                  Approve all installments first, then this GM can be approved.
+                </p>
+              )}
+            </div>
+          )}
+
           {requiresAmountVerification && (
             <>
               <div>
-                <Label className="text-sm font-medium">Payment Screenshot</Label>
+                <Label className="text-sm font-medium">
+                  Payment Screenshot
+                  {screenshotRequired ? (
+                    <span className="text-red-500"> *</span>
+                  ) : (
+                    <span className="text-muted-foreground font-normal"> (optional for {gmKind})</span>
+                  )}
+                </Label>
                 <Input
                   type="file"
                   accept="image/*"
@@ -175,10 +257,16 @@ export function AccountApprovalModal({
                 {!uploadingScreenshot && screenshotName && (
                   <p className="text-xs text-emerald-600 mt-1 truncate">✓ {screenshotName}</p>
                 )}
+                {screenshotRequired && !screenshotUrl && !uploadingScreenshot && (
+                  <p className="text-xs text-red-600 mt-1">Payment screenshot is required for Full GM.</p>
+                )}
               </div>
 
               <div>
-                <Label className="text-sm font-medium">Amount in Screenshot (PKR)</Label>
+                <Label className="text-sm font-medium">
+                  Amount in Screenshot (PKR)
+                  {screenshotRequired ? <span className="text-red-500"> *</span> : null}
+                </Label>
                 <Input
                   type="number"
                   step="0.01"

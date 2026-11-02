@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { db } from "../db";
+import { db, pool } from "../db";
 import { targetSystemTargets, targetSystemDailyTargets, targetSystemKwaRecords, targetSystemKwaHistory, targetSystemUserTargets, users } from "../../shared/schema";
 import { eq, desc, and, or, inArray, lte, gte, isNull, ilike } from "drizzle-orm";
 import { requireRole } from "../middleware/auth.middleware";
@@ -52,6 +52,8 @@ export const dailyTargetSchema = z
 export const kwaRecordSchema = z
   .object({
     company: z.string().trim().min(1, "company is required").max(200),
+    companyId: z.string().uuid().optional(),
+    comId: z.string().trim().max(100).optional(),
     employee: z.string().trim().min(1, "employee is required").max(200),
     kwa: z.coerce.number().finite().nonnegative(),
     detail: z.string().trim().max(500).optional(),
@@ -296,14 +298,39 @@ router.put("/daily-targets/:id", async (req, res) => {
   }
 });
 
-// Get all KWA records
+// Get all KWA records (Com Id = legacy com_id / customer drm_id, not KWA row id).
 router.get("/kwa-records", async (req, res) => {
   try {
-    const records = await db
-      .select()
-      .from(targetSystemKwaRecords)
-      .orderBy(desc(targetSystemKwaRecords.createdAt));
-    res.json(records);
+    await pool.query(`ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS com_id text`);
+    await pool.query(
+      `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES drm.customers(id)`,
+    );
+    const { rows } = await pool.query(`
+      SELECT
+        k.id,
+        k.company,
+        k.employee,
+        k.kwa,
+        k.detail,
+        k.remaining,
+        k.type,
+        k.used_by AS "usedBy",
+        k.reward,
+        k.status,
+        k.pay_date AS "payDate",
+        k.created_at AS "createdAt",
+        k.customer_id AS "customerId",
+        COALESCE(NULLIF(btrim(k.com_id), ''), c_ref.drm_id, c_name.drm_id, '') AS "comId"
+      FROM drm.target_system_kwa_records k
+      LEFT JOIN drm.customers c_ref ON c_ref.id = k.customer_id
+      LEFT JOIN LATERAL (
+        SELECT drm_id FROM drm.customers
+        WHERE lower(trim(company_name)) = lower(trim(k.company))
+        LIMIT 1
+      ) c_name ON k.customer_id IS NULL
+      ORDER BY k.created_at DESC
+    `);
+    res.json(rows);
   } catch (error) {
     console.error("Error fetching KWA records:", error);
     res.status(500).json({ error: "Failed to fetch KWA records" });
@@ -313,12 +340,39 @@ router.get("/kwa-records", async (req, res) => {
 // Create a new KWA record
 router.post("/kwa-records", async (req, res) => {
   try {
-    const { company, employee, kwa, detail, type, reward, status, payDate } = kwaRecordSchema.parse(req.body);
+    const { company, companyId, comId, employee, kwa, detail, type, reward, status, payDate } =
+      kwaRecordSchema.parse(req.body);
+
+    let resolvedCustomerId: string | null = companyId ?? null;
+    let resolvedComId: string | null = comId?.trim() || null;
+    if (resolvedCustomerId) {
+      const cust = await pool.query(
+        `SELECT id, drm_id FROM drm.customers WHERE id = $1 LIMIT 1`,
+        [resolvedCustomerId],
+      );
+      if (cust.rows[0]) {
+        resolvedComId = resolvedComId || cust.rows[0].drm_id || null;
+      } else {
+        resolvedCustomerId = null;
+      }
+    }
+    if (!resolvedComId) {
+      const byName = await pool.query(
+        `SELECT id, drm_id FROM drm.customers WHERE lower(trim(company_name)) = lower(trim($1)) LIMIT 1`,
+        [company],
+      );
+      if (byName.rows[0]) {
+        resolvedCustomerId = resolvedCustomerId || byName.rows[0].id;
+        resolvedComId = byName.rows[0].drm_id || null;
+      }
+    }
 
     const [newRecord] = await db
       .insert(targetSystemKwaRecords)
       .values({
         company,
+        customerId: resolvedCustomerId,
+        comId: resolvedComId,
         employee,
         kwa: String(kwa),
         detail: detail || "",

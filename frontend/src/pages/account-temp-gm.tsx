@@ -3,7 +3,7 @@ import { Trash2, Search } from "lucide-react";
 import { useState, useMemo } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, extractApiError, mutationRequest } from "@/lib/queryClient";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -61,6 +61,8 @@ export default function AccountTempGm() {
   const [showForm, setShowForm] = useState(false);
   const [companySearch, setCompanySearch] = useState("");
   const [showCompanyDropdown, setShowCompanyDropdown] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<TempGmEntry | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
   const pageSize = 10;
 
   const form = useForm<FormValues>({
@@ -75,6 +77,8 @@ export default function AccountTempGm() {
     },
   });
 
+  const watchedCompany = form.watch("companyName");
+
   // ── Queries ──────────────────────────────────────────────────────────
   const { data: entries = [], isLoading } = useQuery<TempGmEntry[]>({
     queryKey: ["/api/account/temp-gm"],
@@ -86,6 +90,22 @@ export default function AccountTempGm() {
 
   const { data: users = [] } = useQuery<User[]>({
     queryKey: ["/api/account/users-list"],
+  });
+
+  const { data: eligibility } = useQuery<{
+    canAddTempGm: boolean;
+    hasActiveGm: boolean;
+    hasBlockingTempGm: boolean;
+  }>({
+    queryKey: ["/api/account/temp-gm/eligibility", watchedCompany],
+    queryFn: async () => {
+      const q = encodeURIComponent(watchedCompany.trim());
+      const res = await apiRequest("GET", `/api/account/temp-gm/eligibility?companyName=${q}`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(extractApiError(body, res.status));
+      return body;
+    },
+    enabled: !!watchedCompany?.trim(),
   });
 
   // ── Filtered customers for autocomplete ─────────────────────────────
@@ -103,33 +123,53 @@ export default function AccountTempGm() {
 
   // ── Mutations ────────────────────────────────────────────────────────
   const createMutation = useMutation({
-    mutationFn: (data: FormValues) =>
-      apiRequest("POST", "/api/account/temp-gm", data),
+    mutationFn: (data: FormValues) => mutationRequest("POST", "/api/account/temp-gm", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm/eligibility"] });
+      queryClient.invalidateQueries({ queryKey: ["hod-verification-temp-gm"] });
       form.reset({ companyName: "", personName: "", amount: "", amountType: "PKR", reason: "", comment: "" });
       setCompanySearch("");
       setShowForm(false);
       toast({ title: "✅ Success", description: "Entry submitted successfully" });
     },
-    onError: () =>
-      toast({ title: "Error", description: "Failed to submit", variant: "destructive" }),
+    onError: (err: Error) =>
+      toast({ title: "Cannot add Temp GM", description: err.message || "Failed to submit", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiRequest("DELETE", `/api/account/temp-gm/${id}`, undefined),
+    mutationFn: ({ id, deleteReason: reason }: { id: string; deleteReason: string }) =>
+      mutationRequest("DELETE", `/api/account/temp-gm/${id}`, { deleteReason: reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm"] });
-      toast({ title: "Deleted", description: "Entry deleted" });
+      queryClient.invalidateQueries({ queryKey: ["/api/account/temp-gm/eligibility"] });
+      setDeleteTarget(null);
+      setDeleteReason("");
+      toast({ title: "Deleted", description: "Temp GM removed (soft delete)" });
     },
+    onError: (err: Error) =>
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" }),
   });
 
   // ── Helpers ──────────────────────────────────────────────────────────
   const totalAmount = entries.reduce((s, e) => s + parseFloat(e.amount || "0"), 0);
   const totalPages = Math.ceil(entries.length / pageSize);
   const pageEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const onSubmit = (data: FormValues) => createMutation.mutate(data);
+  const onSubmit = (data: FormValues) => {
+    if (eligibility && !eligibility.canAddTempGm) {
+      toast({
+        title: "Cannot add Temp GM",
+        description: eligibility.hasActiveGm
+          ? "This company already has a GM (Full, Loan, or Partial)."
+          : "This company already has an active Temp GM.",
+        variant: "destructive",
+      });
+      return;
+    }
+    createMutation.mutate(data);
+  };
+
+  const canSubmitTempGm = !eligibility || eligibility.canAddTempGm;
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
@@ -199,6 +239,13 @@ export default function AccountTempGm() {
                   )}
                   {form.formState.errors.companyName && (
                     <p className="text-[10px] text-red-500 mt-0.5">{form.formState.errors.companyName.message}</p>
+                  )}
+                  {watchedCompany?.trim() && eligibility && !eligibility.canAddTempGm && (
+                    <p className="text-[10px] text-red-600 mt-1">
+                      {eligibility.hasActiveGm
+                        ? "This company already has a GM. Temp GM is not allowed."
+                        : "An active Temp GM already exists for this company."}
+                    </p>
                   )}
                 </div>
 
@@ -281,7 +328,7 @@ export default function AccountTempGm() {
               {/* Submit */}
               <button
                 type="submit"
-                disabled={createMutation.isPending}
+                disabled={createMutation.isPending || !canSubmitTempGm}
                 className="bg-green-600 hover:bg-green-700 text-white text-[12px] font-semibold px-5 py-1.5 rounded transition-colors disabled:opacity-60"
               >
                 {createMutation.isPending ? "Submitting..." : "Submit"}
@@ -342,11 +389,14 @@ export default function AccountTempGm() {
                         </td>
                         <td className="px-3 py-2">
                           <button
+                            type="button"
                             onClick={() => {
-                              if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id);
+                              setDeleteTarget(entry);
+                              setDeleteReason("");
                             }}
                             disabled={deleteMutation.isPending}
                             className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                            title="Soft delete with reason"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -386,6 +436,44 @@ export default function AccountTempGm() {
                 disabled={currentPage === totalPages}
                 className="text-[11px] px-2 py-1 border rounded disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-zinc-800"
               >Next</button>
+            </div>
+          </div>
+        )}
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg max-w-md w-full p-4 border dark:border-zinc-800">
+              <h2 className="text-sm font-bold text-gray-800 dark:text-zinc-100 mb-2">Delete Temp GM</h2>
+              <p className="text-[11px] text-gray-600 dark:text-zinc-400 mb-3">
+                Company: <strong>{deleteTarget.company_name}</strong>. After delete, sales can add GM from the pool for this company.
+              </p>
+              <label className="block text-[11px] font-semibold text-gray-600 dark:text-zinc-300 mb-1">Reason (required)</label>
+              <textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                rows={3}
+                className="w-full text-[11px] border border-gray-300 rounded px-2 py-1.5 mb-3 dark:border-zinc-800"
+                placeholder="Why is this Temp GM being removed?"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setDeleteTarget(null); setDeleteReason(""); }}
+                  className="text-[11px] px-3 py-1.5 border rounded dark:border-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteReason.trim().length < 3 || deleteMutation.isPending}
+                  onClick={() =>
+                    deleteMutation.mutate({ id: deleteTarget.id, deleteReason: deleteReason.trim() })
+                  }
+                  className="text-[11px] px-3 py-1.5 bg-red-600 text-white rounded disabled:opacity-50"
+                >
+                  {deleteMutation.isPending ? "Deleting..." : "Confirm delete"}
+                </button>
+              </div>
             </div>
           </div>
         )}

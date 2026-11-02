@@ -715,18 +715,36 @@ function FollowupListView({
     );
 }
 
-export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO PRIVATE POOL" }: { customerId: string; onBack: () => void; backLabel?: string }) {
+const ACCOUNT_GM_BV_ROLES = new Set(["accountant", "account_manager", "admin"]);
+
+export function CustomerAttributeView({
+    customerId,
+    onBack,
+    backLabel = "BACK TO PRIVATE POOL",
+    initialOpenModal = null,
+    initialGmEntryId = null,
+}: {
+    customerId: string;
+    onBack: () => void;
+    backLabel?: string;
+    initialOpenModal?: string | null;
+    initialGmEntryId?: string | null;
+}) {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [, setLocation] = useLocation();
     // Followup is hidden outright for Service Manager / Service Executive on
     // this card (explicit request) — everyone else still sees it as before.
     // Invoice is unconditionally disabled from this card for every role.
-    const activeRole = normalizeRole(sessionStorage.getItem("userRole"));
+    const activeRole = normalizeRole(
+        sessionStorage.getItem("activeRoleId") || sessionStorage.getItem("userRole") || "",
+    );
     const hideFollowup = activeRole === "service_manager" || activeRole === "service_executive";
+    const showAccountGmBv = ACCOUNT_GM_BV_ROLES.has(activeRole);
     const [activeHistoryTab, setActiveHistoryTab] = useState("Contact History");
     const [isQuotationTemplateModalOpen, setQuotationTemplateModalOpen] = useState(false);
     const [activeCardModal, setActiveCardModal] = useState<string | null>(null);
+    const [focusGmEntryId, setFocusGmEntryId] = useState<string | null>(initialGmEntryId);
     const [isRatingModalOpen, setRatingModalOpen] = useState(false);
     const [ratingValue, setRatingValue] = useState("5");
     const [ratingNote, setRatingNote] = useState("");
@@ -754,6 +772,16 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
     });
     const gmGateLatest = gmGateHistory[0] || null;
     const gmDocGateSubmitted = !!gmGateLatest?.gmDocSubmittedAt;
+    const focusGmForAccountBv =
+        (focusGmEntryId && gmGateHistory.find((g: any) => g.id === focusGmEntryId)) ||
+        gmGateHistory.find((g: any) => !g.accountBvDate) ||
+        gmGateLatest;
+    const accountGmBvLocked = !!focusGmForAccountBv?.accountBvDate;
+    useEffect(() => {
+        if (showAccountGmBv && initialOpenModal) {
+            setActiveCardModal(initialOpenModal);
+        }
+    }, [showAccountGmBv, initialOpenModal]);
     const [isSampleModalOpen, setSampleModalOpen] = useState(false);
     const [sampleProduct, setSampleProduct] = useState("");
     const [sampleNote, setSampleNote] = useState("");
@@ -858,7 +886,13 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
     return (
         <div className="bg-[#f8fafc] font-sans p-4 min-h-screen relative dark:bg-zinc-950">
             <QuotationTemplateModal open={isQuotationTemplateModalOpen} onClose={() => setQuotationTemplateModalOpen(false)} />
-            <AttributeActionModal type={activeCardModal} onClose={() => setActiveCardModal(null)} customerId={customerId} companyName={lead.companyName} />
+            <AttributeActionModal
+                type={activeCardModal}
+                onClose={() => setActiveCardModal(null)}
+                customerId={customerId}
+                companyName={lead.companyName}
+                gmEntryId={focusGmEntryId || focusGmForAccountBv?.id || null}
+            />
             <button onClick={onBack} className="flex items-center gap-2 mb-4 text-[#475569] font-bold text-[14px] uppercase tracking-tight hover:text-[#059669] transition-colors dark:text-zinc-400">
                 <ArrowLeft className="w-4 h-4 text-[#059669] dark:text-zinc-400" /> {backLabel}
             </button>
@@ -922,6 +956,26 @@ export function CustomerAttributeView({ customerId, onBack, backLabel = "BACK TO
                                 gmDocGateSubmitted ? "bg-[#d97706] hover:bg-[#b45309] cursor-pointer" : "bg-slate-300 dark:bg-zinc-800 cursor-not-allowed opacity-60"
                             )}
                         >Gm BV submit</span>
+                        {showAccountGmBv && (
+                            <span
+                                onClick={() => {
+                                    if (!accountGmBvLocked) setActiveCardModal("account_gm_bv");
+                                }}
+                                title={
+                                    accountGmBvLocked
+                                        ? "Account GM BV date already saved"
+                                        : "Set account GM BV date (one-time)"
+                                }
+                                className={cn(
+                                    "transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium shadow-sm dark:bg-zinc-900",
+                                    accountGmBvLocked
+                                        ? "bg-slate-400 dark:bg-zinc-700 cursor-not-allowed opacity-70"
+                                        : "bg-[#1e293b] hover:bg-[#0f172a] cursor-pointer",
+                                )}
+                            >
+                                Account Gm BV
+                            </span>
+                        )}
                         <span onClick={() => setActiveCardModal('update_expiry')} className="bg-[#3b82f6] hover:bg-[#2563eb] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Update Expiry</span>
                         <span onClick={() => setRatingModalOpen(true)} className="bg-[#f59e0b] hover:bg-[#d97706] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Rate Customer</span>
                         <span onClick={() => setSampleModalOpen(true)} className="bg-[#0ea5e9] hover:bg-[#0284c7] transition-colors text-white px-2 py-[2px] rounded-[3px] text-[12px] font-medium cursor-pointer shadow-sm">Log Sample</span>
@@ -1486,15 +1540,31 @@ function QuotationTemplateModal({ open, onClose }: { open: boolean; onClose: () 
 }
 
 
-export function AttributeActionModal({ type, onClose, customerId, companyName }: { type: string | null; onClose: () => void; customerId?: string; companyName?: string }) {
+export function AttributeActionModal({
+    type,
+    onClose,
+    customerId,
+    companyName,
+    gmEntryId,
+}: {
+    type: string | null;
+    onClose: () => void;
+    customerId?: string;
+    companyName?: string;
+    gmEntryId?: string | null;
+}) {
     const queryClient = useQueryClient();
     const { data: gmHistory = [] } = useQuery<any[]>({
         queryKey: ["/api/sales/customers", customerId, "gm-entries"],
-        enabled: !!customerId && (type === 'gmdoc' || type === 'gmbv'),
+        enabled: !!customerId && (type === "gmdoc" || type === "gmbv" || type === "account_gm_bv"),
         staleTime: 0,
     });
 
     const latestGm = gmHistory[0] || null;
+    const activeGm =
+        (gmEntryId && gmHistory.find((g) => g.id === gmEntryId)) ||
+        gmHistory.find((g) => !g.accountBvDate) ||
+        latestGm;
     const packageValue = latestGm ? latestGm.package || 'No package selected' : 'No package selected';
     const statusValue = latestGm ? latestGm.status || '-' : '-';
     const paymentMethodValue = latestGm ? latestGm.paymentStatus || '-' : '-';
@@ -1505,7 +1575,10 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
     const [gmDocDate, setGmDocDate] = useState(latestGm?.gmDocDate || '');
     const [gmDocNote, setGmDocNote] = useState(latestGm?.gmDocNote || '');
     const [gmDocChecklist, setGmDocChecklist] = useState<string[]>(latestGm?.gmDocChecklist || []);
-    const [gmBvDate, setGmBvDate] = useState(latestGm?.gmBvDate || '');
+    const [gmBvDate, setGmBvDate] = useState(latestGm?.gmBvDate || "");
+    const [accountBvDate, setAccountBvDate] = useState(activeGm?.accountBvDate || "");
+    const [accountBvNote, setAccountBvNote] = useState(activeGm?.accountBvNote || "");
+    const accountBvSaved = !!activeGm?.accountBvDate;
 
     // The modal stays mounted across open/close cycles (only `type` toggles),
     // so re-sync local form state whenever a fresh GM record loads in —
@@ -1514,8 +1587,10 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
         setGmDocDate(latestGm?.gmDocDate || '');
         setGmDocNote(latestGm?.gmDocNote || '');
         setGmDocChecklist(latestGm?.gmDocChecklist || []);
-        setGmBvDate(latestGm?.gmBvDate || '');
-    }, [latestGm?.id, type]);
+        setGmBvDate(latestGm?.gmBvDate || "");
+        setAccountBvDate(activeGm?.accountBvDate || "");
+        setAccountBvNote(activeGm?.accountBvNote || "");
+    }, [latestGm?.id, activeGm?.id, type]);
 
     const refreshGmHistory = () => queryClient.invalidateQueries({ queryKey: ["/api/sales/customers", customerId, "gm-entries"] });
 
@@ -1531,6 +1606,26 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
         mutationFn: async () => apiRequest("POST", `/api/sales/gm-entries/${latestGm?.id}/gm-bv`, { bvDate: gmBvDate || undefined }),
         onSuccess: () => { refreshGmHistory(); onClose(); },
         onError: (err: any) => alert(err?.message || "Failed to submit GM BV"),
+    });
+
+    const accountGmBvMutation = useMutation({
+        mutationFn: async () => {
+            const res = await apiRequest("PATCH", `/api/account/gm-entries/${activeGm?.id}/bv-date`, {
+                bvDate: accountBvDate,
+                note: accountBvNote || undefined,
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(body?.error || "Failed to save account GM BV date");
+            }
+            return body;
+        },
+        onSuccess: () => {
+            refreshGmHistory();
+            queryClient.invalidateQueries({ queryKey: ["/api/reports/bv"] });
+            onClose();
+        },
+        onError: (err: any) => alert(err?.message || "Failed to save account GM BV date"),
     });
 
     const toggleChecklistDoc = (doc: string) => {
@@ -1560,6 +1655,75 @@ export function AttributeActionModal({ type, onClose, customerId, companyName }:
         );
     }
 
+
+    if (type === "account_gm_bv") {
+        const pkg = activeGm ? activeGm.package || "No package selected" : "No package selected";
+        const status = activeGm ? activeGm.paymentStatus || activeGm.status || "-" : "-";
+        return (
+            <Dialog open={true} onOpenChange={(val) => !val && onClose()}>
+                <DialogContent className="max-w-[400px] w-[95vw] bg-white border-slate-200 dark:bg-zinc-900 dark:border-zinc-800">
+                    <DialogHeader className="border-b border-slate-100 pb-3 dark:border-zinc-800">
+                        <DialogTitle className="text-[17px] font-bold text-[#334155] dark:text-zinc-100">Account GM BV Date</DialogTitle>
+                    </DialogHeader>
+                    <div className="pt-2 pb-2 flex flex-col gap-4 font-sans px-1">
+                        <div className="flex flex-col gap-2">
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Packge</label>
+                            <input type="text" readOnly value={pkg} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Status</label>
+                            <input type="text" readOnly value={status} className="w-full border border-slate-200 bg-[#f1f5f9] rounded-[6px] px-3 py-2.5 text-[13px] shadow-sm dark:bg-zinc-800 dark:border-zinc-800 text-slate-500 cursor-not-allowed" />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">GM BV Date</label>
+                            <input
+                                type="date"
+                                value={accountBvDate}
+                                onChange={(e) => setAccountBvDate(e.target.value)}
+                                disabled={accountBvSaved}
+                                className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 focus:outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 transition-all shadow-sm dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <label className="text-[13px] font-semibold text-[#4b5563] dark:text-zinc-400">Note</label>
+                            <textarea
+                                rows={3}
+                                value={accountBvNote}
+                                onChange={(e) => setAccountBvNote(e.target.value)}
+                                disabled={accountBvSaved}
+                                className="w-full border border-slate-300 bg-white rounded-[6px] px-3 py-2.5 text-[13px] text-slate-700 resize-none dark:bg-zinc-900 dark:border-zinc-800 dark:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                            />
+                        </div>
+                        {accountBvSaved && (
+                            <p className="text-[12px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-[6px] px-3 py-2">
+                                Account GM BV date saved on {activeGm?.accountBvDate}. This cannot be changed.
+                            </p>
+                        )}
+                        {!activeGm?.id && (
+                            <p className="text-[12px] text-amber-600 bg-amber-50 border border-amber-200 rounded-[6px] px-3 py-2">
+                                No GM entry found for this company.
+                            </p>
+                        )}
+                    </div>
+                    <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-100 px-1 dark:border-zinc-800">
+                        <button type="button" onClick={onClose} className="px-6 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-[6px] text-[13px] font-bold dark:bg-zinc-900 dark:text-zinc-400">
+                            {accountBvSaved ? "Close" : "Cancel"}
+                        </button>
+                        {!accountBvSaved && (
+                            <button
+                                type="button"
+                                onClick={() => accountGmBvMutation.mutate()}
+                                disabled={!activeGm?.id || !accountBvDate || accountGmBvMutation.isPending}
+                                className="px-8 py-2 bg-[#059669] hover:bg-[#047857] text-white rounded-[6px] text-[13px] font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {accountGmBvMutation.isPending ? "Saving…" : "Save"}
+                            </button>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
+        );
+    }
 
     if (type === 'gmbv') {
         return (

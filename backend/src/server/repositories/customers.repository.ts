@@ -875,6 +875,8 @@ export class CustomersRepositoryExtended extends CustomersRepository {
           gm_doc_checklist as "gmDocChecklist",
           gm_bv_submitted_at as "gmBvSubmittedAt",
           to_char(gm_bv_date, 'YYYY-MM-DD') as "gmBvDate",
+          to_char(account_bv_date, 'YYYY-MM-DD') as "accountBvDate",
+          account_bv_note as "accountBvNote",
           created_at as "createdAt"
         FROM drm.gm_entries
         WHERE customer_id = $1 OR (company_name = (SELECT company_name from drm.customers WHERE id = $1) AND customer_id IS NULL)

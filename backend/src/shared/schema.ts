@@ -1291,6 +1291,7 @@ export const gmPartialReceipts = drmSchema.table("gm_partial_receipts", {
   method: text("method"),
   reference: text("reference"),
   notes: text("notes"),
+  screenshotUrl: text("screenshot_url"),
   collectedBy: uuid("collected_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
@@ -3800,6 +3801,9 @@ export const targetSystemDailyTargets = drmSchema.table("target_system_daily_tar
 
 export const targetSystemKwaRecords = drmSchema.table("target_system_kwa_records", {
   id: serial("id").primaryKey(),
+  /** Legacy webxl_kwa.com_id — customer's drm_id when known. */
+  comId: text("com_id"),
+  customerId: uuid("customer_id").references(() => customers.id),
   company: text("company").notNull(),
   employee: text("employee").notNull(),
   kwa: decimal("kwa", { precision: 12, scale: 2 }).notNull().default("0"),

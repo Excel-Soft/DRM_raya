@@ -3,6 +3,7 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson, queryClient } from "@/lib/queryClient";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 
 type PendingReview = {
   id: string;
@@ -21,10 +22,12 @@ type PendingReview = {
 export function TicketReviewPopup() {
   const { toast } = useToast();
 
+  const supportEnabled = isSupportModuleEnabled();
   const pendingQuery = useQuery<PendingReview[]>({
     queryKey: ["/api/support/tickets/my-submissions/pending-review"],
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    enabled: supportEnabled,
+    refetchInterval: supportEnabled ? 30_000 : false,
+    refetchOnWindowFocus: supportEnabled,
   });
 
   const approveMutation = useMutation({

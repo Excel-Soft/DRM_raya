@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequestJson, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
+import { isSupportModuleEnabled } from "@/lib/feature-flags";
 
 type AcceptedAssignment = {
   id: string;
@@ -21,10 +22,13 @@ type AcceptedAssignment = {
 export function ComplaintBoxWidget() {
   const { toast } = useToast();
 
+  const supportEnabled = isSupportModuleEnabled();
   const acceptedQuery = useQuery<AcceptedAssignment[]>({
     queryKey: ["/api/support/tickets/my-assignments/accepted"],
+    enabled: supportEnabled,
   });
   const accepted = acceptedQuery.data ?? [];
+  if (!supportEnabled) return null;
 
   const submitMutation = useMutation({
     mutationFn: async (id: string) => apiRequestJson("POST", `/api/support/tickets/${id}/submit`),

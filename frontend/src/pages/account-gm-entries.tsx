@@ -524,7 +524,7 @@ export default function AccountGmEntries() {
                       {entry.drmId}
                       {entry.isLoan && <span className="bg-amber-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">L</span>}
                       {entry.isPartialPayment && <span className="bg-purple-400 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm">P</span>}
-                      {entry.isPartialPayment && !!entry.installmentsTotal && (
+                      {(entry.isPartialPayment || entry.isLoan) && !!entry.installmentsTotal && (
                         <span
                           title="Installments collected / scheduled"
                           className={cn(
@@ -612,36 +612,24 @@ export default function AccountGmEntries() {
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5">
-                      {/* ── Approve / Reject (only for HOD Approved entries) ──
-                          A Partial GM can't be approved until its installment
-                          collection (gm_partial_receipts) is fully cleared. */}
+                      {/* ── Account Approve (HOD-approved / pending_managers) ──
+                          Opens Accountant Approve modal for Full / Loan / Partial.
+                          Loan & Partial: Save stays disabled inside the modal until
+                          all installments are collected; screenshot is optional.
+                          Full: payment screenshot is required. */}
                       {(entry.approvalStatus === "pending_managers" && entry.accountManagerStatus === "pending") && (
-                        (entry.isPartialPayment || entry.isLoan) && !entry.fullyPaid ? (
-                          <span
-                            title={entry.isLoan ? "This Loan GM's installments aren't fully collected yet" : "This Partial GM's installments aren't fully collected yet"}
-                            className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-gray-50 text-gray-400 border border-gray-200 cursor-not-allowed"
-                          >
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            Approve
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setApproveModalEntry(entry)}
-                            title="Account Approve"
-                            className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-colors shadow-sm"
-                          >
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            Approve
-                          </button>
-                        )
+                        <button
+                          onClick={() => setApproveModalEntry(entry)}
+                          title="Account Approve"
+                          className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-600 hover:text-white transition-colors shadow-sm"
+                        >
+                          <CheckCircle className="h-3.5 w-3.5" />
+                          Approve
+                        </button>
                       )}
-                      {/* ── Patch 5 Stage 3: payment receipts / loan terms ──
-                          A Loan GM now uses this same installment/receipts
-                          ledger as Partial GM (in addition to its own Loan
-                          Terms admin-approval dialog below) — its "Approve"
-                          button above is held the same way, on `fullyPaid`.
-                          A Full GM has no installments to track, so it gets
-                          neither button. */}
+                      {/* ── Installment receipts / loan terms ──
+                          Loan & Partial: wallet opens installment ledger.
+                          Loan also has terms dialog. Full GM has neither. */}
                       {(entry.isPartialPayment || entry.isLoan) && (
                         <button
                           onClick={() => { setStage3Entry(entry); setPartialDialogOpen(true); }}
@@ -959,11 +947,22 @@ export default function AccountGmEntries() {
         onOpenChange={setLoanDialogOpen}
       />
 
-      {/* ── Accountant Approve Modal (shared with the Account Manager dashboard's "+" action) ── */}
+      {/* ── Accountant Approve Modal (same rules as Account Manager dashboard) ── */}
       <AccountApprovalModal
         open={!!approveModalEntry}
         onOpenChange={(open) => !open && closeApproveModal()}
-        gmEntry={approveModalEntry}
+        gmEntry={
+          approveModalEntry
+            ? {
+                ...approveModalEntry,
+                gmType: approveModalEntry.isLoan
+                  ? "LOAN"
+                  : approveModalEntry.isPartialPayment
+                    ? "PARTIAL"
+                    : "FULL",
+              }
+            : null
+        }
       />
     </div>
   );

@@ -423,6 +423,18 @@ async function ensureGmEntriesPatch5Schema(client: {
   await client.query(
     `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()`,
   );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS delete_reason text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`,
+  );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS deleted_by uuid`,
+  );
+  await client.query(
+    `ALTER TABLE drm.temp_gm_entries ADD COLUMN IF NOT EXISTS hod_reject_reason text`,
+  );
   // Add hod_status and hod_approved_at columns to gm_entries.
   // hod_approved_at: set by HOD approval route already; needed for backfill.
   await client.query(
@@ -481,6 +493,9 @@ async function ensureGmStage3Schema(client: {
   );
   await client.query(
     `CREATE INDEX IF NOT EXISTS idx_gm_partial_receipts_collected_by ON drm.gm_partial_receipts (collected_by)`,
+  );
+  await client.query(
+    `ALTER TABLE drm.gm_partial_receipts ADD COLUMN IF NOT EXISTS screenshot_url text`,
   );
 
   // --- gm_loan_terms (P5): one row per loan GM (gm_id unique) ---
@@ -976,6 +991,12 @@ async function ensureTargetSystemConversionColumn(client: {
   );
   await client.query(
     `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS pay_date timestamp`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS com_id text`,
+  );
+  await client.query(
+    `ALTER TABLE drm.target_system_kwa_records ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES drm.customers(id)`,
   );
   // Category on the definition (organizational only — see schema.ts comment)
   // and max_price snapshotted onto assignments, needed for a real tiered

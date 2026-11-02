@@ -1,15 +1,13 @@
-import { db } from "../../db";
+import { db, pool } from "../../db";
 import {
   linkReports,
   linkReportCommissionVerifications,
   productPostingEvidenceLinks,
-  projects,
-  customers,
   users,
   targetSystemUserTargets,
   notifications,
 } from "@shared/schema";
-import { eq, and, gte, lte, inArray, asc } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 
 /**
  * Real implementation of the Link Report (legacy's linkreport.php + func.php's
@@ -21,9 +19,10 @@ import { eq, and, gte, lte, inArray, asc } from "drizzle-orm";
  * task). linkReports looked like the obvious modern equivalent (same shape,
  * already Drizzle-declared with a full commission-verification table beside
  * it) but turned out to be entirely unused by the live app — 0 rows, nothing
- * writes to it. The real links Product Posting staff submit land in
- * product_posting_evidence_links instead (confirmed live), so the listing
- * reads from there, joined to projects/customers for the company name.
+ * writes to it. Live Product Posting executives submit links via
+ * POST /api/tasks/:id/files (drm.task_files — description holds the URL,
+ * file_url empty), matching legacy webxl_task_links. We union that with
+ * product_posting_evidence_links and link_reports when present.
  * linkReportCommissionVerifications is still used as-is for verification
  * tracking — it just stores opaque link ids in a jsonb array, so it doesn't
  * care which table those ids came from.
@@ -59,40 +58,92 @@ export interface LinkReportRow {
 }
 
 export async function listLinkReport(userId: string, startDate: string, endDate: string): Promise<LinkReportRow[]> {
-  const start = new Date(`${startDate}T00:00:00.000Z`);
-  const end = new Date(`${endDate}T23:59:59.999Z`);
-  const rows = await db
-    .select({
-      id: productPostingEvidenceLinks.id,
-      displayId: productPostingEvidenceLinks.displayId,
-      companyName: customers.companyName,
-      url: productPostingEvidenceLinks.url,
-      createdAt: productPostingEvidenceLinks.createdAt,
-      taskId: productPostingEvidenceLinks.taskId,
-      verifyStatus: productPostingEvidenceLinks.verifyStatus,
-      verifyNote: productPostingEvidenceLinks.verifyNote,
-    })
-    .from(productPostingEvidenceLinks)
-    .leftJoin(projects, eq(projects.id, productPostingEvidenceLinks.projectId))
-    .leftJoin(customers, eq(customers.id, projects.customerId))
-    .where(
-      and(
-        eq(productPostingEvidenceLinks.createdByUserId, userId),
-        gte(productPostingEvidenceLinks.createdAt, start),
-        lte(productPostingEvidenceLinks.createdAt, end),
-      ),
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_status text`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_note text`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`);
+  await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_at timestamptz`);
+
+  const { rows } = await pool.query(
+    `
+    WITH combined AS (
+      SELECT
+        'taskfile:' || f.id::text AS id,
+        NULL::text AS display_id,
+        COALESCE(c.company_name, '-') AS company,
+        btrim(f.description) AS links,
+        f.created_at AS link_date,
+        'task_file' AS source_module,
+        f.task_id::text AS source_record_id,
+        CASE
+          WHEN lower(coalesce(f.verify_status, '')) IN ('verified', 'yes') THEN 'Verified'
+          WHEN lower(coalesce(f.verify_status, '')) IN ('rejected', 'reject') THEN 'Rejected'
+          WHEN lower(coalesce(f.qa_status, '')) IN ('approved', '1', 'yes') THEN 'Verified'
+          WHEN lower(coalesce(f.qa_status, '')) IN ('rejected', '0', 'reject') THEN 'Rejected'
+          ELSE 'Pending'
+        END AS verify_status,
+        coalesce(f.verify_note, f.qa_comment) AS verify_note
+      FROM drm.task_files f
+      JOIN drm.tasks t ON t.id = f.task_id
+      LEFT JOIN drm.projects p ON p.id = t.project_id
+      LEFT JOIN drm.customers c ON c.id = p.customer_id
+      WHERE f.uploaded_by_user_id::text = $1
+        AND f.created_at::date >= $2::date
+        AND f.created_at::date <= $3::date
+        AND (f.file_url IS NULL OR btrim(f.file_url) = '')
+        AND f.description IS NOT NULL AND btrim(f.description) <> ''
+
+      UNION ALL
+
+      SELECT
+        'evidence:' || el.id::text,
+        el.display_id::text,
+        COALESCE(c.company_name, '-'),
+        el.url,
+        el.created_at,
+        'product_posting',
+        el.task_id::text,
+        el.verify_status,
+        el.verify_note
+      FROM drm.product_posting_evidence_links el
+      LEFT JOIN drm.projects p ON p.id = el.project_id
+      LEFT JOIN drm.customers c ON c.id = p.customer_id
+      WHERE el.created_by_user_id::text = $1
+        AND el.created_at::date >= $2::date
+        AND el.created_at::date <= $3::date
+
+      UNION ALL
+
+      SELECT
+        'linkreport:' || lr.id::text,
+        lr.display_id::text,
+        COALESCE(lr.company_name, '-'),
+        lr.link_url,
+        lr.submitted_at,
+        lr.source_module,
+        lr.source_record_id::text,
+        'Pending',
+        NULL::text
+      FROM drm.link_reports lr
+      WHERE lr.submitted_by_user_id::text = $1
+        AND lr.deleted_at IS NULL
+        AND lr.submitted_at::date >= $2::date
+        AND lr.submitted_at::date <= $3::date
     )
-    .orderBy(asc(productPostingEvidenceLinks.createdAt));
-  return rows.map((r) => ({
+    SELECT * FROM combined ORDER BY link_date ASC
+    `,
+    [userId, startDate, endDate],
+  );
+
+  return rows.map((r: any, idx: number) => ({
     id: r.id,
-    displayId: String(r.displayId),
-    company: r.companyName ?? "-",
-    links: r.url,
-    date: r.createdAt ? r.createdAt.toISOString() : null,
-    sourceModule: "product_posting",
-    sourceRecordId: r.taskId,
-    verifyStatus: r.verifyStatus,
-    verifyNote: r.verifyNote,
+    displayId: r.display_id ? String(r.display_id) : String(idx + 1),
+    company: r.company ?? "-",
+    links: r.links,
+    date: r.link_date ? new Date(r.link_date).toISOString() : null,
+    sourceModule: r.source_module,
+    sourceRecordId: r.source_record_id,
+    verifyStatus: r.verify_status || "Pending",
+    verifyNote: r.verify_note ?? null,
   }));
 }
 
@@ -172,6 +223,38 @@ export async function verifyLink(params: {
   verifiedByUserId: string;
   note?: string;
 }) {
+  const rawId = params.linkId;
+  const taskFileId = rawId.startsWith("taskfile:") ? rawId.slice("taskfile:".length) : null;
+  const evidenceId = rawId.startsWith("evidence:") ? rawId.slice("evidence:".length) : null;
+  const legacyEvidenceId = !taskFileId && !evidenceId && !rawId.startsWith("linkreport:") ? rawId : null;
+
+  if (taskFileId) {
+    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_status text`);
+    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verify_note text`);
+    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_by_user_id uuid REFERENCES drm.users(id)`);
+    await pool.query(`ALTER TABLE drm.task_files ADD COLUMN IF NOT EXISTS verified_at timestamptz`);
+    const { rows } = await pool.query(
+      `UPDATE drm.task_files
+          SET verify_status = $1, verify_note = $2, verified_by_user_id = $3, verified_at = NOW()
+        WHERE id = $4
+        RETURNING id, verify_status as "verifyStatus", verify_note as "verifyNote"`,
+      [params.status, params.note ?? null, params.verifiedByUserId, taskFileId],
+    );
+    if (!rows[0]) {
+      const err: any = new Error("Link not found.");
+      err.statusCode = 404;
+      throw err;
+    }
+    return rows[0];
+  }
+
+  const evidenceUuid = evidenceId || legacyEvidenceId;
+  if (!evidenceUuid) {
+    const err: any = new Error("Link not found.");
+    err.statusCode = 404;
+    throw err;
+  }
+
   const [updated] = await db
     .update(productPostingEvidenceLinks)
     .set({
@@ -180,7 +263,7 @@ export async function verifyLink(params: {
       verifiedByUserId: params.verifiedByUserId,
       verifiedAt: new Date(),
     })
-    .where(eq(productPostingEvidenceLinks.id, params.linkId))
+    .where(eq(productPostingEvidenceLinks.id, evidenceUuid))
     .returning();
   if (!updated) {
     const err: any = new Error("Link not found.");

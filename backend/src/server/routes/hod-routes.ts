@@ -759,23 +759,6 @@ router.get("/verification/update-requests", async (req, res) => {
   try {
     const client = await pool.connect();
     try {
-      // Fetch Temp GM entries with creator name
-      const tempGms = await client.query(`
-        SELECT 
-          t.id, 
-          'Temp GM' as type,
-          t.company_name as "company",
-          u.username as "salePerson",
-          t.amount,
-          t.amount_type,
-          t.reason,
-          t.created_at as "createdAt",
-          t.status
-        FROM drm.temp_gm_entries t
-        LEFT JOIN drm.users u ON t.created_by_user_id = u.id
-        WHERE t.status IN ('pending', 'Pending')
-      `);
-
       // Fetch Refund GM entries with creator name
       const refundGms = await client.query(`
         SELECT 
@@ -846,12 +829,11 @@ router.get("/verification/update-requests", async (req, res) => {
       };
 
       const allRequests = [
-        ...tempGms.rows.map(mapToGmStructure),
         ...refundGms.rows.map(mapToGmStructure),
         ...gmUpdateRequests.rows.map(mapToGmStructure)
       ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-      console.log(`[DEBUG] Update Requests: Temp=${tempGms.rowCount}, Refund=${refundGms.rowCount}, GM=${gmUpdateRequests.rowCount}, Total=${allRequests.length}`);
+      console.log(`[DEBUG] Update Requests: Refund=${refundGms.rowCount}, GM=${gmUpdateRequests.rowCount}, Total=${allRequests.length}`);
       if (allRequests.length === 0) {
         console.log("[DEBUG] Refund GMs Query Result:", JSON.stringify(refundGms.rows));
       }
@@ -867,6 +849,98 @@ router.get("/verification/update-requests", async (req, res) => {
     const response = { success: false, message: "Failed to load update requests" };
     logApi(req, 500, response);
     return res.status(500).json(response);
+  }
+});
+
+router.get("/verification/temp-gm", async (req, res) => {
+  try {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(`
+        SELECT
+          t.id,
+          t.company_name AS "companyName",
+          t.person_name AS "personName",
+          t.amount,
+          t.amount_type AS "amountType",
+          t.reason,
+          t.comment,
+          t.status,
+          t.created_at AS "createdAt",
+          COALESCE(u.full_name, u.username, u.name, t.person_name) AS "requestedBy"
+        FROM drm.temp_gm_entries t
+        LEFT JOIN drm.users u ON u.id = COALESCE(t.created_by_user_id, t.created_by)
+        WHERE COALESCE(t.is_deleted, false) = false
+          AND lower(COALESCE(t.status, '')) IN ('pending')
+        ORDER BY t.created_at ASC
+      `);
+      return res.json({ success: true, data: result.rows });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("HOD temp GM fetch error:", error);
+    return res.status(500).json({ success: false, message: "Failed to load Temp GM requests" });
+  }
+});
+
+router.post("/verification/temp-gm/:id/approve", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
+    const { id } = req.params;
+    const result = await pool.query(
+      `UPDATE drm.temp_gm_entries
+       SET status = 'approved', hod_approved_at = NOW(), updated_at = NOW()
+       WHERE id = $1
+         AND COALESCE(is_deleted, false) = false
+         AND lower(COALESCE(status, '')) = 'pending'
+       RETURNING id, company_name, person_name`,
+      [id],
+    );
+    if (!result.rowCount) {
+      return res.status(404).json({ success: false, message: "No pending Temp GM found" });
+    }
+    return res.json({ success: true, message: "Temp GM approved" });
+  } catch (error) {
+    console.error("HOD temp GM approve error:", error);
+    return res.status(500).json({ success: false, message: "Failed to approve Temp GM" });
+  }
+});
+
+router.post("/verification/temp-gm/:id/reject", async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, message: "Not authenticated" });
+    const { id } = req.params;
+    const reason = String(req.body?.reason || req.body?.rejectReason || "").trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, message: "Rejection reason is required" });
+    }
+    const result = await pool.query(
+      `UPDATE drm.temp_gm_entries
+       SET status = 'rejected', hod_reject_reason = $2, updated_at = NOW()
+       WHERE id = $1
+         AND COALESCE(is_deleted, false) = false
+         AND lower(COALESCE(status, '')) = 'pending'
+       RETURNING id, company_name, created_by, created_by_user_id, person_name`,
+      [id, reason],
+    );
+    if (!result.rowCount) {
+      return res.status(404).json({ success: false, message: "No pending Temp GM found" });
+    }
+    const entry = result.rows[0];
+    const creatorId = entry.created_by_user_id || entry.created_by;
+    if (creatorId) {
+      await NotificationService.notify({
+        userId: String(creatorId),
+        message: `Temp GM for '${entry.company_name}' was rejected by HOD. Reason: ${reason}`,
+        type: "ERROR",
+        targetUrl: "/account/temp-gm",
+      }).catch(() => {});
+    }
+    return res.json({ success: true, message: "Temp GM rejected" });
+  } catch (error) {
+    console.error("HOD temp GM reject error:", error);
+    return res.status(500).json({ success: false, message: "Failed to reject Temp GM" });
   }
 });
 

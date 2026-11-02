@@ -364,7 +364,11 @@ export default function DollarSystem() {
         credentials: "include",
         body: JSON.stringify({ bvDate: bvDetailDate }),
       });
-      if (!res.ok) { alert("Failed to update BV date."); return; }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Failed to update BV date.");
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/account/dollar-system/paid-alibaba"] });
       setBvDetailItem(null);
     } catch {
@@ -975,7 +979,8 @@ export default function DollarSystem() {
               <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-gray-600 dark:text-zinc-400">GM BV Date</label>
                 <input type="date" value={bvDetailDate} onChange={(e)=>setBvDetailDate(e.target.value)}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-gray-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200"/>
+                  disabled={!!bvDetailItem.accountBvDate}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-gray-800 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-200 disabled:opacity-60 disabled:cursor-not-allowed"/>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-gray-600 dark:text-zinc-400">User BV Date</label>
@@ -993,8 +998,8 @@ export default function DollarSystem() {
             </div>
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 dark:border-zinc-800 shrink-0">
               <button onClick={()=>setBvDetailItem(null)} className="px-6 py-2.5 bg-gray-500 hover:bg-gray-600 text-white rounded-md text-[13px] font-bold">Close</button>
-              <button onClick={saveBvDetail} disabled={bvDetailSaving || !bvDetailDate} className="px-6 py-2.5 bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md text-[13px] font-bold disabled:opacity-50 disabled:cursor-not-allowed">
-                {bvDetailSaving ? "Updating..." : "Update"}
+              <button onClick={saveBvDetail} disabled={bvDetailSaving || !bvDetailDate || !!bvDetailItem.accountBvDate} className="px-6 py-2.5 bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md text-[13px] font-bold disabled:opacity-50 disabled:cursor-not-allowed">
+                {bvDetailSaving ? "Updating..." : bvDetailItem.accountBvDate ? "Saved" : "Update"}
               </button>
             </div>
           </div>
