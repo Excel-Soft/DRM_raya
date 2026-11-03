@@ -44,6 +44,7 @@ import {
   canCreate,
   canDecide,
   canVoid,
+  canEditOrDeletePenalty,
   canViewReports,
   getDepartment,
   getAllowedEmployeeIds,
@@ -95,6 +96,7 @@ export function registerPenaltyRoutes(app: Express) {
       statuses: PENALTY_STATUSES,
       permissions: {
         canCreate: canCreate(role),
+        canEditOrDelete: canEditOrDeletePenalty(role),
         canDecide: canDecide(role),
         canVoid: canVoid(role),
         canViewReports: canViewReports(role),
@@ -287,10 +289,9 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be edited" });
       }
 
-      // Full access can always edit. Otherwise only the creator may edit, and only while PENDING.
-      const isOwner = String(raw.createdBy) === String(getUserId(req));
+      // Full access can always edit. HOD / account manager / admin / super HOD may edit pending only (legacy).
       if (!isFullAccess(role)) {
-        if (!canCreate(role) || !isOwner) {
+        if (!canEditOrDeletePenalty(role)) {
           return res.status(403).json({ error: "Forbidden", message: "You are not authorized to edit this penalty" });
         }
         if (raw.approvalStatus !== "PENDING") {
@@ -515,9 +516,8 @@ export function registerPenaltyRoutes(app: Express) {
         return res.status(409).json({ error: "Conflict", message: "Voided penalties cannot be deleted" });
       }
 
-      const isOwner = String(raw.createdBy) === String(getUserId(req));
       if (!isFullAccess(role)) {
-        if (!canCreate(role) || !isOwner) {
+        if (!canEditOrDeletePenalty(role)) {
           return res.status(403).json({ error: "Forbidden", message: "You are not authorized to delete this penalty" });
         }
         if (raw.approvalStatus !== "PENDING") {

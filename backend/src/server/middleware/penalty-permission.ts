@@ -58,6 +58,11 @@ export function canDecide(role: string): boolean {
 export function canVoid(role: string): boolean {
   return canDecide(role);
 }
+
+/** Legacy add-penalty.php: Edit/Delete on pending rows — admin, super HOD, HOD, account manager only. */
+export function canEditOrDeletePenalty(role: string): boolean {
+  return isFullAccess(role) || role === "hod" || role === "account_manager";
+}
 // Who can see reports: full-access, HOD, HR.
 export function canViewReports(role: string): boolean {
   return isFullAccess(role) || isHod(role) || isHr(role);

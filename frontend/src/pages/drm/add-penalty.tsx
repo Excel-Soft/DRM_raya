@@ -87,7 +87,7 @@ interface MetaResult {
   penaltyHeads: string[];
   statuses: string[];
   permissions: {
-    canCreate: boolean; canDecide: boolean; canVoid: boolean; canViewReports: boolean;
+    canCreate: boolean; canEditOrDelete: boolean; canDecide: boolean; canVoid: boolean; canViewReports: boolean;
     isFullAccess: boolean; role: string;
   };
 }
@@ -375,6 +375,7 @@ export default function AddPenaltyPage() {
   const canDecide = !!perms?.canDecide;
   const canVoid = !!perms?.canVoid;
   const canCreate = !!perms?.canCreate;
+  const canEditOrDelete = !!perms?.canEditOrDelete;
   const editApproved = editing && form.approvalStatus === "APPROVED" && !perms?.isFullAccess;
 
   return (
@@ -490,7 +491,7 @@ export default function AddPenaltyPage() {
                       <td className="px-4 py-3 text-[13px]">
                         <div className="flex flex-wrap gap-1.5">
                           <button onClick={() => setViewRow(row)} className="text-[12px] text-blue-600 hover:underline">View</button>
-                          {canCreate && isPending && (
+                          {canEditOrDelete && isPending && (
                             <button onClick={() => openEdit(row)} className="text-[12px] text-[#00a65a] hover:underline">Edit</button>
                           )}
                           {canDecide && isPending && (
@@ -505,7 +506,7 @@ export default function AddPenaltyPage() {
                               >Reject</button>
                             </>
                           )}
-                          {canCreate && isPending && (
+                          {canEditOrDelete && isPending && (
                             <button onClick={() => setDeleteRow(row)} className="text-[12px] text-red-600 hover:underline">Delete</button>
                           )}
                           {canVoid && !isVoided && (
