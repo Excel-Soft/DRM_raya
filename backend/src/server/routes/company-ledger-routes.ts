@@ -3,6 +3,7 @@ import { db } from "../db";
 import { ledgerEntries, invoices, customers, users } from "../../shared/schema";
 import { eq, desc, sql, and, ilike, or, gte, lte, inArray } from "drizzle-orm";
 import { requireFinancialPermission, FINANCIAL_ACTIONS, FINANCIAL_VIEW_ROLES, FINANCIAL_VOID_ROLES } from "./middleware/financial-permission";
+import { tryAutoCreateProjectAfterPayment } from "../services/invoice-project-threshold.service";
 
 export const companyLedgerRouter = Router();
 
@@ -303,10 +304,35 @@ companyLedgerRouter.post("/api/account/payment", requireFinancialPermission(FINA
       remarks: paymentMethod || null
     }).returning();
 
+    let projectCreated = false;
+    let thresholdMet = false;
+    let thresholdMeta: { paidPkr?: number; minPkr?: number; totalPkr?: number } = {};
+    try {
+      const auto = await tryAutoCreateProjectAfterPayment({
+        invoiceId,
+        actorUserId: req.user.userId,
+        req,
+      });
+      projectCreated = auto.projectCreated;
+      thresholdMet = auto.thresholdMet;
+      if (auto.financials) {
+        thresholdMeta = {
+          paidPkr: auto.financials.paidPkr,
+          minPkr: auto.financials.minPkr,
+          totalPkr: auto.financials.totalPkr,
+        };
+      }
+    } catch (autoErr) {
+      console.error("[account/payment] project auto-create check failed (non-fatal):", autoErr);
+    }
+
     res.json({
       success: true,
       message: "Payment recorded successfully",
-      data: newEntry[0]
+      data: newEntry[0],
+      projectCreated,
+      thresholdMet,
+      ...thresholdMeta,
     });
   } catch (err) {
     console.error("Error creating payment:", err);

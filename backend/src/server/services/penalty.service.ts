@@ -25,6 +25,26 @@ export const PENALTY_HEADS = [
   "Other",
 ];
 
+/** Penalty Head names + default amounts from DRM attributes (legacy master list). */
+export async function getPenaltyHeadCatalog(): Promise<{ name: string; amount: number | null }[]> {
+  try {
+    const { rows } = await pool.query(
+      `select name, amount from drm.attributes
+       where category = 'Penalty Head' and parent_id is null
+       order by created_at asc`,
+    );
+    if (rows.length === 0) {
+      return PENALTY_HEADS.map((name) => ({ name, amount: null }));
+    }
+    return rows.map((r: { name: string; amount: string | null }) => ({
+      name: r.name,
+      amount: r.amount != null && r.amount !== "" ? Number(r.amount) : null,
+    }));
+  } catch {
+    return PENALTY_HEADS.map((name) => ({ name, amount: null }));
+  }
+}
+
 // Columns selected for a penalty row, joined with employee/creator/approver names.
 const ROW_SELECT = `
   p.id,
@@ -206,18 +226,17 @@ export async function getPenaltyById(id: string) {
   return rows[0] || null;
 }
 
-// For the dashboard "accept / dispute" popup: this employee's own approved,
-// non-voided penalties still awaiting their own action (not acknowledged,
-// and not already sitting in a pending dispute).
+// Employee-first workflow: new penalties go straight to the assignee (notification
+// + login popup) for Confirm / Reject — no HOD pre-approval required.
 export async function getPendingAcknowledgementForEmployee(employeeId: string) {
   const { rows } = await pool.query(
     `select ${ROW_SELECT} ${ROW_JOINS}
       where p.employee_id::text = $1::text
         and p.deleted_at is null
-        and p.approval_status = 'APPROVED'
         and coalesce(p.status, 'ACTIVE') <> 'VOIDED'
         and p.employee_acknowledged_at is null
         and coalesce(p.dispute_status, '') <> 'PENDING'
+        and p.approval_status in ('PENDING', 'APPROVED')
       order by p.created_at desc`,
     [employeeId],
   );
@@ -283,9 +302,12 @@ export async function createPenalty(input: CreatePenaltyInput) {
   try {
     await NotificationService.notify({
       userId: input.employeeId,
-      message: `A penalty (${input.penaltyHead}) of ${input.amount} was recorded for you.`,
+      message: `A penalty (${input.penaltyHead}) of ${input.amount} was assigned to you — please confirm or reject.`,
       type: "WARNING",
       targetUrl: "/drm/add-penalty",
+      module: "penalty",
+      entityType: "Penalty",
+      entityId: String(id),
     });
   } catch { /* non-fatal */ }
 
@@ -376,11 +398,59 @@ export async function decidePenalty(
 
 export async function acknowledgePenalty(id: string) {
   await pool.query(
-    `update drm.penalties set employee_acknowledged_at = now(), updated_at = now()
+    `update drm.penalties
+       set employee_acknowledged_at = now(),
+           approval_status = 'APPROVED',
+           updated_at = now()
      where id::text = $1::text and deleted_at is null`,
     [id],
   );
   return getPenaltyById(id);
+}
+
+/** After employee rejection — assign to another person and reset their response. */
+export async function reassignPenaltyAfterRejection(
+  id: string,
+  input: { employeeId: string; penaltyHead?: string; amount?: number; reason?: string },
+) {
+  const { rows } = await pool.query(
+    `update drm.penalties
+       set employee_id = $2::uuid,
+           penalty_head = coalesce($3, penalty_head),
+           amount = coalesce($4, amount),
+           reason = coalesce($5, reason, penalty_head),
+           employee_acknowledged_at = null,
+           employee_disputed_at = null,
+           dispute_reason = null,
+           dispute_status = null,
+           dispute_resolved_by = null,
+           dispute_resolved_at = null,
+           dispute_resolution_note = null,
+           approval_status = 'PENDING',
+           updated_at = now()
+     where id::text = $1::text and deleted_at is null and dispute_status = 'PENDING'
+     returning id`,
+    [
+      id,
+      input.employeeId,
+      input.penaltyHead ?? null,
+      input.amount ?? null,
+      input.reason ?? null,
+    ],
+  );
+  if (!rows[0]?.id) return null;
+  const updated = await getPenaltyById(id);
+  try {
+    if (updated?.employeeId) {
+      await NotificationService.notify({
+        userId: updated.employeeId,
+        message: `A penalty (${updated.penaltyHead}) of ${updated.amount} was assigned to you — please confirm or reject.`,
+        type: "WARNING",
+        targetUrl: "/drm/add-penalty",
+      });
+    }
+  } catch { /* non-fatal */ }
+  return updated;
 }
 
 // The penalized employee pushes back with a reason instead of accepting.
@@ -395,12 +465,12 @@ export async function disputePenalty(id: string, reason: string) {
     [id, reason],
   );
   const updated = await getPenaltyById(id);
-  // Notify the creator that the employee disputed their penalty.
+  // Notify creator; account/HOD/admin review the rejection reason on Add Penalty.
   try {
     if (updated?.addedById) {
       await NotificationService.notify({
         userId: updated.addedById,
-        message: `${updated.employeeName ?? "An employee"} disputed a penalty (${updated.penaltyHead}) you created.`,
+        message: `${updated.employeeName ?? "An employee"} rejected a penalty (${updated.penaltyHead}). Reason: ${reason}`,
         type: "WARNING",
         targetUrl: "/drm/add-penalty",
       });

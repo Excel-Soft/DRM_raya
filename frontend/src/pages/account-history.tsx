@@ -14,6 +14,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, ArrowRight, Eye, Wallet } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import {
+    formatPkr,
+    invoiceMinimumProjectPkr,
+    invoicePaidNativeToPkr,
+    meetsInvoiceProjectThreshold,
+    resolveInvoiceTotalPkr,
+} from "@shared/invoice-project-threshold";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -169,13 +176,26 @@ export default function AccountHistory() {
             if (!res.ok) throw new Error("Failed to record payment");
             return res.json();
         },
-        onSuccess: () => {
+        onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ["/api/account/history", companyId] });
             queryClient.invalidateQueries({ queryKey: ["/api/reports/ledger"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
             setPaymentModalOpen(false);
             paymentForm.reset();
             setReceiptFile(null);
-            toast({ title: "Success", description: "Payment recorded successfully" });
+            if (data?.projectCreated) {
+                toast({
+                    title: "Payment saved — project created",
+                    description: "Received amount reached 33% of the invoice. Sales Executive has been notified.",
+                });
+            } else if (data?.thresholdMet === false) {
+                toast({
+                    title: "Payment saved",
+                    description: `Still below 33% minimum (${formatPkr(Number(data?.minPkr) || 0)}). Project will be created when enough is received.`,
+                });
+            } else {
+                toast({ title: "Success", description: "Payment recorded successfully" });
+            }
         },
         onError: (err: any) => {
             toast({ title: "Error", description: err?.message || "Failed to record payment", variant: "destructive" });
@@ -234,6 +254,31 @@ export default function AccountHistory() {
     const totalPay = invoices.reduce((s, i) => s + computeInvoiceFinancials(i).pay, 0);
 
     const invoiceReceipts = selectedInvoice ? receipts.filter((r) => r.referenceId === selectedInvoice.id) : [];
+
+    const paymentThresholdPreview = (() => {
+        if (!selectedInvoice) return null;
+        const fin = computeInvoiceFinancials(selectedInvoice);
+        const rate = Number(selectedInvoice.dollarRate) || 280;
+        const totalPkr = resolveInvoiceTotalPkr({
+            grandTotal: selectedInvoice.total,
+            dollarRate: rate,
+            currency: selectedInvoice.currency,
+            pkrTotal: (selectedInvoice as { pkrTotal?: number | string | null }).pkrTotal,
+        });
+        const paidPkr = invoicePaidNativeToPkr(fin.pay, selectedInvoice.currency, rate);
+        const enteredPkr = Number(watchedPaymentAmount) || 0;
+        const cumulativePkr = paidPkr + enteredPkr;
+        const minPkr = invoiceMinimumProjectPkr(totalPkr);
+        const thresholdMetAfter = meetsInvoiceProjectThreshold(cumulativePkr, totalPkr);
+        return {
+            totalPkr,
+            minPkr,
+            cumulativePkr,
+            thresholdMetAfter,
+            showBelowWarning: enteredPkr > 0 && !thresholdMetAfter,
+            showCreateHint: enteredPkr > 0 && thresholdMetAfter,
+        };
+    })();
 
     const SectionHeading = ({ children }: { children: React.ReactNode }) => (
         <div className="flex items-center gap-2 text-[15px] font-bold text-slate-700 dark:text-zinc-200">
@@ -572,6 +617,18 @@ export default function AccountHistory() {
                                             </FormItem>
                                         )}
                                     />
+
+                                    {paymentThresholdPreview?.showBelowWarning && (
+                                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+                                            After this payment, total received will be {formatPkr(paymentThresholdPreview.cumulativePkr)} — below 33% ({formatPkr(paymentThresholdPreview.minPkr)} of {formatPkr(paymentThresholdPreview.totalPkr)}).
+                                            The project will <span className="font-bold">not</span> be created yet. Sales will be notified.
+                                        </div>
+                                    )}
+                                    {paymentThresholdPreview?.showCreateHint && (
+                                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-100">
+                                            This payment reaches 33% ({formatPkr(paymentThresholdPreview.cumulativePkr)} of {formatPkr(paymentThresholdPreview.totalPkr)}). Saving will create the PMS project and notify Sales.
+                                        </div>
+                                    )}
 
                                     <FormField
                                         control={paymentForm.control}

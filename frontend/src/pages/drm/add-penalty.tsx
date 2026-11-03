@@ -9,10 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
-} from "@/components/ui/command";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -22,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Eye, Pencil, Trash2, UserRoundPlus, CircleCheck, CircleX } from "lucide-react";
 
 const GREEN = "#00a65a";
 
@@ -85,9 +82,11 @@ interface ListResult {
 }
 interface MetaResult {
   penaltyHeads: string[];
+  penaltyHeadAmounts?: Record<string, number>;
   statuses: string[];
   permissions: {
-    canCreate: boolean; canEditOrDelete: boolean; canDecide: boolean; canVoid: boolean; canViewReports: boolean;
+    canCreate: boolean; canEditOrDelete: boolean; canReviewEmployeeRejection: boolean;
+    canDecide: boolean; canVoid: boolean; canViewReports: boolean;
     isFullAccess: boolean; role: string;
   };
 }
@@ -116,6 +115,16 @@ function fmtDateTime(v: string | null): string {
   return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function penaltyApprovalLabel(row: PenaltyRow): string {
+  if (row.status === "VOIDED") return "Voided";
+  if (row.disputeStatus === "PENDING") return "Pending (Account / HOD)";
+  if (row.approvalStatus === "PENDING" && !row.employeeAcknowledgedAt) return "Pending (Employee)";
+  if (row.approvalStatus === "APPROVED" && row.employeeAcknowledgedAt) return "Confirmed (Employee)";
+  if (row.approvalStatus === "APPROVED") return "Approved";
+  if (row.approvalStatus === "REJECTED") return "Rejected (HOD)";
+  return row.approvalStatus;
+}
+
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     PENDING: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
@@ -131,20 +140,15 @@ function statusBadge(status: string) {
   );
 }
 
-const EMPTY_FORM = {
+/** Legacy add-penalty: create/edit UI is Person + Head + Amount only. */
+const EMPTY_EDIT = {
   id: "" as string,
   employeeId: "",
-  department: "",
   penaltyHead: "",
-  reason: "",
   amount: "",
-  penaltyDate: new Date().toISOString().slice(0, 10),
-  attachmentUrl: "",
-  attachmentName: "",
-  managerRemarks: "",
   approvalStatus: "PENDING",
 };
-type FormState = typeof EMPTY_FORM;
+type EditFormState = typeof EMPTY_EDIT;
 
 export default function AddPenaltyPage() {
   const { toast } = useToast();
@@ -153,10 +157,15 @@ export default function AddPenaltyPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
-  const [userPickerOpen, setUserPickerOpen] = useState(false);
+  const [showInlineForm, setShowInlineForm] = useState(false);
+  const [inlineEmployeeId, setInlineEmployeeId] = useState("");
+  const [inlineHead, setInlineHead] = useState("");
+  const [inlineAmount, setInlineAmount] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState<EditFormState>({ ...EMPTY_EDIT });
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignForm, setReassignForm] = useState<EditFormState>({ ...EMPTY_EDIT });
+  const [reassignReason, setReassignReason] = useState("");
 
   const [viewRow, setViewRow] = useState<PenaltyRow | null>(null);
   const [approvalRow, setApprovalRow] = useState<PenaltyRow | null>(null);
@@ -176,10 +185,40 @@ export default function AddPenaltyPage() {
   });
   const perms = metaQuery.data?.permissions;
   const heads = metaQuery.data?.penaltyHeads ?? DEFAULT_HEADS;
+  const headAmounts = metaQuery.data?.penaltyHeadAmounts ?? {};
+
+  function amountForHead(head: string): string {
+    const n = headAmounts[head];
+    return n != null && !Number.isNaN(n) ? String(n) : "";
+  }
+
+  function onInlineHeadChange(head: string) {
+    setInlineHead(head);
+    const amt = amountForHead(head);
+    if (amt !== "") setInlineAmount(amt);
+  }
+
+  function onEditHeadChange(head: string) {
+    const amt = amountForHead(head);
+    setEditForm((f) => ({
+      ...f,
+      penaltyHead: head,
+      ...(amt !== "" ? { amount: amt } : {}),
+    }));
+  }
+
+  function onReassignHeadChange(head: string) {
+    const amt = amountForHead(head);
+    setReassignForm((f) => ({
+      ...f,
+      penaltyHead: head,
+      amount: amt !== "" ? amt : f.amount,
+    }));
+  }
 
   const usersQuery = useQuery<{ groups: UserGroup[] }>({
     queryKey: ["/api/penalties/users"],
-    enabled: !!perms?.canCreate,
+    enabled: !!perms?.canCreate || !!perms?.canEditOrDelete,
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/penalties/users");
       if (!res.ok) throw new Error("Failed to load users");
@@ -212,30 +251,71 @@ export default function AddPenaltyPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/penalties"] });
   }
 
-  const saveMutation = useMutation({
-    mutationFn: async (payload: FormState) => {
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const emp = allUsers.find((u) => u.id === inlineEmployeeId);
       const body = {
-        employeeId: payload.employeeId,
-        department: payload.department || null,
-        penaltyHead: payload.penaltyHead,
-        reason: payload.reason,
-        amount: Number(payload.amount),
-        penaltyDate: payload.penaltyDate,
-        attachmentUrl: payload.attachmentUrl || null,
-        attachmentName: payload.attachmentName || null,
-        managerRemarks: payload.managerRemarks || null,
-        approvalStatus: payload.approvalStatus,
+        employeeId: inlineEmployeeId,
+        department: emp?.department || null,
+        penaltyHead: inlineHead,
+        reason: inlineHead,
+        amount: Number(inlineAmount),
+        penaltyDate: new Date().toISOString().slice(0, 10),
       };
-      const res = payload.id
-        ? await apiRequest("PATCH", `/api/penalties/${payload.id}`, body)
-        : await apiRequest("POST", "/api/penalties", body);
+      const res = await apiRequest("POST", "/api/penalties", body);
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.message || "Save failed");
+      if (!res.ok) throw new Error(json?.message || "Failed to add penalty");
       return json;
     },
     onSuccess: () => {
-      toast({ title: editing ? "Penalty updated" : "Penalty added" });
-      setFormOpen(false);
+      toast({ title: "Penalty added" });
+      setInlineEmployeeId("");
+      setInlineHead("");
+      setInlineAmount("");
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const reassignMutation = useMutation({
+    mutationFn: async (payload: EditFormState) => {
+      const body = {
+        employeeId: payload.employeeId,
+        penaltyHead: payload.penaltyHead,
+        amount: Number(payload.amount),
+      };
+      const res = await apiRequest("PATCH", `/api/penalties/${payload.id}/reassign`, body);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || "Re-assign failed");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "Penalty re-assigned" });
+      setReassignOpen(false);
+      setReassignReason("");
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (payload: EditFormState) => {
+      const emp = allUsers.find((u) => u.id === payload.employeeId);
+      const body = {
+        employeeId: payload.employeeId,
+        department: emp?.department || null,
+        penaltyHead: payload.penaltyHead,
+        reason: payload.penaltyHead,
+        amount: Number(payload.amount),
+      };
+      const res = await apiRequest("PATCH", `/api/penalties/${payload.id}`, body);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || "Update failed");
+      return json;
+    },
+    onSuccess: () => {
+      toast({ title: "Penalty updated" });
+      setEditOpen(false);
       invalidate();
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -323,68 +403,133 @@ export default function AddPenaltyPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  function openCreate() {
-    setForm({ ...EMPTY_FORM });
-    setEditing(false);
-    setFormOpen(true);
-  }
-  function openEdit(row: PenaltyRow) {
-    setForm({
+  function openReassign(row: PenaltyRow) {
+    setReassignReason(row.disputeReason ?? "");
+    setReassignForm({
       id: row.id,
       employeeId: row.employeeId,
-      department: row.department ?? "",
       penaltyHead: row.penaltyHead,
-      reason: row.reason,
       amount: String(row.amount ?? ""),
-      penaltyDate: row.penaltyDate ? row.penaltyDate.slice(0, 10) : EMPTY_FORM.penaltyDate,
-      attachmentUrl: row.attachmentUrl ?? "",
-      attachmentName: row.attachmentName ?? "",
-      managerRemarks: row.managerRemarks ?? "",
       approvalStatus: row.approvalStatus,
     });
-    setEditing(true);
-    setFormOpen(true);
+    setReassignOpen(true);
   }
 
-  function selectEmployee(u: ApiUser) {
-    setForm((f) => ({
-      ...f,
-      employeeId: u.id,
-      department: u.department ?? f.department,
-    }));
-    setUserPickerOpen(false);
+  function openEdit(row: PenaltyRow) {
+    setEditForm({
+      id: row.id,
+      employeeId: row.employeeId,
+      penaltyHead: row.penaltyHead,
+      amount: String(row.amount ?? ""),
+      approvalStatus: row.approvalStatus,
+    });
+    setEditOpen(true);
   }
 
-  function submitForm() {
-    if (!form.employeeId) return toast({ title: "Employee is required", variant: "destructive" });
-    if (!form.penaltyHead) return toast({ title: "Penalty head is required", variant: "destructive" });
-    if (!form.reason.trim()) return toast({ title: "Reason is required", variant: "destructive" });
-    if (form.amount === "" || isNaN(Number(form.amount)) || Number(form.amount) < 0)
-      return toast({ title: "Amount must be 0 or greater", variant: "destructive" });
-    if (!form.penaltyDate) return toast({ title: "Penalty date is required", variant: "destructive" });
-    saveMutation.mutate(form);
+  function submitInlineCreate() {
+    if (!inlineEmployeeId) return toast({ title: "Person is required", variant: "destructive" });
+    if (!inlineHead) return toast({ title: "Head is required", variant: "destructive" });
+    if (inlineAmount === "" || isNaN(Number(inlineAmount)) || Number(inlineAmount) < 0) {
+      return toast({ title: "Valid amount is required", variant: "destructive" });
+    }
+    createMutation.mutate();
   }
 
-  const selectedEmployeeLabel = useMemo(() => {
-    const u = allUsers.find((x) => x.id === form.employeeId);
-    if (u) return u.fullName || u.name || u.email || "Employee";
-    if (form.employeeId && editing) return viewRow?.employeeName ?? "Selected employee";
-    return "";
-  }, [allUsers, form.employeeId, editing, viewRow]);
+  function submitReassign() {
+    if (!reassignForm.employeeId) return toast({ title: "Person is required", variant: "destructive" });
+    if (!reassignForm.penaltyHead) return toast({ title: "Head is required", variant: "destructive" });
+    if (reassignForm.amount === "" || isNaN(Number(reassignForm.amount)) || Number(reassignForm.amount) < 0) {
+      return toast({ title: "Valid amount is required", variant: "destructive" });
+    }
+    reassignMutation.mutate(reassignForm);
+  }
+
+  function submitEdit() {
+    if (!editForm.employeeId) return toast({ title: "Person is required", variant: "destructive" });
+    if (!editForm.penaltyHead) return toast({ title: "Head is required", variant: "destructive" });
+    if (editForm.amount === "" || isNaN(Number(editForm.amount)) || Number(editForm.amount) < 0) {
+      return toast({ title: "Valid amount is required", variant: "destructive" });
+    }
+    updateMutation.mutate(editForm);
+  }
 
   const canDecide = !!perms?.canDecide;
   const canVoid = !!perms?.canVoid;
   const canCreate = !!perms?.canCreate;
   const canEditOrDelete = !!perms?.canEditOrDelete;
-  const editApproved = editing && form.approvalStatus === "APPROVED" && !perms?.isFullAccess;
+  const canReviewRejection = !!perms?.canReviewEmployeeRejection;
+  const editApproved = editOpen && editForm.approvalStatus === "APPROVED" && !perms?.isFullAccess;
 
   return (
     <div className="p-6 bg-[#f8f9fa] min-h-[calc(100vh-60px)] dark:bg-zinc-950">
       {/* Header */}
       <div className="mb-4 flex space-x-1 uppercase text-[15px] font-bold tracking-wide">
         <span className="text-[#495057] dark:text-zinc-400">PENALTY / </span>
-        <span className="text-[#00a65a] dark:text-zinc-200">ADD PENALTY</span>
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={() => setShowInlineForm((v) => !v)}
+            className="text-[#00a65a] dark:text-zinc-200 hover:opacity-80 transition-opacity"
+          >
+            ADD PENALTY
+          </button>
+        ) : (
+          <span className="text-[#00a65a] dark:text-zinc-200">ADD PENALTY</span>
+        )}
       </div>
+
+      {/* Legacy inline form: Person, Head, Amount, Submit */}
+      {canCreate && showInlineForm && (
+        <Card className="mb-5 border border-gray-100 shadow-sm rounded-md bg-white dark:bg-zinc-900 dark:border-zinc-800">
+          <CardContent className="p-6">
+            <div className="flex flex-col md:flex-row items-end gap-6">
+              <div className="flex-1 w-full space-y-1.5">
+                <Label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300">Person</Label>
+                <Select value={inlineEmployeeId} onValueChange={setInlineEmployeeId}>
+                  <SelectTrigger className="w-full h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                  <SelectContent>
+                    {allUsers.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>
+                        {u.fullName || u.name || u.email || u.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1 w-full space-y-1.5">
+                <Label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300">Head</Label>
+                <Select value={inlineHead} onValueChange={onInlineHeadChange}>
+                  <SelectTrigger className="w-full h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                  <SelectContent>
+                    {heads.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex-1 w-full space-y-1.5">
+                <Label className="text-[13px] font-semibold text-[#495057] dark:text-zinc-300">Amount</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="00.00"
+                  value={inlineAmount}
+                  onChange={(e) => setInlineAmount(e.target.value)}
+                  className="w-full h-10 text-[13px] bg-[#f8f9fa] dark:bg-zinc-950"
+                />
+              </div>
+              <div>
+                <Button
+                  onClick={submitInlineCreate}
+                  disabled={createMutation.isPending}
+                  className="bg-[#00a65a] hover:bg-[#008d4c] text-white h-10 px-8 font-medium shadow-none text-[13px]"
+                >
+                  Submit
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Summary cards */}
       {summary && (
@@ -412,14 +557,6 @@ export default function AddPenaltyPage() {
         <CardContent className="p-0">
           <div className="p-4 flex flex-wrap justify-between items-center gap-3 bg-white dark:bg-zinc-900">
             <div className="flex items-center gap-2">
-              {canCreate && (
-                <Button
-                  onClick={openCreate}
-                  className="bg-[#00a65a] hover:bg-[#008d4c] text-white h-9 px-4 font-medium shadow-none text-[13px]"
-                >
-                  + Add Penalty
-                </Button>
-              )}
               <span className="text-[13px] text-[#495057] font-medium dark:text-zinc-400">Show</span>
               <Select value={String(limit)} onValueChange={(v) => { setLimit(Number(v)); setPage(1); }}>
                 <SelectTrigger className="w-[70px] h-8 text-[13px]"><SelectValue /></SelectTrigger>
@@ -452,7 +589,7 @@ export default function AddPenaltyPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#f4f6f9] border-y border-gray-200 dark:border-zinc-800 dark:bg-zinc-900">
-                  {["No", "Name", "Penalty Head", "Amount", "Date", "Added By", "Approval Status", "Action"].map((h) => (
+                  {["No", "Name", "Penalty Head", "Amount", "Date", "Add By", "Approval Status", "Action"].map((h) => (
                     <th key={h} className="px-4 py-3 text-[12px] font-bold text-[#495057] dark:text-zinc-400 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -471,6 +608,10 @@ export default function AddPenaltyPage() {
                   const no = pagination ? (pagination.page - 1) * pagination.limit + idx + 1 : idx + 1;
                   const isVoided = row.status === "VOIDED";
                   const isPending = row.approvalStatus === "PENDING" && !isVoided;
+                  const employeeRejected = row.disputeStatus === "PENDING";
+                  const awaitingEmployee = isPending && !employeeRejected && !row.employeeAcknowledgedAt;
+                  const hodCanDecide = canDecide && isPending && !awaitingEmployee && !employeeRejected;
+                  const canEditRow = canEditOrDelete && isPending && !employeeRejected;
                   return (
                     <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:hover:bg-zinc-800 dark:border-zinc-800">
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{no}</td>
@@ -480,34 +621,61 @@ export default function AddPenaltyPage() {
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{fmtDate(row.penaltyDate)}</td>
                       <td className="px-4 py-3 text-[13px] text-[#495057] dark:text-zinc-400">{row.addedByName ?? "—"}</td>
                       <td className="px-4 py-3 text-[13px]">
-                        <div className="flex flex-wrap items-center gap-1">
-                          {statusBadge(row.approvalStatus)}
-                          {isVoided && statusBadge("VOIDED")}
-                          {row.disputeStatus === "PENDING" && (
-                            <Badge className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border-0 text-[11px] font-medium">Disputed</Badge>
-                          )}
-                        </div>
+                        <Badge className="bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200 border-0 text-[11px] font-medium">
+                          {penaltyApprovalLabel(row)}
+                        </Badge>
                       </td>
                       <td className="px-4 py-3 text-[13px]">
-                        <div className="flex flex-wrap gap-1.5">
-                          <button onClick={() => setViewRow(row)} className="text-[12px] text-blue-600 hover:underline">View</button>
-                          {canEditOrDelete && isPending && (
-                            <button onClick={() => openEdit(row)} className="text-[12px] text-[#00a65a] hover:underline">Edit</button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            title="View"
+                            onClick={() => setViewRow(row)}
+                            className="p-1 rounded hover:bg-blue-50 dark:hover:bg-zinc-800 text-blue-600"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          {canEditRow && (
+                            <button
+                              type="button"
+                              title="Edit"
+                              onClick={() => openEdit(row)}
+                              className="p-1 rounded hover:bg-emerald-50 dark:hover:bg-zinc-800 text-[#00a65a]"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
                           )}
-                          {canDecide && isPending && (
+                          {canReviewRejection && employeeRejected && (
+                            <button
+                              type="button"
+                              title="Re-assign after rejection"
+                              onClick={() => openReassign(row)}
+                              className="p-1 rounded hover:bg-indigo-50 dark:hover:bg-zinc-800 text-indigo-600"
+                            >
+                              <UserRoundPlus className="h-4 w-4" />
+                            </button>
+                          )}
+                          {hodCanDecide && (
                             <>
                               <button
                                 onClick={() => { setApprovalRow(row); setApprovalDecision("APPROVED"); setHodRemarks(""); }}
-                                className="text-[12px] text-green-700 hover:underline"
+                                className="text-[11px] text-green-700 hover:underline px-1"
                               >Approve</button>
                               <button
                                 onClick={() => { setApprovalRow(row); setApprovalDecision("REJECTED"); setHodRemarks(""); }}
-                                className="text-[12px] text-red-600 hover:underline"
+                                className="text-[11px] text-red-600 hover:underline px-1"
                               >Reject</button>
                             </>
                           )}
-                          {canEditOrDelete && isPending && (
-                            <button onClick={() => setDeleteRow(row)} className="text-[12px] text-red-600 hover:underline">Delete</button>
+                          {canEditRow && (
+                            <button
+                              type="button"
+                              title="Delete"
+                              onClick={() => setDeleteRow(row)}
+                              className="p-1 rounded hover:bg-red-50 dark:hover:bg-zinc-800 text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           )}
                           {canVoid && !isVoided && (
                             <button
@@ -521,20 +689,26 @@ export default function AddPenaltyPage() {
                               className="text-[12px] text-purple-600 hover:underline"
                             >Acknowledge</button>
                           )}
-                          {canDecide && row.disputeStatus === "PENDING" && (
+                          {(canReviewRejection || canDecide) && row.disputeStatus === "PENDING" && (
                             <>
                               <button
+                                type="button"
                                 disabled={resolveDisputeMutation.isPending}
                                 onClick={() => resolveDisputeMutation.mutate({ id: row.id, action: "uphold" })}
-                                className="text-[12px] text-blue-600 hover:underline disabled:opacity-50"
-                                title={row.disputeReason || ""}
-                              >Dismiss Dispute</button>
+                                className="p-1 rounded hover:bg-blue-50 dark:hover:bg-zinc-800 text-blue-600 disabled:opacity-50"
+                                title={row.disputeReason ? `Penalty stands — reject employee reason: ${row.disputeReason}` : "Penalty stands (reject employee reason)"}
+                              >
+                                <CircleCheck className="h-4 w-4" />
+                              </button>
                               <button
+                                type="button"
                                 disabled={resolveDisputeMutation.isPending}
                                 onClick={() => resolveDisputeMutation.mutate({ id: row.id, action: "withdraw" })}
-                                className="text-[12px] text-orange-600 hover:underline disabled:opacity-50"
-                                title={row.disputeReason || ""}
-                              >Uphold Dispute (Withdraw)</button>
+                                className="p-1 rounded hover:bg-orange-50 dark:hover:bg-zinc-800 text-orange-600 disabled:opacity-50"
+                                title={row.disputeReason ? `Withdraw penalty — uphold employee rejection: ${row.disputeReason}` : "Withdraw penalty (uphold employee rejection)"}
+                              >
+                                <CircleX className="h-4 w-4" />
+                              </button>
                             </>
                           )}
                         </div>
@@ -587,154 +761,132 @@ export default function AddPenaltyPage() {
         </CardContent>
       </Card>
 
-      {/* Add / Edit form */}
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      {/* Edit — same three fields as legacy */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit Penalty" : "Add Penalty"}</DialogTitle>
+            <DialogTitle>Edit Penalty</DialogTitle>
             {editApproved && (
               <DialogDescription className="text-amber-600">
                 This penalty is approved — editing is restricted.
               </DialogDescription>
             )}
           </DialogHeader>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Employee */}
+          <div className="flex flex-col gap-4">
             <div className="space-y-1.5">
-              <Label className="text-[13px]">Employee *</Label>
-              <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-between h-9 text-[13px] font-normal">
-                    {selectedEmployeeLabel || "Choose employee..."}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]" align="start">
-                  <Command>
-                    <CommandInput placeholder="Search employee..." className="text-[13px]" />
-                    <CommandList>
-                      <CommandEmpty>No employee found.</CommandEmpty>
-                      {userGroups.map((g) => (
-                        <CommandGroup key={g.roleId} heading={g.roleLabel}>
-                          {g.users.map((u) => (
-                            <CommandItem
-                              key={u.id}
-                              value={`${u.fullName || u.name || ""} ${u.email || ""}`}
-                              onSelect={() => selectEmployee(u)}
-                            >
-                              <div className="flex flex-col">
-                                <span className="text-[13px]">{u.fullName || u.name || u.email}</span>
-                                {u.department && <span className="text-[11px] text-muted-foreground">{u.department}</span>}
-                              </div>
-                            </CommandItem>
-                          ))}
-                        </CommandGroup>
-                      ))}
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <Label className="text-[13px]">Person</Label>
+              <Select
+                value={editForm.employeeId}
+                onValueChange={(v) => setEditForm((f) => ({ ...f, employeeId: v }))}
+              >
+                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                <SelectContent>
+                  {allUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.fullName || u.name || u.email || u.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            {/* Department */}
             <div className="space-y-1.5">
-              <Label className="text-[13px]">Department</Label>
-              <Input
-                value={form.department}
-                onChange={(e) => setForm((f) => ({ ...f, department: e.target.value }))}
-                className="h-9 text-[13px]"
-                placeholder="Auto-filled from employee"
-              />
-            </div>
-            {/* Penalty Head */}
-            <div className="space-y-1.5">
-              <Label className="text-[13px]">Penalty Head *</Label>
-              <Select value={form.penaltyHead} onValueChange={(v) => setForm((f) => ({ ...f, penaltyHead: v }))}>
-                <SelectTrigger className="h-9 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+              <Label className="text-[13px]">Head</Label>
+              <Select
+                value={editForm.penaltyHead}
+                onValueChange={onEditHeadChange}
+              >
+                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
                 <SelectContent>
                   {heads.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            {/* Amount */}
             <div className="space-y-1.5">
-              <Label className="text-[13px]">Penalty Amount *</Label>
+              <Label className="text-[13px]">Amount</Label>
               <Input
-                type="number" min="0" step="any"
-                value={form.amount}
-                onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-                className="h-9 text-[13px]"
-                placeholder="0"
-              />
-            </div>
-            {/* Date */}
-            <div className="space-y-1.5">
-              <Label className="text-[13px]">Penalty Date *</Label>
-              <Input
-                type="date"
-                value={form.penaltyDate}
-                onChange={(e) => setForm((f) => ({ ...f, penaltyDate: e.target.value }))}
-                className="h-9 text-[13px]"
-              />
-            </div>
-            {/* Approval status (full-access / HOD only) */}
-            {canDecide && (
-              <div className="space-y-1.5">
-                <Label className="text-[13px]">Approval Status</Label>
-                <Select value={form.approvalStatus} onValueChange={(v) => setForm((f) => ({ ...f, approvalStatus: v }))}>
-                  <SelectTrigger className="h-9 text-[13px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PENDING">PENDING</SelectItem>
-                    <SelectItem value="APPROVED">APPROVED</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {/* Reason */}
-            <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-[13px]">Penalty Reason *</Label>
-              <Textarea
-                value={form.reason}
-                onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
-                className="text-[13px] min-h-[70px]"
-                placeholder="Describe the reason for this penalty"
-              />
-            </div>
-            {/* Attachment */}
-            <div className="space-y-1.5">
-              <Label className="text-[13px]">Evidence URL</Label>
-              <Input
-                value={form.attachmentUrl}
-                onChange={(e) => setForm((f) => ({ ...f, attachmentUrl: e.target.value }))}
-                className="h-9 text-[13px]"
-                placeholder="https://..."
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-[13px]">Evidence Name</Label>
-              <Input
-                value={form.attachmentName}
-                onChange={(e) => setForm((f) => ({ ...f, attachmentName: e.target.value }))}
-                className="h-9 text-[13px]"
-                placeholder="e.g. screenshot.png"
-              />
-            </div>
-            {/* Manager remarks */}
-            <div className="space-y-1.5 md:col-span-2">
-              <Label className="text-[13px]">Manager Remarks</Label>
-              <Textarea
-                value={form.managerRemarks}
-                onChange={(e) => setForm((f) => ({ ...f, managerRemarks: e.target.value }))}
-                className="text-[13px] min-h-[50px]"
+                type="number"
+                min="0"
+                step="any"
+                placeholder="00.00"
+                value={editForm.amount}
+                onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))}
+                className="h-10 text-[13px]"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button
-              onClick={submitForm}
-              disabled={saveMutation.isPending || editApproved}
+              onClick={submitEdit}
+              disabled={updateMutation.isPending || editApproved}
               className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
             >
-              {saveMutation.isPending ? "Saving…" : editing ? "Update" : "Submit"}
+              {updateMutation.isPending ? "Saving…" : "Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Re-assign after employee rejection */}
+      <Dialog open={reassignOpen} onOpenChange={setReassignOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Re-assign Penalty</DialogTitle>
+            <DialogDescription>
+              Employee rejected this penalty. Update the assignee or details, then send again.
+            </DialogDescription>
+          </DialogHeader>
+          {reassignReason && (
+            <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40 p-3 text-[12px] text-red-800 dark:text-red-200">
+              <span className="font-semibold">Rejection reason: </span>{reassignReason}
+            </div>
+          )}
+          <div className="flex flex-col gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-[13px]">Person</Label>
+              <Select
+                value={reassignForm.employeeId}
+                onValueChange={(v) => setReassignForm((f) => ({ ...f, employeeId: v }))}
+              >
+                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                <SelectContent>
+                  {allUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.fullName || u.name || u.email || u.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px]">Head</Label>
+              <Select value={reassignForm.penaltyHead} onValueChange={onReassignHeadChange}>
+                <SelectTrigger className="h-10 text-[13px]"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                <SelectContent>
+                  {heads.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[13px]">Amount</Label>
+              <Input
+                type="number"
+                min="0"
+                step="any"
+                value={reassignForm.amount}
+                onChange={(e) => setReassignForm((f) => ({ ...f, amount: e.target.value }))}
+                className="h-10 text-[13px]"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReassignOpen(false)}>Cancel</Button>
+            <Button
+              onClick={submitReassign}
+              disabled={reassignMutation.isPending}
+              className="bg-[#00a65a] hover:bg-[#008d4c] text-white"
+            >
+              {reassignMutation.isPending ? "Saving…" : "Re-assign"}
             </Button>
           </DialogFooter>
         </DialogContent>

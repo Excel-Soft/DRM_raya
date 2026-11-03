@@ -264,7 +264,7 @@ export default function DollarSystem() {
   const [confirmingBuyId, setConfirmingBuyId] = useState<string | null>(null);
   const [confirmBuyError, setConfirmBuyError] = useState("");
   const [balanceStatusUpdatingId, setBalanceStatusUpdatingId] = useState<string | null>(null);
-  const [balanceStatusViewItem, setBalanceStatusViewItem] = useState<any>(null);
+  const [txScreenshotItem, setTxScreenshotItem] = useState<any>(null);
   const [balanceStatusEditItem, setBalanceStatusEditItem] = useState<any>(null);
   const [balanceStatusDraft, setBalanceStatusDraft] = useState("Show");
   const [balanceStatusDateDraft, setBalanceStatusDateDraft] = useState("");
@@ -403,6 +403,10 @@ export default function DollarSystem() {
   const [sliderBound, setSliderBound] = useState(500);
 
   const sliderTrackRef = useRef<HTMLDivElement>(null);
+  const dollarFormRef = useRef(dollarForm);
+  dollarFormRef.current = dollarForm;
+  const dollarSlotsRef = useRef(dollarSlots);
+  dollarSlotsRef.current = dollarSlots;
   const [activeThumb, setActiveThumb] = useState<"min" | "max" | null>(null);
 
   // Mirrors the legacy PHP's addPriceRangeToRepeater: pick the smallest available
@@ -484,29 +488,74 @@ export default function DollarSystem() {
   // A deliberately huge sentinel for the modal's first, unfiltered load — wide
   // enough that no real dollar_buying balance could ever exceed it — so the
   // discovery fetch below always sees every available buy regardless of size.
+  function mapRecordToSlot(r: any, useDollar: number, checked: boolean) {
+    const dollars = Number(r.dollars) || 0;
+    return {
+      id: String(r.id),
+      checked,
+      buyerName: r.name || "-",
+      buyDate: r.buy_date ? safeDate(r.buy_date, "yyyy-MM-dd") : "-",
+      email: r.buyer_reference_paypal_email || "",
+      rate: Number(r.dollar_rate) || 0,
+      totalShort: r.total_short_dollars ?? "-",
+      dollars,
+      useDollar: Number(useDollar.toFixed(2)),
+    };
+  }
+
+  /** Legacy slider browse: list every short whose $ rate is in the slider range. */
+  function listAllSlotsInRange(records: any[], targetDollar: number, previousSlots: any[]) {
+    const prevById = new Map(previousSlots.map((s) => [s.id, s]));
+    const sorted = [...records].sort(
+      (a, b) => Number(a.dollar_rate) - Number(b.dollar_rate) || Number(a.dollars) - Number(b.dollars),
+    );
+    let remaining = targetDollar;
+    return sorted.map((r) => {
+      const dollars = Number(r.dollars) || 0;
+      const prev = prevById.get(String(r.id));
+      const suggested = Math.max(0, Math.min(dollars, remaining));
+      remaining -= suggested;
+      const useDollar = prev?.useDollar ?? suggested;
+      return mapRecordToSlot(r, Number(useDollar) || 0, !!prev?.checked);
+    });
+  }
+
   const loadAndAllocate = async (
     min: number,
     max: number,
     targetDollar: number,
     isTemp: boolean,
-    rate: number,
+    _rate: number,
+    opts?: { listAllInRange?: boolean; previousSlots?: any[]; isTemp?: boolean },
   ) => {
     setSlotsLoading(true);
     try {
-      // Restricted to buyer-dollar lots bought at this order's own rate — never
-      // silently blend in a different-rate buy into this allocation.
+      const tempFlag = opts?.isTemp ?? isTemp;
+      const tempQ = tempFlag ? "&temp=true" : "";
       const res = await apiRequestJson<{ records: any[] }>(
         "GET",
-        `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}&rate=${rate}`
+        `/api/account/dollar-system/buyer-dollar-short?min=${min}&max=${max}${tempQ}`,
       );
       const records = res?.records || [];
-      const { slots, shortfall } = isTemp
-        ? allocateExactMatchFirst(records, targetDollar)
-        : allocateSmallestFirst(records, targetDollar);
+      const previousSlots = opts?.previousSlots ?? [];
+      let slots: any[];
+      let shortfall = 0;
+
+      if (opts?.listAllInRange) {
+        slots = listAllSlotsInRange(records, targetDollar, previousSlots);
+        setAllocError("");
+      } else if (isTemp) {
+        ({ slots, shortfall } = allocateExactMatchFirst(records, targetDollar));
+        setAllocError(shortfall > 0.01
+          ? `Not enough dollar amounts available to cover the entire order amount (short by $${shortfall.toFixed(2)}).`
+          : "");
+      } else {
+        ({ slots, shortfall } = allocateSmallestFirst(records, targetDollar));
+        setAllocError(shortfall > 0.01
+          ? `Not enough dollar amounts available to cover the entire order amount (short by $${shortfall.toFixed(2)}).`
+          : "");
+      }
       setDollarSlots(slots);
-      setAllocError(shortfall > 0.01
-        ? `Not enough dollar amounts available to cover the entire order amount (short by $${shortfall.toFixed(2)}).`
-        : "");
     } catch (err) {
       console.error("Failed to load buyer dollar short records:", err);
       setDollarSlots([]);
@@ -516,12 +565,8 @@ export default function DollarSystem() {
     }
   };
 
-  // The slider itself always displays/drags across a fixed 0–500 range — but
-  // that's a manual narrowing tool only. The list of available entries is
-  // NOT limited to it: every matching-rate buy shows up regardless of size
-  // until the user actually drags the handle to narrow things down.
+  // Slider 0–500 = dollar RATE range (legacy ionRangeSlider / func.php min–max).
   const SLIDER_MAX_BOUND = 500;
-  const UNBOUNDED_FETCH_MAX = 100_000_000;
 
   const handleSliderChange = (type: "min" | "max", val: number) => {
     const bound = sliderBound;
@@ -561,9 +606,18 @@ export default function DollarSystem() {
       setActiveThumb(null);
       // Mirrors the PHP slider's onFinish: re-fetch the available buy pool for the
       // new range and re-run the same allocation the modal opened with.
-      const targetDollar = parseFloat(dollarForm.dollar) || 0;
+      const form = dollarFormRef.current;
+      const targetDollar = parseFloat(form.dollar) || 0;
       const rate = parseFloat(dollarModalItem?.rate || 0) || 0;
-      loadAndAllocate(dollarForm.sliderMin ?? 0, dollarForm.sliderMax ?? sliderBound, targetDollar, !!dollarForm.isTemp, rate);
+      setDollarForm((prev: any) => ({ ...prev, removeUnselected: true }));
+      loadAndAllocate(
+        form.sliderMin ?? 0,
+        form.sliderMax ?? sliderBound,
+        targetDollar,
+        !!form.isTemp,
+        rate,
+        { listAllInRange: true, previousSlots: dollarSlotsRef.current, isTemp: !!form.isTemp },
+      );
     }
   };
 
@@ -611,7 +665,11 @@ export default function DollarSystem() {
       type: item.type || "New",
       detail: item.notes || item.detail || ""
     });
-    loadAndAllocate(0, UNBOUNDED_FETCH_MAX, targetDollar, isTemp, rateVal);
+    loadAndAllocate(0, SLIDER_MAX_BOUND, targetDollar, isTemp, rateVal, {
+      listAllInRange: true,
+      previousSlots: [],
+      isTemp,
+    });
   };
 
   const handleUseDollarChange = (id: string, val: string) => {
@@ -634,8 +692,18 @@ export default function DollarSystem() {
 
   const handleRemoveUnselectedToggle = (checked: boolean) => {
     setDollarForm((prev: any) => ({ ...prev, removeUnselected: checked }));
-    if (!checked) {
-      setDollarSlots(prev => prev.filter(s => s.checked));
+    if (checked) {
+      const form = dollarFormRef.current;
+      const targetDollar = parseFloat(form.dollar) || 0;
+      const rate = parseFloat(dollarModalItem?.rate || 0) || 0;
+      loadAndAllocate(
+        form.sliderMin ?? 0,
+        form.sliderMax ?? sliderBound,
+        targetDollar,
+        !!form.isTemp,
+        rate,
+        { listAllInRange: true, previousSlots: dollarSlotsRef.current, isTemp: !!form.isTemp },
+      );
     }
   };
 
@@ -696,6 +764,13 @@ export default function DollarSystem() {
       setConfirmingBuyId(null);
     }
   };
+
+  function resolveMediaUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) return url;
+    if (url.startsWith("/")) return `${window.location.origin}${url}`;
+    return url;
+  }
 
   const handleBalanceStatusChange = async (id: string, status: string, statusDate?: string) => {
     if (balanceStatusUpdatingId) return;
@@ -890,25 +965,36 @@ export default function DollarSystem() {
         </div>, document.body
       )}
 
-      {balanceStatusViewItem && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50" style={{backdropFilter:"blur(4px)"}} onClick={()=>setBalanceStatusViewItem(null)}>
-          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
-              <div className="text-xl font-[1000] text-gray-900 dark:text-zinc-100">{balanceStatusViewItem.name || "Buyer"}</div>
-              <button onClick={()=>setBalanceStatusViewItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20}/></button>
+      {txScreenshotItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4" style={{ backdropFilter: "blur(4px)" }} onClick={() => setTxScreenshotItem(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 py-3 flex items-center justify-between border-b border-gray-100 dark:border-zinc-800">
+              <div className="text-sm font-black text-gray-900 dark:text-zinc-100 truncate">{txScreenshotItem.name || "Screenshot"}</div>
+              <button type="button" onClick={() => setTxScreenshotItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-zinc-200"><X size={20} /></button>
             </div>
-            <div className="p-6 space-y-3">
-              {[
-                ["Paypal Email", balanceStatusViewItem.email],
-                ["Date", safeDate(balanceStatusViewItem.date, "dd MMM yyyy")],
-                ["Dollar Rate", balanceStatusViewItem.rate],
-                ["Amount", balanceStatusViewItem.amount ? "$ "+balanceStatusViewItem.amount : "-"],
-                ["Ab Payment Status", balanceStatusViewItem.balanceStatus || "Show"],
-                ["Status Date", balanceStatusViewItem.balanceStatusDate ? safeDate(balanceStatusViewItem.balanceStatusDate, "dd MMM yyyy") : "-"],
-              ].map(([l,v]) => (
-                <div key={l} className="flex items-start gap-2 text-[12px]"><span className="w-32 font-black text-gray-500 uppercase shrink-0 dark:text-zinc-400">{l}</span><span className="font-bold text-gray-800 dark:text-zinc-200">{v||"-"}</span></div>
-              ))}
+            <div className="p-4 overflow-auto flex-1 flex items-center justify-center bg-gray-50 dark:bg-zinc-950">
+              {resolveMediaUrl(txScreenshotItem.screenshotUrl) ? (
+                <img
+                  src={resolveMediaUrl(txScreenshotItem.screenshotUrl)!}
+                  alt="Payment screenshot"
+                  className="max-w-full max-h-[70vh] rounded-md border border-gray-200 dark:border-zinc-800 object-contain"
+                />
+              ) : (
+                <p className="text-sm text-gray-500 dark:text-zinc-400">No screenshot attached for this transaction.</p>
+              )}
             </div>
+            {resolveMediaUrl(txScreenshotItem.screenshotUrl) && (
+              <div className="p-3 border-t border-gray-100 dark:border-zinc-800">
+                <a
+                  href={resolveMediaUrl(txScreenshotItem.screenshotUrl)!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-bold text-[#00a65a] hover:underline"
+                >
+                  Open full size
+                </a>
+              </div>
+            )}
           </div>
         </div>, document.body
       )}
@@ -922,7 +1008,11 @@ export default function DollarSystem() {
             </div>
             <form onSubmit={async (e) => {
               e.preventDefault();
-              await handleBalanceStatusChange(balanceStatusEditItem.id, balanceStatusDraft, balanceStatusDateDraft);
+              if (balanceStatusDraft === "Move to Buy") {
+                await handleConfirmBuy(balanceStatusEditItem.id);
+              } else {
+                await handleBalanceStatusChange(balanceStatusEditItem.id, balanceStatusDraft, balanceStatusDateDraft);
+              }
               setBalanceStatusEditItem(null);
             }} className="p-6 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-4">
@@ -941,6 +1031,8 @@ export default function DollarSystem() {
                     <option value="Show">Show</option>
                     <option value="Not Show">Not Show</option>
                     <option value="Refund">Refund</option>
+                    {activeTxTab === "martini" && <option value="Move to Buy">Move to Buy</option>}
+                    <option value="Canceled">Canceled</option>
                   </select>
                 </div>
                 <div>
@@ -1450,7 +1542,7 @@ export default function DollarSystem() {
                           />
                         </div>
 
-                        {/* Scale Numbers & Ticks */}
+                        {/* Scale Numbers & Ticks — dollar rate (PKR/$) range */}
                         <div className="flex justify-between text-[10px] text-gray-400 font-semibold pt-1">
                           <span>0</span>
                           <span>{Math.round(bound * 0.25)}</span>
@@ -1492,7 +1584,7 @@ export default function DollarSystem() {
                       No buyer dollar balances available in this range.
                     </div>
                   )}
-                  {dollarSlots.map((slot, slotIndex) => (
+                  {(dollarForm.removeUnselected ? dollarSlots : dollarSlots.filter((s) => s.checked)).map((slot, slotIndex) => (
                     <div key={slot.id} className="flex flex-wrap md:flex-nowrap items-center gap-2.5 bg-gray-50/70 dark:bg-zinc-800/50 p-2.5 rounded-lg border border-gray-100 dark:border-zinc-800">
                       <div className="flex items-center gap-1 shrink-0 pt-4">
                         <input
@@ -1782,16 +1874,6 @@ export default function DollarSystem() {
                             <div className="text-[10px] font-black text-gray-800 uppercase truncate w-28 dark:text-zinc-100">{tx.name||"-"}</div>
                             <div className="text-[9px] text-gray-400 font-bold uppercase">{safeDate(tx.date, "dd MMM yyyy")}</div>
                             <div className="text-[9px] text-blue-400 font-medium italic truncate w-28">{tx.email||"-"}</div>
-                            {activeTxTab==="martini" && (
-                              <button
-                                type="button"
-                                disabled={confirmingBuyId===tx.id}
-                                onClick={() => handleConfirmBuy(tx.id)}
-                                className="mt-1 text-[8px] font-black uppercase bg-[#00a65a] text-white px-2 py-1 rounded shadow-sm disabled:opacity-50"
-                              >
-                                {confirmingBuyId===tx.id ? "Confirming…" : "Confirm → Move to Buy"}
-                              </button>
-                            )}
                             {(activeTxTab==="balance"||activeTxTab==="martini") && tx.balanceStatus && tx.balanceStatus !== "Show" && (
                               <span className={cn("inline-block mt-1 text-[8px] font-black uppercase px-1.5 py-0.5 rounded",
                                 tx.balanceStatus==="Not Show" ? "bg-gray-400 text-white" : "bg-red-500 text-white"
@@ -1807,17 +1889,17 @@ export default function DollarSystem() {
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  title="View"
-                                  onClick={() => setBalanceStatusViewItem(tx)}
+                                  title="View screenshot"
+                                  onClick={() => setTxScreenshotItem(tx)}
                                   className="h-7 w-7 rounded-full border border-gray-200 dark:border-zinc-700 flex items-center justify-center text-gray-500 hover:bg-gray-50 dark:text-zinc-400 dark:hover:bg-zinc-800 shrink-0"
                                 >
                                   <Eye size={13} />
                                 </button>
                                 <button
                                   type="button"
-                                  title="Update Status"
+                                  title="Edit status (date)"
                                   disabled={balanceStatusUpdatingId===tx.id}
-                                  onClick={() => { setBalanceStatusEditItem(tx); setBalanceStatusDraft(tx.balanceStatus || "Show"); setBalanceStatusDateDraft(tx.balanceStatusDate || ""); }}
+                                  onClick={() => { setBalanceStatusEditItem(tx); setBalanceStatusDraft(tx.balanceStatus || "Show"); setBalanceStatusDateDraft(tx.balanceStatusDate || format(new Date(), "yyyy-MM-dd")); }}
                                   className="h-7 w-7 rounded-full bg-[#00a65a] hover:bg-[#008d4c] text-white flex items-center justify-center disabled:opacity-50 shrink-0"
                                 >
                                   <Pencil size={12} />

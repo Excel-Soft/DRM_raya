@@ -30,6 +30,8 @@ import {
   disputePenalty,
   resolveDispute,
   getPendingAcknowledgementForEmployee,
+  getPenaltyHeadCatalog,
+  reassignPenaltyAfterRejection,
   softDeletePenalty,
   voidPenalty,
   monthlyReport,
@@ -45,6 +47,7 @@ import {
   canDecide,
   canVoid,
   canEditOrDeletePenalty,
+  canReviewEmployeeRejection,
   canViewReports,
   getDepartment,
   getAllowedEmployeeIds,
@@ -91,12 +94,19 @@ export function registerPenaltyRoutes(app: Express) {
   app.get("/api/penalties/meta", async (req: Request, res: Response) => {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
     const role = getActiveRole(req);
+    const catalog = await getPenaltyHeadCatalog();
+    const penaltyHeadAmounts: Record<string, number> = {};
+    for (const row of catalog) {
+      if (row.amount != null && !Number.isNaN(row.amount)) penaltyHeadAmounts[row.name] = row.amount;
+    }
     res.json({
-      penaltyHeads: PENALTY_HEADS,
+      penaltyHeads: catalog.length ? catalog.map((c) => c.name) : PENALTY_HEADS,
+      penaltyHeadAmounts,
       statuses: PENALTY_STATUSES,
       permissions: {
         canCreate: canCreate(role),
         canEditOrDelete: canEditOrDeletePenalty(role),
+        canReviewEmployeeRejection: canReviewEmployeeRejection(role),
         canDecide: canDecide(role),
         canVoid: canVoid(role),
         canViewReports: canViewReports(role),
@@ -471,16 +481,20 @@ export function registerPenaltyRoutes(app: Express) {
     try {
       if (!req.user) return res.status(401).json({ error: "Unauthorized" });
       const role = getActiveRole(req);
-      if (!canDecide(role)) {
-        return res.status(403).json({ error: "Forbidden", message: "Only HOD/admin can resolve a penalty dispute" });
+      if (!canReviewEmployeeRejection(role) && !canDecide(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to resolve this penalty rejection" });
       }
       const id = String(req.params.id);
       const raw = await getPenaltyRaw(id);
       if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
-      if (!(await canViewEmployee(req, raw.employeeId, "decide"))) {
+      const reviewRole = canReviewEmployeeRejection(role);
+      const scopePurpose: "view" | "decide" =
+        isFullAccess(role) || role === "account_manager" ? "view" : "decide";
+      if (!(await canViewEmployee(req, raw.employeeId, scopePurpose))) {
         return res.status(403).json({ error: "Forbidden", message: "You are not authorized to resolve this dispute" });
       }
-      if (String(raw.createdBy) === String(getUserId(req))) {
+      // Employee-rejection review (account / admin / super HOD) may include the creator re-assigning.
+      if (!reviewRole && String(raw.createdBy) === String(getUserId(req))) {
         return res.status(403).json({ error: "Forbidden", message: "You cannot resolve a dispute on a penalty you created." });
       }
       if (raw.disputeStatus !== "PENDING") {
@@ -501,6 +515,54 @@ export function registerPenaltyRoutes(app: Express) {
     } catch (err) {
       console.error("[penalty] dispute resolve error", err);
       res.status(500).json({ error: "InternalError", message: "Failed to resolve dispute" });
+    }
+  });
+
+  // PATCH /api/penalties/:id/reassign — after employee rejection, assign again
+  app.patch("/api/penalties/:id/reassign", async (req: Request, res: Response) => {
+    try {
+      if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+      const role = getActiveRole(req);
+      if (!canReviewEmployeeRejection(role)) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to re-assign this penalty" });
+      }
+      const id = String(req.params.id);
+      const raw = await getPenaltyRaw(id);
+      if (!raw || raw.deletedAt) return res.status(404).json({ error: "NotFound", message: "Penalty not found" });
+      if (raw.disputeStatus !== "PENDING") {
+        return res.status(409).json({ error: "Conflict", message: "Only employee-rejected penalties can be re-assigned" });
+      }
+      const b = req.body ?? {};
+      const employeeId = b.employeeId ? String(b.employeeId) : "";
+      if (!employeeId) return badRequest(res, "employeeId is required");
+      const employee = await fetchUserById(employeeId);
+      if (!employee) return res.status(404).json({ error: "NotFound", message: "Employee not found" });
+      if (!(await canViewEmployee(req, employeeId))) {
+        return res.status(403).json({ error: "Forbidden", message: "You are not authorized to assign this employee" });
+      }
+      const amount = b.amount !== undefined && b.amount !== "" ? Number(b.amount) : undefined;
+      if (amount !== undefined && (Number.isNaN(amount) || amount < 0)) {
+        return badRequest(res, "amount must be >= 0");
+      }
+      const updated = await reassignPenaltyAfterRejection(id, {
+        employeeId,
+        penaltyHead: b.penaltyHead !== undefined ? String(b.penaltyHead) : undefined,
+        amount,
+        reason: b.penaltyHead !== undefined ? String(b.penaltyHead) : undefined,
+      });
+      if (!updated) return res.status(409).json({ error: "Conflict", message: "Could not re-assign penalty" });
+      await recordAuditLog({
+        actorUserId: String(getUserId(req)),
+        action: "penalty.reassign",
+        module: "penalty",
+        entityType: "Penalty",
+        entityId: id,
+        req,
+      });
+      res.json({ success: true, penalty: updated });
+    } catch (err) {
+      console.error("[penalty] reassign error", err);
+      res.status(500).json({ error: "InternalError", message: "Failed to re-assign penalty" });
     }
   });
 

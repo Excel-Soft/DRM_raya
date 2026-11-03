@@ -28,6 +28,13 @@ import {
 import { useState } from "react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import {
+    formatPkr,
+    invoiceMinimumProjectPkr,
+    invoicePaidNativeToPkr,
+    meetsInvoiceProjectThreshold,
+    resolveInvoiceTotalPkr,
+} from "@shared/invoice-project-threshold";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Link } from "wouter";
 import { useForm } from "react-hook-form";
@@ -211,12 +218,25 @@ export default function AccountLedger() {
             if (!res.ok) throw new Error("Failed to record payment");
             return res.json();
         },
-        onSuccess: () => {
+        onSuccess: (data: any) => {
             queryClient.invalidateQueries({ queryKey: ["/api/reports/ledger"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
             setPaymentModalOpen(false);
             paymentForm.reset();
             setReceiptFile(null);
-            toast({ title: "Success", description: "Payment recorded successfully" });
+            if (data?.projectCreated) {
+                toast({
+                    title: "Payment saved — project created",
+                    description: "Received amount reached 33% of the invoice. Sales Executive has been notified.",
+                });
+            } else if (data?.thresholdMet === false) {
+                toast({
+                    title: "Payment saved",
+                    description: `Still below 33% minimum (${formatPkr(Number(data?.minPkr) || 0)}). Project will be created when enough is received.`,
+                });
+            } else {
+                toast({ title: "Success", description: "Payment recorded successfully" });
+            }
         },
         onError: (err: any) => {
             toast({ title: "Error", description: err?.message || "Failed to record payment", variant: "destructive" });
@@ -229,8 +249,50 @@ export default function AccountLedger() {
             const res = await apiRequest("GET", `/api/account/history/${encodeURIComponent(selectedRow?.coName || '')}`);
             return res.json();
         },
-        enabled: receiptsModalOpen && !!selectedRow?.coName,
+        enabled: (receiptsModalOpen || paymentModalOpen) && !!selectedRow?.coName,
     });
+
+    const selectedLedgerInvoice = (() => {
+        const invList = companyHistory?.data?.invoices as any[] | undefined;
+        const receipts = companyHistory?.data?.receipts as any[] | undefined;
+        if (!invList || !selectedRow?.referenceId) return null;
+        const inv = invList.find((i) => i.id === selectedRow.referenceId);
+        if (!inv) return null;
+        const rate = Number(inv.dollarRate) || 280;
+        const payNative = (receipts || [])
+            .filter((r) => r.referenceId === inv.id)
+            .reduce((sum, r) => {
+                const amt = Number(r.amount || 0);
+                if (!r.currency || r.currency === inv.currency) return sum + amt;
+                if (inv.currency === "USD" && r.currency === "PKR") return sum + amt / rate;
+                if (inv.currency === "PKR" && r.currency === "USD") return sum + amt * rate;
+                return sum + amt;
+            }, 0);
+        return { inv, payNative, rate };
+    })();
+
+    const ledgerPaymentThresholdPreview = (() => {
+        if (!selectedLedgerInvoice) return null;
+        const { inv, payNative, rate } = selectedLedgerInvoice;
+        const totalPkr = resolveInvoiceTotalPkr({
+            grandTotal: inv.total,
+            dollarRate: rate,
+            currency: inv.currency,
+            pkrTotal: inv.pkrTotal,
+        });
+        const paidPkr = invoicePaidNativeToPkr(payNative, inv.currency, rate);
+        const enteredPkr = Number(watchedPaymentAmount) || 0;
+        const cumulativePkr = paidPkr + enteredPkr;
+        const minPkr = invoiceMinimumProjectPkr(totalPkr);
+        const thresholdMetAfter = meetsInvoiceProjectThreshold(cumulativePkr, totalPkr);
+        return {
+            totalPkr,
+            minPkr,
+            cumulativePkr,
+            showBelowWarning: enteredPkr > 0 && !thresholdMetAfter,
+            showCreateHint: enteredPkr > 0 && thresholdMetAfter,
+        };
+    })();
 
     const onSubmitPayment = (data: PaymentFormValues) => {
         makePaymentMutation.mutate(data);
@@ -745,6 +807,18 @@ export default function AccountLedger() {
                                             </FormItem>
                                         )}
                                     />
+
+                                    {ledgerPaymentThresholdPreview?.showBelowWarning && (
+                                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+                                            After this payment, total received will be {formatPkr(ledgerPaymentThresholdPreview.cumulativePkr)} — below 33% ({formatPkr(ledgerPaymentThresholdPreview.minPkr)} of {formatPkr(ledgerPaymentThresholdPreview.totalPkr)}).
+                                            The project will <span className="font-bold">not</span> be created yet. Sales will be notified.
+                                        </div>
+                                    )}
+                                    {ledgerPaymentThresholdPreview?.showCreateHint && (
+                                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[11px] leading-relaxed text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/40 dark:text-emerald-100">
+                                            This payment reaches 33% ({formatPkr(ledgerPaymentThresholdPreview.cumulativePkr)} of {formatPkr(ledgerPaymentThresholdPreview.totalPkr)}). Saving will create the PMS project and notify Sales.
+                                        </div>
+                                    )}
 
                                     <FormField
                                         control={paymentForm.control}

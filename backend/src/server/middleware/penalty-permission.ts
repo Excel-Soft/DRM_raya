@@ -63,6 +63,11 @@ export function canVoid(role: string): boolean {
 export function canEditOrDeletePenalty(role: string): boolean {
   return isFullAccess(role) || role === "hod" || role === "account_manager";
 }
+
+/** Review employee rejection and re-assign penalty (admin, super HOD, HOD, account manager). */
+export function canReviewEmployeeRejection(role: string): boolean {
+  return canEditOrDeletePenalty(role);
+}
 // Who can see reports: full-access, HOD, HR.
 export function canViewReports(role: string): boolean {
   return isFullAccess(role) || isHod(role) || isHr(role);

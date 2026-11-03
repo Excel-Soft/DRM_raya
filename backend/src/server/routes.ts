@@ -18,6 +18,7 @@ import { registerSupportRoutes } from "./routes/support-routes";
 import { isSupportModuleEnabled, isBotSystemEnabled, isOnlineFormEnabled, isFbPostEnabled } from "./utils/feature-flags";
 import { registerSettingsRoutes } from "./routes/settings-routes";
 import { registerAttendanceRoutes } from "./routes/attendance-routes";
+import { registerAttendanceImportRoutes } from "./routes/attendance-import-routes";
 import { registerAttendanceEditRoutes } from "./routes/attendance-edit-routes";
 import { registerSalaryRoutes } from "./routes/salary-routes";
 import { registerStage3ReportsRoutes } from "./routes/stage3-reports-routes";
@@ -361,6 +362,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Attendance routes (protected)
   registerAttendanceRoutes(app);
+  registerAttendanceImportRoutes(app);
   registerAttendanceEditRoutes(app);
   registerTodoRoutes(app);
 

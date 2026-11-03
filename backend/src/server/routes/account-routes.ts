@@ -80,6 +80,11 @@ import {
   createOrLinkProjectForGm,
   createOrLinkProjectForLegacySource,
 } from "./services/invoice-to-project.service";
+import {
+  notifySalesBelowProjectThreshold,
+  recordInvoiceApprovalPayment,
+  shouldRunProjectGenerationForApproval,
+} from "../services/invoice-project-threshold.service";
 
 // ── Phase 3: Strict Zod schemas for account-routes write endpoints ──────────
 const createProjectFromGmSchema = z.object({
@@ -3577,6 +3582,15 @@ export function registerAccountRoutes(app: Express) {
         if (!upd.rows[0]) {
           return res.status(404).json({ error: "Invoice not found or already processed" });
         }
+        if (approving) {
+          await recordInvoiceApprovalPayment({
+            invoiceId: id,
+            amount,
+            paymentMethod,
+            actorUserId,
+            invoiceNumber: null,
+          });
+        }
         quotation = { ...upd.rows[0], source: 'quotation' };
       } else if (source === 'product_posting') {
         const checkRes = await pool.query(
@@ -3607,9 +3621,21 @@ export function registerAccountRoutes(app: Express) {
                 `UPDATE drm.product_posting_invoices SET status = 'APPROVED', payment_method = COALESCE($1, payment_method) WHERE id = $2 RETURNING *`,
                 [paymentMethod || null, id]
             );
+
+            await recordInvoiceApprovalPayment({
+              invoiceId: id,
+              amount,
+              paymentMethod,
+              actorUserId,
+              invoiceNumber: invoice.invoice_number,
+            });
+            const postingProjectGate = await shouldRunProjectGenerationForApproval(id, "product_posting");
+            if (!postingProjectGate.allowed && postingProjectGate.financials) {
+              await notifySalesBelowProjectThreshold(postingProjectGate.financials);
+            }
             
-            // Generate project
-            if (upd.rows[0]) {
+            // Generate project (only when ≥ 33% received)
+            if (upd.rows[0] && postingProjectGate.allowed) {
                 const approvedInv = upd.rows[0];
                 // Fallback guess, used only if the catalog lookup below finds nothing.
                 let deptType = 'PRODUCT_POSTING';
@@ -3724,22 +3750,14 @@ export function registerAccountRoutes(app: Express) {
         // 30,000 down to 107.14 USD and back to 29,999 once the amount
         // column's 2-decimal-place limit eats the remainder. Readers convert
         // at calculation time instead, in full floating-point precision.
-        if (approving && amount !== undefined && amount !== null) {
-          const nativeAmount = Number(amount);
-          if (nativeAmount > 0) {
-            await pool.query(
-              `INSERT INTO drm.ledger_entries
-                 (entry_type, amount, currency, description, category, reference_id, reference_type, entry_date, created_by_user_id, status, remarks)
-               VALUES ('Credit', $1, 'PKR', $2, 'Invoice Payment', $3, 'Invoice', now(), $4, 'Posted', $5)`,
-              [
-                nativeAmount,
-                `Payment recorded on approval of invoice ${invRow?.invoiceNumber || id}`,
-                id,
-                actorUserId,
-                paymentMethod || null,
-              ],
-            );
-          }
+        if (approving) {
+          await recordInvoiceApprovalPayment({
+            invoiceId: id,
+            amount,
+            paymentMethod,
+            actorUserId,
+            invoiceNumber: invRow?.invoiceNumber,
+          });
         }
 
         quotation = { ...upd.rows[0], source: 'standard_invoice' };
@@ -3772,6 +3790,15 @@ export function registerAccountRoutes(app: Express) {
           }
         }
 
+        const projectGate = await shouldRunProjectGenerationForApproval(
+          id,
+          quotation.source as "standard_invoice" | "product_posting" | "quotation",
+        );
+        if (!projectGate.allowed && projectGate.financials && quotation.source !== "product_posting") {
+          // product_posting already notified above when inline create was skipped
+          await notifySalesBelowProjectThreshold(projectGate.financials);
+        }
+
         // Best-effort PMS project generation. May itself notify the sales
         // exec (a separate "project has been created" message -- see
         // invoice-to-project.service.ts) when a project is freshly created.
@@ -3782,7 +3809,16 @@ export function registerAccountRoutes(app: Express) {
         // itself was approved (below).
         let genResult: any;
         try {
-          if (quotation.source === 'product_posting') {
+          if (!projectGate.allowed && !projectGate.existingProject) {
+            genResult = {
+              ok: false,
+              created: false,
+              linked: false,
+              projectId: undefined,
+              status: null,
+              reason: "below_33_percent_threshold",
+            };
+          } else if (quotation.source === 'product_posting') {
             // Same projectGenerationMode gate as /api/invoices/:id/account-approve
             // (invoice-routes.ts) — this endpoint is the one the mounted Account
             // Manager UI actually calls, so without this gate the Manual/Automatic
@@ -5796,7 +5832,8 @@ export function registerAccountRoutes(app: Express) {
       const txBalance = await pool.query(`
         SELECT id, buyer_name as "name", date, paypal_email as "email",
                dollar_amount as "amount", dollar_rate as "rate", 'balance' as "txType",
-               balance_status as "balanceStatus", balance_status_date as "balanceStatusDate"
+               balance_status as "balanceStatus", balance_status_date as "balanceStatusDate",
+               screenshot_url as "screenshotUrl"
         FROM drm.dollar_buying
         WHERE is_confirmed = true
           AND COALESCE(remaining_usd, dollar_amount) > 0.009
@@ -5837,7 +5874,9 @@ export function registerAccountRoutes(app: Express) {
       // until someone acts on it, however long that takes.
       const txMartini = await pool.query(`
         SELECT id, buyer_name as "name", date, paypal_email as "email",
-               dollar_amount as "amount", dollar_rate as "rate", 'martini' as "txType"
+               dollar_amount as "amount", dollar_rate as "rate", 'martini' as "txType",
+               balance_status as "balanceStatus", balance_status_date as "balanceStatusDate",
+               screenshot_url as "screenshotUrl"
         FROM drm.dollar_buying
         WHERE is_confirmed = false
         ORDER BY date DESC LIMIT 20
@@ -6415,7 +6454,7 @@ export function registerAccountRoutes(app: Express) {
   // Show/Not Show/Refund label on a Balance tab row ("Ab Payment Status").
   // "Refund" also flips the existing martini liability flag (and reverting
   // back to "Show" un-flips it); "Not Show" only touches this label.
-  const BALANCE_STATUSES = ["Show", "Not Show", "Refund"] as const;
+  const BALANCE_STATUSES = ["Show", "Not Show", "Refund", "Canceled"] as const;
   const balanceStatusSchema = z.object({
     status: z.enum(BALANCE_STATUSES),
     statusDate: z.string().trim().min(1).optional().nullable(),
@@ -6430,7 +6469,8 @@ export function registerAccountRoutes(app: Express) {
         return res.status(404).json({ error: "Buy record not found" });
       }
 
-      const martiniVal = status === "Refund" ? "Refund" : "Show";
+      const martiniVal =
+        status === "Refund" ? "Refund" : status === "Canceled" || status === "Not Show" ? "Not Show" : "Show";
       const result = await pool.query(
         `UPDATE drm.dollar_buying
          SET balance_status = $2, balance_status_date = $3, martini = $4, updated_at = now()
@@ -6457,25 +6497,17 @@ export function registerAccountRoutes(app: Express) {
     }
   });
 
-  // GET /api/account/dollar-system/buyer-dollar-short?min=&max=
-  // Real buyer "buy" records with an unspent balance, for the Pay Alibaba allocation modal.
+  // GET /api/account/dollar-system/buyer-dollar-short?min=&max=&temp=
+  // Pay Alibaba modal: min/max are DOLLAR RATE bounds (legacy func.php slider 0–500),
+  // not short-dollar amounts. Returns buys with remaining balance in that rate range.
   app.get("/api/account/dollar-system/buyer-dollar-short", requireFinancialPermission(FINANCIAL_ACTIONS.dollarBuyingView, { roles: FINANCIAL_VIEW_ROLES }), async (req, res) => {
     try {
       const min = Number(req.query.min ?? 0) || 0;
       const max = Number(req.query.max ?? 500) || 500;
-      // Optional rate filter: the Pay Alibaba allocation modal restricts the
-      // candidate buyer-dollar pool to lots bought at the same rate as the
-      // order being paid, so it never silently blends in a different-rate buy.
-      const rate = req.query.rate !== undefined ? Number(req.query.rate) : null;
-      const params: any[] = [min, max];
-      let rateWhere = "";
-      // A zero/missing rate means the order itself has no rate set — don't
-      // filter anything out in that case (an empty candidate pool would
-      // silently brick the allocation modal for that order).
-      if (rate !== null && !Number.isNaN(rate) && rate > 0) {
-        params.push(rate);
-        rateWhere = ` AND b.dollar_rate = $${params.length}`;
-      }
+      const isTemp = String(req.query.temp ?? "") === "true";
+      const poolWhere = isTemp
+        ? `COALESCE(b.martini, 'Show') = 'Not Show'`
+        : `COALESCE(b.martini, 'Show') = 'Show'`;
       const { rows } = await pool.query(`
         SELECT
           b.id,
@@ -6490,10 +6522,11 @@ export function registerAccountRoutes(app: Express) {
           b.pkr_amount
         FROM drm.dollar_buying b
         WHERE COALESCE(b.remaining_usd, b.dollar_amount) > 0
-          AND COALESCE(b.remaining_usd, b.dollar_amount) BETWEEN $1 AND $2
-          ${rateWhere}
-        ORDER BY COALESCE(b.remaining_usd, b.dollar_amount) ASC
-      `, params);
+          AND b.dollar_rate >= $1::numeric
+          AND b.dollar_rate <= $2::numeric
+          AND ${poolWhere}
+        ORDER BY b.dollar_rate ASC, COALESCE(b.remaining_usd, b.dollar_amount) ASC
+      `, [min, max]);
       res.json({ records: rows });
     } catch (err) {
       console.error("Failed to fetch buyer dollar short records:", err);

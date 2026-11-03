@@ -6,6 +6,12 @@ import { GmApprovalCard } from "@/components/gm-approval-card";
 import { AccountsGmSummaryWidget } from "@/components/accounts-gm-summary-widget";
 import { useToast } from "@/hooks/use-toast";
 import {
+    formatPkr,
+    invoiceMinimumProjectPkr,
+    meetsInvoiceProjectThreshold,
+    resolveInvoiceTotalPkr,
+} from "@shared/invoice-project-threshold";
+import {
     Users,
     CreditCard,
     Briefcase,
@@ -16,6 +22,7 @@ import {
     ArrowDownRight,
     MoreHorizontal,
     Plus,
+    Loader2,
     Search,
     CheckCircle2,
     Clock,
@@ -261,6 +268,45 @@ export default function AccountManagerDashboard() {
     });
 
     const queryClient = useQueryClient();
+
+    const [attendanceImportOpen, setAttendanceImportOpen] = useState(false);
+    const [attendanceFile, setAttendanceFile] = useState<File | null>(null);
+    const [attendancePreview, setAttendancePreview] = useState<any[] | null>(null);
+
+    const attendanceImportMetaQuery = useQuery({
+        queryKey: ["/api/account/attendance/import-meta"],
+        queryFn: async () => {
+            const res = await apiRequest("GET", "/api/account/attendance/import-meta");
+            if (!res.ok) throw new Error("Failed to load attendance meta");
+            return res.json();
+        },
+    });
+
+    const attendanceImportMutation = useMutation({
+        mutationFn: async (file: File) => {
+            const fd = new FormData();
+            fd.append("attentiondoc", file);
+            const res = await fetch("/api/account/attendance/import-excel", {
+                method: "POST",
+                body: fd,
+                credentials: "include",
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || "Failed to import attendance");
+            return data;
+        },
+        onSuccess: (data) => {
+            setAttendancePreview(data.rows || []);
+            queryClient.invalidateQueries({ queryKey: ["/api/account/attendance/import-meta"] });
+            toast({
+                title: "Attendance updated",
+                description: `Imported ${data.imported ?? 0}, skipped ${data.skipped ?? 0}, errors ${data.errors ?? 0}.`,
+            });
+        },
+        onError: (err: any) => {
+            toast({ title: "Import failed", description: err?.message || "Could not process Excel", variant: "destructive" });
+        },
+    });
 
     const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
     const [makeInvoiceModalOpen, setMakeInvoiceModalOpen] = useState(false);
@@ -693,6 +739,7 @@ export default function AccountManagerDashboard() {
         },
         onSuccess: (_, vars) => {
             queryClient.invalidateQueries({ queryKey: ["account-pending-quotations"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
             toast({
                 title: vars.action === "approve" ? "Invoice Approved ✅" : "Invoice Rejected",
                 description: vars.action === "approve" ? "Invoice has been approved successfully." : "Invoice has been rejected.",
@@ -719,6 +766,23 @@ export default function AccountManagerDashboard() {
             toast({ title: "Error", description: err.message || "Failed to create project", variant: "destructive" });
         }
     });
+
+    const selectedInvoiceTotalPkr = selectedGm
+        ? resolveInvoiceTotalPkr({
+            pkrTotal: selectedGm.pkrTotal,
+            amountPkr: selectedGm.amountPkr,
+            grandTotal: selectedGm.grandTotal ?? selectedGm.totalAmount,
+            dollarRate: selectedGm.dollarRate,
+            currency: selectedGm.currency,
+        })
+        : 0;
+    const enteredApprovalPkr = Number(projectForm.amount) || 0;
+    const projectMinPkr = invoiceMinimumProjectPkr(selectedInvoiceTotalPkr);
+    const projectCreationDeferred =
+        selectedGm?.entrySource === "invoice"
+        && projectForm.approvalStatus === "approved"
+        && enteredApprovalPkr > 0
+        && !meetsInvoiceProjectThreshold(enteredApprovalPkr, selectedInvoiceTotalPkr);
 
     const handleSaveProject = async () => {
         if (!selectedGm) return;
@@ -1594,7 +1658,18 @@ export default function AccountManagerDashboard() {
                     <Card className="border-none shadow-md bg-white dark:bg-zinc-900">
                         <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
                             <CardTitle>Attendance</CardTitle>
-                            <Plus className="h-5 w-5 text-emerald-500 cursor-pointer hover:bg-emerald-50 rounded-full p-0.5" />
+                            <button
+                                type="button"
+                                title="Upload attendance Excel"
+                                onClick={() => {
+                                    setAttendanceFile(null);
+                                    setAttendancePreview(null);
+                                    setAttendanceImportOpen(true);
+                                }}
+                                className="rounded-full p-0.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                            >
+                                <Plus className="h-5 w-5 text-emerald-500" />
+                            </button>
                         </CardHeader>
                         <CardContent>
                             <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-zinc-400">
@@ -1602,7 +1677,9 @@ export default function AccountManagerDashboard() {
                                     <ArrowRight className="h-4 w-4" />
                                     <span>Last Date</span>
                                 </div>
-                                <span className="ml-auto font-medium text-slate-900 dark:text-zinc-100">{format(new Date(), "yyyy-MM-dd")}</span>
+                                <span className="ml-auto font-medium text-slate-900 dark:text-zinc-100">
+                                    {attendanceImportMetaQuery.data?.lastDate || "—"}
+                                </span>
                             </div>
                         </CardContent>
                     </Card>
@@ -1664,6 +1741,85 @@ export default function AccountManagerDashboard() {
                 </div>
             </div>
 
+            {/* Attendance Excel Import (legacy attentiondoc_excel_file) */}
+            <Dialog open={attendanceImportOpen} onOpenChange={setAttendanceImportOpen}>
+                <DialogContent className="sm:max-w-[720px] max-h-[90vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Attendance</DialogTitle>
+                        <DialogDescription>
+                            Upload the biometric Excel export (.xlsx / .xls). Rows are processed like the legacy attentiondoc upload.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 overflow-y-auto flex-1 min-h-0 py-2">
+                        <div className="space-y-2">
+                            <Label className="text-sm font-semibold">Excel file</Label>
+                            <Input
+                                type="file"
+                                accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                onChange={(e) => {
+                                    setAttendanceFile(e.target.files?.[0] || null);
+                                    setAttendancePreview(null);
+                                }}
+                            />
+                            {attendanceFile && (
+                                <p className="text-xs text-slate-500">{attendanceFile.name}</p>
+                            )}
+                        </div>
+                        {attendancePreview && attendancePreview.length > 0 && (
+                            <div className="border rounded-md overflow-auto max-h-[280px] text-xs">
+                                <table className="w-full">
+                                    <thead className="bg-slate-50 dark:bg-zinc-800 sticky top-0">
+                                        <tr>
+                                            <th className="p-2 text-left">ID</th>
+                                            <th className="p-2 text-left">Name</th>
+                                            <th className="p-2 text-left">In</th>
+                                            <th className="p-2 text-left">Out</th>
+                                            <th className="p-2 text-left">Late</th>
+                                            <th className="p-2 text-left">Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {attendancePreview.slice(0, 100).map((row: any, idx: number) => (
+                                            <tr key={idx} className="border-t border-slate-100 dark:border-zinc-800">
+                                                <td className="p-2">{row.attId}</td>
+                                                <td className="p-2">{row.name}</td>
+                                                <td className="p-2">{row.timeIn || "—"}</td>
+                                                <td className="p-2">{row.timeOut || "—"}</td>
+                                                <td className="p-2">{row.lateDuration}</td>
+                                                <td className="p-2">{row.date}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                {attendancePreview.length > 100 && (
+                                    <p className="p-2 text-slate-400">Showing first 100 of {attendancePreview.length} rows.</p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button type="button" variant="outline" onClick={() => setAttendanceImportOpen(false)}>
+                            Close
+                        </Button>
+                        <Button
+                            type="button"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                            disabled={!attendanceFile || attendanceImportMutation.isPending}
+                            onClick={() => attendanceFile && attendanceImportMutation.mutate(attendanceFile)}
+                        >
+                            {attendanceImportMutation.isPending ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    Processing…
+                                </>
+                            ) : (
+                                "Upload & Update Attendance"
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Create Project Modal */}
             <Dialog open={createProjectOpen} onOpenChange={setCreateProjectOpen}>
                 <DialogContent className="sm:max-w-[550px] p-0 gap-0 rounded-xl overflow-hidden">
@@ -1703,7 +1859,15 @@ export default function AccountManagerDashboard() {
                                     onChange={(e) => {
                                         const newAmountStr = e.target.value;
                                         setProjectForm(prev => {
-                                            const totalPkr = Number(selectedGm?.amountPkr) || (Number(selectedGm?.grandTotal) || 0) * (Number(selectedGm?.dollarRate) || 280);
+                                            const totalPkr = selectedGm
+                                                ? resolveInvoiceTotalPkr({
+                                                    pkrTotal: selectedGm.pkrTotal,
+                                                    amountPkr: selectedGm.amountPkr,
+                                                    grandTotal: selectedGm.grandTotal ?? selectedGm.totalAmount,
+                                                    dollarRate: selectedGm.dollarRate,
+                                                    currency: selectedGm.currency,
+                                                })
+                                                : 0;
                                             const enteredAmount = Number(newAmountStr) || 0;
                                             const newDue = totalPkr - enteredAmount;
                                             return { ...prev, amount: newAmountStr, due: Math.max(0, newDue).toString() };
@@ -1773,6 +1937,14 @@ export default function AccountManagerDashboard() {
                             </div>
                         </div>
 
+                        {projectCreationDeferred && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-100">
+                                You are recording {formatPkr(enteredApprovalPkr)} — below the 33% minimum ({formatPkr(projectMinPkr)} of {formatPkr(selectedInvoiceTotalPkr)}).
+                                You can still approve; the PMS project will <span className="font-bold">not</span> be created until total received reaches at least 33%.
+                                Add further payments from Account History when the customer pays more.
+                            </div>
+                        )}
+
                         {/* Project */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2">
@@ -1780,14 +1952,7 @@ export default function AccountManagerDashboard() {
                                 <Badge className="bg-rose-100 text-rose-500 rounded px-1.5 py-0 text-[10px] font-bold border-none">1</Badge>
                             </div>
                             <div className="flex flex-wrap gap-2 p-3 border border-slate-200 rounded-md bg-white min-h-[48px] dark:bg-zinc-900 dark:border-zinc-800">
-                                {selectedGm && (() => {
-                                    // First number = 30% of the total PKR amount (the invoice's
-                                    // own dollar rate when available, same 280 default used
-                                    // elsewhere in the app otherwise); second stays 0.
-                                    const totalPkr = Number(selectedGm?.amountPkr) ||
-                                        (Number(selectedGm?.grandTotal) || 0) * (Number(selectedGm?.dollarRate) || 280);
-                                    const thirtyPercentPkr = Math.round(totalPkr * 0.3);
-                                    return (
+                                {selectedGm && (
                                         <span className="inline-flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-md px-3 py-1.5 text-sm text-blue-700 font-medium">
                                             <button
                                                 onClick={() => setSelectedGm(null)}
@@ -1795,10 +1960,9 @@ export default function AccountManagerDashboard() {
                                             >
                                                 <X className="h-3.5 w-3.5" />
                                             </button>
-                                            {projectForm.project} ({thirtyPercentPkr})-(0)
+                                            {projectForm.project} ({projectMinPkr})-(0)
                                         </span>
-                                    );
-                                })()}
+                                )}
                             </div>
                         </div>
                     </div>
